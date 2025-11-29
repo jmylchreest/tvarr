@@ -158,12 +158,51 @@ Video-on-demand content management and live channel generation.
 
 ---
 
-### Phase 7: Advanced Features (Future)
+### Phase 7: Web Frontend
+**Status**: Planned  
+**Target**: Q3 2026
+
+Embedded web UI based on the original m3u-proxy Next.js frontend.
+
+#### Reference Implementation
+The original frontend exists at `../m3u-proxy/frontend/` and uses:
+- Next.js with App Router
+- React 18 with TypeScript
+- shadcn/ui components (Radix UI primitives)
+- Tailwind CSS
+- Static export for embedding
+
+#### Deliverables
+- [ ] Recreate/port frontend from m3u-proxy (see `../m3u-proxy/frontend/`)
+- [ ] Static build embedded in Go binary
+- [ ] Dashboard with system status
+- [ ] Stream source management UI
+- [ ] EPG source management UI
+- [ ] Proxy configuration UI
+- [ ] Filter/mapping rule builder
+- [ ] Job scheduler UI
+- [ ] Log viewer
+- [ ] Settings management
+
+#### API Compatibility Goal
+Maintain REST API compatibility with m3u-proxy where possible to:
+- Enable frontend reuse with minimal modifications
+- Provide easier migration path for existing users
+- Ensure consistent user experience
+
+#### Success Criteria
+- Frontend served from embedded files
+- Full CRUD for all entities
+- Real-time ingestion progress
+- Responsive design (mobile-friendly)
+
+---
+
+### Phase 8: Advanced Features (Future)
 **Status**: Future  
 **Target**: Q4 2026
 
 #### Potential Features
-- [ ] Web UI for management
 - [ ] Multi-tenant support
 - [ ] Distributed deployment (multiple workers)
 - [ ] Plugin system for custom handlers
@@ -198,7 +237,10 @@ Phase 1 (Core)
                 ├─→ Phase 4 (Logo Cache)
                 └─→ Phase 5 (FFmpeg Relay)
                       └─→ Phase 6 (VOD System)
-                            └─→ Phase 7 (Advanced)
+                            └─→ Phase 8 (Advanced)
+
+Phase 1 (Core) ─→ Phase 7 (Web Frontend)
+                  [Can start after REST API is complete]
 ```
 
 ---

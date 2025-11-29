@@ -35,6 +35,48 @@ Structured logging with slog (no emojis in log output). All operations must be t
 ### VII. Security by Default
 All file operations sandboxed to configured directories. Path traversal prevention mandatory. Input validation at system boundaries. No hardcoded credentials. Configuration via environment variables with sensible defaults.
 
+### VIII. No Magic Strings or Literals
+**Reusable values must be constants or variables, never inline literals.** This includes:
+- Version strings, user agents, application names
+- HTTP headers, content types, status messages  
+- Configuration keys, environment variable names
+- Error messages that may be matched or displayed
+- API endpoint paths, query parameter names
+
+Build-time values (version, commit, build date) must be injected via LDFLAGS, not hardcoded. A centralized `internal/version` package must expose these values.
+
+### IX. Resilient HTTP Clients
+All external HTTP communication must use a standardized HTTP client package (`pkg/httpclient`) that provides:
+- **Configurable circuit breaker** with service-specific profiles
+- **Automatic retries** with exponential backoff
+- **Transparent decompression** (gzip, deflate, brotli)
+- **Structured logging and instrumentation** with request/response tracing
+- **Timeout configuration** at connect and request levels
+- **Credential obfuscation** in logs and error messages
+
+The client must accept the standard `*http.Client` interface for injection and testing. Circuit breaker state must be observable via health endpoints.
+
+### X. Production-Grade CI/CD
+This project uses **GitHub Actions** with a multi-stage, matrix-based build pipeline:
+
+**Build Requirements:**
+- Matrix builds for: `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64`
+- ARM64 builds use dedicated ARM runners where available
+- All binaries built with CGO_ENABLED=0 for static linking
+- LDFLAGS injection for version, commit SHA, and build timestamp
+
+**Pipeline Stages:**
+1. **Prepare** - Determine version (tag-based or snapshot with short SHA)
+2. **Lint** - golangci-lint with strict configuration
+3. **Test** - Full test suite with coverage reporting
+4. **Build** - Matrix builds with artifact upload
+5. **Release** - GoReleaser for tagged releases
+
+**Artifact Standards:**
+- Binary naming: `{name}_{version}_{os}_{arch}`
+- Checksums for all release artifacts
+- SBOM generation for supply chain security
+
 ## Technology Stack
 
 | Layer | Technology | Version |
@@ -201,4 +243,4 @@ All code reviews must verify constitutional compliance. Complexity violations mu
 
 Security Engineer has **VETO POWER** on any security-related concerns.
 
-**Version**: 2.0.0 | **Ratified**: 2025-11-29 | **Last Amended**: 2025-11-29
+**Version**: 2.1.0 | **Ratified**: 2025-11-29 | **Last Amended**: 2025-11-29
