@@ -1,0 +1,120 @@
+# Tvarr Configuration Example
+# Copy this file to config.yaml and modify as needed.
+# Environment variables can override any setting using TVARR_ prefix.
+# Example: TVARR_SERVER_PORT=9090 overrides server.port
+
+# HTTP Server Configuration
+server:
+  # Host to bind to (0.0.0.0 for all interfaces)
+  host: "0.0.0.0"
+  # Port to listen on
+  port: 8080
+  # Read timeout for incoming requests
+  read_timeout: 30s
+  # Write timeout for responses
+  write_timeout: 30s
+  # Graceful shutdown timeout
+  shutdown_timeout: 10s
+  # CORS allowed origins (use ["*"] for any origin)
+  cors_origins:
+    - "*"
+
+# Database Configuration
+database:
+  # Database driver: sqlite, postgres, or mysql
+  driver: "sqlite"
+  # Data Source Name (connection string)
+  # SQLite: path to database file
+  # PostgreSQL: postgres://user:password@host:port/database?sslmode=disable
+  # MySQL: user:password@tcp(host:port)/database?parseTime=true
+  dsn: "tvarr.db"
+  # Maximum open connections
+  max_open_conns: 10
+  # Maximum idle connections
+  max_idle_conns: 5
+  # Maximum connection lifetime
+  conn_max_lifetime: 1h
+  # Maximum idle connection time
+  conn_max_idle_time: 30m
+  # Log level: silent, error, warn, info
+  log_level: "warn"
+
+# File Storage Configuration
+storage:
+  # Base directory for all storage
+  base_dir: "./data"
+  # Subdirectory for cached logos
+  logo_dir: "logos"
+  # Subdirectory for generated output files (M3U, XMLTV)
+  output_dir: "output"
+  # Subdirectory for temporary files
+  temp_dir: "temp"
+  # How long to keep unused logos
+  logo_retention: 720h  # 30 days
+  # Maximum size for logo downloads (bytes)
+  max_logo_size: 5242880  # 5MB
+
+# Logging Configuration
+logging:
+  # Log level: debug, info, warn, error
+  level: "info"
+  # Output format: json, text
+  format: "json"
+  # Include source file and line in logs
+  add_source: false
+  # Time format (Go time layout)
+  time_format: "2006-01-02T15:04:05Z07:00"
+
+# Source Ingestion Configuration
+ingestion:
+  # Batch size for channel database operations
+  channel_batch_size: 1000
+  # Batch size for EPG program database operations
+  epg_batch_size: 5000
+  # HTTP timeout for fetching sources
+  http_timeout: 60s
+  # Maximum concurrent source downloads
+  max_concurrent: 3
+  # Number of retry attempts for failed downloads
+  retry_attempts: 3
+  # Delay between retries
+  retry_delay: 5s
+
+# Proxy Generation Pipeline Configuration
+pipeline:
+  # Batch size for streaming channel data
+  stream_batch_size: 1000
+  # Enable explicit GC hints between pipeline stages
+  enable_gc_hints: true
+  # Batch size for concurrent logo downloads
+  logo_batch_size: 50
+
+# Stream Relay Configuration
+relay:
+  # Enable stream relay functionality
+  enabled: false
+  # Maximum concurrent relay streams
+  max_concurrent_streams: 10
+  # Failures before circuit breaker opens
+  circuit_breaker_threshold: 3
+  # Time before circuit breaker allows retry
+  circuit_breaker_timeout: 30s
+  # Connection pool size per upstream host
+  connection_pool_size: 100
+  # Timeout for individual stream connections
+  stream_timeout: 5m
+
+# FFmpeg Configuration
+ffmpeg:
+  # Path to ffmpeg binary (empty = auto-detect from PATH)
+  binary_path: ""
+  # Path to ffprobe binary (empty = auto-detect from PATH)
+  probe_path: ""
+  # Use embedded ffmpeg binary if available
+  use_embedded: false
+  # Hardware acceleration priority (tried in order)
+  hwaccel_priority:
+    - "vaapi"   # Intel/AMD on Linux
+    - "nvenc"   # NVIDIA
+    - "qsv"     # Intel Quick Sync
+    - "amf"     # AMD AMF

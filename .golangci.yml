@@ -1,0 +1,190 @@
+# golangci-lint configuration
+# https://golangci-lint.run/usage/configuration/
+
+run:
+  timeout: 5m
+  issues-exit-code: 1
+  tests: true
+  modules-download-mode: readonly
+
+output:
+  formats:
+    - format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+  sort-results: true
+
+linters:
+  enable:
+    # Default linters
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+    # Additional linters for code quality
+    - bodyclose          # Check HTTP response body is closed
+    - contextcheck       # Check context.Context usage
+    - dupl               # Code clone detection
+    - durationcheck      # Check duration multiplications
+    - errname            # Check error naming conventions
+    - errorlint          # Find code issues with error wrapping
+    - exhaustive         # Check enum switch statements
+    - copyloopvar        # Detect loop variable capture issues (replaces exportloopref)
+    - funlen             # Detect long functions
+    - gocognit           # Cognitive complexity
+    - goconst            # Find repeated strings
+    - gocritic           # Opinionated Go linter
+    - gocyclo            # Cyclomatic complexity
+    - godot              # Check comment periods
+    - gofmt              # Check formatting
+    - goimports          # Check imports
+    - mnd                # Magic number detector (replaces gomnd)
+    - goprintffuncname   # Check printf-like function names
+    - gosec              # Security checker
+    - misspell           # Spell checker
+    - nakedret           # Find naked returns
+    - nestif             # Nested if statements
+    - nilerr             # Check nil error returns
+    - nilnil             # Check nil nil returns
+    - noctx              # Check http requests use context
+    - nolintlint         # Check nolint directives
+    - prealloc           # Find slice pre-allocation opportunities
+    - predeclared        # Find shadowing of predeclared identifiers
+    - revive             # Replacement for golint
+    - rowserrcheck       # Check sql.Rows error handling
+    - sqlclosecheck      # Check sql.Rows/Stmt closure
+    - stylecheck         # Style checker
+    - tenv               # Use t.Setenv in tests
+    - tparallel          # Check test parallelization
+    - unconvert          # Remove unnecessary conversions
+    - unparam            # Find unused parameters
+    - wastedassign       # Find wasted assignments
+    - whitespace         # Check whitespace
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment  # Too noisy for most cases
+
+  gocyclo:
+    min-complexity: 15
+
+  gocognit:
+    min-complexity: 20
+
+  funlen:
+    lines: 100
+    statements: 50
+
+  dupl:
+    threshold: 100
+
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+
+  mnd:
+    ignored-numbers:
+      - '0'
+      - '1'
+      - '2'
+      - '10'
+      - '100'
+      - '1000'
+    ignored-functions:
+      - 'time.Duration'
+      - 'strconv.*'
+      - 'make'
+
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - experimental
+      - opinionated
+      - performance
+      - style
+    disabled-checks:
+      - whyNoLint
+      - hugeParam  # Can be noisy with large structs
+
+  nestif:
+    min-complexity: 4
+
+  nakedret:
+    max-func-lines: 30
+
+  revive:
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+      - name: if-return
+      - name: increment-decrement
+      - name: var-naming
+      - name: var-declaration
+      - name: package-comments
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: indent-error-flow
+      - name: errorf
+      - name: empty-block
+      - name: superfluous-else
+      - name: unused-parameter
+      - name: unreachable-code
+      - name: redefines-builtin-id
+
+  stylecheck:
+    dot-import-whitelist: []
+
+  gosec:
+    excludes:
+      - G104  # Audit errors not checked (too noisy)
+      - G304  # File path provided as taint input (handled by sandbox)
+
+issues:
+  exclude-rules:
+    # Exclude some linters from running on tests files
+    - path: _test\.go
+      linters:
+        - dupl
+        - funlen
+        - gocognit
+        - goconst
+        - mnd
+
+    # Exclude test fixtures
+    - path: tests/fixtures/
+      linters:
+        - all
+
+    # Allow longer lines in generated code
+    - source: "^//go:generate"
+      linters:
+        - lll
+
+  max-issues-per-linter: 50
+  max-same-issues: 5
+  new: false
+
+severity:
+  default-severity: warning
+  rules:
+    - linters:
+        - errcheck
+        - gosec
+      severity: error

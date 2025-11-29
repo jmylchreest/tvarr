@@ -1,0 +1,399 @@
+# https://taskfile.dev
+
+version: "3"
+
+vars:
+  BINARY_NAME: tvarr
+  BUILD_DIR: bin
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
+  BUILD_TIME:
+    sh: date -u '+%Y-%m-%d_%H:%M:%S'
+  LDFLAGS: -ldflags "-X main.Version={{.VERSION}} -X main.BuildTime={{.BUILD_TIME}}"
+  COVERAGE_FILE: coverage.out
+
+tasks:
+  default:
+    desc: Run lint, test, and build
+    cmds:
+      - task: lint
+      - task: test
+      - task: build
+
+  # ============================================
+  # Build Tasks
+  # ============================================
+
+  build:
+    desc: Build the application binary
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - go build {{.LDFLAGS}} -o {{.BUILD_DIR}}/{{.BINARY_NAME}} ./cmd/tvarr
+    sources:
+      - ./**/*.go
+      - go.mod
+      - go.sum
+    generates:
+      - "{{.BUILD_DIR}}/{{.BINARY_NAME}}"
+
+  build:linux:
+    desc: Cross-compile for Linux amd64
+    env:
+      GOOS: linux
+      GOARCH: amd64
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - go build {{.LDFLAGS}} -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-linux-amd64 ./cmd/tvarr
+
+  build:linux:arm64:
+    desc: Cross-compile for Linux arm64
+    env:
+      GOOS: linux
+      GOARCH: arm64
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - go build {{.LDFLAGS}} -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-linux-arm64 ./cmd/tvarr
+
+  build:darwin:
+    desc: Cross-compile for macOS amd64
+    env:
+      GOOS: darwin
+      GOARCH: amd64
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - go build {{.LDFLAGS}} -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-darwin-amd64 ./cmd/tvarr
+
+  build:darwin:arm64:
+    desc: Cross-compile for macOS arm64 (Apple Silicon)
+    env:
+      GOOS: darwin
+      GOARCH: arm64
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - go build {{.LDFLAGS}} -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-darwin-arm64 ./cmd/tvarr
+
+  build:windows:
+    desc: Cross-compile for Windows amd64
+    env:
+      GOOS: windows
+      GOARCH: amd64
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - go build {{.LDFLAGS}} -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-windows-amd64.exe ./cmd/tvarr
+
+  build:all:
+    desc: Build for all platforms
+    cmds:
+      - task: build:linux
+      - task: build:linux:arm64
+      - task: build:darwin
+      - task: build:darwin:arm64
+      - task: build:windows
+
+  # ============================================
+  # Test Tasks
+  # ============================================
+
+  test:
+    desc: Run all tests
+    cmds:
+      - go test -v -coverprofile={{.COVERAGE_FILE}} ./...
+
+  test:race:
+    desc: Run all tests with race detector (requires CGO)
+    env:
+      CGO_ENABLED: "1"
+    cmds:
+      - go test -v -race -coverprofile={{.COVERAGE_FILE}} ./...
+
+  test:short:
+    desc: Run tests without race detector (faster)
+    cmds:
+      - go test -v -short ./...
+
+  test:integration:
+    desc: Run integration tests only
+    cmds:
+      - go test -v -race -tags=integration ./tests/integration/...
+
+  test:coverage:
+    desc: Generate and open coverage report
+    cmds:
+      - task: test
+      - go tool cover -html={{.COVERAGE_FILE}} -o coverage.html
+      - echo "Coverage report generated at coverage.html"
+
+  test:coverage:func:
+    desc: Show coverage by function
+    cmds:
+      - task: test
+      - go tool cover -func={{.COVERAGE_FILE}}
+
+  bench:
+    desc: Run benchmarks
+    cmds:
+      - go test -bench=. -benchmem ./...
+
+  bench:cpu:
+    desc: Run benchmarks with CPU profile
+    cmds:
+      - go test -bench=. -cpuprofile=cpu.prof ./...
+      - echo "CPU profile saved to cpu.prof"
+
+  bench:mem:
+    desc: Run benchmarks with memory profile
+    cmds:
+      - go test -bench=. -memprofile=mem.prof ./...
+      - echo "Memory profile saved to mem.prof"
+
+  # ============================================
+  # Lint & Format Tasks
+  # ============================================
+
+  lint:
+    desc: Run golangci-lint
+    cmds:
+      - |
+        if ! command -v golangci-lint &> /dev/null; then
+          echo "Installing golangci-lint..."
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+        fi
+      - golangci-lint run ./...
+
+  lint:fix:
+    desc: Run golangci-lint with auto-fix
+    cmds:
+      - golangci-lint run --fix ./...
+
+  fmt:
+    desc: Format code with gofmt
+    cmds:
+      - go fmt ./...
+
+  fmt:imports:
+    desc: Format imports with goimports
+    cmds:
+      - |
+        if ! command -v goimports &> /dev/null; then
+          echo "Installing goimports..."
+          go install golang.org/x/tools/cmd/goimports@latest
+        fi
+      - goimports -w .
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  # ============================================
+  # Run Tasks
+  # ============================================
+
+  run:
+    desc: Build and run the application
+    deps: [build]
+    cmds:
+      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} serve
+
+  run:dev:
+    desc: Run with hot reload (requires air)
+    cmds:
+      - |
+        if ! command -v air &> /dev/null; then
+          echo "Installing air..."
+          go install github.com/air-verse/air@latest
+        fi
+      - air
+
+  # ============================================
+  # Database Tasks
+  # ============================================
+
+  migrate:
+    desc: Run database migrations
+    deps: [build]
+    cmds:
+      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} migrate up
+
+  migrate:down:
+    desc: Rollback last migration
+    deps: [build]
+    cmds:
+      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} migrate down
+
+  migrate:status:
+    desc: Show migration status
+    deps: [build]
+    cmds:
+      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} migrate status
+
+  # ============================================
+  # Dependency Tasks
+  # ============================================
+
+  deps:
+    desc: Download and tidy dependencies
+    cmds:
+      - go mod download
+      - go mod tidy
+
+  deps:update:
+    desc: Update all dependencies
+    cmds:
+      - go get -u ./...
+      - go mod tidy
+
+  deps:verify:
+    desc: Verify dependencies
+    cmds:
+      - go mod verify
+
+  deps:vuln:
+    desc: Check for vulnerabilities in dependencies
+    cmds:
+      - |
+        if ! command -v govulncheck &> /dev/null; then
+          echo "Installing govulncheck..."
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+        fi
+      - govulncheck ./...
+
+  # ============================================
+  # Code Generation Tasks
+  # ============================================
+
+  generate:
+    desc: Run go generate
+    cmds:
+      - go generate ./...
+
+  mock:
+    desc: Generate mocks for testing
+    cmds:
+      - |
+        if ! command -v mockgen &> /dev/null; then
+          echo "Installing mockgen..."
+          go install go.uber.org/mock/mockgen@latest
+        fi
+      - go generate ./...
+
+  # ============================================
+  # Docker Tasks
+  # ============================================
+
+  docker:build:
+    desc: Build Docker image
+    cmds:
+      - docker build -t {{.BINARY_NAME}}:{{.VERSION}} .
+
+  docker:run:
+    desc: Run Docker container
+    cmds:
+      - docker run -p 8080:8080 {{.BINARY_NAME}}:{{.VERSION}}
+
+  docker:compose:up:
+    desc: Start services with docker-compose
+    cmds:
+      - docker-compose up -d
+
+  docker:compose:down:
+    desc: Stop services with docker-compose
+    cmds:
+      - docker-compose down
+
+  # ============================================
+  # Clean Tasks
+  # ============================================
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -rf {{.BUILD_DIR}}
+      - rm -f {{.COVERAGE_FILE}} coverage.html
+      - rm -f cpu.prof mem.prof
+
+  clean:all:
+    desc: Clean everything including cache
+    cmds:
+      - task: clean
+      - go clean -cache -testcache
+
+  # ============================================
+  # Documentation Tasks
+  # ============================================
+
+  docs:
+    desc: Generate and serve godoc
+    cmds:
+      - |
+        if ! command -v godoc &> /dev/null; then
+          echo "Installing godoc..."
+          go install golang.org/x/tools/cmd/godoc@latest
+        fi
+      - echo "Starting godoc server at http://localhost:6060"
+      - godoc -http=:6060
+
+  # ============================================
+  # Security Tasks
+  # ============================================
+
+  security:
+    desc: Run all security checks
+    cmds:
+      - task: deps:vuln
+      - task: security:gosec
+
+  security:gosec:
+    desc: Run gosec security scanner
+    cmds:
+      - |
+        if ! command -v gosec &> /dev/null; then
+          echo "Installing gosec..."
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+        fi
+      - gosec ./...
+
+  # ============================================
+  # CI Tasks
+  # ============================================
+
+  ci:
+    desc: Run full CI pipeline
+    cmds:
+      - task: deps
+      - task: fmt
+      - task: vet
+      - task: lint
+      - task: test
+      - task: build
+
+  ci:quick:
+    desc: Quick CI check (no race detector)
+    cmds:
+      - task: deps
+      - task: lint
+      - task: test:short
+      - task: build
+
+  # ============================================
+  # Release Tasks
+  # ============================================
+
+  release:snapshot:
+    desc: Create snapshot release (for testing)
+    cmds:
+      - |
+        if ! command -v goreleaser &> /dev/null; then
+          echo "Installing goreleaser..."
+          go install github.com/goreleaser/goreleaser@latest
+        fi
+      - goreleaser release --snapshot --clean
+
+  # ============================================
+  # Help
+  # ============================================
+
+  help:
+    desc: Show all available tasks
+    cmds:
+      - task --list-all
