@@ -49,10 +49,10 @@ storage:
   output_dir: "output"
   # Subdirectory for temporary files
   temp_dir: "temp"
-  # How long to keep unused logos
-  logo_retention: 720h  # 30 days
-  # Maximum size for logo downloads (bytes)
-  max_logo_size: 5242880  # 5MB
+  # How long to keep unused cached logos (supports: 30d, 30 days, 1mo, 4w, etc.)
+  logo_retention: 30 days
+  # Maximum size for logo downloads (supports: 5MB, 5 MB, 5242880, etc.)
+  max_logo_size: 5MB
 
 # Logging Configuration
 logging:
@@ -79,6 +79,9 @@ ingestion:
   retry_attempts: 3
   # Delay between retries
   retry_delay: 5s
+  # Maximum response size for downloads (protects against zip bombs)
+  # Set to 0 for no limit. Applied AFTER decompression.
+  max_response_size: 500MB
 
 # Proxy Generation Pipeline Configuration
 pipeline:

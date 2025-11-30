@@ -56,7 +56,77 @@ All external HTTP communication must use a standardized HTTP client package (`pk
 
 The client must accept the standard `*http.Client` interface for injection and testing. Circuit breaker state must be observable via health endpoints.
 
-### X. Production-Grade CI/CD
+### X. Human-Readable Duration Configuration
+All duration configuration values must support human-readable formats via `pkg/duration`. This internal package extends Go's standard `time.ParseDuration` with support for:
+
+**Supported Units (case-insensitive, with plural/singular variants):**
+- `s`, `sec`, `second(s)`: seconds
+- `m`, `min`, `minute(s)`: minutes
+- `h`, `hr`, `hour(s)`: hours
+- `d`, `day(s)`: days (24 hours)
+- `w`, `wk`, `week(s)`: weeks (7 days)
+- `mo`, `month(s)`: months (30 days)
+- `y`, `yr`, `year(s)`: years (365 days)
+
+**Examples:**
+```yaml
+logo_retention: 30 days    # Human-readable with space
+http_timeout: 2m30s        # Standard Go format
+cache_ttl: 1 week          # Full word
+pruning_interval: 1w2d     # Short format combination
+```
+
+**Standard Time Units (full words supported):**
+- `h`, `hr`, `hour(s)`: hours
+- `m`, `min`, `minute(s)`: minutes
+- `s`, `sec`, `second(s)`: seconds
+- `ms`, `milli`, `millisecond(s)`: milliseconds
+- `us`, `micro`, `microsecond(s)`: microseconds
+- `ns`, `nano`, `nanosecond(s)`: nanoseconds
+
+**Relative Time Parsing:**
+The package also supports relative time expressions via `pkg/duration.ParseRelative()`:
+- `"5 days ago"` → now - 5 days
+- `"3 hours from now"` → now + 3 hours
+- `"in 2 weeks"` → now + 2 weeks
+- `"1 year after Sep 2, 1990"` → anchored date + duration
+- `"2 weeks before January 1, 2025"` → anchored date - duration
+
+Keywords: `ago`, `before`, `since`, `prior to` (past); `from now`, `after`, `later`, `in` (future)
+
+**Implementation Requirements:**
+- Use `pkg/duration.Parse()` for parsing duration strings in configuration
+- Use `pkg/duration.ParseRelative()` for relative time expressions
+- Use `pkg/duration.Format()` for displaying durations to users
+- Whitespace between number and unit is optional: `"30d"` and `"30 days"` are equivalent
+- The package is maintained internally (no external dependencies) for long-term stability
+
+### XI. Human-Readable Byte Size Configuration
+All byte size configuration values must support human-readable formats via `pkg/bytesize`. This internal package provides parsing and formatting of byte sizes with common units.
+
+**Supported Units (case-insensitive):**
+- `B`, `byte`, `bytes`: bytes
+- `K`, `KB`, `KiB`: kilobytes (1024 bytes)
+- `M`, `MB`, `MiB`: megabytes (1024² bytes)
+- `G`, `GB`, `GiB`: gigabytes (1024³ bytes)
+- `T`, `TB`, `TiB`: terabytes (1024⁴ bytes)
+- `P`, `PB`, `PiB`: petabytes (1024⁵ bytes)
+
+**Examples:**
+```yaml
+max_logo_size: 5MB          # Human-readable
+max_response_size: 100MB    # HTTP client limit
+buffer_size: 64KB           # Buffer configuration
+```
+
+**Implementation Requirements:**
+- Use `pkg/bytesize.Parse()` for parsing size strings in configuration
+- Use `pkg/bytesize.Format()` for displaying sizes to users
+- Supports floating-point values: `"1.5GB"` is valid
+- Raw numbers without units are interpreted as bytes: `"5242880"` = 5MB
+- The package is maintained internally (no external dependencies) for long-term stability
+
+### XII. Production-Grade CI/CD
 This project uses **GitHub Actions** with a multi-stage, matrix-based build pipeline:
 
 **Build Requirements:**

@@ -543,3 +543,135 @@ func TestClient_DoWithCustomRequest(t *testing.T) {
 
 	assert.Equal(t, http.StatusCreated, resp.StatusCode)
 }
+
+func TestClient_MaxResponseSize(t *testing.T) {
+	t.Run("allows response within limit", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte("small response"))
+		}))
+		defer server.Close()
+
+		cfg := DefaultConfig()
+		cfg.MaxResponseSize = 1024 // 1KB limit
+		client := New(cfg)
+
+		resp, err := client.Get(context.Background(), server.URL)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		assert.Equal(t, "small response", string(body))
+	})
+
+	t.Run("returns error when response exceeds limit", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Write more than the limit
+			w.Write([]byte(strings.Repeat("x", 2000)))
+		}))
+		defer server.Close()
+
+		cfg := DefaultConfig()
+		cfg.MaxResponseSize = 1000 // 1000 byte limit
+		client := New(cfg)
+
+		resp, err := client.Get(context.Background(), server.URL)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		_, err = io.ReadAll(resp.Body)
+		assert.ErrorIs(t, err, ErrResponseTooLarge)
+	})
+
+	t.Run("protects against zip bomb after decompression", func(t *testing.T) {
+		// Create a gzipped response that expands significantly
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set(HeaderContentEncoding, EncodingGzip)
+			gw := gzip.NewWriter(w)
+			// Write 5000 bytes of compressible data (lots of zeros compress well)
+			gw.Write([]byte(strings.Repeat("a", 5000)))
+			gw.Close()
+		}))
+		defer server.Close()
+
+		cfg := DefaultConfig()
+		cfg.MaxResponseSize = 1000 // Limit is applied AFTER decompression
+		client := New(cfg)
+
+		resp, err := client.Get(context.Background(), server.URL)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		// Reading should fail because decompressed size exceeds limit
+		_, err = io.ReadAll(resp.Body)
+		assert.ErrorIs(t, err, ErrResponseTooLarge)
+	})
+
+	t.Run("no limit when MaxResponseSize is 0", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(strings.Repeat("x", 10000)))
+		}))
+		defer server.Close()
+
+		cfg := DefaultConfig()
+		cfg.MaxResponseSize = 0 // No limit
+		client := New(cfg)
+
+		resp, err := client.Get(context.Background(), server.URL)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		assert.Len(t, body, 10000)
+	})
+}
+
+func TestLimitedReader(t *testing.T) {
+	t.Run("reads within limit", func(t *testing.T) {
+		data := "hello world"
+		r := newLimitedReader(io.NopCloser(strings.NewReader(data)), 100)
+
+		buf := make([]byte, 100)
+		n, err := r.Read(buf)
+		require.NoError(t, err)
+		assert.Equal(t, len(data), n)
+		assert.Equal(t, data, string(buf[:n]))
+	})
+
+	t.Run("returns error when limit exceeded", func(t *testing.T) {
+		data := strings.Repeat("x", 100)
+		r := newLimitedReader(io.NopCloser(strings.NewReader(data)), 50)
+
+		buf := make([]byte, 100)
+		_, err := r.Read(buf)
+		assert.ErrorIs(t, err, ErrResponseTooLarge)
+	})
+
+	t.Run("returns error on subsequent reads after exceeded", func(t *testing.T) {
+		data := strings.Repeat("x", 100)
+		r := newLimitedReader(io.NopCloser(strings.NewReader(data)), 50)
+
+		buf := make([]byte, 100)
+		r.Read(buf) // First read exceeds
+
+		_, err := r.Read(buf)
+		assert.ErrorIs(t, err, ErrResponseTooLarge)
+	})
+
+	t.Run("close closes underlying reader", func(t *testing.T) {
+		closed := false
+		closer := &mockReadCloser{
+			readFunc: func(p []byte) (int, error) {
+				return 0, io.EOF
+			},
+			closeFunc: func() error {
+				closed = true
+				return nil
+			},
+		}
+		r := newLimitedReader(closer, 100)
+		r.Close()
+		assert.True(t, closed)
+	})
+}

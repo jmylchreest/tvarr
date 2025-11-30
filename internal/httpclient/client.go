@@ -28,9 +28,10 @@ import (
 
 // Common errors returned by the client.
 var (
-	ErrCircuitOpen    = errors.New("circuit breaker is open")
-	ErrMaxRetries     = errors.New("max retries exceeded")
-	ErrRequestTimeout = errors.New("request timeout")
+	ErrCircuitOpen      = errors.New("circuit breaker is open")
+	ErrMaxRetries       = errors.New("max retries exceeded")
+	ErrRequestTimeout   = errors.New("request timeout")
+	ErrResponseTooLarge = errors.New("response body exceeds maximum size limit")
 )
 
 // Default configuration values.
@@ -44,6 +45,7 @@ const (
 	DefaultCircuitHalfOpenMax   = 1
 	DefaultBackoffMultiplier    = 2.0
 	DefaultMaxResponseBodyLog   = 1024
+	DefaultMaxResponseSize      = 0 // 0 means no limit
 	DefaultAcceptEncodingHeader = "gzip, deflate, br"
 	DefaultUserAgentHeader      = "tvarr-httpclient/1.0"
 )
@@ -94,6 +96,11 @@ type Config struct {
 	// EnableDecompression enables automatic response decompression.
 	EnableDecompression bool
 
+	// MaxResponseSize is the maximum allowed response body size in bytes.
+	// This limit is applied AFTER decompression to protect against zip bombs.
+	// Set to 0 to disable the limit (default).
+	MaxResponseSize int64
+
 	// BaseClient is the underlying http.Client to use.
 	// If nil, a default client is created.
 	BaseClient *http.Client
@@ -113,6 +120,7 @@ func DefaultConfig() Config {
 		UserAgent:           DefaultUserAgentHeader,
 		Logger:              slog.Default(),
 		EnableDecompression: true,
+		MaxResponseSize:     DefaultMaxResponseSize,
 	}
 }
 
@@ -252,6 +260,13 @@ func (c *Client) DoWithContext(ctx context.Context, req *http.Request) (*http.Re
 			resp.Body = c.wrapDecompression(resp)
 		}
 
+		// Apply max response size limit AFTER decompression
+		// This protects against zip bombs where a small compressed payload
+		// expands to a massive uncompressed size
+		if c.config.MaxResponseSize > 0 {
+			resp.Body = newLimitedReader(resp.Body, c.config.MaxResponseSize)
+		}
+
 		return resp, nil
 	}
 
@@ -353,6 +368,43 @@ func (d *decompressReader) Close() error {
 		closer.Close()
 	}
 	return d.closer.Close()
+}
+
+// limitedReader wraps a reader with a maximum size limit.
+// It returns ErrResponseTooLarge when the limit is exceeded.
+type limitedReader struct {
+	reader    io.Reader
+	closer    io.Closer
+	remaining int64
+	exceeded  bool
+}
+
+func newLimitedReader(r io.ReadCloser, limit int64) *limitedReader {
+	return &limitedReader{
+		reader:    r,
+		closer:    r,
+		remaining: limit,
+	}
+}
+
+func (l *limitedReader) Read(p []byte) (int, error) {
+	if l.exceeded {
+		return 0, ErrResponseTooLarge
+	}
+
+	n, err := l.reader.Read(p)
+	l.remaining -= int64(n)
+
+	if l.remaining < 0 {
+		l.exceeded = true
+		return n, ErrResponseTooLarge
+	}
+
+	return n, err
+}
+
+func (l *limitedReader) Close() error {
+	return l.closer.Close()
 }
 
 // isRetryableStatus returns true if the HTTP status code is retryable.
