@@ -245,7 +245,10 @@ As a developer, I want a REST API to manage all entities so that I can integrate
 
 #### FFmpeg Integration
 - **FR-050**: System MUST support external FFmpeg binary (system-installed)
-- **FR-051**: System MUST support embedded FFmpeg binary (optional, via go-ffstatic or similar)
+- **FR-051**: System MUST support embedded FFmpeg binary (optional)
+  - Primary option: go-ffstatic (static FFmpeg binaries)
+  - Fallback: System FFmpeg via PATH detection
+  - Decision documented in Phase 13 research task T230
 - **FR-052**: System MUST detect available hardware acceleration capabilities
 - **FR-053**: System MUST cache ffprobe results per stream URL
 - **FR-054**: System MUST manage FFmpeg process lifecycle with proper cleanup
@@ -264,6 +267,9 @@ As a developer, I want a REST API to manage all entities so that I can integrate
 - **FR-073**: System MUST support JSON request/response format
 - **FR-074**: System MUST support pagination for list endpoints
 - **FR-075**: System MUST support configurable API authentication (MVP: none/disabled by default)
+  - Implementation: Bearer token or API key header
+  - Configuration: `auth.enabled`, `auth.type`, `auth.tokens[]`
+  - Scaffold: T253 creates config structure, full implementation post-MVP
 
 #### Storage
 - **FR-080**: System MUST support SQLite database
@@ -283,6 +289,9 @@ As a developer, I want a REST API to manage all entities so that I can integrate
 - **NFR-005**: System MUST expose health check and metrics endpoints
 - **NFR-006**: System MUST support graceful shutdown with configurable timeout (default: 30s)
 - **NFR-007**: System MUST support configurable rate limiting for API and relay endpoints (MVP: unlimited/disabled by default)
+  - Implementation: Token bucket or sliding window per IP/token
+  - Configuration: `ratelimit.enabled`, `ratelimit.requests_per_minute`, `ratelimit.burst`
+  - Scaffold: T242b creates middleware structure, full implementation post-MVP
 
 ### Key Entities
 

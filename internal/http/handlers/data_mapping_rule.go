@@ -24,7 +24,7 @@ func (h *DataMappingRuleHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "listDataMappingRules",
 		Method:      "GET",
-		Path:        "/api/v1/data-mapping-rules",
+		Path:        "/api/v1/data-mapping",
 		Summary:     "List data mapping rules",
 		Description: "Returns all data mapping rules, ordered by priority",
 		Tags:        []string{"DataMappingRules"},
@@ -33,7 +33,7 @@ func (h *DataMappingRuleHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "getDataMappingRule",
 		Method:      "GET",
-		Path:        "/api/v1/data-mapping-rules/{id}",
+		Path:        "/api/v1/data-mapping/{id}",
 		Summary:     "Get data mapping rule",
 		Description: "Returns a data mapping rule by ID",
 		Tags:        []string{"DataMappingRules"},
@@ -42,7 +42,7 @@ func (h *DataMappingRuleHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "createDataMappingRule",
 		Method:      "POST",
-		Path:        "/api/v1/data-mapping-rules",
+		Path:        "/api/v1/data-mapping",
 		Summary:     "Create data mapping rule",
 		Description: "Creates a new data mapping rule",
 		Tags:        []string{"DataMappingRules"},
@@ -51,7 +51,7 @@ func (h *DataMappingRuleHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "updateDataMappingRule",
 		Method:      "PUT",
-		Path:        "/api/v1/data-mapping-rules/{id}",
+		Path:        "/api/v1/data-mapping/{id}",
 		Summary:     "Update data mapping rule",
 		Description: "Updates an existing data mapping rule",
 		Tags:        []string{"DataMappingRules"},
@@ -60,7 +60,7 @@ func (h *DataMappingRuleHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "deleteDataMappingRule",
 		Method:      "DELETE",
-		Path:        "/api/v1/data-mapping-rules/{id}",
+		Path:        "/api/v1/data-mapping/{id}",
 		Summary:     "Delete data mapping rule",
 		Description: "Deletes a data mapping rule",
 		Tags:        []string{"DataMappingRules"},

@@ -28,7 +28,7 @@ func (h *EpgSourceHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "listEpgSources",
 		Method:      "GET",
-		Path:        "/epg-sources",
+		Path:        "/api/v1/sources/epg",
 		Summary:     "List EPG sources",
 		Description: "Returns all EPG sources",
 		Tags:        []string{"EPG Sources"},
@@ -37,7 +37,7 @@ func (h *EpgSourceHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "getEpgSource",
 		Method:      "GET",
-		Path:        "/epg-sources/{id}",
+		Path:        "/api/v1/sources/epg/{id}",
 		Summary:     "Get EPG source",
 		Description: "Returns an EPG source by ID",
 		Tags:        []string{"EPG Sources"},
@@ -46,7 +46,7 @@ func (h *EpgSourceHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "createEpgSource",
 		Method:      "POST",
-		Path:        "/epg-sources",
+		Path:        "/api/v1/sources/epg",
 		Summary:     "Create EPG source",
 		Description: "Creates a new EPG source",
 		Tags:        []string{"EPG Sources"},
@@ -55,7 +55,7 @@ func (h *EpgSourceHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "updateEpgSource",
 		Method:      "PUT",
-		Path:        "/epg-sources/{id}",
+		Path:        "/api/v1/sources/epg/{id}",
 		Summary:     "Update EPG source",
 		Description: "Updates an existing EPG source",
 		Tags:        []string{"EPG Sources"},
@@ -64,7 +64,7 @@ func (h *EpgSourceHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "deleteEpgSource",
 		Method:      "DELETE",
-		Path:        "/epg-sources/{id}",
+		Path:        "/api/v1/sources/epg/{id}",
 		Summary:     "Delete EPG source",
 		Description: "Deletes an EPG source and all its programs",
 		Tags:        []string{"EPG Sources"},
@@ -73,7 +73,7 @@ func (h *EpgSourceHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "ingestEpgSource",
 		Method:      "POST",
-		Path:        "/epg-sources/{id}/ingest",
+		Path:        "/api/v1/sources/epg/{id}/ingest",
 		Summary:     "Trigger EPG ingestion",
 		Description: "Triggers ingestion for an EPG source",
 		Tags:        []string{"EPG Sources"},

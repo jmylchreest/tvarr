@@ -226,7 +226,7 @@ func TestFormatRelative(t *testing.T) {
 	}{
 		{"same time", anchor, "now"},
 		{"5 days ago", anchor.Add(-5 * Day), "5d ago"},
-		{"3 hours ago", anchor.Add(-3 * time.Hour), "3h0m0s ago"},
+		{"3 hours ago", anchor.Add(-3 * time.Hour), "3h ago"},
 		{"in 2 weeks", anchor.Add(2 * Week), "in 2w"},
 		{"in 1 day", anchor.Add(Day), "in 1d"},
 		{"1 year ago", anchor.Add(-Year), "1y ago"},

@@ -217,6 +217,7 @@ func MustParse(s string) time.Duration {
 
 // Format converts a duration to a human-readable string.
 // Uses the largest appropriate units (years, months, weeks, days, hours, etc.).
+// Zero components are omitted: 1h0m0s becomes 1h, 1h0m10s becomes 1h10s.
 func Format(d time.Duration) string {
 	if d == 0 {
 		return "0s"
@@ -245,7 +246,19 @@ func Format(d time.Duration) string {
 	days := d / Day
 	d -= days * Day
 
-	// Build result
+	// Extract hours
+	hours := d / time.Hour
+	d -= hours * time.Hour
+
+	// Extract minutes
+	minutes := d / time.Minute
+	d -= minutes * time.Minute
+
+	// Extract seconds
+	seconds := d / time.Second
+	d -= seconds * time.Second
+
+	// Build result - only include non-zero components
 	if years > 0 {
 		fmt.Fprintf(&result, "%dy", years)
 	}
@@ -258,8 +271,30 @@ func Format(d time.Duration) string {
 	if days > 0 {
 		fmt.Fprintf(&result, "%dd", days)
 	}
+	if hours > 0 {
+		fmt.Fprintf(&result, "%dh", hours)
+	}
+	if minutes > 0 {
+		fmt.Fprintf(&result, "%dm", minutes)
+	}
+	if seconds > 0 {
+		fmt.Fprintf(&result, "%ds", seconds)
+	}
+	// Handle sub-second remainders (milliseconds, microseconds, nanoseconds)
 	if d > 0 {
-		result.WriteString(d.String())
+		if d >= time.Millisecond {
+			ms := d / time.Millisecond
+			d -= ms * time.Millisecond
+			fmt.Fprintf(&result, "%dms", ms)
+		}
+		if d >= time.Microsecond {
+			us := d / time.Microsecond
+			d -= us * time.Microsecond
+			fmt.Fprintf(&result, "%dµs", us)
+		}
+		if d > 0 {
+			fmt.Fprintf(&result, "%dns", d)
+		}
 	}
 
 	// Handle case where only extended units with no remainder

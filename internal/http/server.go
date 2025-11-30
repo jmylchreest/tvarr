@@ -53,9 +53,13 @@ type Server struct {
 }
 
 // NewServer creates a new HTTP server with the given configuration.
-func NewServer(config ServerConfig, logger *slog.Logger) *Server {
+// The version parameter is used in the OpenAPI spec and should match the build version.
+func NewServer(config ServerConfig, logger *slog.Logger, version string) *Server {
 	if logger == nil {
 		logger = slog.Default()
+	}
+	if version == "" {
+		version = "dev"
 	}
 
 	router := chi.NewRouter()
@@ -68,8 +72,13 @@ func NewServer(config ServerConfig, logger *slog.Logger) *Server {
 	router.Use(middleware.CORS())
 	router.Use(chimiddleware.Compress(5))
 
-	// Create Huma API
-	api := humachi.New(router, huma.DefaultConfig("tvarr API", "1.0.0"))
+	// Create Huma API with custom config
+	// Note: DocsPath is left empty - we use our own docs handler with dark theme support
+	humaConfig := huma.DefaultConfig("tvarr API", version)
+	humaConfig.Info.Description = "M3U/XMLTV proxy and EPG management API"
+	humaConfig.DocsPath = "" // Disabled - using custom DocsHandler
+
+	api := humachi.New(router, humaConfig)
 
 	return &Server{
 		config: config,

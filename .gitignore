@@ -66,6 +66,9 @@ tvarr
 # Taskfile cache
 .task/
 
+# Air hot reload
+tmp/
+
 # Embedded frontend assets (built assets, not source)
 internal/assets/static/*
 !internal/assets/static/.gitkeep

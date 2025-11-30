@@ -28,7 +28,7 @@ func (h *RelayProfileHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "listRelayProfiles",
 		Method:      "GET",
-		Path:        "/relay/profiles",
+		Path:        "/api/v1/relay/profiles",
 		Summary:     "List relay profiles",
 		Description: "Returns all relay profiles",
 		Tags:        []string{"Relay Profiles"},
@@ -37,7 +37,7 @@ func (h *RelayProfileHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "getRelayProfile",
 		Method:      "GET",
-		Path:        "/relay/profiles/{id}",
+		Path:        "/api/v1/relay/profiles/{id}",
 		Summary:     "Get relay profile",
 		Description: "Returns a relay profile by ID",
 		Tags:        []string{"Relay Profiles"},
@@ -46,7 +46,7 @@ func (h *RelayProfileHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "getDefaultRelayProfile",
 		Method:      "GET",
-		Path:        "/relay/profiles/default",
+		Path:        "/api/v1/relay/profiles/default",
 		Summary:     "Get default relay profile",
 		Description: "Returns the default relay profile",
 		Tags:        []string{"Relay Profiles"},
@@ -55,7 +55,7 @@ func (h *RelayProfileHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "createRelayProfile",
 		Method:      "POST",
-		Path:        "/relay/profiles",
+		Path:        "/api/v1/relay/profiles",
 		Summary:     "Create relay profile",
 		Description: "Creates a new relay profile",
 		Tags:        []string{"Relay Profiles"},
@@ -64,7 +64,7 @@ func (h *RelayProfileHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "updateRelayProfile",
 		Method:      "PUT",
-		Path:        "/relay/profiles/{id}",
+		Path:        "/api/v1/relay/profiles/{id}",
 		Summary:     "Update relay profile",
 		Description: "Updates an existing relay profile",
 		Tags:        []string{"Relay Profiles"},
@@ -73,7 +73,7 @@ func (h *RelayProfileHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "deleteRelayProfile",
 		Method:      "DELETE",
-		Path:        "/relay/profiles/{id}",
+		Path:        "/api/v1/relay/profiles/{id}",
 		Summary:     "Delete relay profile",
 		Description: "Deletes a relay profile",
 		Tags:        []string{"Relay Profiles"},
@@ -82,7 +82,7 @@ func (h *RelayProfileHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "setDefaultRelayProfile",
 		Method:      "POST",
-		Path:        "/relay/profiles/{id}/set-default",
+		Path:        "/api/v1/relay/profiles/{id}/set-default",
 		Summary:     "Set default relay profile",
 		Description: "Sets a relay profile as the default",
 		Tags:        []string{"Relay Profiles"},
@@ -91,7 +91,7 @@ func (h *RelayProfileHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "getFFmpegInfo",
 		Method:      "GET",
-		Path:        "/relay/ffmpeg",
+		Path:        "/api/v1/relay/ffmpeg",
 		Summary:     "Get FFmpeg info",
 		Description: "Returns information about the detected FFmpeg installation",
 		Tags:        []string{"Relay Profiles"},
@@ -100,7 +100,7 @@ func (h *RelayProfileHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "getRelayStats",
 		Method:      "GET",
-		Path:        "/relay/stats",
+		Path:        "/api/v1/relay/stats",
 		Summary:     "Get relay statistics",
 		Description: "Returns statistics about active relay sessions",
 		Tags:        []string{"Relay Profiles"},

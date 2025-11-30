@@ -27,7 +27,7 @@ func (h *JobHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "listJobs",
 		Method:      "GET",
-		Path:        "/jobs",
+		Path:        "/api/v1/jobs",
 		Summary:     "List jobs",
 		Description: "Returns all jobs",
 		Tags:        []string{"Jobs"},
@@ -36,7 +36,7 @@ func (h *JobHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "getJob",
 		Method:      "GET",
-		Path:        "/jobs/{id}",
+		Path:        "/api/v1/jobs/{id}",
 		Summary:     "Get job",
 		Description: "Returns a job by ID",
 		Tags:        []string{"Jobs"},
@@ -45,7 +45,7 @@ func (h *JobHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "listJobsByType",
 		Method:      "GET",
-		Path:        "/jobs/type/{type}",
+		Path:        "/api/v1/jobs/type/{type}",
 		Summary:     "List jobs by type",
 		Description: "Returns all jobs of a specific type",
 		Tags:        []string{"Jobs"},
@@ -54,7 +54,7 @@ func (h *JobHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "listPendingJobs",
 		Method:      "GET",
-		Path:        "/jobs/pending",
+		Path:        "/api/v1/jobs/pending",
 		Summary:     "List pending jobs",
 		Description: "Returns all pending jobs",
 		Tags:        []string{"Jobs"},
@@ -63,7 +63,7 @@ func (h *JobHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "listRunningJobs",
 		Method:      "GET",
-		Path:        "/jobs/running",
+		Path:        "/api/v1/jobs/running",
 		Summary:     "List running jobs",
 		Description: "Returns all running jobs",
 		Tags:        []string{"Jobs"},
@@ -72,7 +72,7 @@ func (h *JobHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "getJobHistory",
 		Method:      "GET",
-		Path:        "/jobs/history",
+		Path:        "/api/v1/jobs/history",
 		Summary:     "Get job history",
 		Description: "Returns job execution history with pagination",
 		Tags:        []string{"Jobs"},
@@ -81,7 +81,7 @@ func (h *JobHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "getJobStats",
 		Method:      "GET",
-		Path:        "/jobs/stats",
+		Path:        "/api/v1/jobs/stats",
 		Summary:     "Get job statistics",
 		Description: "Returns job statistics",
 		Tags:        []string{"Jobs"},
@@ -90,7 +90,7 @@ func (h *JobHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "getRunnerStatus",
 		Method:      "GET",
-		Path:        "/jobs/runner",
+		Path:        "/api/v1/jobs/runner",
 		Summary:     "Get runner status",
 		Description: "Returns the job runner status",
 		Tags:        []string{"Jobs"},
@@ -99,7 +99,7 @@ func (h *JobHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "cancelJob",
 		Method:      "POST",
-		Path:        "/jobs/{id}/cancel",
+		Path:        "/api/v1/jobs/{id}/cancel",
 		Summary:     "Cancel job",
 		Description: "Cancels a pending or running job",
 		Tags:        []string{"Jobs"},
@@ -108,7 +108,7 @@ func (h *JobHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "deleteJob",
 		Method:      "DELETE",
-		Path:        "/jobs/{id}",
+		Path:        "/api/v1/jobs/{id}",
 		Summary:     "Delete job",
 		Description: "Deletes a completed job",
 		Tags:        []string{"Jobs"},
@@ -117,7 +117,7 @@ func (h *JobHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "triggerStreamIngestion",
 		Method:      "POST",
-		Path:        "/jobs/trigger/stream/{id}",
+		Path:        "/api/v1/jobs/trigger/stream/{id}",
 		Summary:     "Trigger stream ingestion",
 		Description: "Triggers immediate ingestion for a stream source",
 		Tags:        []string{"Jobs"},
@@ -126,7 +126,7 @@ func (h *JobHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "triggerEpgIngestion",
 		Method:      "POST",
-		Path:        "/jobs/trigger/epg/{id}",
+		Path:        "/api/v1/jobs/trigger/epg/{id}",
 		Summary:     "Trigger EPG ingestion",
 		Description: "Triggers immediate ingestion for an EPG source",
 		Tags:        []string{"Jobs"},
@@ -135,7 +135,7 @@ func (h *JobHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "triggerProxyGeneration",
 		Method:      "POST",
-		Path:        "/jobs/trigger/proxy/{id}",
+		Path:        "/api/v1/jobs/trigger/proxy/{id}",
 		Summary:     "Trigger proxy generation",
 		Description: "Triggers immediate generation for a stream proxy",
 		Tags:        []string{"Jobs"},
@@ -144,7 +144,7 @@ func (h *JobHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "validateCron",
 		Method:      "POST",
-		Path:        "/jobs/cron/validate",
+		Path:        "/api/v1/jobs/cron/validate",
 		Summary:     "Validate cron expression",
 		Description: "Validates a cron expression and returns the next run time",
 		Tags:        []string{"Jobs"},

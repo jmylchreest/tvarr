@@ -28,7 +28,7 @@ func (h *StreamSourceHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "listStreamSources",
 		Method:      "GET",
-		Path:        "/sources",
+		Path:        "/api/v1/sources/stream",
 		Summary:     "List stream sources",
 		Description: "Returns all stream sources",
 		Tags:        []string{"Stream Sources"},
@@ -37,7 +37,7 @@ func (h *StreamSourceHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "getStreamSource",
 		Method:      "GET",
-		Path:        "/sources/{id}",
+		Path:        "/api/v1/sources/stream/{id}",
 		Summary:     "Get stream source",
 		Description: "Returns a stream source by ID",
 		Tags:        []string{"Stream Sources"},
@@ -46,7 +46,7 @@ func (h *StreamSourceHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "createStreamSource",
 		Method:      "POST",
-		Path:        "/sources",
+		Path:        "/api/v1/sources/stream",
 		Summary:     "Create stream source",
 		Description: "Creates a new stream source",
 		Tags:        []string{"Stream Sources"},
@@ -55,7 +55,7 @@ func (h *StreamSourceHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "updateStreamSource",
 		Method:      "PUT",
-		Path:        "/sources/{id}",
+		Path:        "/api/v1/sources/stream/{id}",
 		Summary:     "Update stream source",
 		Description: "Updates an existing stream source",
 		Tags:        []string{"Stream Sources"},
@@ -64,7 +64,7 @@ func (h *StreamSourceHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "deleteStreamSource",
 		Method:      "DELETE",
-		Path:        "/sources/{id}",
+		Path:        "/api/v1/sources/stream/{id}",
 		Summary:     "Delete stream source",
 		Description: "Deletes a stream source and all its channels",
 		Tags:        []string{"Stream Sources"},
@@ -73,7 +73,7 @@ func (h *StreamSourceHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "ingestStreamSource",
 		Method:      "POST",
-		Path:        "/sources/{id}/ingest",
+		Path:        "/api/v1/sources/stream/{id}/ingest",
 		Summary:     "Trigger ingestion",
 		Description: "Triggers ingestion for a stream source",
 		Tags:        []string{"Stream Sources"},

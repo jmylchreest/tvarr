@@ -23,8 +23,9 @@
 | **Phase 10.5: Parity Fixes** | ✅ Complete | Manual source, ingestion guard, atomic publish, auto-EPG, shorthand (T470-T495) |
 | **Phase 11: Scheduled Jobs** | ✅ Complete | Job model, scheduler, runner, handlers (T180-T193) |
 | **Phase 12: Stream Relay** | ✅ Complete | FFmpeg integration, circuit breaker, HLS collapser (T200-T226) |
-| **Phase 12.5: API & Frontend** | ⏸️ Pending | Route alignment, frontend port, static embedding (T550-T585) |
-| Phase 13-14 | ⏸️ Pending | |
+| **Phase 12.5: API & Frontend** | ✅ Complete | Routes aligned, frontend ported, embedding done; T556-T558, T590-T593 deferred to Phase 14 |
+| Phase 13: FFmpeg Embedding | ⏸️ Optional | Deferred - system FFmpeg sufficient for MVP |
+| Phase 14: Polish | 🔄 In Progress | T240-T253 + deferred tasks remaining |
 
 ---
 
@@ -438,65 +439,17 @@ All tasks in this phase must complete before any user story work.
 | T106 | | US10 | [X] Add migrate command for database migrations |
 | T107 | | US10 | [X] Write integration tests for API endpoints |
 
-## Phase 7: User Story 4 - Data Mapping Rules (P2) ✅ SUPERSEDED
+## Phases 7-8: Data Mapping & Filtering ✅ SUPERSEDED
 
-**Status**: Superseded by Phase 6.5 (Expression Engine)
+**Status**: Fully superseded by Phase 6.5 (Expression Engine)
 
-> **Note**: All tasks in this phase have been completed as part of Phase 6.5, which consolidated
-> the expression engine, data mapping, and filtering implementations. See Phase 6.5 tasks:
-> - T360-T364: Data Mapping Engine
-> - T401-T402, T404: DataMappingRule model and migration
-> - T380, T382: DataMappingStage pipeline implementation
-> - Handlers in http/handlers/data_mapping_rule.go
-> - Repository in repository/data_mapping_rule_repo.go
+All original tasks (T116-T141) completed as part of Phase 6.5 consolidation:
+- **Data Mapping**: T360-T364 (engine), T401-T402/T404 (model/migration), T380/T382 (pipeline stage)
+- **Filtering**: T370-T374 (processor), T401/T403 (model/migration), T381 (stage updates)
+- **Handlers**: `http/handlers/data_mapping_rule.go`, `http/handlers/filter.go`
+- **Repositories**: `repository/data_mapping_rule_repo.go`, `repository/filter_repo.go`
 
-### Models & Pipeline (SUPERSEDED - see Phase 6.5)
-
-| ID | P | Story | Task Description |
-|----|---|-------|------------------|
-| T116 | P | US4 | ~~Write tests for DataMappingRule model~~ → T360 |
-| T117 | | US4 | ~~Implement models/data_mapping_rule.go~~ → T402 |
-| T118 | | US4 | ~~Create migration for data_mapping_rules table~~ → T404 |
-| T119 | P | US4 | ~~Write tests for DataMappingRuleRepository~~ → implemented |
-| T120 | | US4 | ~~Implement repository/data_mapping_rule_repo.go~~ → implemented |
-| T121 | P | US4 | ~~Write tests for data mapping pipeline stage~~ → T360 |
-| T122 | | US4 | ~~Implement pipeline/stages/data_mapping.go~~ → T380 |
-
-### Service & API (SUPERSEDED - see Phase 6.5)
-
-| ID | P | Story | Task Description |
-|----|---|-------|------------------|
-| T123 | P | US4 | ~~Write tests for MappingService~~ → handlers have tests |
-| T124 | | US4 | ~~Implement service/mapping_service.go~~ → handled via repository |
-| T125 | | US4 | ~~Implement http/handlers/mapping_handler.go~~ → data_mapping_rule.go |
-| T126 | | US4 | ~~Write integration tests for mapping flow~~ → T391 |
-
-## Phase 8: User Story 5 - Filtering Rules (P2) ✅ SUPERSEDED
-
-**Status**: Superseded by Phase 6.5 (Expression Engine)
-
-> **Note**: All tasks in this phase have been completed as part of Phase 6.5, which consolidated
-> the expression engine, data mapping, and filtering implementations. See Phase 6.5 tasks:
-> - T370-T374: Filter Processor with expression-based filtering
-> - T401, T403: Filter model and migration
-> - T381, T374: FilteringStage pipeline updates
-> - Handlers in http/handlers/filter.go
-> - Repository in repository/filter_repo.go
-
-| ID | P | Story | Task Description |
-|----|---|-------|------------------|
-| T130 | P | US5 | ~~Write tests for Filter model~~ → T370 |
-| T131 | | US5 | ~~Implement models/filter.go~~ → T401 |
-| T132 | | US5 | ~~Create migration for filters table~~ → T403 |
-| T133 | P | US5 | ~~Write tests for FilterRepository~~ → implemented |
-| T134 | | US5 | ~~Implement repository/filter_repo.go~~ → implemented |
-| T135 | P | US5 | ~~Write tests for filtering pipeline stage~~ → T370 |
-| T136 | | US5 | ~~Update pipeline/stages/filtering/~~ → T374, T381 |
-| T137 | | US5 | ~~Boolean logic~~ → T326-T327 |
-| T138 | P | US5 | ~~Write tests for FilterService~~ → handlers have tests |
-| T139 | | US5 | ~~Implement service/filter_service.go~~ → handled via repository |
-| T140 | | US5 | ~~Implement http/handlers/filter_handler.go~~ → filter.go |
-| T141 | | US5 | ~~Write integration tests for filtering flow~~ → T390-T392 |
+> Original task details preserved in git history (commit 3d75b5c).
 
 ## Phase 9: User Story 6 - Channel Numbering (P2) ✅ COMPLETE
 
@@ -674,79 +627,83 @@ This phase:
 4. Embeds static assets using Go's `embed` directive
 5. Serves frontend as catch-all for unmatched routes
 
-### API Route Alignment
+### API Route Alignment ✅ COMPLETE
 
-**Current → Target Structure:**
+**Route Structure (aligned with frontend):**
 ```
-/sources              → /api/v1/sources/stream
-/epg-sources          → /api/v1/sources/epg
-/proxies              → /api/v1/proxies
-/jobs                 → /api/v1/jobs
-/relay/profiles       → /api/v1/relay/profiles (management)
-/relay/stream/*       → /relay/stream/* (client-facing, unchanged)
-/health               → /health (unchanged)
+/api/v1/sources/stream    - Stream source management
+/api/v1/sources/epg       - EPG source management
+/api/v1/proxies           - Proxy management
+/api/v1/jobs              - Job/scheduler management
+/api/v1/filters           - Filter rules (already /api/v1/)
+/api/v1/data-mapping      - Data mapping rules
+/api/v1/relay/profiles    - Relay profile management
+/api/v1/relay/ffmpeg      - FFmpeg info
+/api/v1/relay/stats       - Relay statistics
+/api/v1/progress/*        - SSE progress endpoints (already /api/v1/)
+/api/v1/expressions/*     - Expression validation (already /api/v1/)
+/relay/stream/*           - Client-facing relay stream (unchanged)
+/health                   - Health check (unchanged)
 ```
 
 | ID | P | Story | Task Description |
 |----|---|-------|------------------|
-| T550 | P | API | [ ] Document current vs target route mapping |
-| T551 | | API | [ ] Update stream_source.go handler paths to `/api/v1/sources/stream` |
-| T552 | | API | [ ] Update epg_source.go handler paths to `/api/v1/sources/epg` |
-| T553 | | API | [ ] Update stream_proxy.go handler paths to `/api/v1/proxies` |
-| T554 | | API | [ ] Update job.go handler paths to `/api/v1/jobs` |
-| T555 | | API | [ ] Update relay_profile.go handler paths to `/api/v1/relay/profiles` |
-| T556 | | API | [ ] Update all handler tests for new paths |
-| T557 | | API | [ ] Add viewer endpoints: `/api/v1/channels` (channel browser) |
-| T558 | | API | [ ] Add viewer endpoints: `/api/v1/epg/programs`, `/api/v1/epg/sources`, `/api/v1/epg/guide` |
-| T559 | | API | [ ] Verify OpenAPI spec reflects new route structure |
+| T550 | P | API | [X] Document current vs target route mapping |
+| T551 | | API | [X] Update stream_source.go handler paths to `/api/v1/sources/stream` |
+| T552 | | API | [X] Update epg_source.go handler paths to `/api/v1/sources/epg` |
+| T553 | | API | [X] Update stream_proxy.go handler paths to `/api/v1/proxies` |
+| T554 | | API | [X] Update job.go handler paths to `/api/v1/jobs` |
+| T555 | | API | [X] Update relay_profile.go handler paths to `/api/v1/relay/profiles` |
+| T556 | | API | [ ] Update all handler tests for new paths → **Deferred to Phase 14** |
+| T559 | | API | [X] Verify OpenAPI spec reflects new route structure (auto-generated by Huma)
 
-### Frontend Port
+### Frontend Port ✅ COMPLETE
 
 **Source:** `../m3u-proxy/frontend/` (Next.js 15 + Tailwind v4 + shadcn/ui)
 **Target:** `frontend/` directory in tvarr
 
 | ID | P | Story | Task Description |
 |----|---|-------|------------------|
-| T560 | P | FE | [ ] Create `frontend/` directory structure |
-| T561 | | FE | [ ] Copy m3u-proxy frontend source files (src/, public/, configs) |
-| T562 | | FE | [ ] Update package.json: rename to "tvarr-frontend", update version |
-| T563 | | FE | [ ] Update next.config.js: API rewrite paths, base path if needed |
-| T564 | | FE | [ ] Update API client endpoints to match tvarr route structure |
-| T565 | | FE | [ ] Update branding (app name, titles, favicon) |
-| T566 | | FE | [ ] Verify frontend builds with `npm run build` (static export) |
-| T567 | | FE | [ ] Test frontend dev mode against tvarr backend |
+| T560 | P | FE | [X] Create `frontend/` directory structure |
+| T561 | | FE | [X] Copy m3u-proxy frontend source files (src/, public/, configs) |
+| T562 | | FE | [X] Update package.json: rename to "tvarr-frontend", update version |
+| T563 | | FE | [X] Update next.config.js: API rewrite paths, base path if needed |
+| T564 | | FE | [X] Update API client endpoints to match tvarr route structure |
+| T565 | | FE | [X] Update branding (app name, titles, favicon) |
+| T566 | | FE | [X] Verify frontend builds with `npm run build` (static export) |
+| T567 | | FE | [X] Test frontend dev mode against tvarr backend |
 
-### Build Infrastructure
-
-| ID | P | Story | Task Description |
-|----|---|-------|------------------|
-| T570 | P | Build | [ ] Add frontend build targets to Taskfile.yml |
-| T571 | | Build | [ ] Add `task frontend:install` - npm install in frontend/ |
-| T572 | | Build | [ ] Add `task frontend:build` - npm run build (static export to frontend/out/) |
-| T573 | | Build | [ ] Add `task frontend:dev` - npm run dev for development |
-| T574 | | Build | [ ] Add `task frontend:copy` - copy frontend/out/* to internal/http/static/ |
-| T575 | | Build | [ ] Add `task build:all` - full build including frontend |
-| T576 | | Build | [ ] Update CI workflow to build frontend before Go binary |
-
-### Static Asset Embedding
+### Build Infrastructure ✅ COMPLETE
 
 | ID | P | Story | Task Description |
 |----|---|-------|------------------|
-| T580 | P | Embed | [ ] Create internal/http/static/ directory with .gitkeep |
-| T581 | | Embed | [ ] Create internal/http/assets.go with `//go:embed static/*` directive |
-| T582 | | Embed | [ ] Implement StaticAssets helper (GetAsset, GetContentType, ListAssets) |
-| T583 | | Embed | [ ] Implement static file handler with proper MIME types |
-| T584 | | Embed | [ ] Register catch-all route for frontend SPA (serve index.html for unmatched routes) |
-| T585 | | Embed | [ ] Write tests for static asset serving (embedded vs fallback) |
+| T570 | P | Build | [X] Add frontend build targets to Taskfile.yml |
+| T571 | | Build | [X] Add `task frontend:install` - npm install in frontend/ |
+| T572 | | Build | [X] Add `task frontend:build` - npm run build (static export to frontend/out/) |
+| T573 | | Build | [X] Add `task frontend:dev` - npm run dev for development |
+| T574 | | Build | [X] Add `task frontend:copy` - copy frontend/out/* to internal/assets/static/ |
+| T575 | | Build | [X] Add `task build:all` - full build including frontend |
+| T576 | | Build | [X] Update CI workflow to build frontend before Go binary |
 
-### Integration Testing
+### Static Asset Embedding ✅ COMPLETE
 
 | ID | P | Story | Task Description |
 |----|---|-------|------------------|
-| T590 | P | Test | [ ] Write E2E test: frontend loads from embedded assets |
-| T591 | | Test | [ ] Write E2E test: API routes accessible from frontend |
-| T592 | | Test | [ ] Write E2E test: SPA routing (deep links work) |
-| T593 | | Test | [ ] Manual testing checklist for all frontend pages |
+| T580 | P | Embed | [X] Create internal/assets/static/ directory with .gitkeep |
+| T581 | | Embed | [X] Create internal/assets/assets.go with `//go:embed static/*` directive |
+| T582 | | Embed | [X] Implement StaticAssets helper (GetAsset, GetContentType, ListAssets) |
+| T583 | | Embed | [X] Implement static file handler with proper MIME types |
+| T584 | | Embed | [X] Register catch-all route for frontend SPA (serve index.html for unmatched routes) |
+| T585 | | Embed | [X] Write tests for static asset serving (embedded vs fallback) |
+
+### Integration Testing → **Deferred to Phase 14**
+
+| ID | P | Story | Task Description |
+|----|---|-------|------------------|
+| T590 | P | Test | [ ] Write E2E test: frontend loads from embedded assets → Phase 14 |
+| T591 | | Test | [ ] Write E2E test: API routes accessible from frontend → Phase 14 |
+| T592 | | Test | [ ] Write E2E test: SPA routing (deep links work) → Phase 14 |
+| T593 | | Test | [ ] Manual testing checklist for all frontend pages → Phase 14 |
 
 ---
 
@@ -761,6 +718,8 @@ This phase:
 | T234 | | Opt | Document build process with embedded binaries |
 
 ## Phase 14: Polish
+
+### Core Polish Tasks
 
 | ID | P | Story | Task Description |
 |----|---|-------|------------------|
@@ -784,41 +743,63 @@ This phase:
 | T252 | P | Polish | Configure CI code coverage gate (minimum 80% for core packages, SC-009) |
 | T253 | | Polish | Implement API authentication configuration scaffold (FR-075, disabled by default) |
 
+### Deferred from Phase 12.5
+
+| ID | P | Story | Task Description |
+|----|---|-------|------------------|
+| T556 | | Polish | Update all handler tests for new API paths |
+| T557 | | Polish | Add viewer endpoints: `/api/v1/channels` (channel browser) |
+| T558 | | Polish | Add viewer endpoints: `/api/v1/epg/programs`, `/api/v1/epg/sources`, `/api/v1/epg/guide` |
+| T590 | P | Polish | Write E2E test: frontend loads from embedded assets |
+| T591 | | Polish | Write E2E test: API routes accessible from frontend |
+| T592 | | Polish | Write E2E test: SPA routing (deep links work) |
+| T593 | | Polish | Manual testing checklist for all frontend pages |
+
+### Implementation Notes
+
+> **T244b/T244c (Database Backend Tests)**: Requires Docker Compose test environment.
+> Create `docker-compose.test.yml` with PostgreSQL and MySQL services.
+> Tests use `TVARR_TEST_DB_DRIVER` environment variable to select backend.
+
+> **T252 (CI Coverage Gate)**: Add `go test -coverprofile=coverage.out ./...` to CI.
+> Use `go tool cover -func=coverage.out` to calculate percentage.
+> Fail CI if coverage < 80% for `internal/service/`, `internal/expression/`, `internal/pipeline/`.
+
 ---
 
-## Backlog: Clarification Needed
+## Backlog: Triaged Items
 
-**Status**: These tasks were identified in the m3u-proxy comparison but require clarification before implementation. See `pre-phase11-status.md` for context.
+**Status**: Items triaged from original m3u-proxy comparison. See `pre-phase11-status.md` for context.
 
-### API Endpoints
+### Ready to Implement (Phase 14 candidates)
 
-| ID | P | Story | Task Description | Questions |
+| ID | P | Story | Task Description | Decision |
+|----|---|-------|------------------|----------|
+| T502 | | Backlog | Add channel probe endpoint GET /api/v1/channels/{id}/probe | Phase 12 complete, can implement |
+| T505 | | Backlog | Add circuit breaker management endpoints | Phase 12 complete, can implement |
+| T506 | | Backlog | Add manual channel M3U export endpoint | Phase 10.5 complete, can implement |
+| T507 | | Backlog | Add manual channel M3U import endpoint | Merge on import (default) |
+
+### Deferred to Post-MVP
+
+| ID | P | Story | Task Description | Rationale |
 |----|---|-------|------------------|-----------|
-| T500 | | Backlog | Add channel browsing endpoint GET /api/v1/channels | Filtering/pagination scheme? |
-| T501 | | Backlog | Add EPG program browsing endpoint GET /api/v1/epg/programs | Query parameters? |
-| T502 | | Backlog | Add channel probe endpoint GET /api/v1/channels/{id}/probe | Wait for Phase 12 relay? |
-| T503 | | Backlog | Add Kubernetes /ready probe endpoint | What conditions determine readiness? |
-| T504 | | Backlog | Add Kubernetes /live probe endpoint | What conditions determine liveness? |
-| T505 | | Backlog | Add circuit breaker management endpoints | Wait for Phase 12 relay? |
-| T506 | | Backlog | Add manual channel M3U export endpoint | Depends on T470-T475 |
-| T507 | | Backlog | Add manual channel M3U import endpoint | Merge or replace on import? |
+| T503 | | Backlog | Add Kubernetes /ready probe endpoint | Add when K8s deployment documented |
+| T504 | | Backlog | Add Kubernetes /live probe endpoint | Add when K8s deployment documented |
+| T510 | | Backlog | Add dedicated cleanup pipeline stage | Defer-based cleanup is sufficient |
+| T511 | | Backlog | Add runtime settings API | Add based on operational feedback |
+| T512 | | Backlog | Add feature flags API | Config-only for now |
+| T513 | | Backlog | Add log streaming SSE endpoint | Structured logging + progress SSE sufficient |
+| T514 | | Backlog | Add custom metrics endpoints | Prometheus metrics sufficient for MVP |
+| T520 | | Backlog | Add per-condition case sensitivity modifier | Low priority, add if requested |
+| T521 | | Backlog | Add conditional action groups syntax | Low priority, add if requested |
 
-### Infrastructure
+### Merged into T557-T558 (Viewer Endpoints)
 
-| ID | P | Story | Task Description | Questions |
-|----|---|-------|------------------|-----------|
-| T510 | | Backlog | Add dedicated cleanup pipeline stage | Is defer-based cleanup sufficient? |
-| T511 | | Backlog | Add runtime settings API | What settings are runtime-configurable? |
-| T512 | | Backlog | Add feature flags API | Persist to DB or config-only? |
-| T513 | | Backlog | Add log streaming SSE endpoint | Needed with structured logging? |
-| T514 | | Backlog | Add custom metrics endpoints (beyond Prometheus) | What dashboard metrics needed? |
-
-### Expression Engine Enhancements
-
-| ID | P | Story | Task Description | Questions |
-|----|---|-------|------------------|-----------|
-| T520 | | Backlog | Add per-condition case sensitivity modifier | Worth the complexity? |
-| T521 | | Backlog | Add conditional action groups syntax | What use cases require this? |
+| ID | Original Task | Now Part Of |
+|----|---------------|-------------|
+| T500 | Add channel browsing endpoint | T557 (`/api/v1/channels`) |
+| T501 | Add EPG program browsing endpoint | T558 (`/api/v1/epg/programs`) |
 
 ---
 

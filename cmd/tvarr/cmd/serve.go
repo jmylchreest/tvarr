@@ -190,7 +190,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 		Host: viper.GetString("server.host"),
 		Port: viper.GetInt("server.port"),
 	}
-	server := internalhttp.NewServer(serverConfig, logger)
+	server := internalhttp.NewServer(serverConfig, logger, version.Version)
+
+	// Register OpenAPI docs handler with system theme detection (dark/light)
+	docsHandler := handlers.NewDocsHandler("tvarr API", "/openapi.yaml", handlers.WithSystemTheme())
+	server.Router().Get("/docs", docsHandler.ServeHTTP)
+
+	// Register static handler for embedded frontend (must be first to catch-all non-API routes)
+	staticHandler := handlers.NewStaticHandler()
+	server.Router().Mount("/", staticHandler)
 
 	// Register handlers
 	healthHandler := handlers.NewHealthHandler(version.Version)

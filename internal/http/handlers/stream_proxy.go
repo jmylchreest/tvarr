@@ -28,7 +28,7 @@ func (h *StreamProxyHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "listStreamProxies",
 		Method:      "GET",
-		Path:        "/proxies",
+		Path:        "/api/v1/proxies",
 		Summary:     "List stream proxies",
 		Description: "Returns all stream proxies",
 		Tags:        []string{"Stream Proxies"},
@@ -37,7 +37,7 @@ func (h *StreamProxyHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "getStreamProxy",
 		Method:      "GET",
-		Path:        "/proxies/{id}",
+		Path:        "/api/v1/proxies/{id}",
 		Summary:     "Get stream proxy",
 		Description: "Returns a stream proxy by ID with its sources",
 		Tags:        []string{"Stream Proxies"},
@@ -46,7 +46,7 @@ func (h *StreamProxyHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "createStreamProxy",
 		Method:      "POST",
-		Path:        "/proxies",
+		Path:        "/api/v1/proxies",
 		Summary:     "Create stream proxy",
 		Description: "Creates a new stream proxy",
 		Tags:        []string{"Stream Proxies"},
@@ -55,7 +55,7 @@ func (h *StreamProxyHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "updateStreamProxy",
 		Method:      "PUT",
-		Path:        "/proxies/{id}",
+		Path:        "/api/v1/proxies/{id}",
 		Summary:     "Update stream proxy",
 		Description: "Updates an existing stream proxy",
 		Tags:        []string{"Stream Proxies"},
@@ -64,7 +64,7 @@ func (h *StreamProxyHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "deleteStreamProxy",
 		Method:      "DELETE",
-		Path:        "/proxies/{id}",
+		Path:        "/api/v1/proxies/{id}",
 		Summary:     "Delete stream proxy",
 		Description: "Deletes a stream proxy",
 		Tags:        []string{"Stream Proxies"},
@@ -73,7 +73,7 @@ func (h *StreamProxyHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "setProxySources",
 		Method:      "PUT",
-		Path:        "/proxies/{id}/sources",
+		Path:        "/api/v1/proxies/{id}/sources",
 		Summary:     "Set proxy sources",
 		Description: "Sets the stream sources for a proxy",
 		Tags:        []string{"Stream Proxies"},
@@ -82,7 +82,7 @@ func (h *StreamProxyHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "setProxyEpgSources",
 		Method:      "PUT",
-		Path:        "/proxies/{id}/epg-sources",
+		Path:        "/api/v1/proxies/{id}/epg-sources",
 		Summary:     "Set proxy EPG sources",
 		Description: "Sets the EPG sources for a proxy",
 		Tags:        []string{"Stream Proxies"},
@@ -91,7 +91,7 @@ func (h *StreamProxyHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "generateProxy",
 		Method:      "POST",
-		Path:        "/proxies/{id}/generate",
+		Path:        "/api/v1/proxies/{id}/generate",
 		Summary:     "Generate proxy output",
 		Description: "Triggers generation for a stream proxy",
 		Tags:        []string{"Stream Proxies"},

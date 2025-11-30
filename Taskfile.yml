@@ -451,7 +451,16 @@ tasks:
       - ./{{.DEBUG_DIR}}/{{.BINARY_NAME}} serve
 
   run:dev:
-    desc: Run with hot reload (requires air)
+    desc: Run Go backend with hot reload (API only, no frontend)
+    summary: |
+      Runs the Go backend server with hot reload using air.
+
+      For full-stack development:
+        Terminal 1: task run:dev       (Go backend on :8080)
+        Terminal 2: task frontend:dev  (Next.js on :3000)
+
+      The frontend dev server proxies API requests to the backend.
+      For production builds, use 'task frontend:embed' to embed the UI.
     cmds:
       - |
         if ! command -v air &> /dev/null; then
@@ -459,6 +468,13 @@ tasks:
           go install github.com/air-verse/air@latest
         fi
       - air
+
+  run:prod:
+    desc: Build with embedded frontend and run (production-like)
+    cmds:
+      - task: frontend:embed
+      - task: build
+      - ./{{.DEBUG_DIR}}/{{.BINARY_NAME}} serve
 
   # ============================================
   # Dependency Tasks
@@ -471,15 +487,67 @@ tasks:
       - go mod tidy
 
   deps:update:
-    desc: Update all dependencies
+    desc: Update all Go dependencies to latest versions
     cmds:
       - go get -u ./...
       - go mod tidy
+
+  deps:update:all:
+    desc: Update all dependencies (Go + frontend)
+    cmds:
+      - task: deps:update
+      - task: frontend:deps:update
+
+  deps:check:
+    desc: Check for available Go dependency updates (like cargo outdated)
+    cmds:
+      - |
+        if ! command -v go-mod-upgrade &> /dev/null; then
+          echo "Installing go-mod-upgrade..."
+          go install github.com/oligot/go-mod-upgrade@latest
+        fi
+      - go-mod-upgrade
 
   deps:vuln:
     desc: Check for vulnerabilities in dependencies (alias for security:vulncheck)
     cmds:
       - task: security:vulncheck
+
+  # Frontend dependency tasks
+  frontend:deps:update:
+    desc: Update frontend dependencies (npm)
+    dir: "{{.FRONTEND_DIR}}"
+    cmds:
+      - npm update
+
+  frontend:deps:check:
+    desc: Check for available frontend dependency updates (like cargo outdated)
+    dir: "{{.FRONTEND_DIR}}"
+    cmds:
+      - npm outdated || true
+
+  frontend:deps:upgrade:
+    desc: Interactively upgrade frontend dependencies to latest versions
+    dir: "{{.FRONTEND_DIR}}"
+    cmds:
+      - |
+        if ! command -v npm-check-updates &> /dev/null; then
+          echo "Installing npm-check-updates globally..."
+          npm install -g npm-check-updates
+        fi
+      - ncu
+
+  frontend:deps:upgrade:apply:
+    desc: Apply all frontend dependency upgrades (may have breaking changes)
+    dir: "{{.FRONTEND_DIR}}"
+    cmds:
+      - |
+        if ! command -v npm-check-updates &> /dev/null; then
+          echo "Installing npm-check-updates globally..."
+          npm install -g npm-check-updates
+        fi
+      - ncu -u
+      - npm install
 
   # ============================================
   # Code Generation Tasks
