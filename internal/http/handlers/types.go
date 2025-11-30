@@ -606,3 +606,142 @@ type EpgProgramListResponse struct {
 	Pagination PaginationMeta       `json:"pagination"`
 	Programs   []EpgProgramResponse `json:"programs"`
 }
+
+// Job types
+
+// JobResponse represents a job in API responses.
+type JobResponse struct {
+	ID             models.ULID     `json:"id"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+	Type           models.JobType  `json:"type"`
+	TargetID       models.ULID     `json:"target_id,omitempty"`
+	TargetName     string          `json:"target_name,omitempty"`
+	Status         models.JobStatus `json:"status"`
+	CronSchedule   string          `json:"cron_schedule,omitempty"`
+	NextRunAt      *time.Time      `json:"next_run_at,omitempty"`
+	StartedAt      *time.Time      `json:"started_at,omitempty"`
+	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
+	DurationMs     int64           `json:"duration_ms,omitempty"`
+	AttemptCount   int             `json:"attempt_count"`
+	MaxAttempts    int             `json:"max_attempts"`
+	BackoffSeconds int             `json:"backoff_seconds"`
+	LastError      string          `json:"last_error,omitempty"`
+	Result         string          `json:"result,omitempty"`
+	Priority       int             `json:"priority"`
+	LockedBy       string          `json:"locked_by,omitempty"`
+	LockedAt       *time.Time      `json:"locked_at,omitempty"`
+}
+
+// JobFromModel converts a job model to a response.
+func JobFromModel(j *models.Job) JobResponse {
+	resp := JobResponse{
+		ID:             j.ID,
+		CreatedAt:      j.CreatedAt,
+		UpdatedAt:      j.UpdatedAt,
+		Type:           j.Type,
+		TargetID:       j.TargetID,
+		TargetName:     j.TargetName,
+		Status:         j.Status,
+		CronSchedule:   j.CronSchedule,
+		DurationMs:     j.DurationMs,
+		AttemptCount:   j.AttemptCount,
+		MaxAttempts:    j.MaxAttempts,
+		BackoffSeconds: j.BackoffSeconds,
+		LastError:      j.LastError,
+		Result:         j.Result,
+		Priority:       j.Priority,
+		LockedBy:       j.LockedBy,
+	}
+	if j.NextRunAt != nil {
+		t := time.Time(*j.NextRunAt)
+		resp.NextRunAt = &t
+	}
+	if j.StartedAt != nil {
+		t := time.Time(*j.StartedAt)
+		resp.StartedAt = &t
+	}
+	if j.CompletedAt != nil {
+		t := time.Time(*j.CompletedAt)
+		resp.CompletedAt = &t
+	}
+	if j.LockedAt != nil {
+		t := time.Time(*j.LockedAt)
+		resp.LockedAt = &t
+	}
+	return resp
+}
+
+// JobHistoryResponse represents a job history record in API responses.
+type JobHistoryResponse struct {
+	ID            models.ULID     `json:"id"`
+	CreatedAt     time.Time       `json:"created_at"`
+	JobID         models.ULID     `json:"job_id"`
+	Type          models.JobType  `json:"type"`
+	TargetID      models.ULID     `json:"target_id,omitempty"`
+	TargetName    string          `json:"target_name,omitempty"`
+	Status        models.JobStatus `json:"status"`
+	StartedAt     *time.Time      `json:"started_at,omitempty"`
+	CompletedAt   *time.Time      `json:"completed_at,omitempty"`
+	DurationMs    int64           `json:"duration_ms,omitempty"`
+	AttemptNumber int             `json:"attempt_number"`
+	Error         string          `json:"error,omitempty"`
+	Result        string          `json:"result,omitempty"`
+}
+
+// JobHistoryFromModel converts a job history model to a response.
+func JobHistoryFromModel(h *models.JobHistory) JobHistoryResponse {
+	resp := JobHistoryResponse{
+		ID:            h.ID,
+		CreatedAt:     h.CreatedAt,
+		JobID:         h.JobID,
+		Type:          h.Type,
+		TargetID:      h.TargetID,
+		TargetName:    h.TargetName,
+		Status:        h.Status,
+		DurationMs:    h.DurationMs,
+		AttemptNumber: h.AttemptNumber,
+		Error:         h.Error,
+		Result:        h.Result,
+	}
+	if h.StartedAt != nil {
+		t := time.Time(*h.StartedAt)
+		resp.StartedAt = &t
+	}
+	if h.CompletedAt != nil {
+		t := time.Time(*h.CompletedAt)
+		resp.CompletedAt = &t
+	}
+	return resp
+}
+
+// JobStatsResponse represents job statistics.
+type JobStatsResponse struct {
+	PendingCount   int64            `json:"pending_count"`
+	RunningCount   int64            `json:"running_count"`
+	CompletedCount int64            `json:"completed_count"`
+	FailedCount    int64            `json:"failed_count"`
+	ByType         map[string]int64 `json:"by_type"`
+}
+
+// RunnerStatusResponse represents the job runner status.
+type RunnerStatusResponse struct {
+	Running      bool   `json:"running"`
+	WorkerCount  int    `json:"worker_count"`
+	WorkerID     string `json:"worker_id"`
+	PendingJobs  int64  `json:"pending_jobs"`
+	RunningJobs  int64  `json:"running_jobs"`
+	PollInterval string `json:"poll_interval"`
+}
+
+// ValidateCronRequest is the request body for validating cron expressions.
+type ValidateCronRequest struct {
+	Expression string `json:"expression" doc:"Cron expression to validate" minLength:"1"`
+}
+
+// ValidateCronResponse is the response for cron validation.
+type ValidateCronResponse struct {
+	Valid   bool       `json:"valid"`
+	Error   string     `json:"error,omitempty"`
+	NextRun *time.Time `json:"next_run,omitempty"`
+}
