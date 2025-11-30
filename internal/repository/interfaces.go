@@ -231,15 +231,41 @@ type LastKnownCodecRepository interface {
 // See internal/service/logo_indexer.go for the LogoIndexer service.
 
 // JobRepository defines operations for job persistence.
-// Will be implemented in Phase 11 (US9).
 type JobRepository interface {
-	Create(ctx context.Context, job interface{}) error
-	GetByID(ctx context.Context, id models.ULID) (interface{}, error)
-	GetAll(ctx context.Context) ([]interface{}, error)
-	GetPending(ctx context.Context) ([]interface{}, error)
-	GetByStatus(ctx context.Context, status string) ([]interface{}, error)
-	Update(ctx context.Context, job interface{}) error
+	// Create creates a new job.
+	Create(ctx context.Context, job *models.Job) error
+	// GetByID retrieves a job by ID.
+	GetByID(ctx context.Context, id models.ULID) (*models.Job, error)
+	// GetAll retrieves all jobs.
+	GetAll(ctx context.Context) ([]*models.Job, error)
+	// GetPending retrieves all pending/scheduled jobs ready for execution.
+	GetPending(ctx context.Context) ([]*models.Job, error)
+	// GetByStatus retrieves jobs by status.
+	GetByStatus(ctx context.Context, status models.JobStatus) ([]*models.Job, error)
+	// GetByType retrieves jobs by type.
+	GetByType(ctx context.Context, jobType models.JobType) ([]*models.Job, error)
+	// GetByTargetID retrieves jobs for a specific target.
+	GetByTargetID(ctx context.Context, targetID models.ULID) ([]*models.Job, error)
+	// GetRunning retrieves all currently running jobs.
+	GetRunning(ctx context.Context) ([]*models.Job, error)
+	// Update updates an existing job.
+	Update(ctx context.Context, job *models.Job) error
+	// Delete deletes a job by ID.
 	Delete(ctx context.Context, id models.ULID) error
-	UpdateStatus(ctx context.Context, id models.ULID, status string, result string, err error) error
-	GetHistory(ctx context.Context, jobType string, offset, limit int) ([]interface{}, int64, error)
+	// DeleteCompleted deletes completed jobs older than the specified duration.
+	DeleteCompleted(ctx context.Context, before time.Time) (int64, error)
+	// AcquireJob atomically acquires a pending job for execution (sets status to running).
+	// Returns nil if no jobs are available or if another worker acquired it first.
+	AcquireJob(ctx context.Context, workerID string) (*models.Job, error)
+	// ReleaseJob releases a job lock (used when a worker fails unexpectedly).
+	ReleaseJob(ctx context.Context, id models.ULID) error
+	// FindDuplicatePending finds an existing pending/scheduled job for the same type and target.
+	// Used for deduplication of concurrent job requests.
+	FindDuplicatePending(ctx context.Context, jobType models.JobType, targetID models.ULID) (*models.Job, error)
+	// CreateHistory creates a job history record.
+	CreateHistory(ctx context.Context, history *models.JobHistory) error
+	// GetHistory retrieves job history with pagination.
+	GetHistory(ctx context.Context, jobType *models.JobType, offset, limit int) ([]*models.JobHistory, int64, error)
+	// DeleteHistory deletes history records older than the specified time.
+	DeleteHistory(ctx context.Context, before time.Time) (int64, error)
 }

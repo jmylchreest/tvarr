@@ -261,5 +261,7 @@ func runMigrations(db *gorm.DB) error {
 		&models.ManualStreamChannel{},
 		&models.Filter{},
 		&models.DataMappingRule{},
+		&models.Job{},
+		&models.JobHistory{},
 	)
 }

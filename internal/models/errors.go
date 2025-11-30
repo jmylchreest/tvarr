@@ -74,4 +74,7 @@ var (
 
 	// ErrFilePathRequired indicates a required file path field is empty.
 	ErrFilePathRequired = errors.New("file_path is required")
+
+	// ErrJobTypeRequired indicates a required job type field is empty.
+	ErrJobTypeRequired = errors.New("job type is required")
 )
