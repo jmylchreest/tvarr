@@ -239,7 +239,7 @@ As a developer, I want a REST API to manage all entities so that I can integrate
 - **FR-041**: System MUST support relay profiles with codec/bitrate configuration
 - **FR-042**: System MUST support hardware acceleration (VAAPI, NVENC, QSV, AMF)
 - **FR-043**: System MUST support HLS collapsing (variant playlist → continuous stream)
-- **FR-044**: System MUST implement circuit breaker for upstream failures
+- **FR-044**: System MUST implement circuit breaker for upstream failures (default: 5 failures within 30 seconds opens circuit, 60 seconds half-open reset)
 - **FR-045**: System MUST support connection pooling with per-host concurrency limits
 
 #### FFmpeg Integration
@@ -294,7 +294,7 @@ As a developer, I want a REST API to manage all entities so that I can integrate
 - **DataMappingRule**: Transformation rule for metadata
 - **Filter**: Include/exclude expression for content curation
 - **RelayProfile**: FFmpeg transcoding configuration
-- **LogoAsset**: Cached logo with metadata
+- **LogoAsset**: Cached logo with metadata (file-based storage with JSON sidecar, not database-stored per constitution Key Systems #3)
 - **LastKnownCodec**: Cached ffprobe result per stream
 - **Job**: Scheduled or immediate task execution record
 

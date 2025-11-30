@@ -101,6 +101,22 @@ type Config struct {
 	// Set to 0 to disable the limit (default).
 	MaxResponseSize int64
 
+	// AcceptableStatusCodes specifies which HTTP status codes should be considered
+	// "successful" for circuit breaker purposes.
+	//
+	// If set (non-nil/non-empty), ONLY these codes are acceptable - this gives full
+	// control over what constitutes success. Supports both individual codes and ranges.
+	//
+	// Examples:
+	//   AcceptableStatusCodes: MustParseStatusCodes("200-299,404")  // 2xx range + 404
+	//   AcceptableStatusCodes: StatusCodesFromSlice([]int{200, 404}) // Individual codes
+	//
+	// If nil/empty (default), all 2xx status codes are considered acceptable.
+	//
+	// Note: Retryable status codes (429, 502, 503, 504) are always retried first,
+	// regardless of this setting. This only affects circuit breaker failure tracking.
+	AcceptableStatusCodes *StatusCodeSet
+
 	// BaseClient is the underlying http.Client to use.
 	// If nil, a default client is created.
 	BaseClient *http.Client
@@ -245,8 +261,18 @@ func (c *Client) DoWithContext(ctx context.Context, req *http.Request) (*http.Re
 			continue
 		}
 
-		// Success
-		c.breaker.RecordSuccess()
+		// Check if status code is acceptable for circuit breaker purposes
+		if c.isAcceptableStatus(resp.StatusCode) {
+			c.breaker.RecordSuccess()
+		} else {
+			// Non-acceptable status codes (e.g., 5xx errors) count as failures
+			// but we don't retry them - just record the failure
+			c.breaker.RecordFailure()
+			c.logger.Debug("non-acceptable status code recorded as failure",
+				slog.String("url", obfuscateURL(req.URL)),
+				slog.Int("status", resp.StatusCode),
+			)
+		}
 		c.logger.Debug("request completed",
 			slog.String("url", obfuscateURL(req.URL)),
 			slog.String("method", req.Method),
@@ -418,6 +444,23 @@ func isRetryableStatus(code int) bool {
 	default:
 		return false
 	}
+}
+
+// isAcceptableStatus returns true if the HTTP status code should be considered
+// "successful" for circuit breaker purposes.
+//
+// If AcceptableStatusCodes is configured (non-nil/non-empty), ONLY those codes are acceptable.
+// This allows full control, including making 2xx codes unacceptable if needed.
+//
+// If AcceptableStatusCodes is nil/empty, defaults to accepting all 2xx status codes.
+func (c *Client) isAcceptableStatus(code int) bool {
+	// If explicitly configured, use only the configured codes
+	if !c.config.AcceptableStatusCodes.IsEmpty() {
+		return c.config.AcceptableStatusCodes.Contains(code)
+	}
+
+	// Default behavior: 2xx status codes are acceptable
+	return code >= 200 && code < 300
 }
 
 // obfuscateURL returns a URL string with sensitive query parameters obfuscated.

@@ -19,7 +19,8 @@
 | Phase 7: US4 Data Mapping | ✅ Superseded | Merged into Phase 6.5 |
 | Phase 8: US5 Filtering | ✅ Superseded | Merged into Phase 6.5 |
 | Phase 9: Channel Numbering | ✅ Complete | T150-T153, configurable modes |
-| Phase 10-14 | ⏸️ Pending | |
+| Phase 10: Logo Caching | ✅ Complete | File-based caching with metadata sidecar |
+| Phase 11-14 | ⏸️ Pending | |
 
 ---
 
@@ -508,23 +509,27 @@ All tasks in this phase must complete before any user story work.
 - Conflict resolution tracks original vs assigned numbers
 - Proxy configuration overrides stage defaults at runtime
 
-## Phase 10: User Story 7 - Logo Caching (P2)
+## Phase 10: User Story 7 - Logo Caching (P2) ✅ COMPLETE
+
+**Implementation Note**: Per constitution principle (Key Systems #3), logo caching uses file-based storage with JSON metadata sidecars instead of database tables. This eliminates database overhead for cached assets while maintaining queryable metadata via in-memory indexing.
 
 | ID | P | Story | Task Description |
 |----|---|-------|------------------|
-| T160 | P | US7 | Write tests for LogoAsset model |
-| T161 | | US7 | Implement models/logo_asset.go |
-| T162 | | US7 | Create migration for logo_assets table |
-| T163 | P | US7 | Write tests for LogoAssetRepository |
-| T164 | | US7 | Implement repository/logo_asset_repo.go |
-| T165 | P | US7 | Write tests for logo cache storage |
-| T166 | | US7 | Implement storage/logo_cache.go |
-| T167 | P | US7 | Write tests for logo caching pipeline stage |
-| T168 | | US7 | Implement pipeline/stages/logo_caching.go |
-| T169 | | US7 | Implement logo cleanup job |
-| T170 | P | US7 | Write tests for LogoService |
-| T171 | | US7 | Implement service/logo_service.go |
-| T172 | | US7 | Write integration tests for logo caching |
+| T160 | P | US7 | ~~Write tests for LogoAsset model~~ → N/A (file-based) |
+| T161 | | US7 | ~~Implement models/logo_asset.go~~ → N/A (file-based) |
+| T162 | | US7 | ~~Create migration for logo_assets table~~ → N/A (file-based) |
+| T163 | P | US7 | ~~Write tests for LogoAssetRepository~~ → N/A (file-based) |
+| T164 | | US7 | ~~Implement repository/logo_asset_repo.go~~ → N/A (file-based) |
+| T165 | P | US7 | [X] Write tests for logo cache storage |
+| T166 | | US7 | [X] Implement storage/logo_cache.go |
+| T166a | | US7 | [X] Implement storage/logo_metadata.go - JSON sidecar metadata |
+| T167 | P | US7 | [X] Write tests for logo caching pipeline stage |
+| T168 | | US7 | [X] Implement pipeline/stages/logocaching/stage.go |
+| T169 | | US7 | [X] Implement logo cleanup in LogoService.Prune() |
+| T170 | P | US7 | [X] Write tests for LogoService |
+| T171 | | US7 | [X] Implement service/logo_service.go |
+| T171a | | US7 | [X] Implement service/logo_indexer.go - in-memory hash-based index |
+| T172 | | US7 | [X] Write integration tests for logo caching |
 
 ## Phase 11: User Story 9 - Scheduled Jobs (P2)
 

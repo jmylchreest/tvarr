@@ -460,6 +460,211 @@ func TestIsRetryableStatus(t *testing.T) {
 	}
 }
 
+func TestClient_IsAcceptableStatus(t *testing.T) {
+	t.Run("2xx codes are acceptable by default when no config", func(t *testing.T) {
+		client := NewWithDefaults()
+
+		for code := 200; code < 300; code++ {
+			assert.True(t, client.isAcceptableStatus(code), "status %d should be acceptable by default", code)
+		}
+	})
+
+	t.Run("4xx and 5xx codes are not acceptable by default", func(t *testing.T) {
+		client := NewWithDefaults()
+
+		nonAcceptable := []int{
+			http.StatusBadRequest,
+			http.StatusUnauthorized,
+			http.StatusForbidden,
+			http.StatusNotFound,
+			http.StatusInternalServerError,
+		}
+
+		for _, code := range nonAcceptable {
+			assert.False(t, client.isAcceptableStatus(code), "status %d should not be acceptable by default", code)
+		}
+	})
+
+	t.Run("configured codes are the ONLY acceptable codes", func(t *testing.T) {
+		cfg := DefaultConfig()
+		// Only 404 and 410 - notably NOT 200
+		cfg.AcceptableStatusCodes = StatusCodesFromSlice([]int{http.StatusNotFound, http.StatusGone})
+		client := New(cfg)
+
+		// 200 is NOT acceptable because it's not in the configured list
+		assert.False(t, client.isAcceptableStatus(http.StatusOK), "200 should NOT be acceptable when not in config")
+		assert.True(t, client.isAcceptableStatus(http.StatusNotFound))
+		assert.True(t, client.isAcceptableStatus(http.StatusGone))
+		assert.False(t, client.isAcceptableStatus(http.StatusBadRequest))
+		assert.False(t, client.isAcceptableStatus(http.StatusInternalServerError))
+	})
+
+	t.Run("configured codes with 2xx gives full control", func(t *testing.T) {
+		cfg := DefaultConfig()
+		// Include 200, 201, and 404
+		cfg.AcceptableStatusCodes = StatusCodesFromSlice([]int{http.StatusOK, http.StatusCreated, http.StatusNotFound})
+		client := New(cfg)
+
+		assert.True(t, client.isAcceptableStatus(http.StatusOK))
+		assert.True(t, client.isAcceptableStatus(http.StatusCreated))
+		assert.False(t, client.isAcceptableStatus(http.StatusAccepted), "202 not in config, should be unacceptable")
+		assert.True(t, client.isAcceptableStatus(http.StatusNotFound))
+		assert.False(t, client.isAcceptableStatus(http.StatusInternalServerError))
+	})
+
+	t.Run("range syntax works for acceptable codes", func(t *testing.T) {
+		cfg := DefaultConfig()
+		// Use range syntax: 200-299,404
+		cfg.AcceptableStatusCodes = MustParseStatusCodes("200-299,404")
+		client := New(cfg)
+
+		// All 2xx should be acceptable
+		for code := 200; code < 300; code++ {
+			assert.True(t, client.isAcceptableStatus(code), "status %d should be acceptable", code)
+		}
+		// 404 should be acceptable
+		assert.True(t, client.isAcceptableStatus(http.StatusNotFound))
+		// Other 4xx/5xx should not
+		assert.False(t, client.isAcceptableStatus(http.StatusBadRequest))
+		assert.False(t, client.isAcceptableStatus(http.StatusInternalServerError))
+	})
+}
+
+func TestClient_AcceptableStatusCodes_CircuitBreaker(t *testing.T) {
+	t.Run("404 counts as failure by default", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer server.Close()
+
+		cfg := DefaultConfig()
+		cfg.RetryAttempts = 0
+		cfg.CircuitThreshold = 3
+		client := New(cfg)
+
+		// Make 3 requests that return 404
+		for i := 0; i < 3; i++ {
+			resp, err := client.Get(context.Background(), server.URL)
+			require.NoError(t, err)
+			resp.Body.Close()
+		}
+
+		// Circuit should be open because 404 counts as failure by default
+		assert.Equal(t, CircuitOpen, client.CircuitState())
+	})
+
+	t.Run("404 does not trip circuit when configured as acceptable", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer server.Close()
+
+		cfg := DefaultConfig()
+		cfg.RetryAttempts = 0
+		cfg.CircuitThreshold = 3
+		// When configuring, we must include ALL acceptable codes
+		cfg.AcceptableStatusCodes = StatusCodesFromSlice([]int{http.StatusOK, http.StatusNotFound})
+		client := New(cfg)
+
+		// Make 5 requests that return 404
+		for i := 0; i < 5; i++ {
+			resp, err := client.Get(context.Background(), server.URL)
+			require.NoError(t, err)
+			resp.Body.Close()
+		}
+
+		// Circuit should still be closed because 404 is acceptable
+		assert.Equal(t, CircuitClosed, client.CircuitState())
+	})
+
+	t.Run("500 still trips circuit even when 404 is acceptable", func(t *testing.T) {
+		var requestCount int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			count := atomic.AddInt32(&requestCount, 1)
+			if count <= 2 {
+				w.WriteHeader(http.StatusNotFound) // First 2 requests: 404
+			} else {
+				w.WriteHeader(http.StatusInternalServerError) // Rest: 500
+			}
+		}))
+		defer server.Close()
+
+		cfg := DefaultConfig()
+		cfg.RetryAttempts = 0
+		cfg.CircuitThreshold = 3
+		// Include both 200 and 404 as acceptable
+		cfg.AcceptableStatusCodes = StatusCodesFromSlice([]int{http.StatusOK, http.StatusNotFound})
+		client := New(cfg)
+
+		// Make requests: 2x404 (acceptable) + 3x500 (failure)
+		for i := 0; i < 5; i++ {
+			resp, err := client.Get(context.Background(), server.URL)
+			require.NoError(t, err)
+			resp.Body.Close()
+		}
+
+		// Circuit should be open after 3 failures (the 500s)
+		assert.Equal(t, CircuitOpen, client.CircuitState())
+	})
+
+	t.Run("multiple acceptable codes work together", func(t *testing.T) {
+		var requestCount int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			count := atomic.AddInt32(&requestCount, 1)
+			switch count % 3 {
+			case 1:
+				w.WriteHeader(http.StatusNotFound)
+			case 2:
+				w.WriteHeader(http.StatusGone)
+			default:
+				w.WriteHeader(http.StatusOK)
+			}
+		}))
+		defer server.Close()
+
+		cfg := DefaultConfig()
+		cfg.RetryAttempts = 0
+		cfg.CircuitThreshold = 3
+		// Must include ALL codes we want to be acceptable
+		cfg.AcceptableStatusCodes = StatusCodesFromSlice([]int{http.StatusOK, http.StatusNotFound, http.StatusGone})
+		client := New(cfg)
+
+		// Make 9 requests alternating 404, 410, 200
+		for i := 0; i < 9; i++ {
+			resp, err := client.Get(context.Background(), server.URL)
+			require.NoError(t, err)
+			resp.Body.Close()
+		}
+
+		// Circuit should still be closed - all responses are acceptable
+		assert.Equal(t, CircuitClosed, client.CircuitState())
+	})
+
+	t.Run("200 not acceptable when explicitly excluded", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		cfg := DefaultConfig()
+		cfg.RetryAttempts = 0
+		cfg.CircuitThreshold = 3
+		// Only 201 and 202 are acceptable - NOT 200
+		cfg.AcceptableStatusCodes = StatusCodesFromSlice([]int{http.StatusCreated, http.StatusAccepted})
+		client := New(cfg)
+
+		// Make 3 requests that return 200 (not in acceptable list)
+		for i := 0; i < 3; i++ {
+			resp, err := client.Get(context.Background(), server.URL)
+			require.NoError(t, err)
+			resp.Body.Close()
+		}
+
+		// Circuit should be open because 200 is not acceptable
+		assert.Equal(t, CircuitOpen, client.CircuitState())
+	})
+}
+
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 

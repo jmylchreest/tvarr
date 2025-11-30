@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -14,8 +15,9 @@ import (
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 
-	"github.com/jmylchreest/tvarr/internal/http"
+	internalhttp "github.com/jmylchreest/tvarr/internal/http"
 	"github.com/jmylchreest/tvarr/internal/http/handlers"
+	"github.com/jmylchreest/tvarr/internal/httpclient"
 	"github.com/jmylchreest/tvarr/internal/ingestor"
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/pipeline"
@@ -88,7 +90,17 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing logo cache: %w", err)
 	}
-	logoService := service.NewLogoService(logoCache).WithLogger(logger)
+
+	// Create HTTP client for logo fetching with 200 and 404 as acceptable statuses
+	// (missing logos are expected and shouldn't trip the circuit breaker)
+	logoHTTPConfig := httpclient.DefaultConfig()
+	logoHTTPConfig.AcceptableStatusCodes = httpclient.StatusCodesFromSlice([]int{http.StatusOK, http.StatusNotFound})
+	logoHTTPConfig.Logger = logger
+	logoHTTPClient := httpclient.New(logoHTTPConfig)
+
+	logoService := service.NewLogoService(logoCache).
+		WithHTTPClient(logoHTTPClient.StandardClient()).
+		WithLogger(logger)
 
 	// Load logo index with pruning of stale cached logos
 	logoRetention := viper.GetDuration("storage.logo_retention")
@@ -154,11 +166,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	).WithLogger(logger).WithProgressService(progressService)
 
 	// Initialize HTTP server
-	serverConfig := http.ServerConfig{
+	serverConfig := internalhttp.ServerConfig{
 		Host: viper.GetString("server.host"),
 		Port: viper.GetInt("server.port"),
 	}
-	server := http.NewServer(serverConfig, logger)
+	server := internalhttp.NewServer(serverConfig, logger)
 
 	// Register handlers
 	healthHandler := handlers.NewHealthHandler(version.Version)

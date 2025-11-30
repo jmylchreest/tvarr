@@ -59,14 +59,19 @@ The client must accept the standard `*http.Client` interface for injection and t
 ### X. Human-Readable Duration Configuration
 All duration configuration values must support human-readable formats via `pkg/duration`. This internal package extends Go's standard `time.ParseDuration` with support for:
 
-**Supported Units (case-insensitive, with plural/singular variants):**
-- `s`, `sec`, `second(s)`: seconds
-- `m`, `min`, `minute(s)`: minutes
-- `h`, `hr`, `hour(s)`: hours
+**Extended Units (beyond Go's standard time.ParseDuration):**
 - `d`, `day(s)`: days (24 hours)
 - `w`, `wk`, `week(s)`: weeks (7 days)
 - `mo`, `month(s)`: months (30 days)
 - `y`, `yr`, `year(s)`: years (365 days)
+
+**Standard Time Units (full words supported, case-insensitive):**
+- `h`, `hr`, `hour(s)`: hours
+- `m`, `min`, `minute(s)`: minutes
+- `s`, `sec`, `second(s)`: seconds
+- `ms`, `milli`, `millisecond(s)`: milliseconds
+- `us`, `µs`, `micro`, `microsecond(s)`: microseconds
+- `ns`, `nano`, `nanosecond(s)`: nanoseconds
 
 **Examples:**
 ```yaml
@@ -75,14 +80,6 @@ http_timeout: 2m30s        # Standard Go format
 cache_ttl: 1 week          # Full word
 pruning_interval: 1w2d     # Short format combination
 ```
-
-**Standard Time Units (full words supported):**
-- `h`, `hr`, `hour(s)`: hours
-- `m`, `min`, `minute(s)`: minutes
-- `s`, `sec`, `second(s)`: seconds
-- `ms`, `milli`, `millisecond(s)`: milliseconds
-- `us`, `micro`, `microsecond(s)`: microseconds
-- `ns`, `nano`, `nanosecond(s)`: nanoseconds
 
 **Relative Time Parsing:**
 The package also supports relative time expressions via `pkg/duration.ParseRelative()`:
