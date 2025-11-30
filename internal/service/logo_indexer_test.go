@@ -75,7 +75,7 @@ func TestLogoIndexer_GetByURL(t *testing.T) {
 	// Now it should be found
 	found := indexer.GetByURL("https://example.com/test.png")
 	require.NotNil(t, found)
-	assert.Equal(t, testMeta.ULID, found.ULID)
+	assert.Equal(t, testMeta.ID, found.ID)
 }
 
 func TestLogoIndexer_GetByURLHash(t *testing.T) {
@@ -89,14 +89,14 @@ func TestLogoIndexer_GetByURLHash(t *testing.T) {
 	// Lookup by hash
 	found := indexer.GetByURLHash(testMeta.URLHash)
 	require.NotNil(t, found)
-	assert.Equal(t, testMeta.ULID, found.ULID)
+	assert.Equal(t, testMeta.ID, found.ID)
 
 	// Non-existent hash
 	notFound := indexer.GetByURLHash("nonexistenthash")
 	assert.Nil(t, notFound)
 }
 
-func TestLogoIndexer_GetByULID(t *testing.T) {
+func TestLogoIndexer_GetByID(t *testing.T) {
 	indexer, _ := setupTestLogoIndexer(t)
 
 	// Add a logo
@@ -104,13 +104,13 @@ func TestLogoIndexer_GetByULID(t *testing.T) {
 	testMeta.ContentType = "image/png"
 	indexer.Add(testMeta)
 
-	// Lookup by ULID
-	found := indexer.GetByULID(testMeta.ULID)
+	// Lookup by ID
+	found := indexer.GetByID(testMeta.ID)
 	require.NotNil(t, found)
 	assert.Equal(t, testMeta.OriginalURL, found.OriginalURL)
 
-	// Non-existent ULID
-	notFound := indexer.GetByULID("01NONEXISTENT")
+	// Non-existent ID
+	notFound := indexer.GetByID("nonexistent")
 	assert.Nil(t, notFound)
 }
 
@@ -126,7 +126,7 @@ func TestLogoIndexer_Add(t *testing.T) {
 	// Verify it's indexed by all keys
 	assert.NotNil(t, indexer.GetByURL(testMeta.OriginalURL))
 	assert.NotNil(t, indexer.GetByURLHash(testMeta.URLHash))
-	assert.NotNil(t, indexer.GetByULID(testMeta.ULID))
+	assert.NotNil(t, indexer.GetByID(testMeta.ID))
 
 	stats := indexer.Stats()
 	assert.Equal(t, 1, stats.TotalLogos)
@@ -144,12 +144,12 @@ func TestLogoIndexer_Remove(t *testing.T) {
 	assert.NotNil(t, indexer.GetByURL(testMeta.OriginalURL))
 
 	// Remove it
-	indexer.Remove(testMeta.ULID)
+	indexer.Remove(testMeta.ID)
 
 	// Verify it's gone from all indices
 	assert.Nil(t, indexer.GetByURL(testMeta.OriginalURL))
 	assert.Nil(t, indexer.GetByURLHash(testMeta.URLHash))
-	assert.Nil(t, indexer.GetByULID(testMeta.ULID))
+	assert.Nil(t, indexer.GetByID(testMeta.ID))
 
 	stats := indexer.Stats()
 	assert.Equal(t, 0, stats.TotalLogos)

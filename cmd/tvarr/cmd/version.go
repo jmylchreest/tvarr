@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"github.com/jmylchreest/tvarr/internal/version"
@@ -16,11 +15,8 @@ var versionCmd = &cobra.Command{
 	Short: "Print version information",
 	Long:  "Print the version, commit, and build date of tvarr.",
 	Run: func(cmd *cobra.Command, args []string) {
-		info := version.GetInfo()
-
 		if versionJSON {
-			output, _ := json.MarshalIndent(info, "", "  ")
-			fmt.Println(string(output))
+			fmt.Println(version.JSON())
 			return
 		}
 

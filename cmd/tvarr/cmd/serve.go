@@ -142,7 +142,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		logger.Info("ingestion guard enabled for proxy generation")
 	}
 
-	pipelineFactory := pipeline.NewDefaultFactoryWithIngestionGuard(
+	pipelineFactory := pipeline.NewDefaultFactory(
 		channelRepo,
 		epgProgramRepo,
 		filterRepo,

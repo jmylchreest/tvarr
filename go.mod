@@ -21,6 +21,11 @@ require (
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
+	github.com/abema/go-mp4 v1.4.1 // indirect
+	github.com/asticode/go-astikit v0.30.0 // indirect
+	github.com/asticode/go-astits v1.14.0 // indirect
+	github.com/bluenviron/gohlslib/v2 v2.2.4 // indirect
+	github.com/bluenviron/mediacommon/v2 v2.5.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-sql-driver/mysql v1.8.1 // indirect

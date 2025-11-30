@@ -84,6 +84,12 @@ var (
 	// ErrRelayProfileInvalidBitrate indicates an invalid bitrate value.
 	ErrRelayProfileInvalidBitrate = errors.New("bitrate must be non-negative")
 
+	// ErrRelayProfileNotFound indicates a relay profile was not found.
+	ErrRelayProfileNotFound = errors.New("relay profile not found")
+
 	// ErrStreamURLNotFound indicates a stream URL was not found.
 	ErrStreamURLNotFound = errors.New("stream URL not found")
+
+	// ErrLastKnownCodecNotFound indicates a last known codec entry was not found.
+	ErrLastKnownCodecNotFound = errors.New("last known codec not found")
 )

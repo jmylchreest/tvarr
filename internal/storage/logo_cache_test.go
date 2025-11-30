@@ -222,9 +222,9 @@ func TestLogoCache_StoreWithMetadata(t *testing.T) {
 	assert.True(t, metaExists)
 
 	// Verify metadata can be read back
-	loadedMeta, err := cache.LoadMetadata(meta.ULID)
+	loadedMeta, err := cache.LoadMetadata(meta.ID)
 	require.NoError(t, err)
-	assert.Equal(t, meta.ULID, loadedMeta.ULID)
+	assert.Equal(t, meta.ID, loadedMeta.ID)
 	assert.Equal(t, meta.OriginalURL, loadedMeta.OriginalURL)
 	assert.Equal(t, meta.URLHash, loadedMeta.URLHash)
 	assert.Equal(t, meta.ContentType, loadedMeta.ContentType)
@@ -251,7 +251,7 @@ func TestLogoCache_DeleteWithMetadata(t *testing.T) {
 	assert.True(t, metaExists)
 
 	// Delete with metadata
-	err = cache.DeleteWithMetadata(meta.ULID, meta.ContentType)
+	err = cache.DeleteWithMetadata(meta.ID, meta.ContentType)
 	require.NoError(t, err)
 
 	// Verify both files are gone
@@ -308,7 +308,7 @@ func TestLogoCache_GetImagePath(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get absolute path for the image
-	absPath, err := cache.GetImageAbsolutePath(meta.ULID, meta.ContentType)
+	absPath, err := cache.GetImageAbsolutePath(meta.ID, meta.ContentType)
 	require.NoError(t, err)
 	assert.NotEmpty(t, absPath)
 

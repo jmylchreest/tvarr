@@ -1,6 +1,7 @@
 package version
 
 import (
+	"encoding/json"
 	"runtime"
 	"strings"
 	"testing"
@@ -38,10 +39,16 @@ func TestString(t *testing.T) {
 }
 
 func TestShort(t *testing.T) {
+	// Save originals and restore after test
+	originalVersion := Version
+	defer func() { Version = originalVersion }()
+
+	Version = "1.0.0"
 	s := Short()
 
-	if !strings.Contains(s, ApplicationName) {
-		t.Errorf("expected short string to contain %s, got %s", ApplicationName, s)
+	// Short() does not include ApplicationName (Cobra adds it)
+	if !strings.Contains(s, "1.0.0") {
+		t.Errorf("expected short string to contain version, got %s", s)
 	}
 }
 
@@ -111,15 +118,21 @@ func TestStringWithCommit(t *testing.T) {
 	originalVersion := Version
 	originalCommit := Commit
 	originalDate := Date
+	originalBranch := Branch
+	originalTreeState := TreeState
 	defer func() {
 		Version = originalVersion
 		Commit = originalCommit
 		Date = originalDate
+		Branch = originalBranch
+		TreeState = originalTreeState
 	}()
 
 	Version = "1.0.0"
 	Commit = "abc123def456789"
 	Date = "2024-01-15T10:30:00Z"
+	Branch = "main"
+	TreeState = "clean"
 
 	s := String()
 
@@ -128,5 +141,120 @@ func TestStringWithCommit(t *testing.T) {
 	}
 	if !strings.Contains(s, "2024-01-15") {
 		t.Errorf("expected string to contain date, got %s", s)
+	}
+	if !strings.Contains(s, "branch: main") {
+		t.Errorf("expected string to contain branch info, got %s", s)
+	}
+}
+
+func TestStringWithDirtyTree(t *testing.T) {
+	// Save originals and restore after test
+	originalVersion := Version
+	originalCommit := Commit
+	originalTreeState := TreeState
+	defer func() {
+		Version = originalVersion
+		Commit = originalCommit
+		TreeState = originalTreeState
+	}()
+
+	Version = "1.0.0"
+	Commit = "abc123def456789"
+	TreeState = "dirty"
+
+	s := String()
+	short := Short()
+
+	// Should contain dirty indicator (*)
+	if !strings.Contains(s, "abc123de*") {
+		t.Errorf("expected string to contain dirty indicator, got %s", s)
+	}
+	// Short format: "1.0.0 (abc123de*)"
+	if !strings.Contains(short, "(abc123de*)") {
+		t.Errorf("expected short string to contain dirty indicator, got %s", short)
+	}
+}
+
+func TestJSON(t *testing.T) {
+	// Save originals and restore after test
+	originalVersion := Version
+	originalCommit := Commit
+	originalDate := Date
+	originalBranch := Branch
+	originalTreeState := TreeState
+	defer func() {
+		Version = originalVersion
+		Commit = originalCommit
+		Date = originalDate
+		Branch = originalBranch
+		TreeState = originalTreeState
+	}()
+
+	Version = "1.2.3"
+	Commit = "abc123def456789"
+	Date = "2024-01-15T10:30:00Z"
+	Branch = "feature-branch"
+	TreeState = "clean"
+
+	jsonStr := JSON()
+
+	// Verify it's valid JSON
+	var info Info
+	if err := json.Unmarshal([]byte(jsonStr), &info); err != nil {
+		t.Fatalf("JSON() did not produce valid JSON: %v", err)
+	}
+
+	// Verify fields
+	if info.Version != "1.2.3" {
+		t.Errorf("expected version 1.2.3, got %s", info.Version)
+	}
+	if info.Commit != "abc123def456789" {
+		t.Errorf("expected full commit, got %s", info.Commit)
+	}
+	if info.CommitSHA != "abc123de" {
+		t.Errorf("expected short commit sha abc123de, got %s", info.CommitSHA)
+	}
+	if info.Date != "2024-01-15T10:30:00Z" {
+		t.Errorf("expected date 2024-01-15T10:30:00Z, got %s", info.Date)
+	}
+	if info.Branch != "feature-branch" {
+		t.Errorf("expected branch feature-branch, got %s", info.Branch)
+	}
+	if info.TreeState != "clean" {
+		t.Errorf("expected tree_state clean, got %s", info.TreeState)
+	}
+	if info.OS != runtime.GOOS {
+		t.Errorf("expected OS %s, got %s", runtime.GOOS, info.OS)
+	}
+	if info.Arch != runtime.GOARCH {
+		t.Errorf("expected Arch %s, got %s", runtime.GOARCH, info.Arch)
+	}
+}
+
+func TestGetInfoFields(t *testing.T) {
+	// Save originals and restore after test
+	originalBranch := Branch
+	originalTreeState := TreeState
+	defer func() {
+		Branch = originalBranch
+		TreeState = originalTreeState
+	}()
+
+	Branch = "test-branch"
+	TreeState = "dirty"
+
+	info := GetInfo()
+
+	if info.Branch != "test-branch" {
+		t.Errorf("expected branch test-branch, got %s", info.Branch)
+	}
+	if info.TreeState != "dirty" {
+		t.Errorf("expected tree_state dirty, got %s", info.TreeState)
+	}
+	if info.OS == "" {
+		t.Error("expected non-empty OS")
+	}
+	if info.Arch == "" {
+		t.Error("expected non-empty Arch")
 	}
 }

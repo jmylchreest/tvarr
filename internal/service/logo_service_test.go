@@ -78,7 +78,7 @@ func TestLogoService_CacheLogo(t *testing.T) {
 
 	assert.Equal(t, "https://example.com/logo.png", meta.OriginalURL)
 	assert.Equal(t, "image/png", meta.ContentType)
-	assert.NotEmpty(t, meta.ULID)
+	assert.NotEmpty(t, meta.ID)
 	assert.True(t, meta.FileSize > 0)
 }
 
@@ -98,8 +98,8 @@ func TestLogoService_CacheLogo_AlreadyCached(t *testing.T) {
 	meta2, err := svc.CacheLogo(ctx, "https://example.com/logo.png")
 	require.NoError(t, err)
 
-	// Should be same ULID
-	assert.Equal(t, meta1.ULID, meta2.ULID)
+	// Should be same ID (same URL produces same ID)
+	assert.Equal(t, meta1.ID, meta2.ID)
 }
 
 func TestLogoService_CacheLogo_HTTPError(t *testing.T) {
@@ -195,7 +195,7 @@ func TestLogoService_DeleteLogo(t *testing.T) {
 	assert.True(t, svc.Contains("https://example.com/logo.png"))
 
 	// Delete it
-	err = svc.DeleteLogo(meta.ULID)
+	err = svc.DeleteLogo(meta.ID)
 	require.NoError(t, err)
 
 	// Verify it's gone from index

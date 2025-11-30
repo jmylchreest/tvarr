@@ -247,12 +247,6 @@ func (idx *LogoIndexer) GetByID(id string) *storage.CachedLogoMetadata {
 	return idx.byID[id]
 }
 
-// GetByULID returns the logo metadata for a given ID (alias for GetByID).
-// Deprecated: Use GetByID instead.
-func (idx *LogoIndexer) GetByULID(id string) *storage.CachedLogoMetadata {
-	return idx.GetByID(id)
-}
-
 // Contains checks if a logo URL is already in the index.
 func (idx *LogoIndexer) Contains(url string) bool {
 	idx.mu.RLock()

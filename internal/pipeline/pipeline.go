@@ -114,54 +114,9 @@ func NewFactory(deps *Dependencies) *Factory {
 }
 
 // NewDefaultFactory creates a factory with the standard stage configuration.
-// This is the recommended way to create a pipeline factory.
-// Deprecated: Use NewDefaultFactoryWithLogoCaching for logo caching support.
-func NewDefaultFactory(
-	channelRepo repository.ChannelRepository,
-	epgProgramRepo repository.EpgProgramRepository,
-	filterRepo repository.FilterRepository,
-	dataMappingRuleRepo repository.DataMappingRuleRepository,
-	sandbox *storage.Sandbox,
-	logger *slog.Logger,
-) *Factory {
-	return NewDefaultFactoryWithLogoCaching(
-		channelRepo,
-		epgProgramRepo,
-		filterRepo,
-		dataMappingRuleRepo,
-		sandbox,
-		logger,
-		nil, // No logo caching
-	)
-}
-
-// NewDefaultFactoryWithLogoCaching creates a factory with logo caching support.
-// If logoCacher is nil, logo caching stage is skipped.
-func NewDefaultFactoryWithLogoCaching(
-	channelRepo repository.ChannelRepository,
-	epgProgramRepo repository.EpgProgramRepository,
-	filterRepo repository.FilterRepository,
-	dataMappingRuleRepo repository.DataMappingRuleRepository,
-	sandbox *storage.Sandbox,
-	logger *slog.Logger,
-	logoCacher logocaching.LogoCacher,
-) *Factory {
-	return NewDefaultFactoryWithIngestionGuard(
-		channelRepo,
-		epgProgramRepo,
-		filterRepo,
-		dataMappingRuleRepo,
-		sandbox,
-		logger,
-		logoCacher,
-		nil, // No ingestion guard
-	)
-}
-
-// NewDefaultFactoryWithIngestionGuard creates a factory with ingestion guard support.
 // If stateManager is nil, ingestion guard stage is skipped.
 // If logoCacher is nil, logo caching stage is skipped.
-func NewDefaultFactoryWithIngestionGuard(
+func NewDefaultFactory(
 	channelRepo repository.ChannelRepository,
 	epgProgramRepo repository.EpgProgramRepository,
 	filterRepo repository.FilterRepository,

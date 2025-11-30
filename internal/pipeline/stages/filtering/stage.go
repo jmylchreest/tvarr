@@ -4,7 +4,6 @@ package filtering
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/jmylchreest/tvarr/internal/expression"
@@ -36,28 +35,6 @@ const (
 	FilterActionExclude FilterAction = "exclude"
 )
 
-// FilterMatchType specifies how to match the pattern.
-type FilterMatchType string
-
-const (
-	FilterMatchTypeExact    FilterMatchType = "exact"
-	FilterMatchTypeContains FilterMatchType = "contains"
-	FilterMatchTypePrefix   FilterMatchType = "prefix"
-	FilterMatchTypeSuffix   FilterMatchType = "suffix"
-	FilterMatchTypeRegex    FilterMatchType = "regex"
-)
-
-// Filter represents a legacy filter rule configuration.
-// Deprecated: Use ExpressionFilter for new filters.
-type Filter struct {
-	Enabled   bool            `json:"enabled"`
-	Target    FilterTarget    `json:"target"`
-	Action    FilterAction    `json:"action"`
-	Field     string          `json:"field"`
-	MatchType FilterMatchType `json:"match_type"`
-	Pattern   string          `json:"pattern"`
-}
-
 // ExpressionFilter represents an expression-based filter rule.
 type ExpressionFilter struct {
 	ID         string       `json:"id"`
@@ -78,26 +55,16 @@ type compiledExpressionFilter struct {
 // Stage applies filter rules to channels and programs.
 type Stage struct {
 	shared.BaseStage
-	filters                    []Filter
-	compiledFilters            []*compiledFilter
-	expressionFilters          []ExpressionFilter
-	compiledExpressionFilters  []*compiledExpressionFilter
-}
-
-// compiledFilter is a pre-compiled filter for performance.
-type compiledFilter struct {
-	filter *Filter
-	regex  *regexp.Regexp
+	expressionFilters         []ExpressionFilter
+	compiledExpressionFilters []*compiledExpressionFilter
 }
 
 // New creates a new filtering stage.
 func New() *Stage {
 	return &Stage{
-		BaseStage:                  shared.NewBaseStage(StageID, StageName),
-		filters:                    make([]Filter, 0),
-		compiledFilters:            make([]*compiledFilter, 0),
-		expressionFilters:          make([]ExpressionFilter, 0),
-		compiledExpressionFilters:  make([]*compiledExpressionFilter, 0),
+		BaseStage:                 shared.NewBaseStage(StageID, StageName),
+		expressionFilters:         make([]ExpressionFilter, 0),
+		compiledExpressionFilters: make([]*compiledExpressionFilter, 0),
 	}
 }
 
@@ -154,20 +121,6 @@ func NewConstructor() core.StageConstructor {
 	}
 }
 
-// WithFilters sets the legacy filters for the stage.
-// Deprecated: Use WithExpressionFilters for new filters.
-func (s *Stage) WithFilters(filters []Filter) *Stage {
-	s.filters = filters
-	return s
-}
-
-// AddFilter adds a legacy filter to the stage.
-// Deprecated: Use AddExpressionFilter for new filters.
-func (s *Stage) AddFilter(filter Filter) *Stage {
-	s.filters = append(s.filters, filter)
-	return s
-}
-
 // WithExpressionFilters sets the expression-based filters for the stage.
 func (s *Stage) WithExpressionFilters(filters []ExpressionFilter) *Stage {
 	s.expressionFilters = filters
@@ -185,14 +138,9 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	result := shared.NewResult()
 
 	// Use configured filters, or skip if none
-	if len(s.filters) == 0 && len(s.expressionFilters) == 0 {
+	if len(s.expressionFilters) == 0 {
 		result.Message = "No filters configured"
 		return result, nil
-	}
-
-	// Compile legacy filters
-	if err := s.compileFilters(s.filters); err != nil {
-		return result, fmt.Errorf("compiling legacy filters: %w", err)
 	}
 
 	// Compile expression filters
@@ -268,33 +216,6 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	return result, nil
 }
 
-// compileFilters pre-compiles regex patterns for performance.
-func (s *Stage) compileFilters(filters []Filter) error {
-	s.compiledFilters = make([]*compiledFilter, 0, len(filters))
-
-	for i := range filters {
-		filter := &filters[i]
-		if !filter.Enabled {
-			continue
-		}
-
-		cf := &compiledFilter{filter: filter}
-
-		// Compile regex if using regex match type
-		if filter.MatchType == FilterMatchTypeRegex && filter.Pattern != "" {
-			re, err := regexp.Compile(filter.Pattern)
-			if err != nil {
-				return fmt.Errorf("invalid regex pattern %q: %w", filter.Pattern, err)
-			}
-			cf.regex = re
-		}
-
-		s.compiledFilters = append(s.compiledFilters, cf)
-	}
-
-	return nil
-}
-
 // compileExpressionFilters pre-parses expression filters.
 func (s *Stage) compileExpressionFilters() error {
 	s.compiledExpressionFilters = make([]*compiledExpressionFilter, 0, len(s.expressionFilters))
@@ -332,28 +253,8 @@ func (s *Stage) compileExpressionFilters() error {
 	return nil
 }
 
-// shouldIncludeChannel checks if a channel passes all filters.
+// shouldIncludeChannel checks if a channel passes all expression filters.
 func (s *Stage) shouldIncludeChannel(ch *models.Channel) bool {
-	// Check legacy filters first
-	for _, cf := range s.compiledFilters {
-		if cf.filter.Target != FilterTargetChannel {
-			continue
-		}
-
-		matches := s.matchesFilter(cf, s.getChannelFieldValue(ch, cf.filter.Field))
-
-		// If action is exclude and matches, exclude the channel
-		if cf.filter.Action == FilterActionExclude && matches {
-			return false
-		}
-
-		// If action is include and doesn't match, exclude the channel
-		if cf.filter.Action == FilterActionInclude && !matches {
-			return false
-		}
-	}
-
-	// Check expression filters
 	for _, cef := range s.compiledExpressionFilters {
 		if cef.filter.Target != FilterTargetChannel {
 			continue
@@ -385,26 +286,8 @@ func (s *Stage) shouldIncludeChannel(ch *models.Channel) bool {
 	return true
 }
 
-// shouldIncludeProgram checks if a program passes all filters.
+// shouldIncludeProgram checks if a program passes all expression filters.
 func (s *Stage) shouldIncludeProgram(prog *models.EpgProgram) bool {
-	// Check legacy filters first
-	for _, cf := range s.compiledFilters {
-		if cf.filter.Target != FilterTargetProgram {
-			continue
-		}
-
-		matches := s.matchesFilter(cf, s.getProgramFieldValue(prog, cf.filter.Field))
-
-		if cf.filter.Action == FilterActionExclude && matches {
-			return false
-		}
-
-		if cf.filter.Action == FilterActionInclude && !matches {
-			return false
-		}
-	}
-
-	// Check expression filters
 	for _, cef := range s.compiledExpressionFilters {
 		if cef.filter.Target != FilterTargetProgram {
 			continue
@@ -467,68 +350,6 @@ func (s *Stage) createProgramEvalContext(prog *models.EpgProgram) expression.Fie
 	}
 
 	return expression.NewChannelEvalContext(fields)
-}
-
-// matchesFilter checks if a value matches a filter.
-func (s *Stage) matchesFilter(cf *compiledFilter, value string) bool {
-	pattern := cf.filter.Pattern
-
-	switch cf.filter.MatchType {
-	case FilterMatchTypeExact:
-		return value == pattern
-
-	case FilterMatchTypeContains:
-		return strings.Contains(strings.ToLower(value), strings.ToLower(pattern))
-
-	case FilterMatchTypePrefix:
-		return strings.HasPrefix(strings.ToLower(value), strings.ToLower(pattern))
-
-	case FilterMatchTypeSuffix:
-		return strings.HasSuffix(strings.ToLower(value), strings.ToLower(pattern))
-
-	case FilterMatchTypeRegex:
-		if cf.regex != nil {
-			return cf.regex.MatchString(value)
-		}
-		return false
-
-	default:
-		return false
-	}
-}
-
-// getChannelFieldValue returns the value of a channel field for filtering.
-func (s *Stage) getChannelFieldValue(ch *models.Channel, field string) string {
-	switch field {
-	case "name", "channel_name":
-		return ch.ChannelName
-	case "tvg_id":
-		return ch.TvgID
-	case "tvg_name":
-		return ch.TvgName
-	case "group", "group_title":
-		return ch.GroupTitle
-	case "url", "stream_url":
-		return ch.StreamURL
-	default:
-		return ""
-	}
-}
-
-// getProgramFieldValue returns the value of a program field for filtering.
-func (s *Stage) getProgramFieldValue(prog *models.EpgProgram, field string) string {
-	switch field {
-	case "title":
-		return prog.Title
-	case "description":
-		return prog.Description
-	case "category":
-		return prog.Category
-	case "channel_id":
-		return prog.ChannelID
-	default:
-		return ""
-	}
 }
 
 // Ensure Stage implements core.Stage.

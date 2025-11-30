@@ -44,10 +44,6 @@ type CachedLogoMetadata struct {
 	// Used for determining pruning eligibility.
 	Source LogoSource `json:"source,omitempty"`
 
-	// ULID is kept for backwards compatibility during migration.
-	// Deprecated: Use ID instead.
-	ULID string `json:"ulid,omitempty"`
-
 	// OriginalURL is the source URL where the logo was fetched from (before normalization).
 	// Empty for uploaded logos.
 	OriginalURL string `json:"original_url"`
@@ -95,7 +91,6 @@ func NewCachedLogoMetadata(originalURL string) *CachedLogoMetadata {
 	return &CachedLogoMetadata{
 		ID:            urlHash, // Deterministic ID from normalized URL
 		Source:        LogoSourceCached,
-		ULID:          urlHash, // Backwards compatibility
 		OriginalURL:   originalURL,
 		NormalizedURL: normalized,
 		URLHash:       urlHash,
@@ -112,19 +107,13 @@ func NewUploadedLogoMetadata() *CachedLogoMetadata {
 	return &CachedLogoMetadata{
 		ID:        id,
 		Source:    LogoSourceUploaded,
-		ULID:      id, // Backwards compatibility
 		CreatedAt: time.Now().UTC(),
 	}
 }
 
 // GetID returns the canonical identifier for this logo.
-// Handles backwards compatibility with old ULID-based entries.
 func (m *CachedLogoMetadata) GetID() string {
-	if m.ID != "" {
-		return m.ID
-	}
-	// Backwards compatibility: old entries only have ULID
-	return m.ULID
+	return m.ID
 }
 
 // GetSource returns the logo source, defaulting to Cached for backwards compatibility.

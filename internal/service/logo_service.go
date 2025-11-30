@@ -191,12 +191,6 @@ func (s *LogoService) GetLogoByID(id string) *storage.CachedLogoMetadata {
 	return s.indexer.GetByID(id)
 }
 
-// GetLogoByULID retrieves a cached logo by its ID (alias for GetLogoByID).
-// Deprecated: Use GetLogoByID instead.
-func (s *LogoService) GetLogoByULID(id string) *storage.CachedLogoMetadata {
-	return s.GetLogoByID(id)
-}
-
 // Contains checks if a logo URL is already cached.
 func (s *LogoService) Contains(logoURL string) bool {
 	return s.indexer.Contains(logoURL)

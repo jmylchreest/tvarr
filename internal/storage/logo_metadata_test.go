@@ -14,7 +14,6 @@ func TestCachedLogoMetadata_JSONRoundTrip(t *testing.T) {
 	meta := &CachedLogoMetadata{
 		ID:          "abc123def456",
 		Source:      LogoSourceCached,
-		ULID:        "abc123def456",
 		OriginalURL: "https://example.com/logo.png",
 		URLHash:     "abc123def456",
 		ContentType: "image/png",
@@ -223,17 +222,6 @@ func TestNewUploadedLogoMetadata(t *testing.T) {
 	assert.Empty(t, meta1.OriginalURL)
 	// Source is uploaded
 	assert.Equal(t, LogoSourceUploaded, meta1.Source)
-}
-
-func TestCachedLogoMetadata_GetID_BackwardsCompatibility(t *testing.T) {
-	// Old entries might only have ULID field (not ID)
-	meta := &CachedLogoMetadata{
-		ULID:        "01HXYZ123456789ABCDEFGHIJK",
-		OriginalURL: "https://example.com/old.png",
-	}
-
-	// GetID should fall back to ULID
-	assert.Equal(t, "01HXYZ123456789ABCDEFGHIJK", meta.GetID())
 }
 
 func TestCachedLogoMetadata_IsPrunable(t *testing.T) {
