@@ -207,24 +207,64 @@ type DataMappingRuleRepository interface {
 }
 
 // RelayProfileRepository defines operations for relay profile persistence.
-// Will be implemented in Phase 12 (US8).
 type RelayProfileRepository interface {
-	Create(ctx context.Context, profile interface{}) error
-	GetByID(ctx context.Context, id models.ULID) (interface{}, error)
-	GetAll(ctx context.Context) ([]interface{}, error)
-	GetByName(ctx context.Context, name string) (interface{}, error)
-	Update(ctx context.Context, profile interface{}) error
+	// Create creates a new relay profile.
+	Create(ctx context.Context, profile *models.RelayProfile) error
+	// GetByID retrieves a relay profile by ID.
+	GetByID(ctx context.Context, id models.ULID) (*models.RelayProfile, error)
+	// GetAll retrieves all relay profiles.
+	GetAll(ctx context.Context) ([]*models.RelayProfile, error)
+	// GetByName retrieves a relay profile by name.
+	GetByName(ctx context.Context, name string) (*models.RelayProfile, error)
+	// GetDefault retrieves the default relay profile.
+	GetDefault(ctx context.Context) (*models.RelayProfile, error)
+	// Update updates an existing relay profile.
+	Update(ctx context.Context, profile *models.RelayProfile) error
+	// Delete deletes a relay profile by ID.
 	Delete(ctx context.Context, id models.ULID) error
+	// Count returns the total number of relay profiles.
+	Count(ctx context.Context) (int64, error)
+	// SetDefault sets a profile as the default (unsets previous default).
+	SetDefault(ctx context.Context, id models.ULID) error
 }
 
 // LastKnownCodecRepository defines operations for codec cache persistence.
-// Will be implemented in Phase 12 (US8).
 type LastKnownCodecRepository interface {
-	Create(ctx context.Context, codec interface{}) error
-	GetByStreamURL(ctx context.Context, streamURL string) (interface{}, error)
-	Upsert(ctx context.Context, codec interface{}) error
+	// Create creates a new codec cache entry.
+	Create(ctx context.Context, codec *models.LastKnownCodec) error
+	// GetByID retrieves a codec entry by ID.
+	GetByID(ctx context.Context, id models.ULID) (*models.LastKnownCodec, error)
+	// GetByStreamURL retrieves codec info by stream URL.
+	GetByStreamURL(ctx context.Context, streamURL string) (*models.LastKnownCodec, error)
+	// GetBySourceID retrieves all codec entries for a source.
+	GetBySourceID(ctx context.Context, sourceID models.ULID) ([]*models.LastKnownCodec, error)
+	// Upsert creates or updates a codec entry based on stream URL.
+	Upsert(ctx context.Context, codec *models.LastKnownCodec) error
+	// Update updates an existing codec entry.
+	Update(ctx context.Context, codec *models.LastKnownCodec) error
+	// Delete deletes a codec entry by ID.
 	Delete(ctx context.Context, id models.ULID) error
-	DeleteExpired(ctx context.Context, before time.Time) (int64, error)
+	// DeleteByStreamURL deletes a codec entry by stream URL.
+	DeleteByStreamURL(ctx context.Context, streamURL string) error
+	// DeleteBySourceID deletes all codec entries for a source.
+	DeleteBySourceID(ctx context.Context, sourceID models.ULID) (int64, error)
+	// DeleteExpired deletes expired codec entries.
+	DeleteExpired(ctx context.Context) (int64, error)
+	// Touch updates the access time and increments hit count for a stream URL.
+	Touch(ctx context.Context, streamURL string) error
+	// GetValidCount returns the count of valid (non-expired, no error) entries.
+	GetValidCount(ctx context.Context) (int64, error)
+	// GetStats returns cache statistics.
+	GetStats(ctx context.Context) (*CodecCacheStats, error)
+}
+
+// CodecCacheStats holds statistics about the codec cache.
+type CodecCacheStats struct {
+	TotalEntries   int64 `json:"total_entries"`
+	ValidEntries   int64 `json:"valid_entries"`
+	ExpiredEntries int64 `json:"expired_entries"`
+	ErrorEntries   int64 `json:"error_entries"`
+	TotalHits      int64 `json:"total_hits"`
 }
 
 // Note: Logo caching uses file-based storage with in-memory indexing.

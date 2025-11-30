@@ -77,4 +77,13 @@ var (
 
 	// ErrJobTypeRequired indicates a required job type field is empty.
 	ErrJobTypeRequired = errors.New("job type is required")
+
+	// ErrRelayProfileNameRequired indicates a required relay profile name field is empty.
+	ErrRelayProfileNameRequired = errors.New("relay profile name is required")
+
+	// ErrRelayProfileInvalidBitrate indicates an invalid bitrate value.
+	ErrRelayProfileInvalidBitrate = errors.New("bitrate must be non-negative")
+
+	// ErrStreamURLNotFound indicates a stream URL was not found.
+	ErrStreamURLNotFound = errors.New("stream URL not found")
 )

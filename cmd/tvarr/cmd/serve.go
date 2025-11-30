@@ -263,5 +263,7 @@ func runMigrations(db *gorm.DB) error {
 		&models.DataMappingRule{},
 		&models.Job{},
 		&models.JobHistory{},
+		&models.RelayProfile{},
+		&models.LastKnownCodec{},
 	)
 }
