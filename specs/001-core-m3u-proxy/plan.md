@@ -52,7 +52,6 @@ tvarr/
 │   │   ├── filter.go
 │   │   ├── data_mapping_rule.go
 │   │   ├── relay_profile.go
-│   │   ├── logo_asset.go
 │   │   ├── last_known_codec.go
 │   │   └── job.go
 │   ├── repository/                 # Data access layer (Repository pattern)
@@ -65,7 +64,6 @@ tvarr/
 │   │   ├── filter_repo.go
 │   │   ├── data_mapping_rule_repo.go
 │   │   ├── relay_profile_repo.go
-│   │   ├── logo_asset_repo.go
 │   │   ├── last_known_codec_repo.go
 │   │   └── job_repo.go
 │   ├── service/                    # Business logic layer
@@ -76,7 +74,8 @@ tvarr/
 │   │   ├── mapping_service.go
 │   │   ├── relay_service.go
 │   │   ├── job_service.go
-│   │   └── logo_service.go
+│   │   ├── logo_service.go         # Logo caching orchestration
+│   │   └── logo_indexer.go         # In-memory hash-based logo index
 │   ├── ingestor/                   # Source ingestion logic
 │   │   ├── interfaces.go           # SourceHandler interface
 │   │   ├── factory.go              # Handler factory
@@ -120,7 +119,8 @@ tvarr/
 │   │   └── runner.go               # Queue runner
 │   ├── storage/                    # File storage
 │   │   ├── sandbox.go              # Sandboxed file manager
-│   │   ├── logo_cache.go           # Logo cache implementation
+│   │   ├── logo_cache.go           # Logo cache implementation (file-based)
+│   │   ├── logo_metadata.go        # Logo metadata with JSON sidecar
 │   │   └── output_manager.go       # Proxy output files
 │   ├── http/                       # HTTP layer
 │   │   ├── server.go               # HTTP server setup

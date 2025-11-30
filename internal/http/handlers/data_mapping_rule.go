@@ -106,7 +106,7 @@ func DataMappingRuleFromModel(r *models.DataMappingRule) DataMappingRuleResponse
 // ListDataMappingRulesInput is the input for listing data mapping rules.
 type ListDataMappingRulesInput struct {
 	SourceType string `query:"source_type" doc:"Filter by source type (stream or epg)" required:"false"`
-	Enabled    *bool  `query:"enabled" doc:"Filter by enabled status" required:"false"`
+	Enabled    string `query:"enabled" doc:"Filter by enabled status (true or false)" required:"false" enum:"true,false,"`
 }
 
 // ListDataMappingRulesOutput is the output for listing data mapping rules.
@@ -122,7 +122,11 @@ func (h *DataMappingRuleHandler) List(ctx context.Context, input *ListDataMappin
 	var rules []*models.DataMappingRule
 	var err error
 
-	if input.Enabled != nil && *input.Enabled {
+	// Parse enabled filter (string to bool)
+	enabledFilter := input.Enabled == "true"
+	hasEnabledFilter := input.Enabled != ""
+
+	if hasEnabledFilter && enabledFilter {
 		if input.SourceType != "" {
 			rules, err = h.repo.GetEnabledForSourceType(ctx, models.DataMappingRuleSourceType(input.SourceType), nil)
 		} else {

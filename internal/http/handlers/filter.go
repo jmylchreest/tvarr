@@ -106,7 +106,7 @@ func FilterFromModel(f *models.Filter) FilterResponse {
 // ListFiltersInput is the input for listing filters.
 type ListFiltersInput struct {
 	SourceType string `query:"source_type" doc:"Filter by source type (stream or epg)" required:"false"`
-	Enabled    *bool  `query:"enabled" doc:"Filter by enabled status" required:"false"`
+	Enabled    string `query:"enabled" doc:"Filter by enabled status (true or false)" required:"false" enum:"true,false,"`
 }
 
 // ListFiltersOutput is the output for listing filters.
@@ -122,7 +122,11 @@ func (h *FilterHandler) List(ctx context.Context, input *ListFiltersInput) (*Lis
 	var filters []*models.Filter
 	var err error
 
-	if input.Enabled != nil && *input.Enabled {
+	// Parse enabled filter (string to bool)
+	enabledFilter := input.Enabled == "true"
+	hasEnabledFilter := input.Enabled != ""
+
+	if hasEnabledFilter && enabledFilter {
 		if input.SourceType != "" {
 			filters, err = h.repo.GetEnabledForSourceType(ctx, models.FilterSourceType(input.SourceType), nil)
 		} else {

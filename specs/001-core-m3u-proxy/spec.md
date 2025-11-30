@@ -198,6 +198,7 @@ As a developer, I want a REST API to manage all entities so that I can integrate
 - What happens when database is full? → Graceful error handling, cleanup job prioritized
 - What happens when two proxies use same source during concurrent generation? → Source data is shared, no duplicate fetching
 - How does system handle 100k+ channels? → Streaming processing, batch database operations, memory cleanup between stages
+- What happens when logo cache or output directory fills disk? → Logo caching skipped with warning logged, proxy generation fails gracefully with clear error message, system continues serving existing cached files
 
 ## Requirements
 
@@ -294,7 +295,7 @@ As a developer, I want a REST API to manage all entities so that I can integrate
 - **DataMappingRule**: Transformation rule for metadata
 - **Filter**: Include/exclude expression for content curation
 - **RelayProfile**: FFmpeg transcoding configuration
-- **LogoAsset**: Cached logo with metadata (file-based storage with JSON sidecar, not database-stored per constitution Key Systems #3)
+- **CachedLogoMetadata**: Cached logo with metadata (file-based storage with JSON sidecar, not database-stored per constitution Key Systems #3)
 - **LastKnownCodec**: Cached ffprobe result per stream
 - **Job**: Scheduled or immediate task execution record
 

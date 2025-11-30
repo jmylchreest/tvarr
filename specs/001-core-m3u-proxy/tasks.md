@@ -20,9 +20,11 @@
 | Phase 8: US5 Filtering | ✅ Superseded | Merged into Phase 6.5 |
 | Phase 9: Channel Numbering | ✅ Complete | T150-T153, configurable modes |
 | Phase 10: Logo Caching | ✅ Complete | File-based caching with metadata sidecar |
-| **Phase 10.5: Parity Fixes** | ✅ Complete | Manual source, ingestion guard, atomic publish, auto-EPG, shorthand |
+| **Phase 10.5: Parity Fixes** | ✅ Complete | Manual source, ingestion guard, atomic publish, auto-EPG, shorthand (T470-T495) |
 | **Phase 11: Scheduled Jobs** | ✅ Complete | Job model, scheduler, runner, handlers (T180-T193) |
-| Phase 12-14 | ⏸️ Pending | |
+| **Phase 12: Stream Relay** | ✅ Complete | FFmpeg integration, circuit breaker, HLS collapser (T200-T226) |
+| **Phase 12.5: API & Frontend** | ⏸️ Pending | Route alignment, frontend port, static embedding (T550-T585) |
+| Phase 13-14 | ⏸️ Pending | |
 
 ---
 
@@ -533,61 +535,61 @@ All tasks in this phase must complete before any user story work.
 | T171a | | US7 | [X] Implement service/logo_indexer.go - in-memory hash-based index |
 | T172 | | US7 | [X] Write integration tests for logo caching |
 
-## Phase 10.5: Parity Fixes (P0 - BLOCKING)
+## Phase 10.5: Parity Fixes ✅ COMPLETE
 
 **Priority**: P0 - Must complete before Phase 11
-**Rationale**: Gap analysis between tvarr and m3u-proxy revealed critical missing features that affect data consistency and user experience. See `pre-phase11-status.md` for full analysis.
+**Rationale**: Gap analysis between tvarr and m3u-proxy revealed critical missing features that affect data consistency and user experience.
 
-### Manual Source Type
-
-| ID | P | Story | Task Description |
-|----|---|-------|------------------|
-| T470 | P | Parity | [ ] Write tests for Manual source type |
-| T471 | | Parity | [ ] Add `SourceTypeManual` to SourceType enum in models/stream_source.go |
-| T472 | | Parity | [ ] Update StreamSource.URL to be optional (for Manual sources) |
-| T473 | | Parity | [ ] Implement ingestor/manual_handler.go - materialize ManualStreamChannels to Channels |
-| T474 | | Parity | [ ] Register manual handler in ingestor/factory.go |
-| T475 | | Parity | [ ] Write integration tests for manual source ingestion |
-
-### Ingestion Guard Pipeline Stage
+### Manual Source Type ✅ COMPLETE
 
 | ID | P | Story | Task Description |
 |----|---|-------|------------------|
-| T476 | P | Parity | [ ] Write tests for ingestion guard stage |
-| T477 | | Parity | [ ] Implement pipeline/stages/ingestionguard/stage.go |
-| T478 | | Parity | [ ] Add configurable polling interval and max attempts |
-| T479 | | Parity | [ ] Register ingestion guard as first stage in factory |
-| T480 | | Parity | [ ] Add feature flag to enable/disable ingestion guard |
+| T470 | P | Parity | [X] Write tests for Manual source type |
+| T471 | | Parity | [X] Add `SourceTypeManual` to SourceType enum in models/stream_source.go |
+| T472 | | Parity | [X] Update StreamSource.URL to be optional (for Manual sources) |
+| T473 | | Parity | [X] Implement ingestor/manual_handler.go - materialize ManualStreamChannels to Channels |
+| T474 | | Parity | [X] Register manual handler in ingestor/factory.go |
+| T475 | | Parity | [X] Write integration tests for manual source ingestion |
 
-### Atomic File Publishing
-
-| ID | P | Story | Task Description |
-|----|---|-------|------------------|
-| T481 | P | Parity | [ ] Write tests for atomic publish |
-| T482 | | Parity | [ ] Update pipeline/stages/publish/stage.go to use os.Rename() |
-| T483 | | Parity | [ ] Add cross-filesystem fallback (copy-then-rename) |
-| T484 | | Parity | [ ] Update storage/sandbox.go with atomic publish helper |
-
-### Auto-EPG Linking for Xtream Sources
+### Ingestion Guard Pipeline Stage ✅ COMPLETE
 
 | ID | P | Story | Task Description |
 |----|---|-------|------------------|
-| T485 | P | Parity | [ ] Write tests for auto-EPG linking |
-| T486 | | Parity | [ ] Add check_epg_availability() to source_service.go |
-| T487 | | Parity | [ ] Update CreateStreamSource to auto-create EPG for Xtream type |
-| T488 | | Parity | [ ] Add URL-based source linking for Xtream sources |
-| T489 | | Parity | [ ] Write integration tests for auto-EPG creation |
+| T476 | P | Parity | [X] Write tests for ingestion guard stage |
+| T477 | | Parity | [X] Implement pipeline/stages/ingestionguard/stage.go |
+| T478 | | Parity | [X] Add configurable polling interval and max attempts |
+| T479 | | Parity | [X] Register ingestion guard as first stage in factory |
+| T480 | | Parity | [X] Add feature flag to enable/disable ingestion guard |
 
-### Expression Engine Action Shorthand
+### Atomic File Publishing ✅ COMPLETE
 
 | ID | P | Story | Task Description |
 |----|---|-------|------------------|
-| T490 | P | Parity | [ ] Write tests for action shorthand syntax |
-| T491 | | Parity | [ ] Update lexer.go to recognize ?=, +=, -= operators |
-| T492 | | Parity | [ ] Update parser.go to handle implicit SET (field = value without keyword) |
-| T493 | | Parity | [ ] Update operators.go to map shorthand to ActionOperator |
-| T494 | | Parity | [ ] Ensure backward compatibility with keyword syntax |
-| T495 | | Parity | [ ] Write integration tests for shorthand expressions |
+| T481 | P | Parity | [X] Write tests for atomic publish |
+| T482 | | Parity | [X] Update pipeline/stages/publish/stage.go to use os.Rename() |
+| T483 | | Parity | [X] Add cross-filesystem fallback (copy-then-rename) |
+| T484 | | Parity | [X] Update storage/sandbox.go with atomic publish helper |
+
+### Auto-EPG Linking for Xtream Sources ✅ COMPLETE
+
+| ID | P | Story | Task Description |
+|----|---|-------|------------------|
+| T485 | P | Parity | [X] Write tests for auto-EPG linking |
+| T486 | | Parity | [X] Add check_epg_availability() to source_service.go |
+| T487 | | Parity | [X] Update CreateStreamSource to auto-create EPG for Xtream type |
+| T488 | | Parity | [X] Add URL-based source linking for Xtream sources |
+| T489 | | Parity | [X] Write integration tests for auto-EPG creation |
+
+### Expression Engine Action Shorthand ✅ COMPLETE
+
+| ID | P | Story | Task Description |
+|----|---|-------|------------------|
+| T490 | P | Parity | [X] Write tests for action shorthand syntax |
+| T491 | | Parity | [X] Update lexer.go to recognize ?=, +=, -= operators |
+| T492 | | Parity | [X] Update parser.go to handle implicit SET (field = value without keyword) |
+| T493 | | Parity | [X] Update operators.go to map shorthand to ActionOperator |
+| T494 | | Parity | [X] Ensure backward compatibility with keyword syntax |
+| T495 | | Parity | [X] Write integration tests for shorthand expressions |
 
 ---
 
@@ -610,53 +612,143 @@ All tasks in this phase must complete before any user story work.
 | T192 | | US9 | [X] Implement http/handlers/job_handler.go |
 | T193 | | US9 | [X] Write integration tests for scheduling |
 
-## Phase 12: User Story 8 - Stream Relay (P3)
+## Phase 12: User Story 8 - Stream Relay (P3) ✅ COMPLETE
 
-### Models & Repository
-
-| ID | P | Story | Task Description |
-|----|---|-------|------------------|
-| T200 | P | US8 | Write tests for RelayProfile model |
-| T201 | | US8 | Implement models/relay_profile.go |
-| T202 | P | US8 | Write tests for LastKnownCodec model |
-| T203 | | US8 | Implement models/last_known_codec.go |
-| T204 | | US8 | Create migrations for relay_profiles, last_known_codecs tables |
-| T205 | P | US8 | Write tests for RelayProfileRepository |
-| T206 | | US8 | Implement repository/relay_profile_repo.go |
-| T207 | P | US8 | Write tests for LastKnownCodecRepository |
-| T208 | | US8 | Implement repository/last_known_codec_repo.go |
-
-### FFmpeg Integration
+### Models & Repository ✅ COMPLETE
 
 | ID | P | Story | Task Description |
 |----|---|-------|------------------|
-| T210 | | US8 | Implement ffmpeg/binary.go - binary detection |
-| T211 | | US8 | Implement ffmpeg/hwaccel.go - hardware acceleration detection |
-| T212 | P | US8 | Write tests for FFmpeg wrapper |
-| T213 | | US8 | Implement relay/ffmpeg_wrapper.go - process management |
-| T214 | P | US8 | Write tests for stream prober |
-| T215 | | US8 | Implement relay/stream_prober.go - ffprobe integration |
+| T200 | P | US8 | [X] Write tests for RelayProfile model |
+| T201 | | US8 | [X] Implement models/relay_profile.go |
+| T202 | P | US8 | [X] Write tests for LastKnownCodec model |
+| T203 | | US8 | [X] Implement models/last_known_codec.go |
+| T204 | | US8 | [X] Create migrations for relay_profiles, last_known_codecs tables |
+| T205 | P | US8 | [X] Write tests for RelayProfileRepository |
+| T206 | | US8 | [X] Implement repository/relay_profile_repo.go |
+| T207 | P | US8 | [X] Write tests for LastKnownCodecRepository |
+| T208 | | US8 | [X] Implement repository/last_known_codec_repo.go |
 
-### Relay System
-
-| ID | P | Story | Task Description |
-|----|---|-------|------------------|
-| T216 | P | US8 | Write tests for circuit breaker |
-| T217 | | US8 | Implement relay/circuit_breaker.go |
-| T218 | P | US8 | Write tests for HLS collapser |
-| T219 | | US8 | Implement relay/hls_collapser.go |
-| T220 | | US8 | Implement relay/connection_pool.go - per-host concurrency |
-| T221 | P | US8 | Write tests for relay manager |
-| T222 | | US8 | Implement relay/manager.go |
-
-### Service & API
+### FFmpeg Integration ✅ COMPLETE
 
 | ID | P | Story | Task Description |
 |----|---|-------|------------------|
-| T223 | P | US8 | Write tests for RelayService |
-| T224 | | US8 | Implement service/relay_service.go |
-| T225 | | US8 | Implement http/handlers/relay_handler.go |
-| T226 | | US8 | Write integration tests for relay flow |
+| T210 | | US8 | [X] Implement ffmpeg/binary.go - binary detection |
+| T211 | | US8 | [X] Implement ffmpeg/hwaccel.go - hardware acceleration detection |
+| T212 | P | US8 | [X] Write tests for FFmpeg wrapper |
+| T213 | | US8 | [X] Implement internal/ffmpeg/wrapper.go - process management |
+| T214 | P | US8 | [X] Write tests for stream prober |
+| T215 | | US8 | [X] Implement internal/ffmpeg/prober.go - ffprobe integration |
+
+### Relay System ✅ COMPLETE
+
+| ID | P | Story | Task Description |
+|----|---|-------|------------------|
+| T216 | P | US8 | [X] Write tests for circuit breaker |
+| T217 | | US8 | [X] Implement relay/circuit_breaker.go |
+| T218 | P | US8 | [X] Write tests for HLS collapser |
+| T219 | | US8 | [X] Implement relay/hls_collapser.go |
+| T220 | | US8 | [X] Implement relay/connection_pool.go - per-host concurrency |
+| T221 | P | US8 | [X] Write tests for relay manager |
+| T222 | | US8 | [X] Implement relay/manager.go |
+
+### Service & API ✅ COMPLETE
+
+| ID | P | Story | Task Description |
+|----|---|-------|------------------|
+| T223 | P | US8 | [X] Write tests for RelayService |
+| T224 | | US8 | [X] Implement service/relay_service.go |
+| T225 | | US8 | [X] Implement http/handlers/relay_profile.go and relay_stream.go |
+| T226 | | US8 | [X] Write integration tests for relay flow
+
+## Phase 12.5: API Route Alignment & Frontend Integration
+
+**Priority**: P1 - Required for complete user experience
+**Rationale**: Aligns tvarr API structure with m3u-proxy for frontend compatibility, ports the Next.js frontend, and embeds static assets into the Go binary.
+
+### Overview
+
+This phase:
+1. Restructures HTTP routes to match m3u-proxy's `/api/v1/` convention
+2. Ports the m3u-proxy Next.js/Tailwind frontend to tvarr
+3. Adds build infrastructure for frontend compilation
+4. Embeds static assets using Go's `embed` directive
+5. Serves frontend as catch-all for unmatched routes
+
+### API Route Alignment
+
+**Current → Target Structure:**
+```
+/sources              → /api/v1/sources/stream
+/epg-sources          → /api/v1/sources/epg
+/proxies              → /api/v1/proxies
+/jobs                 → /api/v1/jobs
+/relay/profiles       → /api/v1/relay/profiles (management)
+/relay/stream/*       → /relay/stream/* (client-facing, unchanged)
+/health               → /health (unchanged)
+```
+
+| ID | P | Story | Task Description |
+|----|---|-------|------------------|
+| T550 | P | API | [ ] Document current vs target route mapping |
+| T551 | | API | [ ] Update stream_source.go handler paths to `/api/v1/sources/stream` |
+| T552 | | API | [ ] Update epg_source.go handler paths to `/api/v1/sources/epg` |
+| T553 | | API | [ ] Update stream_proxy.go handler paths to `/api/v1/proxies` |
+| T554 | | API | [ ] Update job.go handler paths to `/api/v1/jobs` |
+| T555 | | API | [ ] Update relay_profile.go handler paths to `/api/v1/relay/profiles` |
+| T556 | | API | [ ] Update all handler tests for new paths |
+| T557 | | API | [ ] Add viewer endpoints: `/api/v1/channels` (channel browser) |
+| T558 | | API | [ ] Add viewer endpoints: `/api/v1/epg/programs`, `/api/v1/epg/sources`, `/api/v1/epg/guide` |
+| T559 | | API | [ ] Verify OpenAPI spec reflects new route structure |
+
+### Frontend Port
+
+**Source:** `../m3u-proxy/frontend/` (Next.js 15 + Tailwind v4 + shadcn/ui)
+**Target:** `frontend/` directory in tvarr
+
+| ID | P | Story | Task Description |
+|----|---|-------|------------------|
+| T560 | P | FE | [ ] Create `frontend/` directory structure |
+| T561 | | FE | [ ] Copy m3u-proxy frontend source files (src/, public/, configs) |
+| T562 | | FE | [ ] Update package.json: rename to "tvarr-frontend", update version |
+| T563 | | FE | [ ] Update next.config.js: API rewrite paths, base path if needed |
+| T564 | | FE | [ ] Update API client endpoints to match tvarr route structure |
+| T565 | | FE | [ ] Update branding (app name, titles, favicon) |
+| T566 | | FE | [ ] Verify frontend builds with `npm run build` (static export) |
+| T567 | | FE | [ ] Test frontend dev mode against tvarr backend |
+
+### Build Infrastructure
+
+| ID | P | Story | Task Description |
+|----|---|-------|------------------|
+| T570 | P | Build | [ ] Add frontend build targets to Taskfile.yml |
+| T571 | | Build | [ ] Add `task frontend:install` - npm install in frontend/ |
+| T572 | | Build | [ ] Add `task frontend:build` - npm run build (static export to frontend/out/) |
+| T573 | | Build | [ ] Add `task frontend:dev` - npm run dev for development |
+| T574 | | Build | [ ] Add `task frontend:copy` - copy frontend/out/* to internal/http/static/ |
+| T575 | | Build | [ ] Add `task build:all` - full build including frontend |
+| T576 | | Build | [ ] Update CI workflow to build frontend before Go binary |
+
+### Static Asset Embedding
+
+| ID | P | Story | Task Description |
+|----|---|-------|------------------|
+| T580 | P | Embed | [ ] Create internal/http/static/ directory with .gitkeep |
+| T581 | | Embed | [ ] Create internal/http/assets.go with `//go:embed static/*` directive |
+| T582 | | Embed | [ ] Implement StaticAssets helper (GetAsset, GetContentType, ListAssets) |
+| T583 | | Embed | [ ] Implement static file handler with proper MIME types |
+| T584 | | Embed | [ ] Register catch-all route for frontend SPA (serve index.html for unmatched routes) |
+| T585 | | Embed | [ ] Write tests for static asset serving (embedded vs fallback) |
+
+### Integration Testing
+
+| ID | P | Story | Task Description |
+|----|---|-------|------------------|
+| T590 | P | Test | [ ] Write E2E test: frontend loads from embedded assets |
+| T591 | | Test | [ ] Write E2E test: API routes accessible from frontend |
+| T592 | | Test | [ ] Write E2E test: SPA routing (deep links work) |
+| T593 | | Test | [ ] Manual testing checklist for all frontend pages |
+
+---
 
 ## Phase 13: FFmpeg Embedding (Optional)
 
@@ -741,13 +833,15 @@ Phase 1 (Setup) → Phase 2 (Database) → [US1, US2] in parallel
                                       ↓
                               Phase 6.5 (Expression Engine) ← BLOCKING
                                       ↓
-                              Phase 6.6 (SSE Progress) ← Optional but recommended
+                              Phase 6.6 (SSE Progress)
                                       ↓
                                [US4, US5] in parallel
                                       ↓
                                [US6, US7, US9] in parallel
                                       ↓
                                      US8 (Relay)
+                                      ↓
+                              Phase 12.5 (API & Frontend) ← NEXT
                                       ↓
                                Phase 13, 14 (Optional, Polish)
 ```
@@ -762,17 +856,19 @@ Phase 1 (Setup) → Phase 2 (Database) → [US1, US2] in parallel
 | Phase 4: US2 | 13 | ✅ Complete |
 | Phase 5: US3 | 13 | ✅ Complete |
 | Phase 6: US10 | 8 | ✅ Complete |
-| **Phase 6.5: Expression Engine** | **21** | **BLOCKING - Critical path** |
-| Phase 6.6: SSE Progress | 8 | Real-time progress streaming |
-| Phase 7: US4 | 8 | Reduced (engine in 6.5) |
-| Phase 8: US5 | 3 | Reduced (engine in 6.5) |
-| Phase 9: US6 | 3 | Straightforward |
-| Phase 10: US7 | 8 | File management |
-| Phase 11: US9 | 8 | Job scheduling |
-| Phase 12: US8 | 21 | FFmpeg integration complex |
-| Phase 13: Optional | 13 | Embedding complexity |
+| **Phase 6.5: Expression Engine** | **21** | ✅ Complete |
+| Phase 6.6: SSE Progress | 8 | ✅ Complete |
+| Phase 7: US4 | 8 | ✅ Superseded (in 6.5) |
+| Phase 8: US5 | 3 | ✅ Superseded (in 6.5) |
+| Phase 9: US6 | 3 | ✅ Complete |
+| Phase 10: US7 | 8 | ✅ Complete |
+| Phase 10.5: Parity Fixes | 5 | ✅ Complete |
+| Phase 11: US9 | 8 | ✅ Complete |
+| Phase 12: US8 | 21 | ✅ Complete |
+| **Phase 12.5: API & Frontend** | **13** | Route alignment, frontend port, embedding |
+| Phase 13: Optional | 13 | FFmpeg embedding (optional) |
 | Phase 14: Polish | 8 | Documentation, testing |
-| **Total** | **161** | |
+| **Total** | **179** | |
 
 ## Phase 6.5 Task Groupings (Recommended Order)
 
