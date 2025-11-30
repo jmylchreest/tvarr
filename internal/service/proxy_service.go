@@ -8,12 +8,14 @@ import (
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/pipeline"
 	"github.com/jmylchreest/tvarr/internal/repository"
+	"github.com/jmylchreest/tvarr/internal/service/progress"
 )
 
 // ProxyService provides business logic for stream proxy management.
 type ProxyService struct {
 	proxyRepo       repository.StreamProxyRepository
 	pipelineFactory pipeline.OrchestratorFactory
+	progressService *progress.Service
 	logger          *slog.Logger
 }
 
@@ -27,6 +29,12 @@ func NewProxyService(
 		pipelineFactory: pipelineFactory,
 		logger:          slog.Default(),
 	}
+}
+
+// WithProgressService sets the progress service for progress reporting.
+func (s *ProxyService) WithProgressService(svc *progress.Service) *ProxyService {
+	s.progressService = svc
+	return s
 }
 
 // WithLogger sets the logger for the service.
@@ -192,9 +200,29 @@ func (s *ProxyService) Generate(ctx context.Context, proxyID models.ULID) (*pipe
 		return nil, fmt.Errorf("creating pipeline: %w", err)
 	}
 
+	// Start progress tracking if service is available
+	var progressMgr *progress.OperationManager
+	if s.progressService != nil {
+		stages := orchestrator.Stages()
+		progressMgr, err = progress.StartPipelineOperation(s.progressService, "stream_proxy", proxyID, stages)
+		if err != nil {
+			// Log but don't fail - progress tracking is non-essential
+			s.logger.WarnContext(ctx, "failed to start progress tracking",
+				slog.String("proxy_id", proxyID.String()),
+				slog.String("error", err.Error()),
+			)
+		} else {
+			// Set progress reporter on orchestrator
+			orchestrator.SetProgressReporter(progressMgr)
+		}
+	}
+
 	// Get sources with priority ordering
 	sources, err := s.proxyRepo.GetSources(ctx, proxyID)
 	if err != nil {
+		if progressMgr != nil {
+			progressMgr.Fail(err)
+		}
 		s.proxyRepo.UpdateStatus(ctx, proxyID, models.StreamProxyStatusFailed, err.Error())
 		return nil, fmt.Errorf("getting sources: %w", err)
 	}
@@ -203,6 +231,9 @@ func (s *ProxyService) Generate(ctx context.Context, proxyID models.ULID) (*pipe
 	// Get EPG sources with priority ordering
 	epgSources, err := s.proxyRepo.GetEpgSources(ctx, proxyID)
 	if err != nil {
+		if progressMgr != nil {
+			progressMgr.Fail(err)
+		}
 		s.proxyRepo.UpdateStatus(ctx, proxyID, models.StreamProxyStatusFailed, err.Error())
 		return nil, fmt.Errorf("getting EPG sources: %w", err)
 	}
@@ -211,6 +242,9 @@ func (s *ProxyService) Generate(ctx context.Context, proxyID models.ULID) (*pipe
 	// Execute pipeline
 	result, err := orchestrator.Execute(ctx)
 	if err != nil {
+		if progressMgr != nil {
+			progressMgr.Fail(err)
+		}
 		s.proxyRepo.UpdateStatus(ctx, proxyID, models.StreamProxyStatusFailed, err.Error())
 		return result, fmt.Errorf("executing pipeline: %w", err)
 	}
@@ -220,6 +254,11 @@ func (s *ProxyService) Generate(ctx context.Context, proxyID models.ULID) (*pipe
 		s.logger.WarnContext(ctx, "failed to update proxy generation stats",
 			slog.String("error", err.Error()),
 		)
+	}
+
+	// Complete progress tracking
+	if progressMgr != nil {
+		progressMgr.Complete(fmt.Sprintf("Generated %d channels, %d programs", result.ChannelCount, result.ProgramCount))
 	}
 
 	s.logger.InfoContext(ctx, "proxy generation completed",

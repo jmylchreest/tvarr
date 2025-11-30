@@ -29,6 +29,9 @@ func AllMigrations() []Migration {
 		migration011Filters(),
 		migration012DataMappingRules(),
 		migration013DefaultFiltersAndRules(),
+
+		// Note: Logo caching (Phase 10) uses file-based storage with
+		// in-memory indexing, no database tables required.
 	}
 }
 
@@ -272,3 +275,4 @@ func migration013DefaultFiltersAndRules() Migration {
 		},
 	}
 }
+

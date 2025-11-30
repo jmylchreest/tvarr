@@ -14,11 +14,12 @@
 | Phase 4: US2 EPG Sources | ✅ Complete | T050-T066 |
 | Phase 5: US3 Proxy Config | ✅ Complete | T070-T087, pipeline refactored |
 | Phase 6: US10 REST API | ✅ Complete | T090-T107 |
-| **Phase 6.5: Expression Engine** | 🟡 In Progress | Core complete, API integration needed |
-| Phase 6.6: SSE Progress Streaming | ⏸️ Pending | Real-time progress updates via SSE |
-| Phase 7: US4 Data Mapping | ⏸️ Blocked | Needs Phase 6.5 |
-| Phase 8: US5 Filtering | ⏸️ Blocked | Needs Phase 6.5 |
-| Phase 9-14 | ⏸️ Pending | |
+| **Phase 6.5: Expression Engine** | ✅ Complete | All tasks complete |
+| Phase 6.6: SSE Progress Streaming | ✅ Complete | Real-time progress updates via SSE |
+| Phase 7: US4 Data Mapping | ✅ Superseded | Merged into Phase 6.5 |
+| Phase 8: US5 Filtering | ✅ Superseded | Merged into Phase 6.5 |
+| Phase 9: Channel Numbering | ✅ Complete | T150-T153, configurable modes |
+| Phase 10-14 | ⏸️ Pending | |
 
 ---
 
@@ -45,12 +46,12 @@
 | Filter Model | Database persistence | ✅ Complete | migration added |
 | DataMappingRule Model | Database persistence | ✅ Complete | migration added |
 | Default Filters/Rules | Migration seed data | ✅ Complete | matches m3u-proxy |
-| Conflict Resolution | Numbering conflicts | ❌ Pending | MEDIUM |
-| Filter Repository | CRUD operations | ❌ Pending | Needed for US5 |
-| DataMappingRule Repository | CRUD operations | ❌ Pending | Needed for US4 |
-| Filter API Handlers | REST CRUD endpoints | ❌ Pending | Needed for US5 |
-| DataMappingRule API Handlers | REST CRUD endpoints | ❌ Pending | Needed for US4 |
-| Pipeline Database Integration | Load rules from DB | ❌ Pending | Final wiring |
+| Conflict Resolution | Numbering conflicts | ✅ Complete | detect/resolve in preserve mode |
+| Filter Repository | CRUD operations | ✅ Complete | repository/filter_repo.go |
+| DataMappingRule Repository | CRUD operations | ✅ Complete | repository/data_mapping_rule_repo.go |
+| Filter API Handlers | REST CRUD endpoints | ✅ Complete | handlers/filter.go |
+| DataMappingRule API Handlers | REST CRUD endpoints | ✅ Complete | handlers/data_mapping_rule.go |
+| Pipeline Database Integration | Load rules from DB | ✅ Complete | orchestrator loads from DB |
 
 ### Expression Engine Foundation ✅ COMPLETE
 
@@ -107,7 +108,7 @@
 | T342 | P | Expr | [X] Write tests for time helper |
 | T343 | | Expr | [X] Implement expression/helpers/time_helper.go - @time:now(), @time:parse() |
 | T344 | P | Expr | [X] Write tests for logo helper |
-| T345 | | Expr | [X] Implement expression/helpers/logo_helper.go - @logo:UUID resolution |
+| T345 | | Expr | [X] Implement expression/helpers/logo_helper.go - @logo:ULID resolution |
 | T346 | | Expr | [X] Implement expression/helpers/processor.go - HelperPostProcessor registry |
 
 ### Rule Processor ✅ COMPLETE
@@ -168,20 +169,19 @@
 | T404 | | Expr | [X] Create migration for data_mapping_rules table |
 | T405 | | Expr | [X] Create migration for default filters and rules |
 
-### Integration & Testing (PARTIAL)
+### Integration & Testing ✅ COMPLETE (Core)
 
 | ID | P | Story | Task Description |
 |----|---|-------|------------------|
 | T390 | P | Expr | [X] Write integration tests for expression parsing |
 | T391 | P | Expr | [X] Write integration tests for rule application |
 | T392 | P | Expr | [X] Write integration tests for helper resolution |
-| T393 | | Expr | [ ] Write fuzzing tests for expression parser |
-| T394 | | Expr | [ ] Write benchmark tests for expression evaluation |
-| T395 | | Expr | [ ] End-to-end pipeline test with data mapping + filtering |
+
+> **Deferred to Phase 14 (Polish)**: T393-T395 (fuzzing, benchmarks, e2e) are non-blocking quality improvements.
 
 ---
 
-## Phase 6.6: SSE Progress Streaming
+## Phase 6.6: SSE Progress Streaming ✅ COMPLETE
 
 **Priority**: P2 - Enhances user experience for long-running operations
 **Rationale**: Provides real-time feedback for ingestion, proxy regeneration, and pipeline operations. Essential for frontend integration and operation monitoring.
@@ -198,66 +198,66 @@ This phase implements Server-Sent Events (SSE) for real-time progress streaming,
 
 | ID | P | Story | Task Description |
 |----|---|-------|------------------|
-| T410 | P | SSE | [ ] Write tests for UniversalProgress types and states |
-| T411 | | SSE | [ ] Implement service/progress_service.go - ProgressService struct |
-| T412 | | SSE | [ ] Implement UniversalState enum (Idle, Preparing, Connecting, Downloading, Processing, Saving, Cleanup, Completed, Error, Cancelled) |
-| T413 | | SSE | [ ] Implement OperationType enum (StreamIngestion, EpgIngestion, ProxyRegeneration, Pipeline, DataMapping, LogoCaching, Filtering, Maintenance, Database) |
-| T414 | | SSE | [ ] Implement UniversalProgress struct with stages, timestamps, metadata |
-| T415 | | SSE | [ ] Implement ProgressManager for staged operations with weighted progress calculation |
-| T416 | | SSE | [ ] Implement StageUpdater for individual stage progress reporting |
-| T417 | | SSE | [ ] Implement broadcast channel mechanism for SSE subscribers |
-| T418 | | SSE | [ ] Implement operation blocking (prevent duplicate operations per owner) |
-| T419 | | SSE | [ ] Implement automatic cleanup of completed/stale operations |
+| T410 | P | SSE | [x] Write tests for UniversalProgress types and states |
+| T411 | | SSE | [x] Implement service/progress_service.go - ProgressService struct |
+| T412 | | SSE | [x] Implement UniversalState enum (Idle, Preparing, Connecting, Downloading, Processing, Saving, Cleanup, Completed, Error, Cancelled) |
+| T413 | | SSE | [x] Implement OperationType enum (StreamIngestion, EpgIngestion, ProxyRegeneration, Pipeline, DataMapping, LogoCaching, Filtering, Maintenance, Database) |
+| T414 | | SSE | [x] Implement UniversalProgress struct with stages, timestamps, metadata |
+| T415 | | SSE | [x] Implement ProgressManager for staged operations with weighted progress calculation |
+| T416 | | SSE | [x] Implement StageUpdater for individual stage progress reporting |
+| T417 | | SSE | [x] Implement broadcast channel mechanism for SSE subscribers |
+| T418 | | SSE | [x] Implement operation blocking (prevent duplicate operations per owner) |
+| T419 | | SSE | [x] Implement automatic cleanup of completed/stale operations |
 
 ### SSE HTTP Endpoint
 
 | ID | P | Story | Task Description |
 |----|---|-------|------------------|
-| T420 | P | SSE | [ ] Write tests for SSE progress handler |
-| T421 | | SSE | [ ] Implement http/handlers/progress_handler.go - SSE endpoint |
-| T422 | | SSE | [ ] Implement GET /api/v1/progress/events SSE stream |
-| T423 | | SSE | [ ] Implement query filters (operation_type, owner_id, resource_id, state, active_only) |
-| T424 | | SSE | [ ] Implement SSE keepalive heartbeat (30s interval) |
-| T425 | | SSE | [ ] Implement GET /api/v1/progress/operations - list current operations |
-| T426 | | SSE | [ ] Register progress routes in serve.go |
+| T420 | P | SSE | [x] Write tests for SSE progress handler |
+| T421 | | SSE | [x] Implement http/handlers/progress_handler.go - SSE endpoint |
+| T422 | | SSE | [x] Implement GET /api/v1/progress/events SSE stream |
+| T423 | | SSE | [x] Implement query filters (operation_type, owner_id, resource_id, state, active_only) |
+| T424 | | SSE | [x] Implement SSE keepalive heartbeat (30s interval) |
+| T425 | | SSE | [x] Implement GET /api/v1/progress/operations - list current operations |
+| T426 | | SSE | [x] Register progress routes in serve.go |
 
 ### Pipeline Integration
 
 | ID | P | Story | Task Description |
 |----|---|-------|------------------|
-| T430 | P | SSE | [ ] Write tests for pipeline progress integration |
-| T431 | | SSE | [ ] Update pipeline/core/orchestrator.go to use ProgressService |
-| T432 | | SSE | [ ] Register pipeline stages with ProgressManager |
-| T433 | | SSE | [ ] Bridge existing ProgressReporter to new ProgressService |
-| T434 | | SSE | [ ] Implement stage-level progress updates during pipeline execution |
+| T430 | P | SSE | [x] Write tests for pipeline progress integration |
+| T431 | | SSE | [x] Update pipeline/core/orchestrator.go to use ProgressService |
+| T432 | | SSE | [x] Register pipeline stages with ProgressManager |
+| T433 | | SSE | [x] Bridge existing ProgressReporter to new ProgressService |
+| T434 | | SSE | [x] Implement stage-level progress updates during pipeline execution |
 
 ### Ingestion Integration
 
 | ID | P | Story | Task Description |
 |----|---|-------|------------------|
-| T440 | P | SSE | [ ] Write tests for ingestion progress integration |
-| T441 | | SSE | [ ] Update service/source_service.go to use ProgressService |
-| T442 | | SSE | [ ] Update service/epg_service.go to use ProgressService |
-| T443 | | SSE | [ ] Implement progress stages for ingestion (Connecting, Downloading, Processing, Saving) |
-| T444 | | SSE | [ ] Track item counts (channels/programs processed vs total) |
+| T440 | P | SSE | [x] Write tests for ingestion progress integration |
+| T441 | | SSE | [x] Update service/source_service.go to use ProgressService |
+| T442 | | SSE | [x] Update service/epg_service.go to use ProgressService |
+| T443 | | SSE | [x] Implement progress stages for ingestion (Connecting, Downloading, Processing, Saving) |
+| T444 | | SSE | [x] Track item counts (channels/programs processed vs total) |
 
 ### Service Integration
 
 | ID | P | Story | Task Description |
 |----|---|-------|------------------|
-| T450 | P | SSE | [ ] Write tests for proxy regeneration progress |
-| T451 | | SSE | [ ] Update service/proxy_service.go to use ProgressService |
-| T452 | | SSE | [ ] Implement progress tracking for proxy regeneration |
-| T453 | | SSE | [ ] Add ProgressService to application dependencies in serve.go |
+| T450 | P | SSE | [x] Write tests for proxy regeneration progress |
+| T451 | | SSE | [x] Update service/proxy_service.go to use ProgressService |
+| T452 | | SSE | [x] Implement progress tracking for proxy regeneration |
+| T453 | | SSE | [x] Add ProgressService to application dependencies in serve.go |
 
 ### Testing
 
 | ID | P | Story | Task Description |
 |----|---|-------|------------------|
-| T460 | P | SSE | [ ] Write integration tests for SSE endpoint |
-| T461 | | SSE | [ ] Write tests for concurrent operation blocking |
-| T462 | | SSE | [ ] Write tests for progress calculation with multiple stages |
-| T463 | | SSE | [ ] Write tests for cleanup of stale operations |
+| T460 | P | SSE | [x] Write integration tests for SSE endpoint |
+| T461 | | SSE | [x] Write tests for concurrent operation blocking |
+| T462 | | SSE | [x] Write tests for progress calculation with multiple stages |
+| T463 | | SSE | [x] Write tests for cleanup of stale operations |
 
 ---
 
@@ -433,60 +433,80 @@ All tasks in this phase must complete before any user story work.
 | T106 | | US10 | [X] Add migrate command for database migrations |
 | T107 | | US10 | [X] Write integration tests for API endpoints |
 
-## Phase 7: User Story 4 - Data Mapping Rules (P2) ⏸️ BLOCKED
+## Phase 7: User Story 4 - Data Mapping Rules (P2) ✅ SUPERSEDED
 
-**Blocked by**: Phase 6.5 (Expression Engine)
+**Status**: Superseded by Phase 6.5 (Expression Engine)
 
-### Expression Engine (MOVED TO PHASE 6.5)
+> **Note**: All tasks in this phase have been completed as part of Phase 6.5, which consolidated
+> the expression engine, data mapping, and filtering implementations. See Phase 6.5 tasks:
+> - T360-T364: Data Mapping Engine
+> - T401-T402, T404: DataMappingRule model and migration
+> - T380, T382: DataMappingStage pipeline implementation
+> - Handlers in http/handlers/data_mapping_rule.go
+> - Repository in repository/data_mapping_rule_repo.go
 
-### Models & Pipeline
-
-| ID | P | Story | Task Description |
-|----|---|-------|------------------|
-| T116 | P | US4 | Write tests for DataMappingRule model |
-| T117 | | US4 | Implement models/data_mapping_rule.go |
-| T118 | | US4 | Create migration for data_mapping_rules table |
-| T119 | P | US4 | Write tests for DataMappingRuleRepository |
-| T120 | | US4 | Implement repository/data_mapping_rule_repo.go |
-| T121 | P | US4 | Write tests for data mapping pipeline stage |
-| T122 | | US4 | Implement pipeline/stages/data_mapping.go |
-
-### Service & API
+### Models & Pipeline (SUPERSEDED - see Phase 6.5)
 
 | ID | P | Story | Task Description |
 |----|---|-------|------------------|
-| T123 | P | US4 | Write tests for MappingService |
-| T124 | | US4 | Implement service/mapping_service.go |
-| T125 | | US4 | Implement http/handlers/mapping_handler.go |
-| T126 | | US4 | Write integration tests for mapping flow |
+| T116 | P | US4 | ~~Write tests for DataMappingRule model~~ → T360 |
+| T117 | | US4 | ~~Implement models/data_mapping_rule.go~~ → T402 |
+| T118 | | US4 | ~~Create migration for data_mapping_rules table~~ → T404 |
+| T119 | P | US4 | ~~Write tests for DataMappingRuleRepository~~ → implemented |
+| T120 | | US4 | ~~Implement repository/data_mapping_rule_repo.go~~ → implemented |
+| T121 | P | US4 | ~~Write tests for data mapping pipeline stage~~ → T360 |
+| T122 | | US4 | ~~Implement pipeline/stages/data_mapping.go~~ → T380 |
 
-## Phase 8: User Story 5 - Filtering Rules (P2) ⏸️ BLOCKED
-
-**Blocked by**: Phase 6.5 (Expression Engine)
-
-| ID | P | Story | Task Description |
-|----|---|-------|------------------|
-| T130 | P | US5 | Write tests for Filter model |
-| T131 | | US5 | Implement models/filter.go |
-| T132 | | US5 | Create migration for filters table |
-| T133 | P | US5 | Write tests for FilterRepository |
-| T134 | | US5 | Implement repository/filter_repo.go |
-| T135 | P | US5 | Write tests for filtering pipeline stage (expression-based) |
-| T136 | | US5 | Update pipeline/stages/filtering/ to use expression engine |
-| T137 | | US5 | (MOVED) Boolean logic now in Phase 6.5 |
-| T138 | P | US5 | Write tests for FilterService |
-| T139 | | US5 | Implement service/filter_service.go |
-| T140 | | US5 | Implement http/handlers/filter_handler.go |
-| T141 | | US5 | Write integration tests for filtering flow |
-
-## Phase 9: User Story 6 - Channel Numbering (P2)
+### Service & API (SUPERSEDED - see Phase 6.5)
 
 | ID | P | Story | Task Description |
 |----|---|-------|------------------|
-| T150 | P | US6 | Write tests for numbering pipeline stage |
-| T151 | | US6 | Update pipeline/stages/numbering/ with conflict detection |
-| T152 | | US6 | Implement numbering configuration (base number, group-based) |
-| T153 | | US6 | Write integration tests for numbering |
+| T123 | P | US4 | ~~Write tests for MappingService~~ → handlers have tests |
+| T124 | | US4 | ~~Implement service/mapping_service.go~~ → handled via repository |
+| T125 | | US4 | ~~Implement http/handlers/mapping_handler.go~~ → data_mapping_rule.go |
+| T126 | | US4 | ~~Write integration tests for mapping flow~~ → T391 |
+
+## Phase 8: User Story 5 - Filtering Rules (P2) ✅ SUPERSEDED
+
+**Status**: Superseded by Phase 6.5 (Expression Engine)
+
+> **Note**: All tasks in this phase have been completed as part of Phase 6.5, which consolidated
+> the expression engine, data mapping, and filtering implementations. See Phase 6.5 tasks:
+> - T370-T374: Filter Processor with expression-based filtering
+> - T401, T403: Filter model and migration
+> - T381, T374: FilteringStage pipeline updates
+> - Handlers in http/handlers/filter.go
+> - Repository in repository/filter_repo.go
+
+| ID | P | Story | Task Description |
+|----|---|-------|------------------|
+| T130 | P | US5 | ~~Write tests for Filter model~~ → T370 |
+| T131 | | US5 | ~~Implement models/filter.go~~ → T401 |
+| T132 | | US5 | ~~Create migration for filters table~~ → T403 |
+| T133 | P | US5 | ~~Write tests for FilterRepository~~ → implemented |
+| T134 | | US5 | ~~Implement repository/filter_repo.go~~ → implemented |
+| T135 | P | US5 | ~~Write tests for filtering pipeline stage~~ → T370 |
+| T136 | | US5 | ~~Update pipeline/stages/filtering/~~ → T374, T381 |
+| T137 | | US5 | ~~Boolean logic~~ → T326-T327 |
+| T138 | P | US5 | ~~Write tests for FilterService~~ → handlers have tests |
+| T139 | | US5 | ~~Implement service/filter_service.go~~ → handled via repository |
+| T140 | | US5 | ~~Implement http/handlers/filter_handler.go~~ → filter.go |
+| T141 | | US5 | ~~Write integration tests for filtering flow~~ → T390-T392 |
+
+## Phase 9: User Story 6 - Channel Numbering (P2) ✅ COMPLETE
+
+| ID | P | Story | Task Description |
+|----|---|-------|------------------|
+| T150 | P | US6 | [X] Write tests for numbering pipeline stage |
+| T151 | | US6 | [X] Update pipeline/stages/numbering/ with conflict detection |
+| T152 | | US6 | [X] Implement numbering configuration (base number, group-based) |
+| T153 | | US6 | [X] Write integration tests for numbering |
+
+**Implementation Notes:**
+- NumberingMode enum added to StreamProxy model (sequential, preserve, group)
+- GroupNumberingSize field added for configurable group ranges
+- Conflict resolution tracks original vs assigned numbers
+- Proxy configuration overrides stage defaults at runtime
 
 ## Phase 10: User Story 7 - Logo Caching (P2)
 
@@ -588,15 +608,24 @@ All tasks in this phase must complete before any user story work.
 | ID | P | Story | Task Description |
 |----|---|-------|------------------|
 | T240 | P | Polish | Implement OpenAPI documentation generation |
-| T241 | P | Polish | Implement observability/tracing.go - OpenTelemetry setup |
-| T242 | P | Polish | Implement observability/metrics.go - Prometheus metrics |
+| T241 | P | Polish | Implement observability/tracing.go - OpenTelemetry setup with request tracing |
+| T242 | P | Polish | Implement observability/metrics.go - Prometheus metrics with /metrics endpoint (NFR-005) |
+| T242a | | Polish | Write tests for health check and metrics endpoints |
+| T242b | | Polish | Implement configurable rate limiting middleware (NFR-007, disabled by default) |
 | T243 | | Polish | Write performance tests for 100k channel ingestion |
 | T244 | | Polish | Write performance tests for 1M EPG program ingestion |
 | T244a | | Polish | Write stability/soak test for 24/7 operation (SC-006) - long-running scheduled jobs |
+| T244b | | Polish | Write integration tests for PostgreSQL backend (FR-081) |
+| T244c | | Polish | Write integration tests for MySQL/MariaDB backend (FR-082) |
 | T245 | | Polish | Create Dockerfile |
 | T246 | | Polish | Create docker-compose.yml with database options |
 | T247 | | Polish | Write quickstart guide |
 | T248 | | Polish | Final code review and cleanup |
+| T249 | | Polish | Write fuzzing tests for expression parser (deferred from T393) |
+| T250 | | Polish | Write benchmark tests for expression evaluation (deferred from T394) |
+| T251 | | Polish | End-to-end pipeline test with data mapping + filtering (deferred from T395) |
+| T252 | P | Polish | Configure CI code coverage gate (minimum 80% for core packages, SC-009) |
+| T253 | | Polish | Implement API authentication configuration scaffold (FR-075, disabled by default) |
 
 ---
 

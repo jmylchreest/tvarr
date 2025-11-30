@@ -217,18 +217,8 @@ type LastKnownCodecRepository interface {
 	DeleteExpired(ctx context.Context, before time.Time) (int64, error)
 }
 
-// LogoAssetRepository defines operations for logo asset persistence.
-// Will be implemented in Phase 10 (US7).
-type LogoAssetRepository interface {
-	Create(ctx context.Context, asset interface{}) error
-	GetByID(ctx context.Context, id models.ULID) (interface{}, error)
-	GetByURL(ctx context.Context, url string) (interface{}, error)
-	GetByHash(ctx context.Context, hash string) (interface{}, error)
-	Update(ctx context.Context, asset interface{}) error
-	Delete(ctx context.Context, id models.ULID) error
-	DeleteUnused(ctx context.Context, before time.Time) (int64, error)
-	UpdateLastAccessed(ctx context.Context, id models.ULID) error
-}
+// Note: Logo caching uses file-based storage with in-memory indexing.
+// See internal/service/logo_indexer.go for the LogoIndexer service.
 
 // JobRepository defines operations for job persistence.
 // Will be implemented in Phase 11 (US9).

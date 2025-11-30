@@ -21,6 +21,7 @@ import (
 	"github.com/jmylchreest/tvarr/internal/pipeline"
 	"github.com/jmylchreest/tvarr/internal/repository"
 	"github.com/jmylchreest/tvarr/internal/service"
+	"github.com/jmylchreest/tvarr/internal/service/progress"
 	"github.com/jmylchreest/tvarr/internal/storage"
 	"github.com/jmylchreest/tvarr/internal/version"
 )
@@ -82,20 +83,55 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("initializing storage: %w", err)
 	}
 
+	// Initialize logo cache and service
+	logoCache, err := storage.NewLogoCache(viper.GetString("storage.data_dir"))
+	if err != nil {
+		return fmt.Errorf("initializing logo cache: %w", err)
+	}
+	logoService := service.NewLogoService(logoCache).WithLogger(logger)
+
+	// Load logo index with pruning of stale cached logos
+	logoRetention := viper.GetDuration("storage.logo_retention")
+	if logoRetention > 0 {
+		result, err := logoService.LoadIndexWithOptions(context.Background(), service.LogoIndexerOptions{
+			PruneStaleLogos:    true,
+			StalenessThreshold: logoRetention,
+		})
+		if err != nil {
+			return fmt.Errorf("loading logo index: %w", err)
+		}
+		if result.PrunedCount > 0 {
+			logger.Info("pruned stale logos on startup",
+				slog.Int("pruned_count", result.PrunedCount),
+				slog.Int64("pruned_bytes", result.PrunedSize),
+				slog.Duration("retention", logoRetention))
+		}
+	} else {
+		if err := logoService.LoadIndex(context.Background()); err != nil {
+			return fmt.Errorf("loading logo index: %w", err)
+		}
+	}
+
 	// Initialize ingestor components
 	stateManager := ingestor.NewStateManager()
 	streamHandlerFactory := ingestor.NewHandlerFactory()
 	epgHandlerFactory := ingestor.NewEpgHandlerFactory()
 
-	// Initialize pipeline factory with default stages
-	pipelineFactory := pipeline.NewDefaultFactory(
+	// Initialize pipeline factory with default stages and logo caching
+	pipelineFactory := pipeline.NewDefaultFactoryWithLogoCaching(
 		channelRepo,
 		epgProgramRepo,
 		filterRepo,
 		dataMappingRuleRepo,
 		sandbox,
 		logger,
+		logoService, // Logo caching enabled
 	)
+
+	// Initialize progress service
+	progressService := progress.NewService(logger)
+	progressService.Start()
+	defer progressService.Stop()
 
 	// Initialize services
 	sourceService := service.NewSourceService(
@@ -103,19 +139,19 @@ func runServe(cmd *cobra.Command, args []string) error {
 		channelRepo,
 		streamHandlerFactory,
 		stateManager,
-	).WithLogger(logger)
+	).WithLogger(logger).WithProgressService(progressService)
 
 	epgService := service.NewEpgService(
 		epgSourceRepo,
 		epgProgramRepo,
 		epgHandlerFactory,
 		stateManager,
-	).WithLogger(logger)
+	).WithLogger(logger).WithProgressService(progressService)
 
 	proxyService := service.NewProxyService(
 		proxyRepo,
 		pipelineFactory,
-	).WithLogger(logger)
+	).WithLogger(logger).WithProgressService(progressService)
 
 	// Initialize HTTP server
 	serverConfig := http.ServerConfig{
@@ -145,6 +181,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	dataMappingRuleHandler := handlers.NewDataMappingRuleHandler(dataMappingRuleRepo)
 	dataMappingRuleHandler.Register(server.API())
+
+	progressHandler := handlers.NewProgressHandler(progressService)
+	progressHandler.Register(server.API())
+	progressHandler.RegisterSSE(server.Router())
 
 	// Setup graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())

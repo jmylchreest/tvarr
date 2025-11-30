@@ -19,18 +19,14 @@ const (
 	StageName = "Channel Numbering"
 )
 
-// NumberingMode determines how channel numbers are assigned.
-type NumberingMode string
+// NumberingMode is an alias for models.NumberingMode for backwards compatibility.
+type NumberingMode = models.NumberingMode
 
+// Mode constants for backwards compatibility.
 const (
-	// NumberingModeSequential assigns sequential numbers starting from StartingChannelNumber.
-	NumberingModeSequential NumberingMode = "sequential"
-
-	// NumberingModePreserve keeps existing channel numbers where possible.
-	NumberingModePreserve NumberingMode = "preserve"
-
-	// NumberingModeGroup assigns numbers within groups (100s for group 1, 200s for group 2, etc.).
-	NumberingModeGroup NumberingMode = "group"
+	NumberingModeSequential = models.NumberingModeSequential
+	NumberingModePreserve   = models.NumberingModePreserve
+	NumberingModeGroup      = models.NumberingModeGroup
 )
 
 // ConflictResolution represents how a numbering conflict was resolved.
@@ -44,6 +40,7 @@ type ConflictResolution struct {
 type Stage struct {
 	shared.BaseStage
 	mode      NumberingMode
+	groupSize int // Size of each group range (default 100)
 	logger    *slog.Logger
 	conflicts []ConflictResolution
 }
@@ -53,6 +50,7 @@ func New() *Stage {
 	return &Stage{
 		BaseStage: shared.NewBaseStage(StageID, StageName),
 		mode:      NumberingModeSequential,
+		groupSize: 100,
 		conflicts: make([]ConflictResolution, 0),
 	}
 }
@@ -71,6 +69,14 @@ func NewConstructor() core.StageConstructor {
 // WithMode sets the numbering mode.
 func (s *Stage) WithMode(mode NumberingMode) *Stage {
 	s.mode = mode
+	return s
+}
+
+// WithGroupSize sets the group size for group numbering mode.
+func (s *Stage) WithGroupSize(size int) *Stage {
+	if size > 0 {
+		s.groupSize = size
+	}
 	return s
 }
 
@@ -96,9 +102,21 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 		startingNumber = 1
 	}
 
+	// Determine the numbering mode - use proxy config if set, otherwise use stage default
+	mode := s.mode
+	if state.Proxy.NumberingMode != "" {
+		mode = NumberingMode(state.Proxy.NumberingMode)
+	}
+
+	// Determine the group size - use proxy config if set, otherwise use stage default
+	groupSize := s.groupSize
+	if state.Proxy.GroupNumberingSize > 0 {
+		groupSize = state.Proxy.GroupNumberingSize
+	}
+
 	var numberedCount int
 
-	switch s.mode {
+	switch mode {
 	case NumberingModeSequential:
 		numberedCount = s.assignSequential(state.Channels, startingNumber)
 
@@ -106,7 +124,7 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 		numberedCount = s.assignPreserving(state.Channels, startingNumber)
 
 	case NumberingModeGroup:
-		numberedCount = s.assignByGroup(state.Channels, startingNumber)
+		numberedCount = s.assignByGroup(state.Channels, startingNumber, groupSize)
 
 	default:
 		numberedCount = s.assignSequential(state.Channels, startingNumber)
@@ -171,8 +189,16 @@ func (s *Stage) assignPreserving(channels []*models.Channel, startNum int) int {
 
 	modified := 0
 
+	// Sort conflict indices to ensure deterministic ordering
+	conflictIndices := make([]int, 0, len(channelsWithConflicts))
+	for idx := range channelsWithConflicts {
+		conflictIndices = append(conflictIndices, idx)
+	}
+	sort.Ints(conflictIndices)
+
 	// Second pass: resolve conflicts by finding next available number
-	for idx, originalNum := range channelsWithConflicts {
+	for _, idx := range conflictIndices {
+		originalNum := channelsWithConflicts[idx]
 		ch := channels[idx]
 		newNum := originalNum
 
@@ -223,7 +249,7 @@ func (s *Stage) assignPreserving(channels []*models.Channel, startNum int) int {
 }
 
 // assignByGroup assigns channel numbers within group ranges.
-func (s *Stage) assignByGroup(channels []*models.Channel, startNum int) int {
+func (s *Stage) assignByGroup(channels []*models.Channel, startNum int, groupSize int) int {
 	// Group channels by GroupTitle
 	groups := make(map[string][]*models.Channel)
 	groupOrder := make([]string, 0)
@@ -243,8 +269,7 @@ func (s *Stage) assignByGroup(channels []*models.Channel, startNum int) int {
 	// Sort groups alphabetically for consistent ordering
 	sort.Strings(groupOrder)
 
-	// Assign numbers: each group gets a range (100s, 200s, etc.)
-	groupSize := 100
+	// Assign numbers: each group gets a range based on groupSize
 	modified := 0
 
 	for i, groupName := range groupOrder {

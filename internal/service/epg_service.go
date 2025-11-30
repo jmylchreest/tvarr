@@ -9,15 +9,17 @@ import (
 	"github.com/jmylchreest/tvarr/internal/ingestor"
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/repository"
+	"github.com/jmylchreest/tvarr/internal/service/progress"
 )
 
 // EpgService provides business logic for EPG source management.
 type EpgService struct {
-	epgSourceRepo  repository.EpgSourceRepository
-	epgProgramRepo repository.EpgProgramRepository
-	factory        *ingestor.EpgHandlerFactory
-	stateManager   *ingestor.StateManager
-	logger         *slog.Logger
+	epgSourceRepo   repository.EpgSourceRepository
+	epgProgramRepo  repository.EpgProgramRepository
+	factory         *ingestor.EpgHandlerFactory
+	stateManager    *ingestor.StateManager
+	progressService *progress.Service
+	logger          *slog.Logger
 }
 
 // NewEpgService creates a new EPG service.
@@ -40,6 +42,22 @@ func NewEpgService(
 func (s *EpgService) WithLogger(logger *slog.Logger) *EpgService {
 	s.logger = logger
 	return s
+}
+
+// WithProgressService sets the progress service for progress reporting.
+func (s *EpgService) WithProgressService(svc *progress.Service) *EpgService {
+	s.progressService = svc
+	return s
+}
+
+// getEpgIngestionStages returns the standard stages for EPG source ingestion.
+func getEpgIngestionStages() []progress.StageInfo {
+	return []progress.StageInfo{
+		{ID: "connect", Name: "Connecting", Weight: 0.1},
+		{ID: "download", Name: "Downloading", Weight: 0.3},
+		{ID: "process", Name: "Processing", Weight: 0.4},
+		{ID: "save", Name: "Saving", Weight: 0.2},
+	}
 }
 
 // Create creates a new EPG source.
@@ -156,9 +174,27 @@ func (s *EpgService) Ingest(ctx context.Context, id models.ULID) error {
 		return fmt.Errorf("starting state tracking: %w", err)
 	}
 
+	// Start progress tracking if service is available
+	var progressMgr *progress.OperationManager
+	if s.progressService != nil {
+		stages := getEpgIngestionStages()
+		progressMgr, err = s.progressService.StartOperation(progress.OpEpgIngestion, id, "epg_source", stages)
+		if err != nil {
+			// Log but don't fail - progress tracking is non-essential
+			s.logger.Warn("failed to start progress tracking",
+				"source_id", id.String(),
+				"error", err.Error(),
+			)
+			progressMgr = nil
+		}
+	}
+
 	// Mark source as ingesting
 	source.MarkIngesting()
 	if err := s.epgSourceRepo.Update(ctx, source); err != nil {
+		if progressMgr != nil {
+			progressMgr.Fail(err)
+		}
 		s.stateManager.Fail(id, err)
 		return fmt.Errorf("updating EPG source status: %w", err)
 	}
@@ -169,12 +205,27 @@ func (s *EpgService) Ingest(ctx context.Context, id models.ULID) error {
 		"type", source.Type,
 	)
 
+	// Stage 1: Connect
+	if progressMgr != nil {
+		progressMgr.StartStage("connect")
+	}
+
 	// Delete existing programs before re-ingesting
 	if err := s.epgProgramRepo.DeleteBySourceID(ctx, id); err != nil {
+		if progressMgr != nil {
+			progressMgr.Fail(err)
+		}
 		s.stateManager.Fail(id, err)
 		source.MarkFailed(err)
 		_ = s.epgSourceRepo.Update(ctx, source)
 		return fmt.Errorf("deleting existing programs: %w", err)
+	}
+
+	// Stage 2: Download
+	if progressMgr != nil {
+		connectStage := progressMgr.StartStage("connect")
+		connectStage.Complete()
+		progressMgr.StartStage("download")
 	}
 
 	// Perform ingestion
@@ -189,6 +240,9 @@ func (s *EpgService) Ingest(ctx context.Context, id models.ULID) error {
 		// Update progress periodically
 		if programCount%500 == 0 {
 			s.stateManager.UpdateProgress(id, programCount, 0)
+			if progressMgr != nil {
+				progressMgr.SetMessage(fmt.Sprintf("Downloaded %d programs", programCount))
+			}
 		}
 
 		// Flush batch when full
@@ -202,7 +256,20 @@ func (s *EpgService) Ingest(ctx context.Context, id models.ULID) error {
 		return nil
 	})
 
-	// Flush remaining programs
+	// Stage 3: Process
+	if progressMgr != nil {
+		downloadStage := progressMgr.StartStage("download")
+		downloadStage.Complete()
+		progressMgr.StartStage("process")
+	}
+
+	// Stage 4: Save - flush remaining programs
+	if progressMgr != nil {
+		processStage := progressMgr.StartStage("process")
+		processStage.Complete()
+		progressMgr.StartStage("save")
+	}
+
 	if len(batchPrograms) > 0 {
 		if batchErr := s.epgProgramRepo.CreateBatch(ctx, batchPrograms); batchErr != nil {
 			if err == nil {
@@ -212,6 +279,9 @@ func (s *EpgService) Ingest(ctx context.Context, id models.ULID) error {
 	}
 
 	if err != nil {
+		if progressMgr != nil {
+			progressMgr.Fail(err)
+		}
 		s.stateManager.Fail(id, err)
 		source.MarkFailed(err)
 		_ = s.epgSourceRepo.Update(ctx, source)
@@ -232,6 +302,11 @@ func (s *EpgService) Ingest(ctx context.Context, id models.ULID) error {
 	}
 
 	s.stateManager.Complete(id, programCount)
+
+	// Complete progress tracking
+	if progressMgr != nil {
+		progressMgr.Complete(fmt.Sprintf("Ingested %d programs", programCount))
+	}
 
 	s.logger.Info("EPG ingestion completed",
 		"source_id", id.String(),

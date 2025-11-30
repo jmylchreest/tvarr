@@ -71,4 +71,7 @@ var (
 
 	// ErrMappingRuleIDRequired indicates a required mapping rule ID field is zero.
 	ErrMappingRuleIDRequired = errors.New("mapping_rule_id is required")
+
+	// ErrFilePathRequired indicates a required file path field is empty.
+	ErrFilePathRequired = errors.New("file_path is required")
 )

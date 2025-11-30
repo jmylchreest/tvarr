@@ -228,3 +228,173 @@ func TestStage_ConflictsResetBetweenExecutions(t *testing.T) {
 	// Conflicts should be reset
 	assert.Empty(t, stage.GetConflicts())
 }
+
+// Integration tests for proxy configuration
+
+func TestStage_ProxyConfigOverridesStageDefaults(t *testing.T) {
+	// Stage defaults to sequential mode
+	stage := New()
+
+	channels := []*models.Channel{
+		testChannel("Channel A", 5),
+		testChannel("Channel B", 5), // Conflict
+		testChannel("Channel C", 0),
+	}
+
+	// Proxy specifies preserve mode
+	proxy := &models.StreamProxy{
+		StartingChannelNumber: 1,
+		NumberingMode:         models.NumberingModePreserve,
+	}
+	state := core.NewState(proxy)
+	state.Channels = channels
+
+	_, err := stage.Execute(context.Background(), state)
+	require.NoError(t, err)
+
+	// Preserve mode should keep existing numbers and resolve conflicts
+	assert.Equal(t, 5, channels[0].ChannelNumber) // Kept
+	assert.Equal(t, 6, channels[1].ChannelNumber) // Conflict resolved
+	assert.Equal(t, 1, channels[2].ChannelNumber) // Assigned starting number
+}
+
+func TestStage_ProxyGroupSizeConfiguration(t *testing.T) {
+	stage := New()
+
+	// Create channels with group titles
+	ch1 := testChannel("Sports 1", 0)
+	ch1.GroupTitle = "Sports"
+	ch2 := testChannel("News 1", 0)
+	ch2.GroupTitle = "News"
+
+	channels := []*models.Channel{ch1, ch2}
+
+	// Proxy specifies group mode with custom group size
+	proxy := &models.StreamProxy{
+		StartingChannelNumber: 1,
+		NumberingMode:         models.NumberingModeGroup,
+		GroupNumberingSize:    50, // Custom: 50 instead of default 100
+	}
+	state := core.NewState(proxy)
+	state.Channels = channels
+
+	_, err := stage.Execute(context.Background(), state)
+	require.NoError(t, err)
+
+	// Groups are sorted alphabetically: News, Sports
+	// With groupSize=50: News starts at 1, Sports starts at 51
+	assert.Equal(t, 1, ch2.ChannelNumber)  // News at 1
+	assert.Equal(t, 51, ch1.ChannelNumber) // Sports at 51
+}
+
+func TestStage_ProxyGroupSizeZeroUsesDefault(t *testing.T) {
+	stage := New()
+
+	ch1 := testChannel("A Channel", 0)
+	ch1.GroupTitle = "Group A"
+	ch2 := testChannel("B Channel", 0)
+	ch2.GroupTitle = "Group B"
+
+	channels := []*models.Channel{ch1, ch2}
+
+	// Proxy specifies group mode but GroupNumberingSize is 0 (default)
+	proxy := &models.StreamProxy{
+		StartingChannelNumber: 1,
+		NumberingMode:         models.NumberingModeGroup,
+		GroupNumberingSize:    0, // Zero means use stage default (100)
+	}
+	state := core.NewState(proxy)
+	state.Channels = channels
+
+	_, err := stage.Execute(context.Background(), state)
+	require.NoError(t, err)
+
+	// With default groupSize=100: Group A at 1, Group B at 101
+	assert.Equal(t, 1, ch1.ChannelNumber)   // Group A at 1
+	assert.Equal(t, 101, ch2.ChannelNumber) // Group B at 101
+}
+
+func TestStage_StageMethodConfigurationStillWorks(t *testing.T) {
+	// Configure stage via methods
+	stage := New().WithMode(NumberingModeGroup).WithGroupSize(25)
+
+	ch1 := testChannel("X", 0)
+	ch1.GroupTitle = "First"
+	ch2 := testChannel("Y", 0)
+	ch2.GroupTitle = "Second"
+
+	channels := []*models.Channel{ch1, ch2}
+
+	// Proxy with empty NumberingMode - should use stage default
+	proxy := &models.StreamProxy{
+		StartingChannelNumber: 10,
+		NumberingMode:         "", // Empty - use stage default
+		GroupNumberingSize:    0,  // Zero - use stage default
+	}
+	state := core.NewState(proxy)
+	state.Channels = channels
+
+	_, err := stage.Execute(context.Background(), state)
+	require.NoError(t, err)
+
+	// Stage configured with groupSize=25: First at 10, Second at 35
+	assert.Equal(t, 10, ch1.ChannelNumber) // First at 10
+	assert.Equal(t, 35, ch2.ChannelNumber) // Second at 35
+}
+
+func TestStage_ArtifactMetadataContainsConfiguration(t *testing.T) {
+	stage := New()
+
+	channels := []*models.Channel{
+		testChannel("Channel 1", 0),
+	}
+
+	proxy := &models.StreamProxy{
+		StartingChannelNumber: 100,
+		NumberingMode:         models.NumberingModeSequential,
+	}
+	state := core.NewState(proxy)
+	state.Channels = channels
+
+	result, err := stage.Execute(context.Background(), state)
+	require.NoError(t, err)
+
+	require.Len(t, result.Artifacts, 1)
+	artifact := result.Artifacts[0]
+
+	assert.Equal(t, 100, artifact.Metadata["starting_number"])
+	assert.Equal(t, 0, artifact.Metadata["conflicts_resolved"])
+}
+
+func TestStage_UncategorizedGroupHandling(t *testing.T) {
+	stage := New()
+
+	// Mix of channels with and without group titles
+	ch1 := testChannel("Sports", 0)
+	ch1.GroupTitle = "Sports"
+	ch2 := testChannel("No Group", 0)
+	ch2.GroupTitle = "" // Will be "Uncategorized"
+	ch3 := testChannel("News", 0)
+	ch3.GroupTitle = "News"
+
+	channels := []*models.Channel{ch1, ch2, ch3}
+
+	proxy := &models.StreamProxy{
+		StartingChannelNumber: 1,
+		NumberingMode:         models.NumberingModeGroup,
+		GroupNumberingSize:    100,
+	}
+	state := core.NewState(proxy)
+	state.Channels = channels
+
+	_, err := stage.Execute(context.Background(), state)
+	require.NoError(t, err)
+
+	// Groups sorted: News, Sports, Uncategorized
+	// Group 0 (News): starts at 1
+	// Group 1 (Sports): starts at 101
+	// Group 2 (Uncategorized): starts at 201
+	assert.Equal(t, 101, ch1.ChannelNumber) // Sports at 101
+	assert.Equal(t, 201, ch2.ChannelNumber) // Uncategorized at 201
+	assert.Equal(t, 1, ch3.ChannelNumber)   // News at 1
+}

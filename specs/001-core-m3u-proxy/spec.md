@@ -83,7 +83,7 @@ As an IPTV administrator, I want to create transformation rules that modify chan
 
 1. **Given** I create a rule `channel_name contains "HD" SET group_title = "HD Channels"`, **When** proxy generates, **Then** matching channels have group_title updated
 2. **Given** I create a rule with regex `tvg_name matches "^(.+) \\((.+)\\)$" SET channel_name = "$1"`, **When** proxy generates, **Then** capture groups are applied
-3. **Given** I create a conditional rule `tvg_logo contains "missing" SET tvg_logo ?= "http://default.png"`, **When** proxy generates, **Then** only empty logos are updated
+3. **Given** I create a conditional rule `tvg_logo contains "missing" SET_IF_EMPTY tvg_logo = "http://default.png"`, **When** proxy generates, **Then** only empty logos are updated
 4. **Given** rules for EPG, **When** proxy generates, **Then** program metadata is transformed
 
 ---
@@ -134,7 +134,7 @@ As an IPTV administrator, I want channel logos to be cached locally so that clie
 1. **Given** logo caching enabled, **When** proxy generates, **Then** logos are downloaded to local cache
 2. **Given** a cached logo exists, **When** proxy generates again, **Then** cached version is used (no re-download)
 3. **Given** logo URL changes, **When** proxy generates, **Then** new logo is fetched
-4. **Given** retention policy configured, **When** cleanup runs, **Then** old/unused logos are removed
+4. **Given** retention policy configured (default: 30 days unused), **When** cleanup runs, **Then** old/unused logos are removed
 
 ---
 
@@ -152,7 +152,7 @@ As an IPTV administrator, I want to relay streams through the proxy with optiona
 2. **Given** a relay profile with transcoding options, **When** relay active, **Then** FFmpeg applies codec/bitrate settings
 3. **Given** HLS source with single variant, **When** relay active, **Then** HLS is collapsed to continuous TS stream
 4. **Given** hardware acceleration available (VAAPI/NVENC/QSV), **When** relay configured, **Then** hardware encoder is used
-5. **Given** upstream fails, **When** relay active, **Then** circuit breaker opens after configured failures
+5. **Given** upstream fails, **When** relay active, **Then** circuit breaker opens after configured failures (default: 5 failures within 30 seconds, reset after 60 seconds half-open)
 
 ---
 
@@ -230,7 +230,7 @@ As a developer, I want a REST API to manage all entities so that I can integrate
 - **FR-030**: System MUST support boolean operators (AND, OR, NOT)
 - **FR-031**: System MUST support comparison operators (equals, contains, matches, starts_with, ends_with)
 - **FR-032**: System MUST support regex matching with capture group substitution
-- **FR-033**: System MUST support actions (SET, ?= conditional set, REMOVE)
+- **FR-033**: System MUST support actions (SET, SET_IF_EMPTY, APPEND, REMOVE, DELETE)
 - **FR-034**: System MUST support nested parentheses for complex expressions
 - **FR-035**: System MUST support case-sensitive and case-insensitive matching
 
@@ -273,8 +273,10 @@ As a developer, I want a REST API to manage all entities so that I can integrate
 
 ### Non-Functional Requirements
 
-- **NFR-001**: System MUST process 100k+ channels with configurable memory limits (default: 1GB peak RSS); streaming/batched processing required for large datasets
-- **NFR-002**: System MUST process 1M+ EPG programs with configurable memory limits (default: 1GB peak RSS); batch sizes configurable via config file
+- **NFR-001**: System MUST process 100k+ channels with configurable memory limits (target: 500MB, threshold: 1GB peak RSS); streaming/batched processing required for large datasets
+- **NFR-002**: System MUST process 1M+ EPG programs with configurable memory limits (target: 1GB, threshold: 2GB peak RSS); batch sizes configurable via config file
+
+> **Note**: Memory limits are advisory targets achieved through streaming/batching design patterns. Runtime enforcement (e.g., GOMEMLIMIT, container memory limits) is a deployment concern, not application-enforced.
 - **NFR-003**: System MUST be configurable via environment variables and config file
 - **NFR-004**: System MUST provide structured logging with correlation IDs
 - **NFR-005**: System MUST expose health check and metrics endpoints

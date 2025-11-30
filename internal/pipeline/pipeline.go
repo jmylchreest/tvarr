@@ -17,6 +17,7 @@ import (
 	"github.com/jmylchreest/tvarr/internal/pipeline/stages/generatexmltv"
 	"github.com/jmylchreest/tvarr/internal/pipeline/stages/loadchannels"
 	"github.com/jmylchreest/tvarr/internal/pipeline/stages/loadprograms"
+	"github.com/jmylchreest/tvarr/internal/pipeline/stages/logocaching"
 	"github.com/jmylchreest/tvarr/internal/pipeline/stages/numbering"
 	"github.com/jmylchreest/tvarr/internal/pipeline/stages/publish"
 	"github.com/jmylchreest/tvarr/internal/repository"
@@ -112,6 +113,7 @@ func NewFactory(deps *Dependencies) *Factory {
 
 // NewDefaultFactory creates a factory with the standard stage configuration.
 // This is the recommended way to create a pipeline factory.
+// Deprecated: Use NewDefaultFactoryWithLogoCaching for logo caching support.
 func NewDefaultFactory(
 	channelRepo repository.ChannelRepository,
 	epgProgramRepo repository.EpgProgramRepository,
@@ -119,6 +121,28 @@ func NewDefaultFactory(
 	dataMappingRuleRepo repository.DataMappingRuleRepository,
 	sandbox *storage.Sandbox,
 	logger *slog.Logger,
+) *Factory {
+	return NewDefaultFactoryWithLogoCaching(
+		channelRepo,
+		epgProgramRepo,
+		filterRepo,
+		dataMappingRuleRepo,
+		sandbox,
+		logger,
+		nil, // No logo caching
+	)
+}
+
+// NewDefaultFactoryWithLogoCaching creates a factory with logo caching support.
+// If logoCacher is nil, logo caching stage is skipped.
+func NewDefaultFactoryWithLogoCaching(
+	channelRepo repository.ChannelRepository,
+	epgProgramRepo repository.EpgProgramRepository,
+	filterRepo repository.FilterRepository,
+	dataMappingRuleRepo repository.DataMappingRuleRepository,
+	sandbox *storage.Sandbox,
+	logger *slog.Logger,
+	logoCacher logocaching.LogoCacher,
 ) *Factory {
 	deps := &Dependencies{
 		ChannelRepo:         channelRepo,
@@ -137,6 +161,12 @@ func NewDefaultFactory(
 	factory.RegisterStage(filtering.NewConstructor())
 	factory.RegisterStage(datamapping.NewConstructor())
 	factory.RegisterStage(numbering.NewConstructor())
+
+	// Logo caching (optional - only if cacher provided)
+	if logoCacher != nil {
+		factory.RegisterStage(logocaching.NewConstructor(logoCacher))
+	}
+
 	factory.RegisterStage(generatem3u.NewConstructor())
 	factory.RegisterStage(generatexmltv.NewConstructor())
 	factory.RegisterStage(publish.NewConstructor())
@@ -151,6 +181,7 @@ const (
 	StageIDFiltering     = filtering.StageID
 	StageIDDataMapping   = datamapping.StageID
 	StageIDNumbering     = numbering.StageID
+	StageIDLogoCaching   = logocaching.StageID
 	StageIDGenerateM3U   = generatem3u.StageID
 	StageIDGenerateXMLTV = generatexmltv.StageID
 	StageIDPublish       = publish.StageID

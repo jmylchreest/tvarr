@@ -30,6 +30,18 @@ const (
 	StreamProxyModeRelay StreamProxyMode = "relay"
 )
 
+// NumberingMode determines how channel numbers are assigned.
+type NumberingMode string
+
+const (
+	// NumberingModeSequential assigns sequential numbers starting from StartingChannelNumber.
+	NumberingModeSequential NumberingMode = "sequential"
+	// NumberingModePreserve keeps existing channel numbers where possible, resolving conflicts.
+	NumberingModePreserve NumberingMode = "preserve"
+	// NumberingModeGroup assigns numbers within groups (100s for group 1, 200s for group 2, etc.).
+	NumberingModeGroup NumberingMode = "group"
+)
+
 // StreamProxy represents a proxy configuration that combines sources,
 // applies filters and mappings, and generates output playlists.
 type StreamProxy struct {
@@ -52,6 +64,14 @@ type StreamProxy struct {
 
 	// StartingChannelNumber is the base channel number for numbering.
 	StartingChannelNumber int `gorm:"default:1" json:"starting_channel_number"`
+
+	// NumberingMode determines how channel numbers are assigned.
+	// Options: sequential (default), preserve, group
+	NumberingMode NumberingMode `gorm:"not null;default:'sequential';size:20" json:"numbering_mode"`
+
+	// GroupNumberingSize is the size of each group range when using group numbering mode.
+	// Default is 100 (groups get numbers 100-199, 200-299, etc.).
+	GroupNumberingSize int `gorm:"default:100" json:"group_numbering_size"`
 
 	// UpstreamTimeout is the timeout in seconds for upstream connections.
 	UpstreamTimeout int `gorm:"default:30" json:"upstream_timeout"`

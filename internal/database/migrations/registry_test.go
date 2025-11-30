@@ -27,6 +27,7 @@ func TestAllMigrations_ReturnsExpectedCount(t *testing.T) {
 	migrations := AllMigrations()
 
 	// We have 13 migrations: 3 for stream sources, 2 for EPG, 5 for proxy, 3 for filters/rules
+	// (Logo caching uses file-based storage with in-memory indexing, no database tables)
 	assert.Len(t, migrations, 13)
 }
 
@@ -72,6 +73,7 @@ func TestMigrator_Up_AllMigrations(t *testing.T) {
 	assert.True(t, db.Migrator().HasTable("proxy_mapping_rules"))
 	assert.True(t, db.Migrator().HasTable("filters"))
 	assert.True(t, db.Migrator().HasTable("data_mapping_rules"))
+	// Note: logo_assets table removed - logo caching uses file-based storage
 }
 
 func TestMigrator_Up_Idempotent(t *testing.T) {

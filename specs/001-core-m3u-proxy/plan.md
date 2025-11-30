@@ -13,7 +13,7 @@
 | **Storage** | GORM with SQLite/PostgreSQL/MySQL support |
 | **Testing** | testify + gomock, table-driven tests |
 | **Target Platform** | Linux (primary), macOS, Windows |
-| **Performance Goals** | 100k channels < 500MB RAM, 1M EPG entries < 1GB RAM |
+| **Performance Goals** | 100k channels < 1GB RAM (target: 500MB), 1M EPG entries < 1GB RAM (configurable) |
 | **Scale** | Large datasets, streaming/batched processing mandatory |
 
 ## Constitution Check
@@ -174,10 +174,10 @@ All database access goes through repository interfaces. This enables:
 type ChannelRepository interface {
     Create(ctx context.Context, channel *models.Channel) error
     CreateInBatches(ctx context.Context, channels []*models.Channel, batchSize int) error
-    FindBySourceID(ctx context.Context, sourceID uint, callback func(*models.Channel) error) error
+    FindBySourceID(ctx context.Context, sourceID models.ULID, callback func(*models.Channel) error) error
     Update(ctx context.Context, channel *models.Channel) error
-    Delete(ctx context.Context, id uint) error
-    DeleteBySourceID(ctx context.Context, sourceID uint) error
+    Delete(ctx context.Context, id models.ULID) error
+    DeleteBySourceID(ctx context.Context, sourceID models.ULID) error
 }
 ```
 
@@ -187,9 +187,9 @@ Large dataset processing uses callbacks instead of slices:
 
 ```go
 // Instead of returning []Channel (memory intensive)
-func (r *channelRepo) FindBySourceID(ctx context.Context, sourceID uint, callback func(*models.Channel) error) error {
+func (r *channelRepo) FindBySourceID(ctx context.Context, sourceID models.ULID, callback func(*models.Channel) error) error {
     return r.db.WithContext(ctx).
-        Where("source_id = ?", sourceID).
+        Where("source_id = ?", sourceID.String()).
         FindInBatches(&[]models.Channel{}, 1000, func(tx *gorm.DB, batch int) error {
             for _, channel := range *tx.Statement.Dest.(*[]models.Channel) {
                 if err := callback(&channel); err != nil {
@@ -212,10 +212,10 @@ type PipelineStage interface {
 }
 
 type PipelineState struct {
-    ProxyID        uint
+    Proxy          *models.StreamProxy  // Full proxy with ULID ID
     TempDir        string
-    ChannelWriter  io.Writer  // Streaming output
-    ProgramWriter  io.Writer  // Streaming output
+    ChannelWriter  io.Writer            // Streaming output
+    ProgramWriter  io.Writer            // Streaming output
     Stats          *StageStats
     Logger         *slog.Logger
 }
