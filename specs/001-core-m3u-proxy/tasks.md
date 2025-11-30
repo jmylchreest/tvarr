@@ -20,8 +20,9 @@
 | Phase 8: US5 Filtering | ✅ Superseded | Merged into Phase 6.5 |
 | Phase 9: Channel Numbering | ✅ Complete | T150-T153, configurable modes |
 | Phase 10: Logo Caching | ✅ Complete | File-based caching with metadata sidecar |
-| **Phase 10.5: Parity Fixes** | ⏸️ Pending | Critical gaps from m3u-proxy comparison |
-| Phase 11-14 | ⏸️ Pending | |
+| **Phase 10.5: Parity Fixes** | ✅ Complete | Manual source, ingestion guard, atomic publish, auto-EPG, shorthand |
+| **Phase 11: Scheduled Jobs** | ✅ Complete | Job model, scheduler, runner, handlers (T180-T193) |
+| Phase 12-14 | ⏸️ Pending | |
 
 ---
 
@@ -590,24 +591,24 @@ All tasks in this phase must complete before any user story work.
 
 ---
 
-## Phase 11: User Story 9 - Scheduled Jobs (P2)
+## Phase 11: User Story 9 - Scheduled Jobs (P2) ✅ COMPLETE
 
 | ID | P | Story | Task Description |
 |----|---|-------|------------------|
-| T180 | P | US9 | Write tests for Job model |
-| T181 | | US9 | Implement models/job.go |
-| T182 | | US9 | Create migration for jobs table |
-| T183 | P | US9 | Write tests for JobRepository |
-| T184 | | US9 | Implement repository/job_repo.go |
-| T185 | P | US9 | Write tests for scheduler |
-| T186 | | US9 | Implement scheduler/scheduler.go - cron-based scheduler |
-| T187 | | US9 | Implement scheduler/queue.go - job queue |
-| T188 | | US9 | Implement scheduler/executor.go - job execution |
-| T189 | | US9 | Implement scheduler/runner.go - queue runner |
-| T190 | P | US9 | Write tests for JobService |
-| T191 | | US9 | Implement service/job_service.go |
-| T192 | | US9 | Implement http/handlers/job_handler.go |
-| T193 | | US9 | Write integration tests for scheduling |
+| T180 | P | US9 | [X] Write tests for Job model |
+| T181 | | US9 | [X] Implement models/job.go |
+| T182 | | US9 | [X] Create migration for jobs table |
+| T183 | P | US9 | [X] Write tests for JobRepository |
+| T184 | | US9 | [X] Implement repository/job_repo.go |
+| T185 | P | US9 | [X] Write tests for scheduler |
+| T186 | | US9 | [X] Implement scheduler/scheduler.go - cron-based scheduler |
+| T187 | | US9 | [X] Implement scheduler/queue.go - job queue (merged into runner) |
+| T188 | | US9 | [X] Implement scheduler/executor.go - job execution |
+| T189 | | US9 | [X] Implement scheduler/runner.go - queue runner |
+| T190 | P | US9 | [X] Write tests for JobService |
+| T191 | | US9 | [X] Implement service/job_service.go |
+| T192 | | US9 | [X] Implement http/handlers/job_handler.go |
+| T193 | | US9 | [X] Write integration tests for scheduling |
 
 ## Phase 12: User Story 8 - Stream Relay (P3)
 
