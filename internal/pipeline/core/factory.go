@@ -8,6 +8,12 @@ import (
 	"github.com/jmylchreest/tvarr/internal/storage"
 )
 
+// StateChecker is an interface for checking ingestion state.
+// Used by the ingestion guard stage to wait for active ingestions.
+type StateChecker interface {
+	IsAnyIngesting() bool
+}
+
 // Dependencies bundles all dependencies needed by pipeline stages.
 // This reduces parameter count and makes dependency injection cleaner.
 type Dependencies struct {
@@ -17,6 +23,9 @@ type Dependencies struct {
 	DataMappingRuleRepo repository.DataMappingRuleRepository
 	Sandbox             *storage.Sandbox
 	Logger              *slog.Logger
+	// StateChecker is used by the ingestion guard stage.
+	// If nil, the ingestion guard is skipped.
+	StateChecker StateChecker
 }
 
 // StageConstructor is a function that creates a stage given dependencies.

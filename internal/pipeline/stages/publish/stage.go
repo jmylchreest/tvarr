@@ -4,6 +4,8 @@ package publish
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -25,6 +27,7 @@ const (
 type Stage struct {
 	shared.BaseStage
 	sandbox *storage.Sandbox
+	logger  *slog.Logger
 }
 
 // New creates a new publish stage.
@@ -38,7 +41,11 @@ func New(sandbox *storage.Sandbox) *Stage {
 // NewConstructor returns a stage constructor for use with the factory.
 func NewConstructor() core.StageConstructor {
 	return func(deps *core.Dependencies) core.Stage {
-		return New(deps.Sandbox)
+		s := New(deps.Sandbox)
+		if deps.Logger != nil {
+			s.logger = deps.Logger.With("stage", StageID)
+		}
+		return s
 	}
 }
 
@@ -88,7 +95,9 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 }
 
 // publishFile atomically moves a file from temp to output directory.
-// It first copies to a temp file in the destination, then renames for atomicity.
+// It uses os.Rename() for atomic publishing on the same filesystem.
+// If source and destination are on different filesystems, it falls back
+// to copy-then-rename for atomicity.
 func (s *Stage) publishFile(ctx context.Context, srcPath, destDir, destName string) error {
 	select {
 	case <-ctx.Done():
@@ -97,20 +106,79 @@ func (s *Stage) publishFile(ctx context.Context, srcPath, destDir, destName stri
 	}
 
 	destPath := filepath.Join(destDir, destName)
+
+	// Try direct rename first (atomic if same filesystem)
+	if err := os.Rename(srcPath, destPath); err == nil {
+		s.log(slog.LevelDebug, "published file via direct rename",
+			slog.String("src", srcPath),
+			slog.String("dest", destPath))
+		return nil
+	}
+
+	// Fall back to copy-then-rename for cross-filesystem scenarios
+	// This ensures atomicity even when temp and output are on different filesystems
+	s.log(slog.LevelDebug, "falling back to copy-then-rename",
+		slog.String("src", srcPath),
+		slog.String("dest", destPath))
+
+	return s.copyThenRename(ctx, srcPath, destPath)
+}
+
+// copyThenRename copies a file to a temp location in the destination directory,
+// then renames it to the final path. This ensures atomic publishing even when
+// the source and destination are on different filesystems.
+func (s *Stage) copyThenRename(ctx context.Context, srcPath, destPath string) error {
 	tempDestPath := destPath + ".tmp"
 
-	// Read source file
-	data, err := os.ReadFile(srcPath)
+	// Open source file
+	srcFile, err := os.Open(srcPath)
 	if err != nil {
-		return fmt.Errorf("reading source file: %w", err)
+		return fmt.Errorf("opening source file: %w", err)
+	}
+	defer srcFile.Close()
+
+	// Create temp destination file
+	tempFile, err := os.Create(tempDestPath)
+	if err != nil {
+		return fmt.Errorf("creating temp file: %w", err)
 	}
 
-	// Write to temp destination
-	if err := os.WriteFile(tempDestPath, data, 0644); err != nil {
-		return fmt.Errorf("writing temp file: %w", err)
+	// Copy with context cancellation check
+	copyErr := func() error {
+		defer tempFile.Close()
+
+		// Copy in chunks to allow for cancellation checks
+		buf := make([]byte, 32*1024) // 32KB buffer
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+
+			n, err := srcFile.Read(buf)
+			if n > 0 {
+				if _, writeErr := tempFile.Write(buf[:n]); writeErr != nil {
+					return fmt.Errorf("writing to temp file: %w", writeErr)
+				}
+			}
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return fmt.Errorf("reading source file: %w", err)
+			}
+		}
+		return nil
+	}()
+
+	if copyErr != nil {
+		// Clean up temp file on failure
+		os.Remove(tempDestPath)
+		return copyErr
 	}
 
-	// Atomic rename
+	// Atomic rename (temp and dest are now on same filesystem)
 	if err := os.Rename(tempDestPath, destPath); err != nil {
 		// Clean up temp file on failure
 		os.Remove(tempDestPath)
@@ -118,6 +186,13 @@ func (s *Stage) publishFile(ctx context.Context, srcPath, destDir, destName stri
 	}
 
 	return nil
+}
+
+// log logs a message if the logger is set.
+func (s *Stage) log(level slog.Level, msg string, attrs ...any) {
+	if s.logger != nil {
+		s.logger.Log(context.Background(), level, msg, attrs...)
+	}
 }
 
 // Ensure Stage implements core.Stage.

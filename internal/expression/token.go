@@ -31,6 +31,11 @@ const (
 	// Action
 	TokenSet // SET keyword
 
+	// Action shorthand operators
+	TokenSetIfEmpty // ?=
+	TokenAppend     // +=
+	TokenRemove     // -=
+
 	// Punctuation
 	TokenComma // ,
 )
@@ -88,6 +93,12 @@ func (t TokenType) String() string {
 		return "RParen"
 	case TokenSet:
 		return "Set"
+	case TokenSetIfEmpty:
+		return "SetIfEmpty"
+	case TokenAppend:
+		return "Append"
+	case TokenRemove:
+		return "Remove"
 	case TokenComma:
 		return "Comma"
 	default:

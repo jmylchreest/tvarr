@@ -61,8 +61,8 @@ func (p *Parser) parseExpression() (ExtendedExpression, error) {
 		return nil, err
 	}
 
-	// Check if there are actions (SET keyword)
-	if p.current.Type == TokenSet {
+	// Check if there are actions (SET keyword or shorthand syntax)
+	if p.hasActions() {
 		actions, err := p.parseActions()
 		if err != nil {
 			return nil, err
@@ -76,6 +76,31 @@ func (p *Parser) parseExpression() (ExtendedExpression, error) {
 	return &ConditionOnly{
 		Condition: NewConditionTree(condition),
 	}, nil
+}
+
+// hasActions checks if the current position starts action syntax.
+// This includes:
+// - SET/APPEND/etc keywords
+// - Shorthand operators: field = value, field ?= value, field += value, field -= value
+func (p *Parser) hasActions() bool {
+	// Explicit action keyword
+	if p.current.Type == TokenSet {
+		return true
+	}
+
+	// Shorthand syntax: identifier followed by assignment operator
+	if p.current.Type == TokenIdent {
+		// Look ahead for shorthand operators
+		if p.pos+1 < len(p.tokens) {
+			next := p.tokens[p.pos+1]
+			switch next.Type {
+			case TokenEquals, TokenSetIfEmpty, TokenAppend, TokenRemove:
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // parseOrCondition parses OR-connected conditions.
@@ -225,59 +250,115 @@ func (p *Parser) parseSimpleCondition() (*Condition, error) {
 	return NewCondition(field, op, value), nil
 }
 
-// parseActions parses one or more actions after SET.
+// parseActions parses one or more actions.
+// Supports both keyword syntax (SET field = value) and shorthand syntax (field = value, field ?= value, etc).
 func (p *Parser) parseActions() ([]*Action, error) {
 	var actions []*Action
 
-	for p.current.Type == TokenSet {
-		opStr := p.current.Value
-		actionOp, ok := ParseActionOperator(opStr)
-		if !ok {
-			return nil, p.errorf("unknown action operator: %s", opStr)
-		}
-		p.advance()
-
-		// Parse one or more field = value assignments for this action operator
-		for {
-			// Parse field name
-			if p.current.Type != TokenIdent {
-				return nil, p.errorf("expected field name after %s", opStr)
+	for p.hasActions() {
+		// Check for keyword-based action (SET, SET_IF_EMPTY, APPEND, etc)
+		if p.current.Type == TokenSet {
+			opStr := p.current.Value
+			actionOp, ok := ParseActionOperator(opStr)
+			if !ok {
+				return nil, p.errorf("unknown action operator: %s", opStr)
 			}
-			field := p.current.Value
 			p.advance()
 
-			// For DELETE, no value is needed
-			if actionOp == ActionDelete {
-				actions = append(actions, NewAction(field, actionOp, nil))
-			} else {
-				// Expect = for assignment
-				if p.current.Type != TokenEquals {
-					return nil, p.errorf("expected '=' after field name")
-				}
-				p.advance()
-
-				// Parse value
-				value, err := p.parseActionValue()
+			// Parse one or more field = value assignments for this action operator
+			for {
+				action, err := p.parseActionAssignment(actionOp)
 				if err != nil {
 					return nil, err
 				}
+				actions = append(actions, action)
 
-				actions = append(actions, NewAction(field, actionOp, value))
+				// Check for comma (multiple assignments in same SET)
+				if p.current.Type == TokenComma {
+					p.advance()
+					// Continue with next field = value in same action operator
+					continue
+				}
+
+				// No comma, break out of inner loop
+				break
 			}
-
-			// Check for comma (multiple assignments in same SET)
-			if p.current.Type == TokenComma {
-				p.advance()
-				// Continue with next field = value in same action operator
-				continue
+		} else if p.current.Type == TokenIdent {
+			// Shorthand syntax: field op= value
+			action, err := p.parseShorthandAction()
+			if err != nil {
+				return nil, err
 			}
-
-			// No comma, break out of inner loop
+			actions = append(actions, action)
+		} else {
 			break
 		}
 	}
 
 	return actions, nil
+}
+
+// parseActionAssignment parses "field = value" or "field" (for DELETE).
+func (p *Parser) parseActionAssignment(actionOp ActionOperator) (*Action, error) {
+	// Parse field name
+	if p.current.Type != TokenIdent {
+		return nil, p.errorf("expected field name")
+	}
+	field := p.current.Value
+	p.advance()
+
+	// For DELETE, no value is needed
+	if actionOp == ActionDelete {
+		return NewAction(field, actionOp, nil), nil
+	}
+
+	// Expect = for assignment
+	if p.current.Type != TokenEquals {
+		return nil, p.errorf("expected '=' after field name")
+	}
+	p.advance()
+
+	// Parse value
+	value, err := p.parseActionValue()
+	if err != nil {
+		return nil, err
+	}
+
+	return NewAction(field, actionOp, value), nil
+}
+
+// parseShorthandAction parses shorthand action syntax: field = value, field ?= value, etc.
+func (p *Parser) parseShorthandAction() (*Action, error) {
+	// Parse field name
+	if p.current.Type != TokenIdent {
+		return nil, p.errorf("expected field name")
+	}
+	field := p.current.Value
+	p.advance()
+
+	// Determine action operator from shorthand token
+	var actionOp ActionOperator
+	switch p.current.Type {
+	case TokenEquals:
+		actionOp = ActionSet
+	case TokenSetIfEmpty:
+		actionOp = ActionSetIfEmpty
+	case TokenAppend:
+		actionOp = ActionAppend
+	case TokenRemove:
+		actionOp = ActionRemove
+	default:
+		return nil, p.errorf("expected assignment operator")
+	}
+	p.advance()
+
+	// Parse value
+	value, err := p.parseActionValue()
+	if err != nil {
+		return nil, err
+	}
+
+	return NewAction(field, actionOp, value), nil
 }
 
 // parseActionValue parses the value part of an action.

@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/jmylchreest/tvarr/internal/models"
+	"github.com/jmylchreest/tvarr/internal/repository"
 )
 
 // HandlerFactory creates and manages source handlers.
@@ -14,16 +15,30 @@ type HandlerFactory struct {
 }
 
 // NewHandlerFactory creates a new handler factory with default handlers registered.
+// Note: Manual handler is not registered by default since it requires a repository.
+// Use RegisterManualHandler to add manual source support.
 func NewHandlerFactory() *HandlerFactory {
 	f := &HandlerFactory{
 		handlers: make(map[models.SourceType]SourceHandler),
 	}
 
-	// Register default handlers
+	// Register default handlers that don't require external dependencies
 	f.Register(NewM3UHandler())
 	f.Register(NewXtreamHandler())
 
 	return f
+}
+
+// NewHandlerFactoryWithManual creates a handler factory with all handlers including Manual.
+func NewHandlerFactoryWithManual(manualRepo repository.ManualStreamChannelRepository) *HandlerFactory {
+	f := NewHandlerFactory()
+	f.RegisterManualHandler(manualRepo)
+	return f
+}
+
+// RegisterManualHandler registers the manual source handler with the required repository.
+func (f *HandlerFactory) RegisterManualHandler(repo repository.ManualStreamChannelRepository) {
+	f.Register(NewManualHandler(repo))
 }
 
 // Register adds a handler to the factory.

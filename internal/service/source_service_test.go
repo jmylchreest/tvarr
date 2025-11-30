@@ -388,3 +388,205 @@ func TestSourceService_IsIngesting(t *testing.T) {
 		t.Error("expected ingesting after start")
 	}
 }
+
+// mockEPGChecker is a mock implementation of EPGChecker
+type mockEPGChecker struct {
+	available bool
+	err       error
+}
+
+func (m *mockEPGChecker) CheckEPGAvailability(ctx context.Context, baseURL, username, password string) (bool, error) {
+	return m.available, m.err
+}
+
+func TestSourceService_CreateXtreamWithAutoEPG(t *testing.T) {
+	sourceRepo := newMockStreamSourceRepo()
+	channelRepo := newMockChannelRepo()
+	epgSourceRepo := newMockEpgSourceRepo()
+	factory := ingestor.NewHandlerFactory()
+	stateManager := ingestor.NewStateManager()
+	epgChecker := &mockEPGChecker{available: true}
+
+	svc := NewSourceService(sourceRepo, channelRepo, factory, stateManager).
+		WithEPGSourceRepo(epgSourceRepo).
+		WithEPGChecker(epgChecker)
+
+	source := &models.StreamSource{
+		Name:     "Xtream Provider",
+		Type:     models.SourceTypeXtream,
+		URL:      "http://xtream.example.com",
+		Username: "testuser",
+		Password: "testpass",
+	}
+
+	err := svc.Create(context.Background(), source)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Check EPG source was auto-created
+	epgSources, _ := epgSourceRepo.GetAll(context.Background())
+	if len(epgSources) != 1 {
+		t.Fatalf("expected 1 EPG source, got %d", len(epgSources))
+	}
+
+	epgSource := epgSources[0]
+	if epgSource.Name != "Xtream Provider (EPG)" {
+		t.Errorf("expected EPG name 'Xtream Provider (EPG)', got %q", epgSource.Name)
+	}
+	if epgSource.Type != models.EpgSourceTypeXtream {
+		t.Errorf("expected EPG type 'xtream', got %q", epgSource.Type)
+	}
+	if epgSource.URL != "http://xtream.example.com" {
+		t.Errorf("expected EPG URL 'http://xtream.example.com', got %q", epgSource.URL)
+	}
+	if epgSource.Username != "testuser" {
+		t.Errorf("expected EPG username 'testuser', got %q", epgSource.Username)
+	}
+	if epgSource.Password != "testpass" {
+		t.Errorf("expected EPG password 'testpass', got %q", epgSource.Password)
+	}
+}
+
+func TestSourceService_CreateXtreamNoAutoEPG_WhenUnavailable(t *testing.T) {
+	sourceRepo := newMockStreamSourceRepo()
+	channelRepo := newMockChannelRepo()
+	epgSourceRepo := newMockEpgSourceRepo()
+	factory := ingestor.NewHandlerFactory()
+	stateManager := ingestor.NewStateManager()
+	epgChecker := &mockEPGChecker{available: false}
+
+	svc := NewSourceService(sourceRepo, channelRepo, factory, stateManager).
+		WithEPGSourceRepo(epgSourceRepo).
+		WithEPGChecker(epgChecker)
+
+	source := &models.StreamSource{
+		Name:     "Xtream Provider",
+		Type:     models.SourceTypeXtream,
+		URL:      "http://xtream.example.com",
+		Username: "testuser",
+		Password: "testpass",
+	}
+
+	err := svc.Create(context.Background(), source)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Check no EPG source was created
+	epgSources, _ := epgSourceRepo.GetAll(context.Background())
+	if len(epgSources) != 0 {
+		t.Errorf("expected 0 EPG sources when unavailable, got %d", len(epgSources))
+	}
+}
+
+func TestSourceService_CreateXtreamNoAutoEPG_WhenAlreadyExists(t *testing.T) {
+	sourceRepo := newMockStreamSourceRepo()
+	channelRepo := newMockChannelRepo()
+	epgSourceRepo := newMockEpgSourceRepo()
+	factory := ingestor.NewHandlerFactory()
+	stateManager := ingestor.NewStateManager()
+	epgChecker := &mockEPGChecker{available: true}
+
+	svc := NewSourceService(sourceRepo, channelRepo, factory, stateManager).
+		WithEPGSourceRepo(epgSourceRepo).
+		WithEPGChecker(epgChecker)
+
+	// Pre-create an EPG source with the same URL
+	existingEPG := &models.EpgSource{
+		Name:     "Existing EPG",
+		Type:     models.EpgSourceTypeXtream,
+		URL:      "http://xtream.example.com",
+		Username: "testuser",
+		Password: "testpass",
+	}
+	_ = epgSourceRepo.Create(context.Background(), existingEPG)
+
+	source := &models.StreamSource{
+		Name:     "Xtream Provider",
+		Type:     models.SourceTypeXtream,
+		URL:      "http://xtream.example.com",
+		Username: "testuser",
+		Password: "testpass",
+	}
+
+	err := svc.Create(context.Background(), source)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Check no additional EPG source was created
+	epgSources, _ := epgSourceRepo.GetAll(context.Background())
+	if len(epgSources) != 1 {
+		t.Errorf("expected 1 EPG source (existing), got %d", len(epgSources))
+	}
+}
+
+func TestSourceService_CreateM3U_NoAutoEPG(t *testing.T) {
+	sourceRepo := newMockStreamSourceRepo()
+	channelRepo := newMockChannelRepo()
+	epgSourceRepo := newMockEpgSourceRepo()
+	factory := ingestor.NewHandlerFactory()
+	stateManager := ingestor.NewStateManager()
+	epgChecker := &mockEPGChecker{available: true}
+
+	svc := NewSourceService(sourceRepo, channelRepo, factory, stateManager).
+		WithEPGSourceRepo(epgSourceRepo).
+		WithEPGChecker(epgChecker)
+
+	// M3U sources should not trigger auto-EPG
+	source := &models.StreamSource{
+		Name: "M3U Provider",
+		Type: models.SourceTypeM3U,
+		URL:  "http://example.com/playlist.m3u",
+	}
+
+	err := svc.Create(context.Background(), source)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Check no EPG source was created
+	epgSources, _ := epgSourceRepo.GetAll(context.Background())
+	if len(epgSources) != 0 {
+		t.Errorf("expected 0 EPG sources for M3U, got %d", len(epgSources))
+	}
+}
+
+func TestSourceService_CreateXtreamAutoEPG_CheckerError(t *testing.T) {
+	sourceRepo := newMockStreamSourceRepo()
+	channelRepo := newMockChannelRepo()
+	epgSourceRepo := newMockEpgSourceRepo()
+	factory := ingestor.NewHandlerFactory()
+	stateManager := ingestor.NewStateManager()
+	epgChecker := &mockEPGChecker{available: false, err: errors.New("connection failed")}
+
+	svc := NewSourceService(sourceRepo, channelRepo, factory, stateManager).
+		WithEPGSourceRepo(epgSourceRepo).
+		WithEPGChecker(epgChecker)
+
+	source := &models.StreamSource{
+		Name:     "Xtream Provider",
+		Type:     models.SourceTypeXtream,
+		URL:      "http://xtream.example.com",
+		Username: "testuser",
+		Password: "testpass",
+	}
+
+	// Should still succeed - auto-EPG check failure shouldn't fail creation
+	err := svc.Create(context.Background(), source)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Stream source should be created
+	if source.ID.IsZero() {
+		t.Error("expected ID to be set")
+	}
+
+	// But no EPG source should be created
+	epgSources, _ := epgSourceRepo.GetAll(context.Background())
+	if len(epgSources) != 0 {
+		t.Errorf("expected 0 EPG sources on checker error, got %d", len(epgSources))
+	}
+}

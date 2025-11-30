@@ -256,6 +256,44 @@ Client (Final Approval)
 - No magic numbers (use named constants)
 - Structured logging with appropriate levels
 
+### XIII. Test Data Standards
+
+**Never use real paid channels, brands, or networks in test data.** This includes:
+- Real TV network names (e.g., BBC, CNN, ESPN, HBO)
+- Real streaming service names
+- Real broadcaster names
+- Trademarked channel identifiers
+
+**Use fictional broadcasters and channels instead:**
+```go
+// GOOD - Fictional names
+"StreamCast News HD"
+"ViewMedia Sports"
+"AeroVision Movies"
+"GlobalStream Entertainment"
+"NationalNet Prime +1"
+
+// BAD - Real brands (NEVER USE)
+"BBC One HD"
+"ESPN Sports"
+"HBO Max"
+"Sky Sports"
+```
+
+**Standard fictional broadcasters:**
+- StreamCast, ViewMedia, AeroVision, GlobalStream
+- NationalNet, SportsCentral, CinemaMax, MusicMax
+
+**Test data generator** (`internal/testutil/sample_data.go`):
+- Provides `SampleDataGenerator` for generating realistic but fictional channel data
+- Supports categories: news, sports, movies, entertainment, adult
+- Supports quality variants: HD, SD, 4K, UHD
+- Supports timeshift variants: +1, +2, +24, +1h
+- All stream URLs use `example.com` or `test.local` domains
+- All logo URLs use `logos.example.com`
+
+This prevents trademark issues and ensures tests don't accidentally validate against production data.
+
 ## Key Systems (from Architecture)
 
 The following systems are critical and must preserve their design:
@@ -310,4 +348,4 @@ All code reviews must verify constitutional compliance. Complexity violations mu
 
 Security Engineer has **VETO POWER** on any security-related concerns.
 
-**Version**: 2.1.0 | **Ratified**: 2025-11-29 | **Last Amended**: 2025-11-29
+**Version**: 2.2.0 | **Ratified**: 2025-11-29 | **Last Amended**: 2025-11-30

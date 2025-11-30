@@ -10,11 +10,13 @@ package pipeline
 import (
 	"log/slog"
 
+	"github.com/jmylchreest/tvarr/internal/ingestor"
 	"github.com/jmylchreest/tvarr/internal/pipeline/core"
 	"github.com/jmylchreest/tvarr/internal/pipeline/stages/datamapping"
 	"github.com/jmylchreest/tvarr/internal/pipeline/stages/filtering"
 	"github.com/jmylchreest/tvarr/internal/pipeline/stages/generatem3u"
 	"github.com/jmylchreest/tvarr/internal/pipeline/stages/generatexmltv"
+	"github.com/jmylchreest/tvarr/internal/pipeline/stages/ingestionguard"
 	"github.com/jmylchreest/tvarr/internal/pipeline/stages/loadchannels"
 	"github.com/jmylchreest/tvarr/internal/pipeline/stages/loadprograms"
 	"github.com/jmylchreest/tvarr/internal/pipeline/stages/logocaching"
@@ -144,6 +146,31 @@ func NewDefaultFactoryWithLogoCaching(
 	logger *slog.Logger,
 	logoCacher logocaching.LogoCacher,
 ) *Factory {
+	return NewDefaultFactoryWithIngestionGuard(
+		channelRepo,
+		epgProgramRepo,
+		filterRepo,
+		dataMappingRuleRepo,
+		sandbox,
+		logger,
+		logoCacher,
+		nil, // No ingestion guard
+	)
+}
+
+// NewDefaultFactoryWithIngestionGuard creates a factory with ingestion guard support.
+// If stateManager is nil, ingestion guard stage is skipped.
+// If logoCacher is nil, logo caching stage is skipped.
+func NewDefaultFactoryWithIngestionGuard(
+	channelRepo repository.ChannelRepository,
+	epgProgramRepo repository.EpgProgramRepository,
+	filterRepo repository.FilterRepository,
+	dataMappingRuleRepo repository.DataMappingRuleRepository,
+	sandbox *storage.Sandbox,
+	logger *slog.Logger,
+	logoCacher logocaching.LogoCacher,
+	stateManager *ingestor.StateManager,
+) *Factory {
 	deps := &Dependencies{
 		ChannelRepo:         channelRepo,
 		EpgProgramRepo:      epgProgramRepo,
@@ -156,6 +183,11 @@ func NewDefaultFactoryWithLogoCaching(
 	factory := NewFactory(deps)
 
 	// Register default stages in execution order
+	// Ingestion guard is FIRST to ensure data consistency
+	if stateManager != nil {
+		factory.RegisterStage(ingestionguard.NewConstructor(stateManager))
+	}
+
 	factory.RegisterStage(loadchannels.NewConstructor())
 	factory.RegisterStage(loadprograms.NewConstructor())
 	factory.RegisterStage(filtering.NewConstructor())
@@ -176,13 +208,14 @@ func NewDefaultFactoryWithLogoCaching(
 
 // Stage IDs for reference.
 const (
-	StageIDLoadChannels  = loadchannels.StageID
-	StageIDLoadPrograms  = loadprograms.StageID
-	StageIDFiltering     = filtering.StageID
-	StageIDDataMapping   = datamapping.StageID
-	StageIDNumbering     = numbering.StageID
-	StageIDLogoCaching   = logocaching.StageID
-	StageIDGenerateM3U   = generatem3u.StageID
-	StageIDGenerateXMLTV = generatexmltv.StageID
-	StageIDPublish       = publish.StageID
+	StageIDIngestionGuard = ingestionguard.StageID
+	StageIDLoadChannels   = loadchannels.StageID
+	StageIDLoadPrograms   = loadprograms.StageID
+	StageIDFiltering      = filtering.StageID
+	StageIDDataMapping    = datamapping.StageID
+	StageIDNumbering      = numbering.StageID
+	StageIDLogoCaching    = logocaching.StageID
+	StageIDGenerateM3U    = generatem3u.StageID
+	StageIDGenerateXMLTV  = generatexmltv.StageID
+	StageIDPublish        = publish.StageID
 )

@@ -62,10 +62,18 @@ type ManualStreamChannelRepository interface {
 	GetByID(ctx context.Context, id models.ULID) (*models.ManualStreamChannel, error)
 	// GetAll retrieves all manual channels.
 	GetAll(ctx context.Context) ([]*models.ManualStreamChannel, error)
+	// GetBySourceID retrieves all manual channels for a source.
+	GetBySourceID(ctx context.Context, sourceID models.ULID) ([]*models.ManualStreamChannel, error)
+	// GetEnabledBySourceID retrieves enabled manual channels for a source, ordered by priority.
+	GetEnabledBySourceID(ctx context.Context, sourceID models.ULID) ([]*models.ManualStreamChannel, error)
 	// Update updates an existing manual channel.
 	Update(ctx context.Context, channel *models.ManualStreamChannel) error
 	// Delete deletes a manual channel by ID.
 	Delete(ctx context.Context, id models.ULID) error
+	// DeleteBySourceID deletes all manual channels for a source.
+	DeleteBySourceID(ctx context.Context, sourceID models.ULID) error
+	// CountBySourceID returns the number of manual channels for a source.
+	CountBySourceID(ctx context.Context, sourceID models.ULID) (int64, error)
 }
 
 // EpgSourceRepository defines operations for EPG source persistence.
@@ -84,6 +92,8 @@ type EpgSourceRepository interface {
 	Delete(ctx context.Context, id models.ULID) error
 	// GetByName retrieves an EPG source by name.
 	GetByName(ctx context.Context, name string) (*models.EpgSource, error)
+	// GetByURL retrieves an EPG source by URL.
+	GetByURL(ctx context.Context, url string) (*models.EpgSource, error)
 	// UpdateLastIngestion updates the last ingestion timestamp and status.
 	UpdateLastIngestion(ctx context.Context, id models.ULID, status string, programCount int) error
 }

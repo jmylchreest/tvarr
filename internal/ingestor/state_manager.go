@@ -149,6 +149,33 @@ func (m *StateManager) IsIngesting(sourceID models.ULID) bool {
 	return exists && state.Status == "ingesting"
 }
 
+// IsAnyIngesting returns true if any ingestion is currently in progress.
+func (m *StateManager) IsAnyIngesting() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, state := range m.states {
+		if state.Status == "ingesting" {
+			return true
+		}
+	}
+	return false
+}
+
+// ActiveIngestionCount returns the number of active ingestions.
+func (m *StateManager) ActiveIngestionCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	count := 0
+	for _, state := range m.states {
+		if state.Status == "ingesting" {
+			count++
+		}
+	}
+	return count
+}
+
 // GetAllStates returns all current ingestion states.
 func (m *StateManager) GetAllStates() []*IngestionState {
 	m.mu.RLock()

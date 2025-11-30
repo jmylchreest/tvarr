@@ -4,9 +4,13 @@ import (
 	"gorm.io/gorm"
 )
 
-// ManualStreamChannel represents a user-defined channel not from an external source.
+// ManualStreamChannel represents a user-defined channel for a Manual stream source.
+// These channels are materialized into the main channels table during ingestion.
 type ManualStreamChannel struct {
 	BaseModel
+
+	// SourceID is the Manual stream source this channel belongs to.
+	SourceID ULID `gorm:"not null;index" json:"source_id"`
 
 	// TvgID is the EPG channel identifier for matching with program data.
 	TvgID string `gorm:"size:255;index" json:"tvg_id,omitempty"`
@@ -80,10 +84,12 @@ func (c *ManualStreamChannel) BeforeUpdate(tx *gorm.DB) error {
 	return c.Validate()
 }
 
-// ToChannel converts a ManualStreamChannel to a Channel-like structure
-// for use in proxy generation pipelines.
+// ToChannel converts a ManualStreamChannel to a Channel for materialization.
+// The resulting channel is linked to the same source as the manual channel.
 func (c *ManualStreamChannel) ToChannel() *Channel {
 	return &Channel{
+		SourceID:      c.SourceID,
+		ExtID:         c.ID.String(), // Use manual channel ID as external ID for deduplication
 		TvgID:         c.TvgID,
 		TvgName:       c.TvgName,
 		TvgLogo:       c.TvgLogo,

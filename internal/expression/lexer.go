@@ -82,6 +82,18 @@ func (l *Lexer) nextToken() Token {
 			return l.makeToken(TokenEquals, "==")
 		}
 		return l.makeToken(TokenEquals, "=")
+	case ch == '?':
+		if l.peek() == '=' {
+			l.next()
+			return l.makeToken(TokenSetIfEmpty, "?=")
+		}
+		return l.makeErrorToken("unexpected character '?'")
+	case ch == '+':
+		if l.peek() == '=' {
+			l.next()
+			return l.makeToken(TokenAppend, "+=")
+		}
+		return l.makeErrorToken("unexpected character '+'")
 	case ch == '!':
 		if l.peek() == '=' {
 			l.next()
@@ -100,9 +112,20 @@ func (l *Lexer) nextToken() Token {
 			return l.makeToken(TokenOr, "||")
 		}
 		return l.makeErrorToken("unexpected character '|'")
+	case ch == '-':
+		if l.peek() == '=' {
+			l.next()
+			return l.makeToken(TokenRemove, "-=")
+		}
+		// Check for negative number
+		if isDigit(l.peek()) {
+			l.backup()
+			return l.scanNumber()
+		}
+		return l.makeErrorToken("unexpected character '-'")
 	case ch == '"' || ch == '\'':
 		return l.scanString(ch)
-	case isDigit(ch) || (ch == '-' && isDigit(l.peek())):
+	case isDigit(ch):
 		l.backup()
 		return l.scanNumber()
 	case isIdentStart(ch):

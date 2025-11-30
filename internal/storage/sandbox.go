@@ -400,3 +400,69 @@ func (s *Sandbox) SubSandbox(relativePath string) (*Sandbox, error) {
 
 	return NewSandbox(path)
 }
+
+// AtomicPublish atomically publishes a file from an external absolute path
+// to a location within the sandbox. It first tries a direct rename (efficient
+// if same filesystem), then falls back to copy-then-rename for cross-filesystem
+// scenarios.
+func (s *Sandbox) AtomicPublish(srcAbsPath, destRelativePath string) error {
+	targetPath, err := s.ResolvePath(destRelativePath)
+	if err != nil {
+		return err
+	}
+
+	// Ensure parent directory exists
+	dir := filepath.Dir(targetPath)
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		return fmt.Errorf("creating parent directory: %w", err)
+	}
+
+	// Try direct rename first (atomic if same filesystem)
+	if err := os.Rename(srcAbsPath, targetPath); err == nil {
+		return nil
+	}
+
+	// Fall back to copy-then-rename for cross-filesystem scenarios
+	return s.atomicCopyPublish(srcAbsPath, targetPath)
+}
+
+// atomicCopyPublish copies a file then renames it for atomicity.
+func (s *Sandbox) atomicCopyPublish(srcAbsPath, targetPath string) error {
+	dir := filepath.Dir(targetPath)
+	tempName := fmt.Sprintf(".%s.%s.tmp", filepath.Base(targetPath), randomHex(8))
+	tempPath := filepath.Join(dir, tempName)
+
+	// Open source file
+	srcFile, err := os.Open(srcAbsPath)
+	if err != nil {
+		return fmt.Errorf("opening source file: %w", err)
+	}
+	defer srcFile.Close()
+
+	// Create temp destination file
+	tempFile, err := os.OpenFile(tempPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0640)
+	if err != nil {
+		return fmt.Errorf("creating temp file: %w", err)
+	}
+
+	// Copy data
+	_, err = io.Copy(tempFile, srcFile)
+	closeErr := tempFile.Close()
+
+	if err != nil {
+		os.Remove(tempPath)
+		return fmt.Errorf("copying to temp file: %w", err)
+	}
+	if closeErr != nil {
+		os.Remove(tempPath)
+		return fmt.Errorf("closing temp file: %w", closeErr)
+	}
+
+	// Atomic rename (temp and dest are now on same filesystem)
+	if err := os.Rename(tempPath, targetPath); err != nil {
+		os.Remove(tempPath)
+		return fmt.Errorf("renaming to target: %w", err)
+	}
+
+	return nil
+}

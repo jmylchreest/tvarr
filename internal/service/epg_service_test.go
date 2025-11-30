@@ -106,6 +106,18 @@ func (m *mockEpgSourceRepo) UpdateLastIngestion(ctx context.Context, id models.U
 	return nil
 }
 
+func (m *mockEpgSourceRepo) GetByURL(ctx context.Context, url string) (*models.EpgSource, error) {
+	if m.getErr != nil {
+		return nil, m.getErr
+	}
+	for _, s := range m.sources {
+		if s.URL == url {
+			return s, nil
+		}
+	}
+	return nil, nil
+}
+
 // Mock EPG Program Repository
 type mockEpgProgramRepo struct {
 	programs       map[models.ULID]*models.EpgProgram

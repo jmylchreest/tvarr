@@ -528,3 +528,173 @@ func TestParser_ComplexExpression(t *testing.T) {
 	assert.Len(t, condActions.Actions, 2)
 	assert.True(t, parsed.HasActions)
 }
+
+// Tests for action shorthand syntax (T490-T495)
+
+func TestParser_ImplicitSetShorthand(t *testing.T) {
+	// Implicit SET: field = "value" instead of SET field = "value"
+	input := `channel_name contains "BBC" tvg_logo = "bbc_logo.png"`
+
+	parsed, err := Parse(input)
+	require.NoError(t, err)
+
+	condActions, ok := parsed.Expression.(*ConditionWithActions)
+	require.True(t, ok, "expected ConditionWithActions")
+
+	require.Len(t, condActions.Actions, 1)
+	assert.Equal(t, "tvg_logo", condActions.Actions[0].Field)
+	assert.Equal(t, ActionSet, condActions.Actions[0].Operator)
+
+	lit, ok := condActions.Actions[0].Value.(*LiteralValue)
+	require.True(t, ok)
+	assert.Equal(t, "bbc_logo.png", lit.Value)
+}
+
+func TestParser_SetIfEmptyShorthand(t *testing.T) {
+	// SET_IF_EMPTY shorthand: field ?= "value"
+	input := `channel_name contains "BBC" tvg_logo ?= "default.png"`
+
+	parsed, err := Parse(input)
+	require.NoError(t, err)
+
+	condActions, ok := parsed.Expression.(*ConditionWithActions)
+	require.True(t, ok, "expected ConditionWithActions")
+
+	require.Len(t, condActions.Actions, 1)
+	assert.Equal(t, "tvg_logo", condActions.Actions[0].Field)
+	assert.Equal(t, ActionSetIfEmpty, condActions.Actions[0].Operator)
+
+	lit, ok := condActions.Actions[0].Value.(*LiteralValue)
+	require.True(t, ok)
+	assert.Equal(t, "default.png", lit.Value)
+}
+
+func TestParser_AppendShorthand(t *testing.T) {
+	// APPEND shorthand: field += "value"
+	input := `channel_name contains "HD" tvg_name += " HD"`
+
+	parsed, err := Parse(input)
+	require.NoError(t, err)
+
+	condActions, ok := parsed.Expression.(*ConditionWithActions)
+	require.True(t, ok, "expected ConditionWithActions")
+
+	require.Len(t, condActions.Actions, 1)
+	assert.Equal(t, "tvg_name", condActions.Actions[0].Field)
+	assert.Equal(t, ActionAppend, condActions.Actions[0].Operator)
+
+	lit, ok := condActions.Actions[0].Value.(*LiteralValue)
+	require.True(t, ok)
+	assert.Equal(t, " HD", lit.Value)
+}
+
+func TestParser_RemoveShorthand(t *testing.T) {
+	// REMOVE shorthand: field -= "value"
+	input := `channel_name contains "UK" tvg_name -= "[UK]"`
+
+	parsed, err := Parse(input)
+	require.NoError(t, err)
+
+	condActions, ok := parsed.Expression.(*ConditionWithActions)
+	require.True(t, ok, "expected ConditionWithActions")
+
+	require.Len(t, condActions.Actions, 1)
+	assert.Equal(t, "tvg_name", condActions.Actions[0].Field)
+	assert.Equal(t, ActionRemove, condActions.Actions[0].Operator)
+
+	lit, ok := condActions.Actions[0].Value.(*LiteralValue)
+	require.True(t, ok)
+	assert.Equal(t, "[UK]", lit.Value)
+}
+
+func TestParser_MixedShorthandAndKeyword(t *testing.T) {
+	// Mix of shorthand and keyword syntax
+	input := `channel_name contains "BBC" SET group_title = "UK" tvg_logo ?= "default.png"`
+
+	parsed, err := Parse(input)
+	require.NoError(t, err)
+
+	condActions, ok := parsed.Expression.(*ConditionWithActions)
+	require.True(t, ok, "expected ConditionWithActions")
+
+	require.Len(t, condActions.Actions, 2)
+
+	// First action: SET group_title = "UK"
+	assert.Equal(t, "group_title", condActions.Actions[0].Field)
+	assert.Equal(t, ActionSet, condActions.Actions[0].Operator)
+
+	// Second action: tvg_logo ?= "default.png"
+	assert.Equal(t, "tvg_logo", condActions.Actions[1].Field)
+	assert.Equal(t, ActionSetIfEmpty, condActions.Actions[1].Operator)
+}
+
+func TestParser_MultipleShorthandActions(t *testing.T) {
+	// Multiple shorthand actions in a row
+	input := `channel_name contains "BBC" tvg_logo = "logo.png" tvg_name += " HD" group_title ?= "Default"`
+
+	parsed, err := Parse(input)
+	require.NoError(t, err)
+
+	condActions, ok := parsed.Expression.(*ConditionWithActions)
+	require.True(t, ok, "expected ConditionWithActions")
+
+	require.Len(t, condActions.Actions, 3)
+
+	assert.Equal(t, "tvg_logo", condActions.Actions[0].Field)
+	assert.Equal(t, ActionSet, condActions.Actions[0].Operator)
+
+	assert.Equal(t, "tvg_name", condActions.Actions[1].Field)
+	assert.Equal(t, ActionAppend, condActions.Actions[1].Operator)
+
+	assert.Equal(t, "group_title", condActions.Actions[2].Field)
+	assert.Equal(t, ActionSetIfEmpty, condActions.Actions[2].Operator)
+}
+
+func TestParser_ShorthandBackwardCompatibility(t *testing.T) {
+	// Ensure keyword syntax still works with shorthand enabled
+	tests := []struct {
+		name     string
+		input    string
+		field    string
+		operator ActionOperator
+	}{
+		{
+			name:     "SET keyword",
+			input:    `channel_name contains "BBC" SET tvg_logo = "logo.png"`,
+			field:    "tvg_logo",
+			operator: ActionSet,
+		},
+		{
+			name:     "SET_IF_EMPTY keyword",
+			input:    `channel_name contains "BBC" SET_IF_EMPTY tvg_logo = "logo.png"`,
+			field:    "tvg_logo",
+			operator: ActionSetIfEmpty,
+		},
+		{
+			name:     "APPEND keyword",
+			input:    `channel_name contains "BBC" APPEND tvg_name = " HD"`,
+			field:    "tvg_name",
+			operator: ActionAppend,
+		},
+		{
+			name:     "REMOVE keyword",
+			input:    `channel_name contains "BBC" REMOVE tvg_name = "[UK]"`,
+			field:    "tvg_name",
+			operator: ActionRemove,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, err := Parse(tt.input)
+			require.NoError(t, err)
+
+			condActions, ok := parsed.Expression.(*ConditionWithActions)
+			require.True(t, ok, "expected ConditionWithActions")
+
+			require.Len(t, condActions.Actions, 1)
+			assert.Equal(t, tt.field, condActions.Actions[0].Field)
+			assert.Equal(t, tt.operator, condActions.Actions[0].Operator)
+		})
+	}
+}

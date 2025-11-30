@@ -49,11 +49,15 @@ func init() {
 	serveCmd.Flags().String("database", "tvarr.db", "Database file path")
 	serveCmd.Flags().String("data-dir", "data", "Data directory for output files")
 
+	// Pipeline flags
+	serveCmd.Flags().Bool("ingestion-guard", true, "Enable ingestion guard (waits for active ingestions)")
+
 	// Bind flags to viper
 	viper.BindPFlag("server.host", serveCmd.Flags().Lookup("host"))
 	viper.BindPFlag("server.port", serveCmd.Flags().Lookup("port"))
 	viper.BindPFlag("database.path", serveCmd.Flags().Lookup("database"))
 	viper.BindPFlag("storage.data_dir", serveCmd.Flags().Lookup("data-dir"))
+	viper.BindPFlag("pipeline.ingestion_guard", serveCmd.Flags().Lookup("ingestion-guard"))
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
@@ -73,6 +77,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Initialize repositories
 	streamSourceRepo := repository.NewStreamSourceRepository(db)
 	channelRepo := repository.NewChannelRepository(db)
+	manualChannelRepo := repository.NewManualChannelRepository(db)
 	epgSourceRepo := repository.NewEpgSourceRepository(db)
 	epgProgramRepo := repository.NewEpgProgramRepository(db)
 	proxyRepo := repository.NewStreamProxyRepository(db)
@@ -127,10 +132,17 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Initialize ingestor components
 	stateManager := ingestor.NewStateManager()
 	streamHandlerFactory := ingestor.NewHandlerFactory()
+	streamHandlerFactory.RegisterManualHandler(manualChannelRepo) // Add manual source support
 	epgHandlerFactory := ingestor.NewEpgHandlerFactory()
 
-	// Initialize pipeline factory with default stages and logo caching
-	pipelineFactory := pipeline.NewDefaultFactoryWithLogoCaching(
+	// Initialize pipeline factory with default stages and optional ingestion guard
+	var ingestionGuardStateManager *ingestor.StateManager
+	if viper.GetBool("pipeline.ingestion_guard") {
+		ingestionGuardStateManager = stateManager
+		logger.Info("ingestion guard enabled for proxy generation")
+	}
+
+	pipelineFactory := pipeline.NewDefaultFactoryWithIngestionGuard(
 		channelRepo,
 		epgProgramRepo,
 		filterRepo,
@@ -138,6 +150,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		sandbox,
 		logger,
 		logoService, // Logo caching enabled
+		ingestionGuardStateManager,
 	)
 
 	// Initialize progress service
@@ -151,7 +164,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		channelRepo,
 		streamHandlerFactory,
 		stateManager,
-	).WithLogger(logger).WithProgressService(progressService)
+	).
+		WithLogger(logger).
+		WithProgressService(progressService).
+		WithEPGSourceRepo(epgSourceRepo).
+		WithEPGChecker(service.NewDefaultEPGChecker())
 
 	epgService := service.NewEpgService(
 		epgSourceRepo,

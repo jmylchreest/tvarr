@@ -84,6 +84,18 @@ func (r *epgSourceRepo) GetByName(ctx context.Context, name string) (*models.Epg
 	return &source, nil
 }
 
+// GetByURL retrieves an EPG source by URL.
+func (r *epgSourceRepo) GetByURL(ctx context.Context, url string) (*models.EpgSource, error) {
+	var source models.EpgSource
+	if err := r.db.WithContext(ctx).Where("url = ?", url).First(&source).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("getting EPG source by URL: %w", err)
+	}
+	return &source, nil
+}
+
 // UpdateLastIngestion updates the last ingestion timestamp and status.
 func (r *epgSourceRepo) UpdateLastIngestion(ctx context.Context, id models.ULID, status string, programCount int) error {
 	now := models.Now()

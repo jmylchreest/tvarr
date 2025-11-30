@@ -5,20 +5,65 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"time"
 
 	"github.com/jmylchreest/tvarr/internal/ingestor"
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/repository"
 	"github.com/jmylchreest/tvarr/internal/service/progress"
+	"github.com/jmylchreest/tvarr/pkg/xtream"
 )
+
+// EPGChecker checks EPG availability for Xtream sources.
+type EPGChecker interface {
+	// CheckEPGAvailability checks if an Xtream server provides EPG data.
+	CheckEPGAvailability(ctx context.Context, baseURL, username, password string) (bool, error)
+}
+
+// DefaultEPGChecker implements EPGChecker using an HTTP HEAD request.
+type DefaultEPGChecker struct {
+	httpClient *http.Client
+}
+
+// NewDefaultEPGChecker creates a new DefaultEPGChecker.
+func NewDefaultEPGChecker() *DefaultEPGChecker {
+	return &DefaultEPGChecker{
+		httpClient: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+	}
+}
+
+// CheckEPGAvailability checks if an Xtream server provides EPG data via HEAD request to xmltv.php.
+func (c *DefaultEPGChecker) CheckEPGAvailability(ctx context.Context, baseURL, username, password string) (bool, error) {
+	client := xtream.NewClient(baseURL, username, password, xtream.WithHTTPClient(c.httpClient))
+	xmltvURL := client.GetXMLTVURL()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, xmltvURL, nil)
+	if err != nil {
+		return false, fmt.Errorf("creating request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("checking EPG availability: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// EPG is available if we get a 2xx response
+	return resp.StatusCode >= 200 && resp.StatusCode < 300, nil
+}
 
 // SourceService provides business logic for stream source management.
 type SourceService struct {
 	sourceRepo      repository.StreamSourceRepository
 	channelRepo     repository.ChannelRepository
+	epgSourceRepo   repository.EpgSourceRepository
 	factory         *ingestor.HandlerFactory
 	stateManager    *ingestor.StateManager
 	progressService *progress.Service
+	epgChecker      EPGChecker
 	logger          *slog.Logger
 }
 
@@ -50,6 +95,18 @@ func (s *SourceService) WithProgressService(svc *progress.Service) *SourceServic
 	return s
 }
 
+// WithEPGSourceRepo sets the EPG source repository for auto-EPG linking.
+func (s *SourceService) WithEPGSourceRepo(repo repository.EpgSourceRepository) *SourceService {
+	s.epgSourceRepo = repo
+	return s
+}
+
+// WithEPGChecker sets the EPG checker for checking EPG availability.
+func (s *SourceService) WithEPGChecker(checker EPGChecker) *SourceService {
+	s.epgChecker = checker
+	return s
+}
+
 // getIngestionStages returns the standard stages for stream source ingestion.
 func getIngestionStages() []progress.StageInfo {
 	return []progress.StageInfo{
@@ -61,6 +118,8 @@ func getIngestionStages() []progress.StageInfo {
 }
 
 // Create creates a new stream source.
+// For Xtream sources, it automatically checks for EPG availability and creates
+// a linked EPG source if EPG is available and doesn't already exist.
 func (s *SourceService) Create(ctx context.Context, source *models.StreamSource) error {
 	if err := source.Validate(); err != nil {
 		return fmt.Errorf("validation failed: %w", err)
@@ -76,7 +135,80 @@ func (s *SourceService) Create(ctx context.Context, source *models.StreamSource)
 		"type", source.Type,
 	)
 
+	// Auto-create linked EPG source for Xtream sources
+	if source.IsXtream() {
+		s.tryAutoCreateEPGSource(ctx, source)
+	}
+
 	return nil
+}
+
+// tryAutoCreateEPGSource attempts to auto-create an EPG source for an Xtream stream source.
+// This is a best-effort operation - failures are logged but don't fail the stream source creation.
+func (s *SourceService) tryAutoCreateEPGSource(ctx context.Context, streamSource *models.StreamSource) {
+	// Skip if no EPG repo or checker configured
+	if s.epgSourceRepo == nil || s.epgChecker == nil {
+		return
+	}
+
+	// Check if EPG source already exists for this URL
+	existing, err := s.epgSourceRepo.GetByURL(ctx, streamSource.URL)
+	if err != nil {
+		s.logger.Warn("failed to check existing EPG source",
+			"stream_source_id", streamSource.ID.String(),
+			"error", err.Error(),
+		)
+		return
+	}
+	if existing != nil {
+		s.logger.Debug("EPG source already exists for URL",
+			"stream_source_id", streamSource.ID.String(),
+			"epg_source_id", existing.ID.String(),
+		)
+		return
+	}
+
+	// Check EPG availability
+	available, err := s.epgChecker.CheckEPGAvailability(ctx, streamSource.URL, streamSource.Username, streamSource.Password)
+	if err != nil {
+		s.logger.Warn("failed to check EPG availability",
+			"stream_source_id", streamSource.ID.String(),
+			"error", err.Error(),
+		)
+		return
+	}
+	if !available {
+		s.logger.Debug("EPG not available for Xtream source",
+			"stream_source_id", streamSource.ID.String(),
+		)
+		return
+	}
+
+	// Create linked EPG source
+	epgSource := &models.EpgSource{
+		Name:      fmt.Sprintf("%s (EPG)", streamSource.Name),
+		Type:      models.EpgSourceTypeXtream,
+		URL:       streamSource.URL,
+		Username:  streamSource.Username,
+		Password:  streamSource.Password,
+		UserAgent: streamSource.UserAgent,
+		Enabled:   streamSource.Enabled,
+		Priority:  streamSource.Priority,
+	}
+
+	if err := s.epgSourceRepo.Create(ctx, epgSource); err != nil {
+		s.logger.Warn("failed to auto-create EPG source",
+			"stream_source_id", streamSource.ID.String(),
+			"error", err.Error(),
+		)
+		return
+	}
+
+	s.logger.Info("auto-created linked EPG source",
+		"stream_source_id", streamSource.ID.String(),
+		"epg_source_id", epgSource.ID.String(),
+		"epg_source_name", epgSource.Name,
+	)
 }
 
 // Update updates an existing stream source.

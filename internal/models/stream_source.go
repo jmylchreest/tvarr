@@ -12,6 +12,10 @@ const (
 	SourceTypeM3U SourceType = "m3u"
 	// SourceTypeXtream represents an Xtream Codes API source.
 	SourceTypeXtream SourceType = "xtream"
+	// SourceTypeManual represents a manual source with user-defined channels.
+	// Manual sources do not fetch from a URL; channels are defined statically
+	// in the manual_stream_channels table and materialized during ingestion.
+	SourceTypeManual SourceType = "manual"
 )
 
 // SourceStatus represents the current status of a source.
@@ -92,6 +96,11 @@ func (s *StreamSource) IsXtream() bool {
 	return s.Type == SourceTypeXtream
 }
 
+// IsManual returns true if this is a Manual source.
+func (s *StreamSource) IsManual() bool {
+	return s.Type == SourceTypeManual
+}
+
 // MarkIngesting sets the source status to ingesting.
 func (s *StreamSource) MarkIngesting() {
 	s.Status = SourceStatusIngesting
@@ -120,10 +129,11 @@ func (s *StreamSource) Validate() error {
 	if s.Name == "" {
 		return ErrNameRequired
 	}
-	if s.URL == "" {
+	// URL is required for M3U and Xtream sources, optional for Manual sources
+	if s.URL == "" && s.Type != SourceTypeManual {
 		return ErrURLRequired
 	}
-	if s.Type != SourceTypeM3U && s.Type != SourceTypeXtream {
+	if s.Type != SourceTypeM3U && s.Type != SourceTypeXtream && s.Type != SourceTypeManual {
 		return ErrInvalidSourceType
 	}
 	if s.Type == SourceTypeXtream && (s.Username == "" || s.Password == "") {

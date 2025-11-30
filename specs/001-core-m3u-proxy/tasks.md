@@ -20,6 +20,7 @@
 | Phase 8: US5 Filtering | ✅ Superseded | Merged into Phase 6.5 |
 | Phase 9: Channel Numbering | ✅ Complete | T150-T153, configurable modes |
 | Phase 10: Logo Caching | ✅ Complete | File-based caching with metadata sidecar |
+| **Phase 10.5: Parity Fixes** | ⏸️ Pending | Critical gaps from m3u-proxy comparison |
 | Phase 11-14 | ⏸️ Pending | |
 
 ---
@@ -531,6 +532,64 @@ All tasks in this phase must complete before any user story work.
 | T171a | | US7 | [X] Implement service/logo_indexer.go - in-memory hash-based index |
 | T172 | | US7 | [X] Write integration tests for logo caching |
 
+## Phase 10.5: Parity Fixes (P0 - BLOCKING)
+
+**Priority**: P0 - Must complete before Phase 11
+**Rationale**: Gap analysis between tvarr and m3u-proxy revealed critical missing features that affect data consistency and user experience. See `pre-phase11-status.md` for full analysis.
+
+### Manual Source Type
+
+| ID | P | Story | Task Description |
+|----|---|-------|------------------|
+| T470 | P | Parity | [ ] Write tests for Manual source type |
+| T471 | | Parity | [ ] Add `SourceTypeManual` to SourceType enum in models/stream_source.go |
+| T472 | | Parity | [ ] Update StreamSource.URL to be optional (for Manual sources) |
+| T473 | | Parity | [ ] Implement ingestor/manual_handler.go - materialize ManualStreamChannels to Channels |
+| T474 | | Parity | [ ] Register manual handler in ingestor/factory.go |
+| T475 | | Parity | [ ] Write integration tests for manual source ingestion |
+
+### Ingestion Guard Pipeline Stage
+
+| ID | P | Story | Task Description |
+|----|---|-------|------------------|
+| T476 | P | Parity | [ ] Write tests for ingestion guard stage |
+| T477 | | Parity | [ ] Implement pipeline/stages/ingestionguard/stage.go |
+| T478 | | Parity | [ ] Add configurable polling interval and max attempts |
+| T479 | | Parity | [ ] Register ingestion guard as first stage in factory |
+| T480 | | Parity | [ ] Add feature flag to enable/disable ingestion guard |
+
+### Atomic File Publishing
+
+| ID | P | Story | Task Description |
+|----|---|-------|------------------|
+| T481 | P | Parity | [ ] Write tests for atomic publish |
+| T482 | | Parity | [ ] Update pipeline/stages/publish/stage.go to use os.Rename() |
+| T483 | | Parity | [ ] Add cross-filesystem fallback (copy-then-rename) |
+| T484 | | Parity | [ ] Update storage/sandbox.go with atomic publish helper |
+
+### Auto-EPG Linking for Xtream Sources
+
+| ID | P | Story | Task Description |
+|----|---|-------|------------------|
+| T485 | P | Parity | [ ] Write tests for auto-EPG linking |
+| T486 | | Parity | [ ] Add check_epg_availability() to source_service.go |
+| T487 | | Parity | [ ] Update CreateStreamSource to auto-create EPG for Xtream type |
+| T488 | | Parity | [ ] Add URL-based source linking for Xtream sources |
+| T489 | | Parity | [ ] Write integration tests for auto-EPG creation |
+
+### Expression Engine Action Shorthand
+
+| ID | P | Story | Task Description |
+|----|---|-------|------------------|
+| T490 | P | Parity | [ ] Write tests for action shorthand syntax |
+| T491 | | Parity | [ ] Update lexer.go to recognize ?=, +=, -= operators |
+| T492 | | Parity | [ ] Update parser.go to handle implicit SET (field = value without keyword) |
+| T493 | | Parity | [ ] Update operators.go to map shorthand to ActionOperator |
+| T494 | | Parity | [ ] Ensure backward compatibility with keyword syntax |
+| T495 | | Parity | [ ] Write integration tests for shorthand expressions |
+
+---
+
 ## Phase 11: User Story 9 - Scheduled Jobs (P2)
 
 | ID | P | Story | Task Description |
@@ -631,6 +690,42 @@ All tasks in this phase must complete before any user story work.
 | T251 | | Polish | End-to-end pipeline test with data mapping + filtering (deferred from T395) |
 | T252 | P | Polish | Configure CI code coverage gate (minimum 80% for core packages, SC-009) |
 | T253 | | Polish | Implement API authentication configuration scaffold (FR-075, disabled by default) |
+
+---
+
+## Backlog: Clarification Needed
+
+**Status**: These tasks were identified in the m3u-proxy comparison but require clarification before implementation. See `pre-phase11-status.md` for context.
+
+### API Endpoints
+
+| ID | P | Story | Task Description | Questions |
+|----|---|-------|------------------|-----------|
+| T500 | | Backlog | Add channel browsing endpoint GET /api/v1/channels | Filtering/pagination scheme? |
+| T501 | | Backlog | Add EPG program browsing endpoint GET /api/v1/epg/programs | Query parameters? |
+| T502 | | Backlog | Add channel probe endpoint GET /api/v1/channels/{id}/probe | Wait for Phase 12 relay? |
+| T503 | | Backlog | Add Kubernetes /ready probe endpoint | What conditions determine readiness? |
+| T504 | | Backlog | Add Kubernetes /live probe endpoint | What conditions determine liveness? |
+| T505 | | Backlog | Add circuit breaker management endpoints | Wait for Phase 12 relay? |
+| T506 | | Backlog | Add manual channel M3U export endpoint | Depends on T470-T475 |
+| T507 | | Backlog | Add manual channel M3U import endpoint | Merge or replace on import? |
+
+### Infrastructure
+
+| ID | P | Story | Task Description | Questions |
+|----|---|-------|------------------|-----------|
+| T510 | | Backlog | Add dedicated cleanup pipeline stage | Is defer-based cleanup sufficient? |
+| T511 | | Backlog | Add runtime settings API | What settings are runtime-configurable? |
+| T512 | | Backlog | Add feature flags API | Persist to DB or config-only? |
+| T513 | | Backlog | Add log streaming SSE endpoint | Needed with structured logging? |
+| T514 | | Backlog | Add custom metrics endpoints (beyond Prometheus) | What dashboard metrics needed? |
+
+### Expression Engine Enhancements
+
+| ID | P | Story | Task Description | Questions |
+|----|---|-------|------------------|-----------|
+| T520 | | Backlog | Add per-condition case sensitivity modifier | Worth the complexity? |
+| T521 | | Backlog | Add conditional action groups syntax | What use cases require this? |
 
 ---
 
