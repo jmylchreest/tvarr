@@ -1,95 +1,93 @@
-# Build and Release workflow for tvarr
-# Builds binaries for multiple platforms on tags and creates releases
-# Also builds snapshot releases on main branch pushes
+# Release Build workflow for tvarr
+# Builds release binaries on version tags (v*)
+# Uses tagged version directly: v1.2.3 → 1.2.3
 
-name: Build & Release
+name: Build Release
 
 on:
   push:
-    branches:
-      - main
     tags:
       - "v*"
   workflow_dispatch:
     inputs:
-      snapshot:
-        description: "Build snapshot release"
+      node_version:
+        description: "Node.js version for frontend build"
         required: false
-        default: "true"
-        type: boolean
-
-# Cancel in-progress runs for the same branch (but not tags)
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        default: "lts/*"
+        type: string
+      go_version:
+        description: "Go version for backend build"
+        required: false
+        default: "stable"
+        type: string
 
 env:
-  GO_VERSION: "1.23"
+  GO_VERSION: ${{ inputs.go_version || 'stable' }}
+  NODE_VERSION: ${{ inputs.node_version || 'lts/*' }}
 
 jobs:
-  # Determine build parameters
+  # Extract version from tag
   prepare:
     name: Prepare
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
-      is_release: ${{ steps.version.outputs.is_release }}
-      is_snapshot: ${{ steps.version.outputs.is_snapshot }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Determine version
+      - name: Extract version from tag
         id: version
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            VERSION="${{ github.ref_name }}"
-            VERSION="${VERSION#v}"
-            echo "version=${VERSION}" >> $GITHUB_OUTPUT
-            echo "is_release=true" >> $GITHUB_OUTPUT
-            echo "is_snapshot=false" >> $GITHUB_OUTPUT
-          else
-            # Get the latest tag or default to 0.0.0
-            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-            LATEST_VERSION="${LATEST_TAG#v}"
+          # Strip 'v' prefix from tag: v1.2.3 → 1.2.3
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Release version: ${VERSION}"
 
-            # Parse version components
-            IFS='.' read -ra VERSION_PARTS <<< "$LATEST_VERSION"
-            MAJOR="${VERSION_PARTS[0]:-0}"
-            MINOR="${VERSION_PARTS[1]:-0}"
-            PATCH="${VERSION_PARTS[2]:-0}"
+  # Build frontend once (shared across all platform builds)
+  frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    needs: prepare
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
 
-            # Increment patch for next version
-            NEXT_PATCH=$((PATCH + 1))
-            SHORT_SHA=$(git rev-parse --short HEAD)
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
 
-            # SemVer 2.0.0 prerelease format
-            VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}-SNAPSHOT.${SHORT_SHA}"
-            echo "version=${VERSION}" >> $GITHUB_OUTPUT
-            echo "is_release=false" >> $GITHUB_OUTPUT
-            echo "is_snapshot=true" >> $GITHUB_OUTPUT
-          fi
-          echo "Determined version: $(cat $GITHUB_OUTPUT | grep version)"
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: npm run build:embed
+
+      - name: Upload frontend assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-assets
+          path: internal/assets/static/
+          if-no-files-found: error
 
   # Build binaries for all platforms
   build:
     name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
     runs-on: ubuntu-latest
-    needs: prepare
+    needs: [prepare, frontend]
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Linux builds
+          # Linux builds (primary)
           - goos: linux
             goarch: amd64
           - goos: linux
             goarch: arm64
-          - goos: linux
-            goarch: arm
-            goarm: "7"
           # macOS builds
           - goos: darwin
             goarch: amd64
@@ -102,10 +100,12 @@ jobs:
             goarch: arm64
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -113,71 +113,91 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      - name: Download frontend assets
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-assets
+          path: internal/assets/static/
+
       - name: Build binary
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          GOARM: ${{ matrix.goarm }}
           CGO_ENABLED: "0"
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
           COMMIT_SHA="${{ github.sha }}"
           BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          BRANCH="${{ github.ref_name }}"
+          TREE_STATE="clean"
 
           LDFLAGS="-s -w"
           LDFLAGS="${LDFLAGS} -X github.com/jmylchreest/tvarr/internal/version.Version=${VERSION}"
-          LDFLAGS="${LDFLAGS} -X github.com/jmylchreest/tvarr/internal/version.CommitSHA=${COMMIT_SHA}"
-          LDFLAGS="${LDFLAGS} -X github.com/jmylchreest/tvarr/internal/version.BuildTime=${BUILD_TIME}"
+          LDFLAGS="${LDFLAGS} -X github.com/jmylchreest/tvarr/internal/version.Commit=${COMMIT_SHA}"
+          LDFLAGS="${LDFLAGS} -X github.com/jmylchreest/tvarr/internal/version.Date=${BUILD_TIME}"
+          LDFLAGS="${LDFLAGS} -X github.com/jmylchreest/tvarr/internal/version.Branch=${BRANCH}"
+          LDFLAGS="${LDFLAGS} -X github.com/jmylchreest/tvarr/internal/version.TreeState=${TREE_STATE}"
 
           BINARY_NAME="tvarr"
           if [ "${{ matrix.goos }}" = "windows" ]; then
             BINARY_NAME="tvarr.exe"
           fi
 
-          ARCH_SUFFIX="${{ matrix.goarch }}"
-          if [ -n "${{ matrix.goarm }}" ]; then
-            ARCH_SUFFIX="${ARCH_SUFFIX}v${{ matrix.goarm }}"
-          fi
-
-          OUTPUT_DIR="dist/tvarr-${{ matrix.goos }}-${ARCH_SUFFIX}"
+          OUTPUT_DIR="dist/tvarr_${{ needs.prepare.outputs.version }}_${{ matrix.goos }}_${{ matrix.goarch }}"
           mkdir -p "${OUTPUT_DIR}"
 
           go build -ldflags="${LDFLAGS}" -o "${OUTPUT_DIR}/${BINARY_NAME}" ./cmd/tvarr
 
+      - name: Install UPX
+        if: matrix.goos != 'darwin'
+        run: |
+          sudo apt-get update && sudo apt-get install -y upx
+
+      - name: Compress binary with UPX
+        if: matrix.goos != 'darwin'
+        run: |
+          BINARY_NAME="tvarr"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            BINARY_NAME="tvarr.exe"
+          fi
+          OUTPUT_DIR="dist/tvarr_${{ needs.prepare.outputs.version }}_${{ matrix.goos }}_${{ matrix.goarch }}"
+
+          echo "Compressing ${OUTPUT_DIR}/${BINARY_NAME} with UPX..."
+          original_size=$(stat -c%s "${OUTPUT_DIR}/${BINARY_NAME}")
+          upx --best --lzma "${OUTPUT_DIR}/${BINARY_NAME}" || upx --best "${OUTPUT_DIR}/${BINARY_NAME}" || echo "UPX compression failed, continuing with uncompressed binary"
+          compressed_size=$(stat -c%s "${OUTPUT_DIR}/${BINARY_NAME}")
+          echo "Size reduction: $((100 - (compressed_size * 100 / original_size)))%"
+
       - name: Create archive
         run: |
-          ARCH_SUFFIX="${{ matrix.goarch }}"
-          if [ -n "${{ matrix.goarm }}" ]; then
-            ARCH_SUFFIX="${ARCH_SUFFIX}v${{ matrix.goarm }}"
-          fi
-
           cd dist
-          ARCHIVE_NAME="tvarr-${{ needs.prepare.outputs.version }}-${{ matrix.goos }}-${ARCH_SUFFIX}"
+          DIR_NAME="tvarr_${{ needs.prepare.outputs.version }}_${{ matrix.goos }}_${{ matrix.goarch }}"
 
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            zip -r "${ARCHIVE_NAME}.zip" "tvarr-${{ matrix.goos }}-${ARCH_SUFFIX}"
+            zip -r "${DIR_NAME}.zip" "${DIR_NAME}"
           else
-            tar -czvf "${ARCHIVE_NAME}.tar.gz" "tvarr-${{ matrix.goos }}-${ARCH_SUFFIX}"
+            tar -czvf "${DIR_NAME}.tar.gz" "${DIR_NAME}"
           fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tvarr-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm && format('v{0}', matrix.goarm) || '' }}
-          path: dist/tvarr-*.tar.gz dist/tvarr-*.zip
+          name: tvarr_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
           if-no-files-found: error
 
-  # Create release (only for tags)
+  # Create GitHub release
   release:
-    name: Release
+    name: GitHub Release
     runs-on: ubuntu-latest
     needs: [prepare, build]
-    if: needs.prepare.outputs.is_release == 'true'
     permissions:
       contents: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -185,12 +205,24 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      - name: Set up Go for SBOM
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          artifact-name: sbom-${{ needs.prepare.outputs.version }}.spdx.json
+          output-file: artifacts/sbom-${{ needs.prepare.outputs.version }}.spdx.json
+          format: spdx-json
+
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum tvarr-*.tar.gz tvarr-*.zip > checksums.txt
+          sha256sum tvarr_*.tar.gz tvarr_*.zip sbom-*.spdx.json > checksums.txt
 
-      - name: Create release
+      - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           name: v${{ needs.prepare.outputs.version }}
@@ -198,57 +230,7 @@ jobs:
           prerelease: false
           generate_release_notes: true
           files: |
-            artifacts/tvarr-*.tar.gz
-            artifacts/tvarr-*.zip
-            artifacts/checksums.txt
-
-  # Create snapshot release (only for main branch pushes)
-  snapshot:
-    name: Snapshot
-    runs-on: ubuntu-latest
-    needs: [prepare, build]
-    if: needs.prepare.outputs.is_snapshot == 'true'
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: Generate checksums
-        run: |
-          cd artifacts
-          sha256sum tvarr-*.tar.gz tvarr-*.zip > checksums.txt
-
-      - name: Delete previous snapshot release
-        run: |
-          # Delete previous snapshot release if it exists
-          gh release delete snapshot --yes --cleanup-tag 2>/dev/null || true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create snapshot release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: snapshot
-          name: Snapshot (${{ needs.prepare.outputs.version }})
-          draft: false
-          prerelease: true
-          body: |
-            **Automated snapshot build from main branch**
-
-            Version: `${{ needs.prepare.outputs.version }}`
-            Commit: `${{ github.sha }}`
-
-            This is an unstable development build. Use at your own risk.
-
-            This release is automatically replaced when new commits are pushed to main.
-          files: |
-            artifacts/tvarr-*.tar.gz
-            artifacts/tvarr-*.zip
+            artifacts/tvarr_*.tar.gz
+            artifacts/tvarr_*.zip
+            artifacts/sbom-*.spdx.json
             artifacts/checksums.txt

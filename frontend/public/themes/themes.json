@@ -1,0 +1,60 @@
+{
+  "themes": [
+    {
+      "id": "graphite",
+      "name": "Graphite",
+      "description": "A modern dark gray theme with clean lines"
+    },
+    {
+      "id": "amber",
+      "name": "Amber",
+      "description": "A warm amber/orange theme with golden accents"
+    },
+    {
+      "id": "amethyst",
+      "name": "Amethyst",
+      "description": "A rich purple theme with mystical vibes"
+    },
+    {
+      "id": "burnt-amber",
+      "name": "Burnt Amber",
+      "description": "A darker amber theme with rich burnt orange tones"
+    },
+    {
+      "id": "candyland",
+      "name": "Candyland",
+      "description": "A playful, colorful theme with candy-inspired pastels"
+    },
+    {
+      "id": "catppuccin",
+      "name": "Catppuccin",
+      "description": "A soothing pastel theme for the high-spirited"
+    },
+    {
+      "id": "claymorphism",
+      "name": "Claymorphism",
+      "description": "A soft, clay-inspired theme with rounded edges"
+    },
+    {
+      "id": "mocha",
+      "name": "Mocha",
+      "description": "A warm coffee-inspired theme with earthy browns"
+    },
+    {
+      "id": "mono",
+      "name": "Mono",
+      "description": "A minimal monochrome theme with monospace typography and sharp edges"
+    },
+    {
+      "id": "nature",
+      "name": "Nature",
+      "description": "A fresh green theme inspired by the natural world"
+    },
+    {
+      "id": "tangerine",
+      "name": "Tangerine",
+      "description": "A vibrant orange theme with citrus-fresh energy"
+    }
+  ],
+  "default": "graphite"
+}

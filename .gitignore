@@ -61,3 +61,19 @@ tmp/
 
 # Build artifacts
 *.log
+tvarr
+
+# Taskfile cache
+.task/
+
+# Embedded frontend assets (built assets, not source)
+internal/assets/static/*
+!internal/assets/static/.gitkeep
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/test-results/
+frontend/playwright-report/
+frontend/*.tsbuildinfo

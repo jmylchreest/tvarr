@@ -137,7 +137,7 @@ This project uses **GitHub Actions** with a multi-stage, matrix-based build pipe
 2. **Lint** - golangci-lint with strict configuration
 3. **Test** - Full test suite with coverage reporting
 4. **Build** - Matrix builds with artifact upload
-5. **Release** - GoReleaser for tagged releases
+5. **Release** - GitHub Release with artifacts for tagged releases
 
 **Artifact Standards:**
 - Binary naming: `{name}_{version}_{os}_{arch}`

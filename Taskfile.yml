@@ -1,49 +1,65 @@
 # https://taskfile.dev
+#
+# NOTE: This Taskfile uses POSIX shell commands and requires bash/sh.
+# Windows users should use WSL, Git Bash, or rely on GitHub Actions for builds.
 
 version: "3"
 
 vars:
   BINARY_NAME: tvarr
-  BUILD_DIR: bin
+  DIST_DIR: dist
+  DEBUG_DIR: "{{.DIST_DIR}}/debug"
+  RELEASE_DIR: "{{.DIST_DIR}}/release"
   MODULE: github.com/jmylchreest/tvarr
   VERSION_PKG: "{{.MODULE}}/internal/version"
+  FRONTEND_DIR: frontend
+  ASSETS_DIR: internal/assets/static
 
-  # Version detection: use git tag if available, otherwise calculate next patch with snapshot
+  # Version detection aligned with GitHub Actions
+  # Release: X.Y.Z (from exact git tag)
+  # Snapshot: X.Y.Z-dev.{commits}+{hash} (SemVer pre-release with build metadata)
   GIT_TAG:
     sh: git describe --tags --exact-match 2>/dev/null || echo ""
-  LAST_TAG:
-    sh: git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"
-  LAST_VERSION:
-    sh: echo "{{.LAST_TAG}}" | sed 's/^v//'
-  NEXT_PATCH:
-    sh: |
-      IFS='.' read -r MAJOR MINOR PATCH <<< "{{.LAST_VERSION}}"
-      echo "${MAJOR}.${MINOR}.$((PATCH + 1))"
-  SHORT_SHA:
-    sh: git rev-parse --short HEAD 2>/dev/null || echo "unknown"
-  # Version follows SemVer 2.0.0:
-  # - Release: X.Y.Z (from git tag)
-  # - Prerelease: X.Y.Z-SNAPSHOT.commitsha (dot-separated identifiers per spec)
+  GIT_DESCRIBE:
+    sh: git describe --tags --always --long 2>/dev/null || echo ""
   VERSION:
     sh: |
       if [ -n "{{.GIT_TAG}}" ]; then
         echo "{{.GIT_TAG}}" | sed 's/^v//'
+      elif echo "{{.GIT_DESCRIBE}}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+-[0-9]+-g[a-f0-9]+$'; then
+        # Parse: vMAJOR.MINOR.PATCH-COMMITS-gHASH
+        MAJOR=$(echo "{{.GIT_DESCRIBE}}" | sed -E 's/^v([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9]+)-g([a-f0-9]+)$/\1/')
+        MINOR=$(echo "{{.GIT_DESCRIBE}}" | sed -E 's/^v([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9]+)-g([a-f0-9]+)$/\2/')
+        PATCH=$(echo "{{.GIT_DESCRIBE}}" | sed -E 's/^v([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9]+)-g([a-f0-9]+)$/\3/')
+        COMMITS=$(echo "{{.GIT_DESCRIBE}}" | sed -E 's/^v([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9]+)-g([a-f0-9]+)$/\4/')
+        HASH=$(echo "{{.GIT_DESCRIBE}}" | sed -E 's/^v([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9]+)-g([a-f0-9]+)$/\5/')
+        NEXT_PATCH=$((PATCH + 1))
+        echo "${MAJOR}.${MINOR}.${NEXT_PATCH}-dev.${COMMITS}+${HASH}"
       else
-        echo "{{.NEXT_PATCH}}-SNAPSHOT.{{.SHORT_SHA}}"
+        SHORT_SHA=$(git rev-parse --short=7 HEAD 2>/dev/null || echo "unknown")
+        echo "0.0.1-dev.0+${SHORT_SHA}"
       fi
 
   # Build metadata
   COMMIT:
     sh: git rev-parse HEAD 2>/dev/null || echo "unknown"
+  SHORT_SHA:
+    sh: git rev-parse --short=7 HEAD 2>/dev/null || echo "unknown"
   BUILD_DATE:
     sh: date -u '+%Y-%m-%dT%H:%M:%SZ'
+  BRANCH:
+    sh: git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"
+  TREE_STATE:
+    sh: if git diff --quiet 2>/dev/null; then echo "clean"; else echo "dirty"; fi
 
-  # LDFLAGS for version injection
+  # LDFLAGS for version injection (aligned with GitHub Actions)
   LDFLAGS: >-
     -s -w
     -X {{.VERSION_PKG}}.Version={{.VERSION}}
     -X {{.VERSION_PKG}}.Commit={{.COMMIT}}
     -X {{.VERSION_PKG}}.Date={{.BUILD_DATE}}
+    -X {{.VERSION_PKG}}.Branch={{.BRANCH}}
+    -X {{.VERSION_PKG}}.TreeState={{.TREE_STATE}}
 
   COVERAGE_FILE: coverage.out
 
@@ -60,26 +76,26 @@ tasks:
   # ============================================
 
   build:
-    desc: Build the application binary
+    desc: Build the application binary (debug, uncompressed)
     cmds:
-      - mkdir -p {{.BUILD_DIR}}
-      - go build -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}} ./cmd/tvarr
+      - mkdir -p {{.DEBUG_DIR}}
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.DEBUG_DIR}}/{{.BINARY_NAME}} ./cmd/tvarr
     sources:
       - ./**/*.go
       - go.mod
       - go.sum
     generates:
-      - "{{.BUILD_DIR}}/{{.BINARY_NAME}}"
+      - "{{.DEBUG_DIR}}/{{.BINARY_NAME}}"
 
-  build:linux:
+  build:linux:amd64:
     desc: Cross-compile for Linux amd64
     env:
       CGO_ENABLED: "0"
       GOOS: linux
       GOARCH: amd64
     cmds:
-      - mkdir -p {{.BUILD_DIR}}
-      - go build -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_linux_amd64 ./cmd/tvarr
+      - mkdir -p {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_linux_amd64
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_linux_amd64/{{.BINARY_NAME}} ./cmd/tvarr
 
   build:linux:arm64:
     desc: Cross-compile for Linux arm64
@@ -88,18 +104,18 @@ tasks:
       GOOS: linux
       GOARCH: arm64
     cmds:
-      - mkdir -p {{.BUILD_DIR}}
-      - go build -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_linux_arm64 ./cmd/tvarr
+      - mkdir -p {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_linux_arm64
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_linux_arm64/{{.BINARY_NAME}} ./cmd/tvarr
 
-  build:darwin:
+  build:darwin:amd64:
     desc: Cross-compile for macOS amd64
     env:
       CGO_ENABLED: "0"
       GOOS: darwin
       GOARCH: amd64
     cmds:
-      - mkdir -p {{.BUILD_DIR}}
-      - go build -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_darwin_amd64 ./cmd/tvarr
+      - mkdir -p {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_darwin_amd64
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_darwin_amd64/{{.BINARY_NAME}} ./cmd/tvarr
 
   build:darwin:arm64:
     desc: Cross-compile for macOS arm64 (Apple Silicon)
@@ -108,53 +124,211 @@ tasks:
       GOOS: darwin
       GOARCH: arm64
     cmds:
-      - mkdir -p {{.BUILD_DIR}}
-      - go build -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_darwin_arm64 ./cmd/tvarr
+      - mkdir -p {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_darwin_arm64
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_darwin_arm64/{{.BINARY_NAME}} ./cmd/tvarr
 
-  build:windows:
+  build:windows:amd64:
     desc: Cross-compile for Windows amd64
     env:
       CGO_ENABLED: "0"
       GOOS: windows
       GOARCH: amd64
     cmds:
-      - mkdir -p {{.BUILD_DIR}}
-      - go build -ldflags "{{.LDFLAGS}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_windows_amd64.exe ./cmd/tvarr
+      - mkdir -p {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_windows_amd64
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_windows_amd64/{{.BINARY_NAME}}.exe ./cmd/tvarr
+
+  build:windows:arm64:
+    desc: Cross-compile for Windows arm64
+    env:
+      CGO_ENABLED: "0"
+      GOOS: windows
+      GOARCH: arm64
+    cmds:
+      - mkdir -p {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_windows_arm64
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_windows_arm64/{{.BINARY_NAME}}.exe ./cmd/tvarr
 
   build:all:
-    desc: Build for all platforms
+    desc: Build for all platforms (matches GitHub Actions matrix)
     cmds:
-      - task: build:linux
+      - task: build:linux:amd64
       - task: build:linux:arm64
-      - task: build:darwin
+      - task: build:darwin:amd64
       - task: build:darwin:arm64
-      - task: build:windows
+      - task: build:windows:amd64
+      - task: build:windows:arm64
+
+  # ============================================
+  # UPX Compression Tasks
+  # ============================================
+
+  upx:install:
+    desc: Install UPX if not present
+    cmds:
+      - |
+        if ! command -v upx &> /dev/null; then
+          echo "Installing UPX..."
+          if command -v apt-get &> /dev/null; then
+            sudo apt-get update && sudo apt-get install -y upx
+          elif command -v brew &> /dev/null; then
+            brew install upx
+          elif command -v pacman &> /dev/null; then
+            sudo pacman -S upx
+          else
+            echo "Please install UPX manually: https://github.com/upx/upx/releases"
+            exit 1
+          fi
+        fi
+    status:
+      - command -v upx
+
+  upx:compress:
+    desc: Compress all release binaries with UPX
+    deps: [upx:install]
+    cmds:
+      - |
+        echo "Compressing binaries with UPX..."
+        for dir in {{.RELEASE_DIR}}/{{.BINARY_NAME}}_*; do
+          if [ -d "$dir" ]; then
+            for binary in "$dir"/{{.BINARY_NAME}} "$dir"/{{.BINARY_NAME}}.exe; do
+              if [ -f "$binary" ]; then
+                original_size=$(stat -c%s "$binary" 2>/dev/null || stat -f%z "$binary")
+                upx --best --lzma "$binary" 2>/dev/null || upx --best "$binary" || echo "UPX failed for $binary"
+                compressed_size=$(stat -c%s "$binary" 2>/dev/null || stat -f%z "$binary")
+                ratio=$((100 - (compressed_size * 100 / original_size)))
+                echo "  $binary: ${ratio}% reduction"
+              fi
+            done
+          fi
+        done
+
+  # ============================================
+  # Frontend Tasks
+  # ============================================
+
+  frontend:install:
+    desc: Install frontend dependencies
+    dir: "{{.FRONTEND_DIR}}"
+    cmds:
+      - npm install
+    sources:
+      - package.json
+      - package-lock.json
+    generates:
+      - node_modules/.package-lock.json
+
+  frontend:dev:
+    desc: Run frontend in development mode
+    dir: "{{.FRONTEND_DIR}}"
+    cmds:
+      - npm run dev
+
+  frontend:build:
+    desc: Build frontend for production
+    dir: "{{.FRONTEND_DIR}}"
+    deps: [frontend:install]
+    env:
+      VERSION: "{{.VERSION}}"
+    cmds:
+      - npm run build
+
+  frontend:embed:
+    desc: Build frontend and copy to assets for Go embedding
+    dir: "{{.FRONTEND_DIR}}"
+    deps: [frontend:install]
+    env:
+      VERSION: "{{.VERSION}}"
+    cmds:
+      - npm run build:embed
+    sources:
+      - src/**/*
+      - public/**/*
+      - package.json
+      - next.config.js
+      - tailwind.config.ts
+    generates:
+      - ../{{.ASSETS_DIR}}/**/*
+
+  frontend:lint:
+    desc: Lint frontend code
+    dir: "{{.FRONTEND_DIR}}"
+    cmds:
+      - npm run lint
+
+  frontend:typecheck:
+    desc: Run TypeScript type checking
+    dir: "{{.FRONTEND_DIR}}"
+    cmds:
+      - npm run type-check
+
+  # ============================================
+  # Release Tasks
+  # ============================================
+
+  release:archive:
+    desc: Create release archives (tar.gz for unix, zip for windows)
+    cmds:
+      - |
+        cd {{.RELEASE_DIR}}
+        for dir in {{.BINARY_NAME}}_*_linux_* {{.BINARY_NAME}}_*_darwin_*; do
+          if [ -d "$dir" ]; then
+            tar -czvf "${dir}.tar.gz" "$dir"
+          fi
+        done
+        for dir in {{.BINARY_NAME}}_*_windows_*; do
+          if [ -d "$dir" ]; then
+            zip -r "${dir}.zip" "$dir"
+          fi
+        done
+
+  release:checksums:
+    desc: Generate SHA256 checksums for release archives
+    cmds:
+      - |
+        cd {{.RELEASE_DIR}}
+        sha256sum *.tar.gz *.zip 2>/dev/null > checksums.txt || true
+        cat checksums.txt
+
+  release:local:
+    desc: Build a full local release (all platforms + UPX + archives + checksums)
+    cmds:
+      - task: clean:release
+      - task: frontend:embed
+      - task: build:all
+      - task: upx:compress
+      - task: release:archive
+      - task: release:checksums
+      - echo "Release artifacts in {{.RELEASE_DIR}}/"
+
+  release:local:fast:
+    desc: Build local release without UPX compression (faster)
+    cmds:
+      - task: clean:release
+      - task: frontend:embed
+      - task: build:all
+      - task: release:archive
+      - task: release:checksums
+      - echo "Release artifacts in {{.RELEASE_DIR}}/"
 
   # ============================================
   # Test Tasks
   # ============================================
 
   test:
-    desc: Run all tests
+    desc: Run all tests with coverage
     cmds:
       - go test -v -coverprofile={{.COVERAGE_FILE}} ./...
 
   test:race:
-    desc: Run all tests with race detector (requires CGO)
+    desc: Run tests with race detector (matches CI)
     env:
       CGO_ENABLED: "1"
     cmds:
       - go test -v -race -coverprofile={{.COVERAGE_FILE}} ./...
 
   test:short:
-    desc: Run tests without race detector (faster)
+    desc: Run tests without verbose output (faster)
     cmds:
-      - go test -v -short ./...
-
-  test:integration:
-    desc: Run integration tests only
-    cmds:
-      - go test -v -race -tags=integration ./tests/integration/...
+      - go test -short ./...
 
   test:coverage:
     desc: Generate and open coverage report
@@ -163,40 +337,22 @@ tasks:
       - go tool cover -html={{.COVERAGE_FILE}} -o coverage.html
       - echo "Coverage report generated at coverage.html"
 
-  test:coverage:func:
-    desc: Show coverage by function
-    cmds:
-      - task: test
-      - go tool cover -func={{.COVERAGE_FILE}}
-
   bench:
     desc: Run benchmarks
     cmds:
       - go test -bench=. -benchmem ./...
 
-  bench:cpu:
-    desc: Run benchmarks with CPU profile
-    cmds:
-      - go test -bench=. -cpuprofile=cpu.prof ./...
-      - echo "CPU profile saved to cpu.prof"
-
-  bench:mem:
-    desc: Run benchmarks with memory profile
-    cmds:
-      - go test -bench=. -memprofile=mem.prof ./...
-      - echo "Memory profile saved to mem.prof"
-
   # ============================================
-  # Lint & Format Tasks
+  # Lint & Verify Tasks
   # ============================================
 
   lint:
-    desc: Run golangci-lint
+    desc: Run golangci-lint (v2)
     cmds:
       - |
         if ! command -v golangci-lint &> /dev/null; then
-          echo "Installing golangci-lint..."
-          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          echo "Installing golangci-lint v2..."
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
         fi
       - golangci-lint run ./...
 
@@ -205,25 +361,84 @@ tasks:
     cmds:
       - golangci-lint run --fix ./...
 
+  lint:install:
+    desc: Install or update golangci-lint v2
+    cmds:
+      - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+      - golangci-lint version
+
   fmt:
     desc: Format code with gofmt
     cmds:
       - go fmt ./...
 
-  fmt:imports:
-    desc: Format imports with goimports
-    cmds:
-      - |
-        if ! command -v goimports &> /dev/null; then
-          echo "Installing goimports..."
-          go install golang.org/x/tools/cmd/goimports@latest
-        fi
-      - goimports -w .
-
   vet:
     desc: Run go vet
     cmds:
       - go vet ./...
+
+  verify:
+    desc: Verify go.mod is tidy and code compiles (matches CI)
+    cmds:
+      - go mod tidy
+      - git diff --exit-code go.mod go.sum || (echo "go.mod/go.sum not tidy" && exit 1)
+      - go build ./...
+
+  # ============================================
+  # Security Tasks
+  # ============================================
+
+  security:
+    desc: Run all security checks (matches CI security job)
+    cmds:
+      - task: security:gosec
+      - task: security:vulncheck
+
+  security:gosec:
+    desc: Run gosec security scanner
+    cmds:
+      - |
+        if ! command -v gosec &> /dev/null; then
+          echo "Installing gosec..."
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+        fi
+      - gosec -no-fail ./...
+
+  security:vulncheck:
+    desc: Run govulncheck for known vulnerabilities
+    cmds:
+      - |
+        if ! command -v govulncheck &> /dev/null; then
+          echo "Installing govulncheck..."
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+        fi
+      - govulncheck ./...
+
+  security:install:
+    desc: Install security scanning tools
+    cmds:
+      - go install github.com/securego/gosec/v2/cmd/gosec@latest
+      - go install golang.org/x/vuln/cmd/govulncheck@latest
+      - echo "Security tools installed"
+
+  # ============================================
+  # CI Tasks (matches GitHub Actions ci.yml)
+  # ============================================
+
+  ci:
+    desc: Run full CI pipeline (matches GitHub Actions)
+    cmds:
+      - task: lint
+      - task: test:race
+      - task: security
+      - task: verify
+
+  ci:quick:
+    desc: Quick CI check (no race detector, no security)
+    cmds:
+      - task: lint
+      - task: test:short
+      - task: verify
 
   # ============================================
   # Run Tasks
@@ -233,7 +448,7 @@ tasks:
     desc: Build and run the application
     deps: [build]
     cmds:
-      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} serve
+      - ./{{.DEBUG_DIR}}/{{.BINARY_NAME}} serve
 
   run:dev:
     desc: Run with hot reload (requires air)
@@ -244,28 +459,6 @@ tasks:
           go install github.com/air-verse/air@latest
         fi
       - air
-
-  # ============================================
-  # Database Tasks
-  # ============================================
-
-  migrate:
-    desc: Run database migrations
-    deps: [build]
-    cmds:
-      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} migrate up
-
-  migrate:down:
-    desc: Rollback last migration
-    deps: [build]
-    cmds:
-      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} migrate down
-
-  migrate:status:
-    desc: Show migration status
-    deps: [build]
-    cmds:
-      - ./{{.BUILD_DIR}}/{{.BINARY_NAME}} migrate status
 
   # ============================================
   # Dependency Tasks
@@ -283,20 +476,10 @@ tasks:
       - go get -u ./...
       - go mod tidy
 
-  deps:verify:
-    desc: Verify dependencies
-    cmds:
-      - go mod verify
-
   deps:vuln:
-    desc: Check for vulnerabilities in dependencies
+    desc: Check for vulnerabilities in dependencies (alias for security:vulncheck)
     cmds:
-      - |
-        if ! command -v govulncheck &> /dev/null; then
-          echo "Installing govulncheck..."
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-        fi
-      - govulncheck ./...
+      - task: security:vulncheck
 
   # ============================================
   # Code Generation Tasks
@@ -307,113 +490,42 @@ tasks:
     cmds:
       - go generate ./...
 
-  mock:
-    desc: Generate mocks for testing
-    cmds:
-      - |
-        if ! command -v mockgen &> /dev/null; then
-          echo "Installing mockgen..."
-          go install go.uber.org/mock/mockgen@latest
-        fi
-      - go generate ./...
-
-  # ============================================
-  # Docker Tasks
-  # ============================================
-
-  docker:build:
-    desc: Build Docker image
-    cmds:
-      - docker build -t {{.BINARY_NAME}}:{{.VERSION}} .
-
-  docker:run:
-    desc: Run Docker container
-    cmds:
-      - docker run -p 8080:8080 {{.BINARY_NAME}}:{{.VERSION}}
-
-  docker:compose:up:
-    desc: Start services with docker-compose
-    cmds:
-      - docker-compose up -d
-
-  docker:compose:down:
-    desc: Stop services with docker-compose
-    cmds:
-      - docker-compose down
-
   # ============================================
   # Clean Tasks
   # ============================================
 
   clean:
-    desc: Clean build artifacts
+    desc: Clean debug build artifacts
     cmds:
-      - rm -rf {{.BUILD_DIR}}
+      - rm -rf {{.DEBUG_DIR}}
       - rm -f {{.COVERAGE_FILE}} coverage.html
       - rm -f cpu.prof mem.prof
 
+  clean:release:
+    desc: Clean release artifacts
+    cmds:
+      - rm -rf {{.RELEASE_DIR}}
+
+  clean:dist:
+    desc: Clean all distribution artifacts (debug + release)
+    cmds:
+      - rm -rf {{.DIST_DIR}}
+
+  clean:frontend:
+    desc: Clean frontend build artifacts
+    cmds:
+      - rm -rf {{.FRONTEND_DIR}}/.next
+      - rm -rf {{.FRONTEND_DIR}}/out
+      - rm -rf {{.ASSETS_DIR}}/*
+      - touch {{.ASSETS_DIR}}/.gitkeep
+
   clean:all:
-    desc: Clean everything including cache
+    desc: Clean everything including caches
     cmds:
       - task: clean
+      - task: clean:dist
+      - task: clean:frontend
       - go clean -cache -testcache
-
-  # ============================================
-  # Documentation Tasks
-  # ============================================
-
-  docs:
-    desc: Generate and serve godoc
-    cmds:
-      - |
-        if ! command -v godoc &> /dev/null; then
-          echo "Installing godoc..."
-          go install golang.org/x/tools/cmd/godoc@latest
-        fi
-      - echo "Starting godoc server at http://localhost:6060"
-      - godoc -http=:6060
-
-  # ============================================
-  # Security Tasks
-  # ============================================
-
-  security:
-    desc: Run all security checks
-    cmds:
-      - task: deps:vuln
-      - task: security:gosec
-
-  security:gosec:
-    desc: Run gosec security scanner
-    cmds:
-      - |
-        if ! command -v gosec &> /dev/null; then
-          echo "Installing gosec..."
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
-        fi
-      - gosec ./...
-
-  # ============================================
-  # CI Tasks
-  # ============================================
-
-  ci:
-    desc: Run full CI pipeline
-    cmds:
-      - task: deps
-      - task: fmt
-      - task: vet
-      - task: lint
-      - task: test
-      - task: build
-
-  ci:quick:
-    desc: Quick CI check (no race detector)
-    cmds:
-      - task: deps
-      - task: lint
-      - task: test:short
-      - task: build
 
   # ============================================
   # Version Info
@@ -424,12 +536,192 @@ tasks:
     cmds:
       - 'echo "Version:    {{.VERSION}}"'
       - 'echo "Commit:     {{.COMMIT}}"'
+      - 'echo "Branch:     {{.BRANCH}}"'
+      - 'echo "Tree State: {{.TREE_STATE}}"'
       - 'echo "Build Date: {{.BUILD_DATE}}"'
-      - 'echo "Last Tag:   {{.LAST_TAG}}"'
 
   # ============================================
-  # Help
+  # Version Bump & Release Tasks
   # ============================================
+
+  bump:major:
+    desc: Bump major version (X.0.0)
+    cmds:
+      - task: _bump
+        vars:
+          BUMP_TYPE: major
+
+  bump:minor:
+    desc: Bump minor version (X.Y.0)
+    cmds:
+      - task: _bump
+        vars:
+          BUMP_TYPE: minor
+
+  bump:patch:
+    desc: Bump patch version (X.Y.Z)
+    cmds:
+      - task: _bump
+        vars:
+          BUMP_TYPE: patch
+
+  bump:
+    desc: Bump patch version (alias for bump:patch)
+    cmds:
+      - task: bump:patch
+
+  _bump:
+    internal: true
+    cmds:
+      - |
+        # Get current version from last tag
+        LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+        CURRENT_VERSION="${LAST_TAG#v}"
+
+        # Parse version components
+        IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+        MAJOR=${MAJOR:-0}
+        MINOR=${MINOR:-0}
+        PATCH=${PATCH:-0}
+
+        # Calculate new version based on bump type
+        case "{{.BUMP_TYPE}}" in
+          major)
+            NEW_VERSION="$((MAJOR + 1)).0.0"
+            ;;
+          minor)
+            NEW_VERSION="${MAJOR}.$((MINOR + 1)).0"
+            ;;
+          patch|*)
+            NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+            ;;
+        esac
+
+        echo "Current version: ${CURRENT_VERSION}"
+        echo "New version:     ${NEW_VERSION}"
+        echo ""
+        echo "To create a release, run: task release VERSION=${NEW_VERSION}"
+
+  release:
+    desc: Create a release (VERSION required, e.g., task release VERSION=1.2.3)
+    requires:
+      vars: [VERSION]
+    cmds:
+      - |
+        VERSION="{{.VERSION}}"
+        TAG="v${VERSION}"
+
+        # Validate version format
+        if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+          echo "Error: VERSION must be in format X.Y.Z (e.g., 1.2.3)"
+          exit 1
+        fi
+
+        # Check if tag already exists
+        if git rev-parse "$TAG" >/dev/null 2>&1; then
+          echo "Error: Tag $TAG already exists"
+          exit 1
+        fi
+
+        # Check for uncommitted changes
+        if ! git diff --quiet || ! git diff --cached --quiet; then
+          echo "Error: You have uncommitted changes. Please commit or stash them first."
+          exit 1
+        fi
+
+        # Get the previous tag for changelog
+        PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+        echo "Creating release ${VERSION}..."
+        echo ""
+
+        # Generate changelog
+        echo "## Changelog"
+        echo ""
+        if [ -n "$PREV_TAG" ]; then
+          echo "Changes since ${PREV_TAG}:"
+          echo ""
+          git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges
+        else
+          echo "Initial release"
+          echo ""
+          git log --pretty=format:"- %s (%h)" --no-merges
+        fi
+        echo ""
+        echo ""
+
+        # Confirm
+        read -p "Create tag ${TAG} and push? [y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+          echo "Aborted."
+          exit 1
+        fi
+
+        # Create annotated tag with changelog
+        CHANGELOG=$(
+          if [ -n "$PREV_TAG" ]; then
+            echo "Release ${VERSION}"
+            echo ""
+            echo "Changes since ${PREV_TAG}:"
+            echo ""
+            git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges
+          else
+            echo "Release ${VERSION}"
+            echo ""
+            echo "Initial release"
+          fi
+        )
+
+        git tag -a "${TAG}" -m "${CHANGELOG}"
+        echo ""
+        echo "Tag ${TAG} created locally."
+        echo ""
+        echo "To push the release:"
+        echo "  git push origin ${TAG}"
+
+  release:auto:
+    desc: Auto-release with patch bump if there are changes since last tag
+    cmds:
+      - |
+        # Get last tag
+        LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+        # Check if there are any commits since last tag
+        if [ -n "$LAST_TAG" ]; then
+          COMMITS_SINCE=$(git rev-list "${LAST_TAG}..HEAD" --count)
+          if [ "$COMMITS_SINCE" -eq 0 ]; then
+            echo "No commits since ${LAST_TAG}. Nothing to release."
+            exit 0
+          fi
+          echo "Found ${COMMITS_SINCE} commits since ${LAST_TAG}"
+        else
+          echo "No previous tags found. This will be the first release."
+        fi
+
+        # Check for uncommitted changes
+        if ! git diff --quiet || ! git diff --cached --quiet; then
+          echo "Error: You have uncommitted changes. Please commit or stash them first."
+          exit 1
+        fi
+
+        # Calculate next patch version
+        CURRENT_VERSION="${LAST_TAG#v}"
+        if [ -z "$CURRENT_VERSION" ]; then
+          CURRENT_VERSION="0.0.0"
+        fi
+
+        IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+        MAJOR=${MAJOR:-0}
+        MINOR=${MINOR:-0}
+        PATCH=${PATCH:-0}
+        NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+
+        echo "Will create release: ${NEW_VERSION}"
+        echo ""
+
+        # Call release task
+        task release VERSION="${NEW_VERSION}"
 
   help:
     desc: Show all available tasks

@@ -17,7 +17,7 @@ import (
 
 	internalhttp "github.com/jmylchreest/tvarr/internal/http"
 	"github.com/jmylchreest/tvarr/internal/http/handlers"
-	"github.com/jmylchreest/tvarr/internal/httpclient"
+	"github.com/jmylchreest/tvarr/pkg/httpclient"
 	"github.com/jmylchreest/tvarr/internal/ingestor"
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/pipeline"
@@ -102,6 +102,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	logoHTTPConfig.AcceptableStatusCodes = httpclient.StatusCodesFromSlice([]int{http.StatusOK, http.StatusNotFound})
 	logoHTTPConfig.Logger = logger
 	logoHTTPClient := httpclient.New(logoHTTPConfig)
+
+	// Register HTTP client for health monitoring
+	httpclient.DefaultRegistry.Register("logo-fetcher", logoHTTPClient)
 
 	logoService := service.NewLogoService(logoCache).
 		WithHTTPClient(logoHTTPClient.StandardClient()).

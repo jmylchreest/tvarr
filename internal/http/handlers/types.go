@@ -505,10 +505,18 @@ type SetProxyEpgSourcesRequest struct {
 
 // HealthResponse represents the health check response.
 type HealthResponse struct {
-	Status  string            `json:"status"`
-	Version string            `json:"version"`
-	Uptime  string            `json:"uptime"`
-	Checks  map[string]string `json:"checks,omitempty"`
+	Status          string                 `json:"status"`
+	Version         string                 `json:"version"`
+	Uptime          string                 `json:"uptime"`
+	Checks          map[string]string      `json:"checks,omitempty"`
+	CircuitBreakers []CircuitBreakerStatus `json:"circuit_breakers,omitempty"`
+}
+
+// CircuitBreakerStatus represents the status of a circuit breaker.
+type CircuitBreakerStatus struct {
+	Name     string `json:"name"`
+	State    string `json:"state"`
+	Failures int    `json:"failures"`
 }
 
 // Channel types
