@@ -525,10 +525,12 @@ type CircuitBreakerStatus struct {
 type ChannelResponse struct {
 	ID            models.ULID `json:"id"`
 	SourceID      models.ULID `json:"source_id"`
+	SourceName    string      `json:"source_name,omitempty"`
 	ExtID         string      `json:"ext_id,omitempty"`
 	TvgID         string      `json:"tvg_id,omitempty"`
 	TvgName       string      `json:"tvg_name,omitempty"`
 	TvgLogo       string      `json:"tvg_logo,omitempty"`
+	LogoURL       string      `json:"logo_url,omitempty"`
 	GroupTitle    string      `json:"group_title,omitempty"`
 	ChannelName   string      `json:"channel_name"`
 	ChannelNumber int         `json:"channel_number,omitempty"`
@@ -537,6 +539,8 @@ type ChannelResponse struct {
 	Language      string      `json:"language,omitempty"`
 	Country       string      `json:"country,omitempty"`
 	IsAdult       bool        `json:"is_adult"`
+	CreatedAt     time.Time   `json:"created_at"`
+	UpdatedAt     time.Time   `json:"updated_at"`
 }
 
 // ChannelFromModel converts a model to a response.
@@ -548,6 +552,7 @@ func ChannelFromModel(c *models.Channel) ChannelResponse {
 		TvgID:         c.TvgID,
 		TvgName:       c.TvgName,
 		TvgLogo:       c.TvgLogo,
+		LogoURL:       c.TvgLogo, // Use TvgLogo as LogoURL
 		GroupTitle:    c.GroupTitle,
 		ChannelName:   c.ChannelName,
 		ChannelNumber: c.ChannelNumber,
@@ -556,6 +561,8 @@ func ChannelFromModel(c *models.Channel) ChannelResponse {
 		Language:      c.Language,
 		Country:       c.Country,
 		IsAdult:       c.IsAdult,
+		CreatedAt:     c.CreatedAt,
+		UpdatedAt:     c.UpdatedAt,
 	}
 }
 
@@ -569,22 +576,26 @@ type ChannelListResponse struct {
 
 // EpgProgramResponse represents an EPG program in API responses.
 type EpgProgramResponse struct {
-	ID          models.ULID `json:"id"`
-	SourceID    models.ULID `json:"source_id"`
-	ChannelID   string      `json:"channel_id"`
-	Start       time.Time   `json:"start"`
-	Stop        time.Time   `json:"stop"`
-	Title       string      `json:"title"`
-	SubTitle    string      `json:"sub_title,omitempty"`
-	Description string      `json:"description,omitempty"`
-	Category    string      `json:"category,omitempty"`
-	Icon        string      `json:"icon,omitempty"`
-	EpisodeNum  string      `json:"episode_num,omitempty"`
-	Rating      string      `json:"rating,omitempty"`
-	Language    string      `json:"language,omitempty"`
-	IsNew       bool        `json:"is_new"`
-	IsPremiere  bool        `json:"is_premiere"`
-	IsLive      bool        `json:"is_live"`
+	ID          models.ULID   `json:"id"`
+	SourceID    models.ULID   `json:"source_id"`
+	ChannelID   string        `json:"channel_id"`
+	Start       time.Time     `json:"start"`
+	Stop        time.Time     `json:"stop"`
+	Duration    time.Duration `json:"duration"`
+	Title       string        `json:"title"`
+	SubTitle    string        `json:"sub_title,omitempty"`
+	Description string        `json:"description,omitempty"`
+	Category    string        `json:"category,omitempty"`
+	Icon        string        `json:"icon,omitempty"`
+	EpisodeNum  string        `json:"episode_num,omitempty"`
+	Rating      string        `json:"rating,omitempty"`
+	Language    string        `json:"language,omitempty"`
+	IsNew       bool          `json:"is_new"`
+	IsPremiere  bool          `json:"is_premiere"`
+	IsLive      bool          `json:"is_live"`
+	IsOnAir     bool          `json:"is_on_air"`
+	HasEnded    bool          `json:"has_ended"`
+	CreatedAt   time.Time     `json:"created_at"`
 }
 
 // EpgProgramFromModel converts a model to a response.
@@ -595,6 +606,7 @@ func EpgProgramFromModel(p *models.EpgProgram) EpgProgramResponse {
 		ChannelID:   p.ChannelID,
 		Start:       p.Start,
 		Stop:        p.Stop,
+		Duration:    p.Duration(),
 		Title:       p.Title,
 		SubTitle:    p.SubTitle,
 		Description: p.Description,
@@ -606,6 +618,9 @@ func EpgProgramFromModel(p *models.EpgProgram) EpgProgramResponse {
 		IsNew:       p.IsNew,
 		IsPremiere:  p.IsPremiere,
 		IsLive:      p.IsLive,
+		IsOnAir:     p.IsOnAir(),
+		HasEnded:    p.HasEnded(),
+		CreatedAt:   p.CreatedAt,
 	}
 }
 

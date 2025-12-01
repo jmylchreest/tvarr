@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/jmylchreest/tvarr/internal/models"
@@ -105,6 +106,15 @@ func (h *RelayProfileHandler) Register(api huma.API) {
 		Description: "Returns statistics about active relay sessions",
 		Tags:        []string{"Relay Profiles"},
 	}, h.GetStats)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "getRelayHealth",
+		Method:      "GET",
+		Path:        "/api/v1/relay/health",
+		Summary:     "Get relay health status",
+		Description: "Returns health status of relay processes",
+		Tags:        []string{"Relay Profiles"},
+	}, h.GetHealth)
 }
 
 // RelayProfileResponse represents a relay profile in API responses.
@@ -550,6 +560,83 @@ func (h *RelayProfileHandler) GetStats(ctx context.Context, input *GetRelayStats
 				"max_per_host":       stats.ConnectionPool.MaxPerHost,
 				"waiting_count":      stats.ConnectionPool.WaitingCount,
 			},
+		},
+	}, nil
+}
+
+// GetRelayHealthInput is the input for getting relay health.
+type GetRelayHealthInput struct{}
+
+// RelayProcessHealth represents the health status of a relay process.
+type RelayProcessHealth struct {
+	ConfigID   string `json:"config_id"`
+	ProfileID  string `json:"profile_id"`
+	Status     string `json:"status"`
+	Error      string `json:"error,omitempty"`
+	LastUpdate string `json:"last_update"`
+}
+
+// GetRelayHealthOutput is the output for getting relay health.
+type GetRelayHealthOutput struct {
+	Body struct {
+		TotalProcesses     string               `json:"total_processes"`
+		HealthyProcesses   string               `json:"healthy_processes"`
+		UnhealthyProcesses string               `json:"unhealthy_processes"`
+		LastCheck          string               `json:"last_check"`
+		Processes          []RelayProcessHealth `json:"processes"`
+	}
+}
+
+// GetHealth returns the health status of relay processes.
+func (h *RelayProfileHandler) GetHealth(ctx context.Context, input *GetRelayHealthInput) (*GetRelayHealthOutput, error) {
+	stats := h.relayService.GetRelayStats()
+
+	// Count healthy/unhealthy based on active sessions
+	healthy := 0
+	unhealthy := 0
+	processes := make([]RelayProcessHealth, 0)
+	var lastCheck string
+
+	for _, s := range stats.Sessions {
+		proc := RelayProcessHealth{
+			ConfigID:   s.ID,
+			ProfileID:  s.ChannelID,
+			LastUpdate: s.LastActivity.Format("2006-01-02T15:04:05Z07:00"),
+		}
+		if s.Closed || s.Error != "" {
+			proc.Status = "unhealthy"
+			proc.Error = s.Error
+			unhealthy++
+		} else {
+			proc.Status = "healthy"
+			healthy++
+		}
+		processes = append(processes, proc)
+
+		// Track most recent activity
+		if lastCheck == "" || s.LastActivity.Format("2006-01-02T15:04:05Z07:00") > lastCheck {
+			lastCheck = s.LastActivity.Format("2006-01-02T15:04:05Z07:00")
+		}
+	}
+
+	// Default to current time if no sessions
+	if lastCheck == "" {
+		lastCheck = time.Now().UTC().Format("2006-01-02T15:04:05Z07:00")
+	}
+
+	return &GetRelayHealthOutput{
+		Body: struct {
+			TotalProcesses     string               `json:"total_processes"`
+			HealthyProcesses   string               `json:"healthy_processes"`
+			UnhealthyProcesses string               `json:"unhealthy_processes"`
+			LastCheck          string               `json:"last_check"`
+			Processes          []RelayProcessHealth `json:"processes"`
+		}{
+			TotalProcesses:     fmt.Sprintf("%d", healthy+unhealthy),
+			HealthyProcesses:   fmt.Sprintf("%d", healthy),
+			UnhealthyProcesses: fmt.Sprintf("%d", unhealthy),
+			LastCheck:          lastCheck,
+			Processes:          processes,
 		},
 	}, nil
 }

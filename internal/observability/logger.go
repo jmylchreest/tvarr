@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/jmylchreest/tvarr/internal/config"
@@ -21,6 +22,13 @@ const (
 	CorrelationIDKey contextKey = "correlation_id"
 )
 
+// GlobalLogLevel is the shared log level that can be changed at runtime.
+// Use SetLogLevel and GetLogLevel to modify/read this value.
+var GlobalLogLevel = &slog.LevelVar{}
+
+// enableRequestLogging controls whether HTTP requests are logged.
+var enableRequestLogging atomic.Bool
+
 // NewLogger creates a new slog.Logger based on the provided configuration.
 // The logger supports JSON and text formats with configurable log levels.
 func NewLogger(cfg config.LoggingConfig) *slog.Logger {
@@ -29,11 +37,14 @@ func NewLogger(cfg config.LoggingConfig) *slog.Logger {
 
 // NewLoggerWithWriter creates a new slog.Logger that writes to the provided writer.
 // This is useful for testing or custom output destinations.
+// The logger uses GlobalLogLevel for dynamic log level changes at runtime.
 func NewLoggerWithWriter(cfg config.LoggingConfig, w io.Writer) *slog.Logger {
+	// Set the initial level from config
 	level := parseLevel(cfg.Level)
+	GlobalLogLevel.Set(level)
 
 	opts := &slog.HandlerOptions{
-		Level:     level,
+		Level:     GlobalLogLevel, // Use the global LevelVar for dynamic changes
 		AddSource: cfg.AddSource,
 		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
 			// Customize time format if specified
@@ -63,6 +74,8 @@ func NewLoggerWithWriter(cfg config.LoggingConfig, w io.Writer) *slog.Logger {
 // parseLevel converts a string log level to slog.Level.
 func parseLevel(level string) slog.Level {
 	switch level {
+	case "trace":
+		return slog.LevelDebug - 4 // slog doesn't have trace, use lower than debug
 	case "debug":
 		return slog.LevelDebug
 	case "info":
@@ -74,6 +87,41 @@ func parseLevel(level string) slog.Level {
 	default:
 		return slog.LevelInfo
 	}
+}
+
+// SetLogLevel changes the global log level at runtime.
+// Valid levels: "trace", "debug", "info", "warn", "error"
+func SetLogLevel(level string) {
+	GlobalLogLevel.Set(parseLevel(level))
+}
+
+// GetLogLevel returns the current log level as a string.
+func GetLogLevel() string {
+	level := GlobalLogLevel.Level()
+	switch {
+	case level < slog.LevelDebug:
+		return "trace"
+	case level == slog.LevelDebug:
+		return "debug"
+	case level == slog.LevelInfo:
+		return "info"
+	case level == slog.LevelWarn:
+		return "warn"
+	case level >= slog.LevelError:
+		return "error"
+	default:
+		return "info"
+	}
+}
+
+// SetRequestLogging enables or disables HTTP request logging.
+func SetRequestLogging(enabled bool) {
+	enableRequestLogging.Store(enabled)
+}
+
+// IsRequestLoggingEnabled returns whether HTTP request logging is enabled.
+func IsRequestLoggingEnabled() bool {
+	return enableRequestLogging.Load()
 }
 
 // WithRequestID adds a request ID to the logger.

@@ -174,6 +174,34 @@ func NewWithDefaults() *Client {
 	return New(DefaultConfig())
 }
 
+// NewWithBreaker creates a new client with the given config and external circuit breaker.
+// This allows sharing circuit breakers between clients (managed by CircuitBreakerManager).
+// If breaker is nil, a new one is created based on the config.
+func NewWithBreaker(cfg Config, breaker *CircuitBreaker) *Client {
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
+
+	baseClient := cfg.BaseClient
+	if baseClient == nil {
+		baseClient = &http.Client{
+			Timeout: cfg.Timeout,
+		}
+	}
+
+	// Use provided breaker or create new one
+	if breaker == nil {
+		breaker = NewCircuitBreaker(cfg.CircuitThreshold, cfg.CircuitTimeout, cfg.CircuitHalfOpenMax)
+	}
+
+	return &Client{
+		config:  cfg,
+		client:  baseClient,
+		breaker: breaker,
+		logger:  cfg.Logger,
+	}
+}
+
 // Do executes an HTTP request with circuit breaker protection and automatic retries.
 func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	return c.DoWithContext(req.Context(), req)
@@ -514,26 +542,76 @@ func (s CircuitState) String() string {
 }
 
 // CircuitBreaker implements the circuit breaker pattern.
+// It uses an atomic config pointer to allow runtime configuration updates
+// without losing state (failure counts, etc.).
 type CircuitBreaker struct {
 	mu              sync.RWMutex
 	state           CircuitState
-	failures        int
-	successes       int
-	threshold       int
-	timeout         time.Duration
-	halfOpenMax     int
+	failures        int // consecutive failures
+	successes       int // consecutive successes in half-open
 	halfOpenCount   int
 	lastFailureTime time.Time
+
+	// Total counters (never reset, for stats/monitoring)
+	totalRequests  int64
+	totalSuccesses int64
+	totalFailures  int64
+
+	// config holds the circuit breaker configuration.
+	// Use atomic operations via getConfig/setConfig for thread safety.
+	configMu sync.RWMutex
+	config   *CircuitBreakerProfileConfig
 }
 
-// NewCircuitBreaker creates a new circuit breaker.
+// NewCircuitBreaker creates a new circuit breaker with the given parameters.
+// For runtime-configurable breakers, prefer NewCircuitBreakerWithConfig.
 func NewCircuitBreaker(threshold int, timeout time.Duration, halfOpenMax int) *CircuitBreaker {
-	return &CircuitBreaker{
-		state:       CircuitClosed,
-		threshold:   threshold,
-		timeout:     timeout,
-		halfOpenMax: halfOpenMax,
+	cfg := &CircuitBreakerProfileConfig{
+		FailureThreshold: threshold,
+		ResetTimeout:     timeout,
+		HalfOpenMax:      halfOpenMax,
 	}
+	return &CircuitBreaker{
+		state:  CircuitClosed,
+		config: cfg,
+	}
+}
+
+// NewCircuitBreakerWithConfig creates a new circuit breaker with the given config.
+// The config pointer can be updated at runtime via UpdateConfig.
+func NewCircuitBreakerWithConfig(cfg *CircuitBreakerProfileConfig) *CircuitBreaker {
+	if cfg == nil {
+		defaultCfg := DefaultProfileConfig()
+		cfg = &defaultCfg
+	}
+	return &CircuitBreaker{
+		state:  CircuitClosed,
+		config: cfg,
+	}
+}
+
+// getConfig returns the current config safely.
+func (cb *CircuitBreaker) getConfig() *CircuitBreakerProfileConfig {
+	cb.configMu.RLock()
+	defer cb.configMu.RUnlock()
+	return cb.config
+}
+
+// UpdateConfig atomically updates the circuit breaker's configuration.
+// The circuit breaker state (failures, successes, etc.) is preserved.
+func (cb *CircuitBreaker) UpdateConfig(cfg *CircuitBreakerProfileConfig) {
+	cb.configMu.Lock()
+	defer cb.configMu.Unlock()
+	cb.config = cfg
+}
+
+// Config returns a copy of the current configuration.
+func (cb *CircuitBreaker) Config() CircuitBreakerProfileConfig {
+	cfg := cb.getConfig()
+	if cfg == nil {
+		return DefaultProfileConfig()
+	}
+	return *cfg
 }
 
 // Allow returns true if the request should be allowed to proceed.
@@ -541,13 +619,18 @@ func (cb *CircuitBreaker) Allow() bool {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
+	cfg := cb.getConfig()
+	if cfg == nil {
+		return true // No config, allow all
+	}
+
 	switch cb.state {
 	case CircuitClosed:
 		return true
 
 	case CircuitOpen:
 		// Check if timeout has elapsed
-		if time.Since(cb.lastFailureTime) >= cb.timeout {
+		if time.Since(cb.lastFailureTime) >= cfg.ResetTimeout {
 			cb.state = CircuitHalfOpen
 			cb.halfOpenCount = 1 // Count this first request
 			return true
@@ -556,7 +639,7 @@ func (cb *CircuitBreaker) Allow() bool {
 
 	case CircuitHalfOpen:
 		// Allow limited requests in half-open state
-		if cb.halfOpenCount < cb.halfOpenMax {
+		if cb.halfOpenCount < cfg.HalfOpenMax {
 			cb.halfOpenCount++
 			return true
 		}
@@ -573,6 +656,8 @@ func (cb *CircuitBreaker) RecordSuccess() {
 	defer cb.mu.Unlock()
 
 	cb.successes++
+	cb.totalRequests++
+	cb.totalSuccesses++
 
 	if cb.state == CircuitHalfOpen {
 		// Reset to closed after success in half-open
@@ -589,10 +674,18 @@ func (cb *CircuitBreaker) RecordFailure() {
 
 	cb.failures++
 	cb.lastFailureTime = time.Now()
+	cb.totalRequests++
+	cb.totalFailures++
+
+	cfg := cb.getConfig()
+	threshold := DefaultCircuitThreshold
+	if cfg != nil && cfg.FailureThreshold > 0 {
+		threshold = cfg.FailureThreshold
+	}
 
 	switch cb.state {
 	case CircuitClosed:
-		if cb.failures >= cb.threshold {
+		if cb.failures >= threshold {
 			cb.state = CircuitOpen
 		}
 
@@ -625,4 +718,42 @@ func (cb *CircuitBreaker) Failures() int {
 	cb.mu.RLock()
 	defer cb.mu.RUnlock()
 	return cb.failures
+}
+
+// Successes returns the current success count.
+func (cb *CircuitBreaker) Successes() int {
+	cb.mu.RLock()
+	defer cb.mu.RUnlock()
+	return cb.successes
+}
+
+// CircuitBreakerStats holds statistics about a circuit breaker.
+type CircuitBreakerStats struct {
+	State               CircuitState                `json:"state"`
+	Failures            int                         `json:"failures"`              // consecutive failures
+	Successes           int                         `json:"successes"`             // consecutive successes in half-open
+	ConsecutiveFailures int                         `json:"consecutive_failures"`  // same as Failures (for clarity)
+	TotalRequests       int64                       `json:"total_requests"`
+	TotalSuccesses      int64                       `json:"total_successes"`
+	TotalFailures       int64                       `json:"total_failures"`
+	LastFailure         time.Time                   `json:"last_failure,omitempty"`
+	Config              CircuitBreakerProfileConfig `json:"config"`
+}
+
+// Stats returns current statistics for this circuit breaker.
+func (cb *CircuitBreaker) Stats() CircuitBreakerStats {
+	cb.mu.RLock()
+	defer cb.mu.RUnlock()
+
+	return CircuitBreakerStats{
+		State:               cb.state,
+		Failures:            cb.failures,
+		Successes:           cb.successes,
+		ConsecutiveFailures: cb.failures,
+		TotalRequests:       cb.totalRequests,
+		TotalSuccesses:      cb.totalSuccesses,
+		TotalFailures:       cb.totalFailures,
+		LastFailure:         cb.lastFailureTime,
+		Config:              cb.Config(),
+	}
 }

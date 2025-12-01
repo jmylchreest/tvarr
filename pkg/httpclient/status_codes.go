@@ -200,3 +200,25 @@ func Default2xxStatusCodes() *StatusCodeSet {
 	set.AddRange(200, 299)
 	return set
 }
+
+// Clone returns a deep copy of the StatusCodeSet.
+func (s *StatusCodeSet) Clone() *StatusCodeSet {
+	if s == nil {
+		return nil
+	}
+
+	clone := NewStatusCodeSet()
+
+	// Copy individual codes
+	for code := range s.codes {
+		clone.codes[code] = struct{}{}
+	}
+
+	// Copy ranges
+	if len(s.ranges) > 0 {
+		clone.ranges = make([]StatusCodeRange, len(s.ranges))
+		copy(clone.ranges, s.ranges)
+	}
+
+	return clone
+}

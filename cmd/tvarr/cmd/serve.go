@@ -83,6 +83,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 	proxyRepo := repository.NewStreamProxyRepository(db)
 	filterRepo := repository.NewFilterRepository(db)
 	dataMappingRuleRepo := repository.NewDataMappingRuleRepository(db)
+	relayProfileRepo := repository.NewRelayProfileRepository(db)
+	lastKnownCodecRepo := repository.NewLastKnownCodecRepository(db)
 
 	// Initialize storage sandbox
 	sandbox, err := storage.NewSandbox(viper.GetString("storage.data_dir"))
@@ -185,6 +187,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 		pipelineFactory,
 	).WithLogger(logger).WithProgressService(progressService)
 
+	relayService := service.NewRelayService(
+		relayProfileRepo,
+		lastKnownCodecRepo,
+		channelRepo,
+	).WithLogger(logger)
+
 	// Initialize HTTP server
 	serverConfig := internalhttp.ServerConfig{
 		Host: viper.GetString("server.host"),
@@ -225,6 +233,27 @@ func runServe(cmd *cobra.Command, args []string) error {
 	progressHandler := handlers.NewProgressHandler(progressService)
 	progressHandler.Register(server.API())
 	progressHandler.RegisterSSE(server.Router())
+
+	featureHandler := handlers.NewFeatureHandler()
+	featureHandler.Register(server.API())
+
+	settingsHandler := handlers.NewSettingsHandler()
+	settingsHandler.Register(server.API())
+
+	logoHandler := handlers.NewLogoHandler(logoService)
+	logoHandler.Register(server.API())
+
+	relayProfileHandler := handlers.NewRelayProfileHandler(relayService)
+	relayProfileHandler.Register(server.API())
+
+	channelHandler := handlers.NewChannelHandler(db)
+	channelHandler.Register(server.API())
+
+	epgHandler := handlers.NewEpgHandler(db)
+	epgHandler.Register(server.API())
+
+	circuitBreakerHandler := handlers.NewCircuitBreakerHandler(httpclient.DefaultManager)
+	circuitBreakerHandler.Register(server.API())
 
 	// Setup graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
