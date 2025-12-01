@@ -246,7 +246,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	relayProfileHandler := handlers.NewRelayProfileHandler(relayService)
 	relayProfileHandler.Register(server.API())
 
-	channelHandler := handlers.NewChannelHandler(db)
+	channelHandler := handlers.NewChannelHandler(db, relayService)
 	channelHandler.Register(server.API())
 
 	epgHandler := handlers.NewEpgHandler(db)

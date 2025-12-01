@@ -5,17 +5,22 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/jmylchreest/tvarr/internal/models"
+	"github.com/jmylchreest/tvarr/internal/service"
 	"gorm.io/gorm"
 )
 
 // ChannelHandler handles channel browsing API endpoints.
 type ChannelHandler struct {
-	db *gorm.DB
+	db           *gorm.DB
+	relayService *service.RelayService
 }
 
 // NewChannelHandler creates a new channel handler.
-func NewChannelHandler(db *gorm.DB) *ChannelHandler {
-	return &ChannelHandler{db: db}
+func NewChannelHandler(db *gorm.DB, relayService *service.RelayService) *ChannelHandler {
+	return &ChannelHandler{
+		db:           db,
+		relayService: relayService,
+	}
 }
 
 // Register registers the channel routes with the API.
@@ -209,8 +214,7 @@ type ProbeChannelOutput struct {
 	}
 }
 
-// ProbeChannel probes a channel stream for codec information.
-// This is a stub - full implementation would use ffprobe.
+// ProbeChannel probes a channel stream for codec information using ffprobe.
 func (h *ChannelHandler) ProbeChannel(ctx context.Context, input *ProbeChannelInput) (*ProbeChannelOutput, error) {
 	var channel models.Channel
 
@@ -221,14 +225,64 @@ func (h *ChannelHandler) ProbeChannel(ctx context.Context, input *ProbeChannelIn
 		return nil, huma.Error500InternalServerError("Failed to fetch channel")
 	}
 
-	// Stub response - in full implementation, this would use ffprobe
+	// Check if relay service is available
+	if h.relayService == nil {
+		resp := &ProbeChannelOutput{}
+		resp.Body.Success = false
+		resp.Body.ChannelID = channel.ID.String()
+		resp.Body.StreamURL = channel.StreamURL
+		resp.Body.Message = "Stream probing not available (relay service not configured)"
+		return resp, nil
+	}
+
+	// Probe the stream using the relay service
+	codec, err := h.relayService.ProbeStream(ctx, channel.StreamURL)
+	if err != nil {
+		resp := &ProbeChannelOutput{}
+		resp.Body.Success = false
+		resp.Body.ChannelID = channel.ID.String()
+		resp.Body.StreamURL = channel.StreamURL
+		resp.Body.Message = "Failed to probe stream: " + err.Error()
+		return resp, nil
+	}
+
+	// Build successful response
 	resp := &ProbeChannelOutput{}
 	resp.Body.Success = true
 	resp.Body.ChannelID = channel.ID.String()
 	resp.Body.StreamURL = channel.StreamURL
-	resp.Body.Message = "Stream probing not yet implemented"
+	resp.Body.Codecs.Video = codec.VideoCodec
+	resp.Body.Codecs.Audio = codec.AudioCodec
+
+	// Build resolution string
+	if codec.VideoWidth > 0 && codec.VideoHeight > 0 {
+		resp.Body.Resolution = formatResolution(codec.VideoWidth, codec.VideoHeight)
+	}
+
+	// Calculate total bitrate
+	resp.Body.Bitrate = codec.VideoBitrate + codec.AudioBitrate
 
 	return resp, nil
+}
+
+// formatResolution formats video dimensions as a resolution string.
+func formatResolution(width, height int) string {
+	if width == 0 || height == 0 {
+		return ""
+	}
+	// Common resolution names
+	switch {
+	case height >= 2160:
+		return "4K"
+	case height >= 1080:
+		return "1080p"
+	case height >= 720:
+		return "720p"
+	case height >= 480:
+		return "480p"
+	default:
+		return ""
+	}
 }
 
 // GetGroupsInput is the input for getting channel groups.
