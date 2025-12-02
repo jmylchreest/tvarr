@@ -154,73 +154,81 @@ func (r *UpdateStreamSourceRequest) ApplyToModel(s *models.StreamSource) {
 
 // EpgSourceResponse represents an EPG source in API responses.
 type EpgSourceResponse struct {
-	ID              models.ULID            `json:"id"`
-	CreatedAt       time.Time              `json:"created_at"`
-	UpdatedAt       time.Time              `json:"updated_at"`
-	Name            string                 `json:"name"`
-	Type            models.EpgSourceType   `json:"type"`
-	URL             string                 `json:"url"`
-	Username        string                 `json:"username,omitempty"`
-	UserAgent       string                 `json:"user_agent,omitempty"`
-	Enabled         bool                   `json:"enabled"`
-	Priority        int                    `json:"priority"`
-	Status          models.EpgSourceStatus `json:"status"`
-	LastIngestionAt *time.Time             `json:"last_ingestion_at,omitempty"`
-	LastError       string                 `json:"last_error,omitempty"`
-	ProgramCount    int                    `json:"program_count"`
-	CronSchedule    string                 `json:"cron_schedule,omitempty"`
-	RetentionDays   int                    `json:"retention_days"`
+	ID               models.ULID            `json:"id"`
+	CreatedAt        time.Time              `json:"created_at"`
+	UpdatedAt        time.Time              `json:"updated_at"`
+	Name             string                 `json:"name"`
+	Type             models.EpgSourceType   `json:"type"`
+	URL              string                 `json:"url"`
+	Username         string                 `json:"username,omitempty"`
+	UserAgent        string                 `json:"user_agent,omitempty"`
+	OriginalTimezone string                 `json:"original_timezone,omitempty"`
+	TimeOffset       string                 `json:"time_offset,omitempty"`
+	Enabled          bool                   `json:"enabled"`
+	Priority         int                    `json:"priority"`
+	Status           models.EpgSourceStatus `json:"status"`
+	LastIngestionAt  *time.Time             `json:"last_ingestion_at,omitempty"`
+	LastError        string                 `json:"last_error,omitempty"`
+	ProgramCount     int                    `json:"program_count"`
+	CronSchedule     string                 `json:"cron_schedule,omitempty"`
+	RetentionDays    int                    `json:"retention_days"`
 }
 
 // EpgSourceFromModel converts a model to a response.
 func EpgSourceFromModel(s *models.EpgSource) EpgSourceResponse {
 	return EpgSourceResponse{
-		ID:              s.ID,
-		CreatedAt:       s.CreatedAt,
-		UpdatedAt:       s.UpdatedAt,
-		Name:            s.Name,
-		Type:            s.Type,
-		URL:             s.URL,
-		Username:        s.Username,
-		UserAgent:       s.UserAgent,
-		Enabled:         s.Enabled,
-		Priority:        s.Priority,
-		Status:          s.Status,
-		LastIngestionAt: s.LastIngestionAt,
-		LastError:       s.LastError,
-		ProgramCount:    s.ProgramCount,
-		CronSchedule:    s.CronSchedule,
-		RetentionDays:   s.RetentionDays,
+		ID:               s.ID,
+		CreatedAt:        s.CreatedAt,
+		UpdatedAt:        s.UpdatedAt,
+		Name:             s.Name,
+		Type:             s.Type,
+		URL:              s.URL,
+		Username:         s.Username,
+		UserAgent:        s.UserAgent,
+		OriginalTimezone: s.OriginalTimezone,
+		TimeOffset:       s.TimeOffset,
+		Enabled:          s.Enabled,
+		Priority:         s.Priority,
+		Status:           s.Status,
+		LastIngestionAt:  s.LastIngestionAt,
+		LastError:        s.LastError,
+		ProgramCount:     s.ProgramCount,
+		CronSchedule:     s.CronSchedule,
+		RetentionDays:    s.RetentionDays,
 	}
 }
 
 // CreateEpgSourceRequest is the request body for creating an EPG source.
 type CreateEpgSourceRequest struct {
-	Name          string               `json:"name" doc:"User-friendly name for the source" minLength:"1" maxLength:"255"`
-	Type          models.EpgSourceType `json:"type" doc:"Source type: xmltv or xtream" enum:"xmltv,xtream"`
-	URL           string               `json:"url" doc:"XMLTV URL or Xtream server URL" minLength:"1" maxLength:"2048"`
-	Username      string               `json:"username,omitempty" doc:"Username for Xtream authentication" maxLength:"255"`
-	Password      string               `json:"password,omitempty" doc:"Password for Xtream authentication" maxLength:"255"`
-	UserAgent     string               `json:"user_agent,omitempty" doc:"Custom User-Agent header" maxLength:"512"`
-	Enabled       *bool                `json:"enabled,omitempty" doc:"Whether the source is enabled (default: true)"`
-	Priority      *int                 `json:"priority,omitempty" doc:"Priority for program merging (higher = preferred)"`
-	CronSchedule  string               `json:"cron_schedule,omitempty" doc:"Cron schedule for automatic ingestion" maxLength:"100"`
-	RetentionDays *int                 `json:"retention_days,omitempty" doc:"Days to retain EPG data after expiry (default: 1)"`
+	Name             string               `json:"name" doc:"User-friendly name for the source" minLength:"1" maxLength:"255"`
+	Type             models.EpgSourceType `json:"type" doc:"Source type: xmltv or xtream" enum:"xmltv,xtream"`
+	URL              string               `json:"url" doc:"XMLTV URL or Xtream server URL" minLength:"1" maxLength:"2048"`
+	Username         string               `json:"username,omitempty" doc:"Username for Xtream authentication" maxLength:"255"`
+	Password         string               `json:"password,omitempty" doc:"Password for Xtream authentication" maxLength:"255"`
+	UserAgent        string               `json:"user_agent,omitempty" doc:"Custom User-Agent header" maxLength:"512"`
+	OriginalTimezone string               `json:"original_timezone,omitempty" doc:"Timezone of the EPG data (e.g., UTC, Europe/London)" maxLength:"50"`
+	TimeOffset       string               `json:"time_offset,omitempty" doc:"Manual time offset adjustment (e.g., +00:00, -05:00)" maxLength:"10"`
+	Enabled          *bool                `json:"enabled,omitempty" doc:"Whether the source is enabled (default: true)"`
+	Priority         *int                 `json:"priority,omitempty" doc:"Priority for program merging (higher = preferred)"`
+	CronSchedule     string               `json:"cron_schedule,omitempty" doc:"Cron schedule for automatic ingestion" maxLength:"100"`
+	RetentionDays    *int                 `json:"retention_days,omitempty" doc:"Days to retain EPG data after expiry (default: 1)"`
 }
 
 // ToModel converts the request to a model.
 func (r *CreateEpgSourceRequest) ToModel() *models.EpgSource {
 	source := &models.EpgSource{
-		Name:          r.Name,
-		Type:          r.Type,
-		URL:           r.URL,
-		Username:      r.Username,
-		Password:      r.Password,
-		UserAgent:     r.UserAgent,
-		Enabled:       true,
-		Priority:      0,
-		CronSchedule:  r.CronSchedule,
-		RetentionDays: 1,
+		Name:             r.Name,
+		Type:             r.Type,
+		URL:              r.URL,
+		Username:         r.Username,
+		Password:         r.Password,
+		UserAgent:        r.UserAgent,
+		OriginalTimezone: r.OriginalTimezone,
+		TimeOffset:       r.TimeOffset,
+		Enabled:          true,
+		Priority:         0,
+		CronSchedule:     r.CronSchedule,
+		RetentionDays:    1,
 	}
 	if r.Enabled != nil {
 		source.Enabled = *r.Enabled
@@ -236,16 +244,18 @@ func (r *CreateEpgSourceRequest) ToModel() *models.EpgSource {
 
 // UpdateEpgSourceRequest is the request body for updating an EPG source.
 type UpdateEpgSourceRequest struct {
-	Name          *string               `json:"name,omitempty" doc:"User-friendly name for the source" maxLength:"255"`
-	Type          *models.EpgSourceType `json:"type,omitempty" doc:"Source type: xmltv or xtream" enum:"xmltv,xtream"`
-	URL           *string               `json:"url,omitempty" doc:"XMLTV URL or Xtream server URL" maxLength:"2048"`
-	Username      *string               `json:"username,omitempty" doc:"Username for Xtream authentication" maxLength:"255"`
-	Password      *string               `json:"password,omitempty" doc:"Password for Xtream authentication" maxLength:"255"`
-	UserAgent     *string               `json:"user_agent,omitempty" doc:"Custom User-Agent header" maxLength:"512"`
-	Enabled       *bool                 `json:"enabled,omitempty" doc:"Whether the source is enabled"`
-	Priority      *int                  `json:"priority,omitempty" doc:"Priority for program merging"`
-	CronSchedule  *string               `json:"cron_schedule,omitempty" doc:"Cron schedule for automatic ingestion" maxLength:"100"`
-	RetentionDays *int                  `json:"retention_days,omitempty" doc:"Days to retain EPG data after expiry"`
+	Name             *string               `json:"name,omitempty" doc:"User-friendly name for the source" maxLength:"255"`
+	Type             *models.EpgSourceType `json:"type,omitempty" doc:"Source type: xmltv or xtream" enum:"xmltv,xtream"`
+	URL              *string               `json:"url,omitempty" doc:"XMLTV URL or Xtream server URL" maxLength:"2048"`
+	Username         *string               `json:"username,omitempty" doc:"Username for Xtream authentication" maxLength:"255"`
+	Password         *string               `json:"password,omitempty" doc:"Password for Xtream authentication" maxLength:"255"`
+	UserAgent        *string               `json:"user_agent,omitempty" doc:"Custom User-Agent header" maxLength:"512"`
+	OriginalTimezone *string               `json:"original_timezone,omitempty" doc:"Timezone of the EPG data" maxLength:"50"`
+	TimeOffset       *string               `json:"time_offset,omitempty" doc:"Manual time offset adjustment" maxLength:"10"`
+	Enabled          *bool                 `json:"enabled,omitempty" doc:"Whether the source is enabled"`
+	Priority         *int                  `json:"priority,omitempty" doc:"Priority for program merging"`
+	CronSchedule     *string               `json:"cron_schedule,omitempty" doc:"Cron schedule for automatic ingestion" maxLength:"100"`
+	RetentionDays    *int                  `json:"retention_days,omitempty" doc:"Days to retain EPG data after expiry"`
 }
 
 // ApplyToModel applies the update request to an existing model.
@@ -267,6 +277,12 @@ func (r *UpdateEpgSourceRequest) ApplyToModel(s *models.EpgSource) {
 	}
 	if r.UserAgent != nil {
 		s.UserAgent = *r.UserAgent
+	}
+	if r.OriginalTimezone != nil {
+		s.OriginalTimezone = *r.OriginalTimezone
+	}
+	if r.TimeOffset != nil {
+		s.TimeOffset = *r.TimeOffset
 	}
 	if r.Enabled != nil {
 		s.Enabled = *r.Enabled
@@ -503,13 +519,80 @@ type SetProxyEpgSourcesRequest struct {
 
 // Health types
 
-// HealthResponse represents the health check response.
+// HealthResponse represents the comprehensive health check response.
 type HealthResponse struct {
-	Status          string                 `json:"status"`
-	Version         string                 `json:"version"`
-	Uptime          string                 `json:"uptime"`
-	Checks          map[string]string      `json:"checks,omitempty"`
-	CircuitBreakers []CircuitBreakerStatus `json:"circuit_breakers,omitempty"`
+	Status        string              `json:"status"`
+	Timestamp     string              `json:"timestamp"`
+	Version       string              `json:"version"`
+	Uptime        string              `json:"uptime"`
+	UptimeSeconds float64             `json:"uptime_seconds"`
+	SystemLoad    float64             `json:"system_load"`
+	CPUInfo       CPUInfo             `json:"cpu_info"`
+	Memory        MemoryInfo          `json:"memory"`
+	Components    HealthComponents    `json:"components"`
+	Checks        map[string]string   `json:"checks,omitempty"`
+}
+
+// CPUInfo contains CPU load information.
+type CPUInfo struct {
+	Cores              int     `json:"cores"`
+	Load1Min           float64 `json:"load_1min"`
+	Load5Min           float64 `json:"load_5min"`
+	Load15Min          float64 `json:"load_15min"`
+	LoadPercentage1Min float64 `json:"load_percentage_1min"`
+}
+
+// MemoryInfo contains memory usage information.
+type MemoryInfo struct {
+	TotalMemoryMB     float64           `json:"total_memory_mb"`
+	UsedMemoryMB      float64           `json:"used_memory_mb"`
+	FreeMemoryMB      float64           `json:"free_memory_mb"`
+	AvailableMemoryMB float64           `json:"available_memory_mb"`
+	SwapUsedMB        float64           `json:"swap_used_mb"`
+	SwapTotalMB       float64           `json:"swap_total_mb"`
+	ProcessMemory     ProcessMemoryInfo `json:"process_memory"`
+}
+
+// ProcessMemoryInfo contains process-specific memory information.
+type ProcessMemoryInfo struct {
+	MainProcessMB        float64 `json:"main_process_mb"`
+	ChildProcessesMB     float64 `json:"child_processes_mb"`
+	TotalProcessTreeMB   float64 `json:"total_process_tree_mb"`
+	PercentageOfSystem   float64 `json:"percentage_of_system"`
+	ChildProcessCount    int     `json:"child_process_count"`
+}
+
+// HealthComponents contains health status of various components.
+type HealthComponents struct {
+	Database        DatabaseHealth        `json:"database"`
+	Scheduler       SchedulerHealth       `json:"scheduler"`
+	CircuitBreakers []CircuitBreakerStatus `json:"circuit_breakers"`
+}
+
+// DatabaseHealth contains database health information.
+type DatabaseHealth struct {
+	Status                 string  `json:"status"`
+	ConnectionPoolSize     int     `json:"connection_pool_size"`
+	ActiveConnections      int     `json:"active_connections"`
+	IdleConnections        int     `json:"idle_connections"`
+	PoolUtilizationPercent float64 `json:"pool_utilization_percent"`
+	ResponseTimeMS         float64 `json:"response_time_ms"`
+	ResponseTimeStatus     string  `json:"response_time_status"`
+	TablesAccessible       bool    `json:"tables_accessible"`
+	WriteCapability        bool    `json:"write_capability"`
+	NoBlockingLocks        bool    `json:"no_blocking_locks"`
+}
+
+// SchedulerHealth contains scheduler health information.
+type SchedulerHealth struct {
+	Status           string           `json:"status"`
+	SourcesScheduled SourcesScheduled `json:"sources_scheduled"`
+}
+
+// SourcesScheduled contains counts of scheduled sources.
+type SourcesScheduled struct {
+	StreamSources int `json:"stream_sources"`
+	EpgSources    int `json:"epg_sources"`
 }
 
 // CircuitBreakerStatus represents the status of a circuit breaker.

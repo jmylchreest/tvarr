@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/jmylchreest/tvarr/internal/models"
@@ -151,6 +152,19 @@ func (h *EpgSourceHandler) Create(ctx context.Context, input *CreateEpgSourceInp
 	source := input.Body.ToModel()
 
 	if err := h.epgService.Create(ctx, source); err != nil {
+		// Check for validation errors
+		if errors.Is(err, models.ErrNameRequired) ||
+			errors.Is(err, models.ErrURLRequired) ||
+			errors.Is(err, models.ErrInvalidURL) ||
+			errors.Is(err, models.ErrInvalidEpgSourceType) ||
+			errors.Is(err, models.ErrXtreamCredentialsRequired) {
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+		// Check for unique constraint violation (duplicate name)
+		errStr := err.Error()
+		if strings.Contains(errStr, "UNIQUE constraint failed") || strings.Contains(errStr, "duplicate key") {
+			return nil, huma.Error409Conflict("an EPG source with this name already exists")
+		}
 		return nil, huma.Error500InternalServerError("failed to create EPG source", err)
 	}
 

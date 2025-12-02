@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jmylchreest/tvarr/internal/config"
 	"github.com/jmylchreest/tvarr/internal/version"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -54,6 +55,9 @@ func init() {
 
 // initConfig reads in config file and ENV variables if set.
 func initConfig() {
+	// Set default configuration values before reading config file
+	config.SetDefaults(viper.GetViper())
+
 	if cfgFile != "" {
 		// Use config file from the flag.
 		viper.SetConfigFile(cfgFile)

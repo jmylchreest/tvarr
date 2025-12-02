@@ -15,17 +15,18 @@ import (
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 
+	"github.com/jmylchreest/tvarr/internal/database/migrations"
 	internalhttp "github.com/jmylchreest/tvarr/internal/http"
 	"github.com/jmylchreest/tvarr/internal/http/handlers"
-	"github.com/jmylchreest/tvarr/pkg/httpclient"
 	"github.com/jmylchreest/tvarr/internal/ingestor"
-	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/pipeline"
 	"github.com/jmylchreest/tvarr/internal/repository"
 	"github.com/jmylchreest/tvarr/internal/service"
 	"github.com/jmylchreest/tvarr/internal/service/progress"
 	"github.com/jmylchreest/tvarr/internal/storage"
 	"github.com/jmylchreest/tvarr/internal/version"
+	"github.com/jmylchreest/tvarr/pkg/duration"
+	"github.com/jmylchreest/tvarr/pkg/httpclient"
 )
 
 var serveCmd = &cobra.Command{
@@ -70,7 +71,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Run migrations
-	if err := runMigrations(db); err != nil {
+	if err := runMigrations(db, logger); err != nil {
 		return fmt.Errorf("running migrations: %w", err)
 	}
 
@@ -126,7 +127,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Info("pruned stale logos on startup",
 				slog.Int("pruned_count", result.PrunedCount),
 				slog.Int64("pruned_bytes", result.PrunedSize),
-				slog.Duration("retention", logoRetention))
+				slog.String("retention", duration.Format(logoRetention)))
 		}
 	} else {
 		if err := logoService.LoadIndex(context.Background()); err != nil {
@@ -204,12 +205,17 @@ func runServe(cmd *cobra.Command, args []string) error {
 	docsHandler := handlers.NewDocsHandler("tvarr API", "/openapi.yaml", handlers.WithSystemTheme())
 	server.Router().Get("/docs", docsHandler.ServeHTTP)
 
-	// Register static handler for embedded frontend (must be first to catch-all non-API routes)
+	// Register logo file server for serving logo images at /logos/{filename}
+	logoHandler := handlers.NewLogoHandler(logoService)
+	logoHandler.RegisterFileServer(server.Router())
+
+	// Register static handler as NotFound fallback for SPA routing
+	// This ensures specific routes (like /logos/*) are matched first
 	staticHandler := handlers.NewStaticHandler()
-	server.Router().Mount("/", staticHandler)
+	server.Router().NotFound(staticHandler.ServeHTTP)
 
 	// Register handlers
-	healthHandler := handlers.NewHealthHandler(version.Version)
+	healthHandler := handlers.NewHealthHandler(version.Version).WithDB(db)
 	healthHandler.Register(server.API())
 
 	streamSourceHandler := handlers.NewStreamSourceHandler(sourceService)
@@ -240,7 +246,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	settingsHandler := handlers.NewSettingsHandler()
 	settingsHandler.Register(server.API())
 
-	logoHandler := handlers.NewLogoHandler(logoService)
 	logoHandler.Register(server.API())
 
 	relayProfileHandler := handlers.NewRelayProfileHandler(relayService)
@@ -289,21 +294,8 @@ func initDatabase(path string) (*gorm.DB, error) {
 	return db, nil
 }
 
-func runMigrations(db *gorm.DB) error {
-	return db.AutoMigrate(
-		&models.StreamSource{},
-		&models.Channel{},
-		&models.EpgSource{},
-		&models.EpgProgram{},
-		&models.StreamProxy{},
-		&models.ProxySource{},
-		&models.ProxyEpgSource{},
-		&models.ManualStreamChannel{},
-		&models.Filter{},
-		&models.DataMappingRule{},
-		&models.Job{},
-		&models.JobHistory{},
-		&models.RelayProfile{},
-		&models.LastKnownCodec{},
-	)
+func runMigrations(db *gorm.DB, logger *slog.Logger) error {
+	migrator := migrations.NewMigrator(db, logger)
+	migrator.RegisterAll(migrations.AllMigrations())
+	return migrator.Up(context.Background())
 }

@@ -129,7 +129,7 @@ func Load(configPath string) (*Config, error) {
 	v := viper.New()
 
 	// Set defaults
-	setDefaults(v)
+	SetDefaults(v)
 
 	// Config file settings
 	if configPath != "" {
@@ -169,8 +169,9 @@ func Load(configPath string) (*Config, error) {
 	return &cfg, nil
 }
 
-// setDefaults configures default values for all configuration options.
-func setDefaults(v *viper.Viper) {
+// SetDefaults configures default values for all configuration options.
+// This should be called before reading the config file to ensure defaults are in place.
+func SetDefaults(v *viper.Viper) {
 	// Server defaults
 	v.SetDefault("server.host", "0.0.0.0")
 	v.SetDefault("server.port", defaultServerPort)
