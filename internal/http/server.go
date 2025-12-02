@@ -70,7 +70,10 @@ func NewServer(config ServerConfig, logger *slog.Logger, version string) *Server
 	router.Use(middleware.NewLoggingMiddleware(logger))
 	router.Use(middleware.Recovery(logger))
 	router.Use(middleware.CORS())
-	router.Use(chimiddleware.Compress(5))
+
+	// Configure compression middleware with SSE exclusion.
+	// SSE (text/event-stream) requires unbuffered streaming; compression interferes with flushing.
+	router.Use(middleware.SkipCompressionForSSE(chimiddleware.Compress(5)))
 
 	// Create Huma API with custom config
 	// Note: DocsPath is left empty - we use our own docs handler with dark theme support

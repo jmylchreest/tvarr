@@ -154,7 +154,7 @@ func TestProgressHandler_GetOperation(t *testing.T) {
 		var resp handlers.GetOperationOutput
 		err = json.NewDecoder(rec.Body).Decode(&resp.Body)
 		require.NoError(t, err)
-		assert.Equal(t, mgr.OperationID(), resp.Body.OperationID)
+		assert.Equal(t, mgr.OperationID(), resp.Body.ID)
 	})
 
 	t.Run("returns 404 for unknown operation", func(t *testing.T) {
@@ -483,8 +483,8 @@ func TestProgressHandler_MultiStageProgress(t *testing.T) {
 		err = json.NewDecoder(rec.Body).Decode(&resp.Body)
 		require.NoError(t, err)
 
-		// Progress should be 0.2 (load weight = 0.2, completed = 100%)
-		assert.InDelta(t, 0.2, resp.Body.Progress, 0.01)
+		// Progress should be 20% (load weight = 0.2, completed = 100%)
+		assert.InDelta(t, 20.0, resp.Body.OverallPercentage, 1.0)
 
 		// Complete second stage at 50%
 		processStage := mgr.StartStage("process")
@@ -497,8 +497,8 @@ func TestProgressHandler_MultiStageProgress(t *testing.T) {
 		err = json.NewDecoder(rec.Body).Decode(&resp.Body)
 		require.NoError(t, err)
 
-		// Progress should be 0.2 + 0.6*0.5 = 0.5
-		assert.InDelta(t, 0.5, resp.Body.Progress, 0.01)
+		// Progress should be 20 + 60*0.5 = 50%
+		assert.InDelta(t, 50.0, resp.Body.OverallPercentage, 1.0)
 	})
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -135,12 +136,12 @@ type GetOperationOutput struct {
 }
 
 // SSEEventsInput is the input for the SSE events endpoint.
+// Note: state and active_only filters are NOT supported for SSE to ensure
+// terminal events are always delivered. Use the REST API for filtered queries.
 type SSEEventsInput struct {
 	OperationType string `query:"operation_type" doc:"Filter events by operation type"`
 	OwnerID       string `query:"owner_id" doc:"Filter events by owner ID"`
 	ResourceID    string `query:"resource_id" doc:"Filter events by resource ID"`
-	State         string `query:"state" doc:"Filter events by state"`
-	ActiveOnly    bool   `query:"active_only" doc:"Only receive events for active operations"`
 }
 
 // Register registers the progress routes with the API.
@@ -255,12 +256,8 @@ func (h *ProgressHandler) handleSSEEvents(w http.ResponseWriter, r *http.Request
 	sub := h.service.Subscribe(filter)
 	defer h.service.Unsubscribe(sub.ID)
 
-	// Get the flusher for streaming
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming not supported", http.StatusInternalServerError)
-		return
-	}
+	// Use ResponseController for reliable flushing with error handling (Go 1.20+)
+	rc := http.NewResponseController(w)
 
 	// Heartbeat ticker
 	heartbeat := time.NewTicker(h.heartbeatInterval)
@@ -270,7 +267,10 @@ func (h *ProgressHandler) handleSSEEvents(w http.ResponseWriter, r *http.Request
 
 	// Send initial comment to establish connection and trigger onopen in browser
 	fmt.Fprintf(w, ":connected\n\n")
-	flusher.Flush()
+	if err := rc.Flush(); err != nil {
+		slog.Error("failed to flush initial SSE connection", "error", err)
+		return
+	}
 
 	for {
 		select {
@@ -279,18 +279,38 @@ func (h *ProgressHandler) handleSSEEvents(w http.ResponseWriter, r *http.Request
 		case <-heartbeat.C:
 			// Send heartbeat comment
 			fmt.Fprintf(w, ":heartbeat %d\n\n", time.Now().Unix())
-			flusher.Flush()
+			if err := rc.Flush(); err != nil {
+				slog.Debug("heartbeat flush failed, client likely disconnected", "error", err)
+				return
+			}
 		case event, ok := <-sub.Events:
 			if !ok {
 				return
 			}
-			h.writeSSEEvent(w, event)
-			flusher.Flush()
+			_, err := h.writeSSEEvent(w, event)
+			if err != nil {
+				slog.Error("failed to write SSE event",
+					"event_type", event.EventType,
+					"operation_id", event.Progress.OperationID,
+					"error", err,
+				)
+				return
+			}
+			if err := rc.Flush(); err != nil {
+				slog.Debug("event flush failed, client likely disconnected",
+					"event_type", event.EventType,
+					"error", err,
+				)
+				return
+			}
 		}
 	}
 }
 
 // parseSSEFilter parses filter parameters from the request.
+// Note: SSE subscriptions do NOT support ActiveOnly or State filters to ensure
+// terminal events (completed, error, cancelled) are always delivered to clients.
+// Clients should filter events locally if needed.
 func (h *ProgressHandler) parseSSEFilter(r *http.Request) *progress.OperationFilter {
 	query := r.URL.Query()
 	filter := &progress.OperationFilter{}
@@ -312,28 +332,50 @@ func (h *ProgressHandler) parseSSEFilter(r *http.Request) *progress.OperationFil
 		}
 	}
 
-	if state := query.Get("state"); state != "" {
-		s := progress.UniversalState(state)
-		filter.State = &s
-	}
-
-	if query.Get("active_only") == "true" {
-		filter.ActiveOnly = true
-	}
+	// Note: state and active_only filters are intentionally NOT supported for SSE
+	// to ensure terminal events are always delivered. Use the REST API to query
+	// operations with these filters.
 
 	return filter
 }
 
 // writeSSEEvent writes a progress event in SSE format.
-func (h *ProgressHandler) writeSSEEvent(w http.ResponseWriter, event *progress.ProgressEvent) {
-	// Write event type
-	fmt.Fprintf(w, "event: %s\n", event.EventType)
-
-	// Write data as JSON
+// Returns the number of bytes written and any error.
+func (h *ProgressHandler) writeSSEEvent(w http.ResponseWriter, event *progress.ProgressEvent) (int, error) {
 	data, err := json.Marshal(ProgressFromService(event.Progress))
 	if err != nil {
-		fmt.Fprintf(w, "data: {\"error\": \"marshal error\"}\n\n")
-		return
+		n, _ := fmt.Fprintf(w, "event: %s\ndata: {\"error\": \"marshal error\"}\n\n", event.EventType)
+		return n, err
 	}
-	fmt.Fprintf(w, "data: %s\n\n", data)
+
+	// Write the full SSE message in one write for better atomicity
+	message := fmt.Sprintf("event: %s\ndata: %s\n\n", event.EventType, data)
+	messageBytes := []byte(message)
+
+	// Log terminal events being written to the response
+	if event.EventType == progress.EventTypeCompleted ||
+		event.EventType == progress.EventTypeError ||
+		event.EventType == progress.EventTypeCancelled {
+		slog.Debug("writing terminal SSE event to response",
+			"event_type", event.EventType,
+			"operation_id", event.Progress.OperationID,
+			"state", event.Progress.State,
+		)
+	}
+
+	// Write with short write detection
+	n, err := w.Write(messageBytes)
+	if err != nil {
+		return n, err
+	}
+	if n < len(messageBytes) {
+		slog.Error("SSE short write detected",
+			"expected", len(messageBytes),
+			"written", n,
+			"event_type", event.EventType,
+			"operation_id", event.Progress.OperationID,
+		)
+		return n, fmt.Errorf("short write: wrote %d of %d bytes", n, len(messageBytes))
+	}
+	return n, nil
 }
