@@ -38,6 +38,12 @@ func NewStaticHandler() *StaticHandler {
 // It implements SPA (Single Page Application) routing by serving index.html
 // for paths that don't match actual files.
 func (h *StaticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Always return 404 for API routes that weren't matched by registered handlers
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		http.NotFound(w, r)
+		return
+	}
+
 	if !h.hasAssets {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
