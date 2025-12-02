@@ -116,7 +116,7 @@ function CreateSourceSheet({
     name: '',
     source_type: 'xtream',
     url: '',
-    max_concurrent_streams: 50,
+    max_concurrent_streams: 0,
     update_cron: '0 0 */6 * * * *',
     username: '',
     password: '',
@@ -139,7 +139,7 @@ function CreateSourceSheet({
         name: '',
         source_type: 'xtream',
         url: '',
-        max_concurrent_streams: 50,
+        max_concurrent_streams: 0,
         update_cron: '0 0 */6 * * * *',
         username: '',
         password: '',
@@ -272,15 +272,16 @@ function CreateSourceSheet({
               <Input
                 id="max_concurrent_streams"
                 type="number"
-                min="1"
+                min="0"
                 value={formData.max_concurrent_streams}
                 onChange={(e) =>
-                  setFormData({ ...formData, max_concurrent_streams: parseInt(e.target.value) })
+                  setFormData({ ...formData, max_concurrent_streams: parseInt(e.target.value) || 0 })
                 }
                 autoComplete="off"
                 required
                 disabled={loading}
               />
+              <p className="text-xs text-muted-foreground">0 = unlimited</p>
             </div>
             <div className="space-y-2">
               <div className="flex items-center justify-between">
@@ -413,7 +414,7 @@ function EditSourceSheet({
     name: '',
     source_type: 'xtream',
     url: '',
-    max_concurrent_streams: 50,
+    max_concurrent_streams: 0,
     update_cron: '0 0 */6 * * * *',
     username: '',
     password: '',
@@ -425,12 +426,13 @@ function EditSourceSheet({
   // Update form data when source changes
   useEffect(() => {
     if (source) {
+      const defaultCron = '0 0 */6 * * * *'; // Every 6 hours
       const newFormData = {
         name: source.name,
         source_type: source.source_type,
         url: source.url,
         max_concurrent_streams: source.max_concurrent_streams,
-        update_cron: source.update_cron,
+        update_cron: source.update_cron || defaultCron,
         username: source.username || '',
         password: source.password || '',
       };
@@ -593,15 +595,16 @@ function EditSourceSheet({
               <Input
                 id="edit-max_concurrent_streams"
                 type="number"
-                min="1"
+                min="0"
                 value={formData.max_concurrent_streams}
                 onChange={(e) =>
-                  setFormData({ ...formData, max_concurrent_streams: parseInt(e.target.value) })
+                  setFormData({ ...formData, max_concurrent_streams: parseInt(e.target.value) || 0 })
                 }
                 required
                 disabled={loading}
                 autoComplete="off"
               />
+              <p className="text-xs text-muted-foreground">0 = unlimited</p>
             </div>
             <div className="space-y-2">
               <div className="flex items-center justify-between">
@@ -946,9 +949,8 @@ export function StreamSources() {
     setErrors((prev) => ({ ...prev, create: null }));
 
     try {
-      const response = await apiClient.createStreamSource(newSource);
+      const createdSource = await apiClient.createStreamSource(newSource);
       // Optimistic update: add new source to existing list instead of full reload
-      const createdSource = response.data || (response as unknown as StreamSourceResponse);
       setAllSources((prev) => [...prev, createdSource]);
       setPagination((prev) =>
         prev
@@ -975,8 +977,7 @@ export function StreamSources() {
     setErrors((prev) => ({ ...prev, edit: null }));
 
     try {
-      const response = await apiClient.updateStreamSource(id, updatedSource);
-      const updated = response.data || (response as unknown as StreamSourceResponse);
+      const updated = await apiClient.updateStreamSource(id, updatedSource);
       // Optimistic update: update existing source in list instead of full reload
       setAllSources((prev) => prev.map((source) => (source.id === id ? updated : source)));
     } catch (error) {

@@ -388,11 +388,12 @@ function EditEpgSourceSheet({
   // Update form data when source changes
   useEffect(() => {
     if (source) {
+      const defaultCron = '0 0 */6 * * * *'; // Every 6 hours
       const newFormData = {
         name: source.name,
         source_type: source.source_type,
         url: source.url,
-        update_cron: source.update_cron,
+        update_cron: source.update_cron || defaultCron,
         original_timezone: source.original_timezone || 'UTC',
         time_offset: source.time_offset || '+00:00',
         username: source.username || '',
