@@ -609,6 +609,99 @@ tasks:
       - 'echo "Build Date: {{.BUILD_DATE}}"'
 
   # ============================================
+  # Version Sync Tasks
+  # ============================================
+
+  version:
+    desc: Show current version information
+    cmds:
+      - |
+        PKG_JSON="{{.FRONTEND_DIR}}/package.json"
+        PKG_VERSION=$(grep -o '"version": "[^"]*"' "$PKG_JSON" | cut -d'"' -f4)
+        GIT_VERSION="{{.VERSION}}"
+
+        echo "=== Version Info ==="
+        echo ""
+        echo "Git-derived version: ${GIT_VERSION}"
+        echo "Frontend package.json: ${PKG_VERSION}"
+        echo ""
+        if [ "$PKG_VERSION" = "$GIT_VERSION" ]; then
+          echo "Status: IN SYNC"
+        else
+          echo "Status: OUT OF SYNC"
+          echo ""
+          echo "To sync: task version:sync"
+        fi
+
+  version:sync:
+    desc: Sync frontend package.json version with git version
+    summary: |
+      Updates frontend/package.json to match the current git-derived version.
+      Use FORCE=true to allow setting a lower version than current.
+
+      Examples:
+        task version:sync                    # Sync to current git version
+        task version:sync VERSION=1.2.3     # Set specific version
+        task version:sync VERSION=0.1.0 FORCE=true  # Force lower version
+    cmds:
+      - |
+        TARGET="{{.VERSION}}"
+        FORCE="{{.FORCE}}"
+        PKG_JSON="{{.FRONTEND_DIR}}/package.json"
+
+        # Get current package.json version
+        CURRENT=$(grep -o '"version": "[^"]*"' "$PKG_JSON" | cut -d'"' -f4)
+
+        echo "Current package.json version: ${CURRENT}"
+        echo "Target version:               ${TARGET}"
+
+        # Skip if already at target
+        if [ "$CURRENT" = "$TARGET" ]; then
+          echo "Already at target version. Nothing to do."
+          exit 0
+        fi
+
+        # Version comparison function (returns 0 if $1 >= $2)
+        version_gte() {
+          [ "$(printf '%s\n' "$1" "$2" | sort -V | head -n1)" = "$2" ]
+        }
+
+        # Check if downgrading without force
+        if [ "$FORCE" != "true" ] && version_gte "$CURRENT" "$TARGET" && [ "$CURRENT" != "$TARGET" ]; then
+          echo ""
+          echo "Error: Target version ($TARGET) is lower than current ($CURRENT)"
+          echo "Use FORCE=true to override: task version:sync VERSION=$TARGET FORCE=true"
+          exit 1
+        fi
+
+        # Update package.json using sed (portable)
+        sed -i "s/\"version\": \"${CURRENT}\"/\"version\": \"${TARGET}\"/" "$PKG_JSON"
+
+        echo ""
+        echo "Updated $PKG_JSON to version ${TARGET}"
+
+  version:check:
+    desc: Check if frontend version matches git version
+    cmds:
+      - |
+        PKG_JSON="{{.FRONTEND_DIR}}/package.json"
+        CURRENT=$(grep -o '"version": "[^"]*"' "$PKG_JSON" | cut -d'"' -f4)
+        GIT_VERSION="{{.VERSION}}"
+
+        echo "Frontend package.json: ${CURRENT}"
+        echo "Git-derived version:   ${GIT_VERSION}"
+
+        if [ "$CURRENT" = "$GIT_VERSION" ]; then
+          echo ""
+          echo "Versions are in sync."
+        else
+          echo ""
+          echo "Warning: Versions are out of sync!"
+          echo "Run 'task version:sync' to update package.json"
+          exit 1
+        fi
+
+  # ============================================
   # Version Bump & Release Tasks
   # ============================================
 
@@ -678,6 +771,7 @@ tasks:
       - |
         VERSION="{{.VERSION}}"
         TAG="v${VERSION}"
+        PKG_JSON="{{.FRONTEND_DIR}}/package.json"
 
         # Validate version format
         if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
@@ -691,10 +785,27 @@ tasks:
           exit 1
         fi
 
-        # Check for uncommitted changes
-        if ! git diff --quiet || ! git diff --cached --quiet; then
-          echo "Error: You have uncommitted changes. Please commit or stash them first."
+        # Check for uncommitted changes (excluding package.json which we'll update)
+        DIRTY_FILES=$(git diff --name-only; git diff --cached --name-only)
+        DIRTY_NON_PKG=$(echo "$DIRTY_FILES" | grep -v "^${PKG_JSON}$" | grep -v "^$" || true)
+        if [ -n "$DIRTY_NON_PKG" ]; then
+          echo "Error: You have uncommitted changes:"
+          echo "$DIRTY_NON_PKG"
+          echo ""
+          echo "Please commit or stash them first."
           exit 1
+        fi
+
+        # Sync frontend package.json version
+        echo "Syncing frontend version to ${VERSION}..."
+        CURRENT_PKG_VERSION=$(grep -o '"version": "[^"]*"' "$PKG_JSON" | cut -d'"' -f4)
+        if [ "$CURRENT_PKG_VERSION" != "$VERSION" ]; then
+          sed -i "s/\"version\": \"${CURRENT_PKG_VERSION}\"/\"version\": \"${VERSION}\"/" "$PKG_JSON"
+          git add "$PKG_JSON"
+          git commit -m "chore: bump frontend version to ${VERSION}"
+          echo "Committed package.json version update"
+        else
+          echo "Frontend version already at ${VERSION}"
         fi
 
         # Get the previous tag for changelog
