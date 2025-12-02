@@ -4,6 +4,7 @@ package generatem3u
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -24,6 +25,7 @@ const (
 // Stage generates an M3U playlist from the pipeline channels.
 type Stage struct {
 	shared.BaseStage
+	logger *slog.Logger
 }
 
 // New creates a new M3U generation stage.
@@ -36,7 +38,11 @@ func New() *Stage {
 // NewConstructor returns a stage constructor for use with the factory.
 func NewConstructor() core.StageConstructor {
 	return func(deps *core.Dependencies) core.Stage {
-		return New()
+		s := New()
+		if deps != nil && deps.Logger != nil {
+			s.logger = deps.Logger.With("stage", StageID)
+		}
+		return s
 	}
 }
 
@@ -45,14 +51,23 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	result := shared.NewResult()
 
 	if len(state.Channels) == 0 {
+		s.log(ctx, slog.LevelInfo, "no channels to write, skipping M3U generation")
 		result.Message = "No channels to write"
 		return result, nil
 	}
+
+	// T035: Log stage start
+	s.log(ctx, slog.LevelInfo, "starting M3U generation",
+		slog.Int("input_channels", len(state.Channels)))
 
 	// Create output file in temp directory
 	outputPath := filepath.Join(state.TempDir, fmt.Sprintf("%s.m3u", state.ProxyID))
 	file, err := os.Create(outputPath)
 	if err != nil {
+		// T039: ERROR logging with full context
+		s.log(ctx, slog.LevelError, "failed to create M3U file",
+			slog.String("output_path", outputPath),
+			slog.String("error", err.Error()))
 		return result, fmt.Errorf("creating M3U file: %w", err)
 	}
 	defer file.Close()
@@ -61,18 +76,30 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 
 	// Write header
 	if err := writer.WriteHeader(); err != nil {
+		// T039: ERROR logging with full context
+		s.log(ctx, slog.LevelError, "failed to write M3U header",
+			slog.String("output_path", outputPath),
+			slog.String("error", err.Error()))
 		return result, fmt.Errorf("writing M3U header: %w", err)
 	}
 
 	channelCount := 0
 	channelNum := state.Proxy.StartingChannelNumber
 
+	var skippedCount int
 	for _, ch := range state.Channels {
 		// Check for context cancellation
 		select {
 		case <-ctx.Done():
 			return result, ctx.Err()
 		default:
+		}
+
+		// Skip channels with empty StreamURL (T011)
+		if ch.StreamURL == "" {
+			state.AddError(fmt.Errorf("channel %q skipped: empty stream URL", ch.ChannelName))
+			skippedCount++
+			continue
 		}
 
 		entry := shared.ChannelToM3UEntry(ch, channelNum)
@@ -99,6 +126,13 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	result.RecordsProcessed = channelCount
 	result.Message = fmt.Sprintf("Generated M3U with %d channels", channelCount)
 
+	// T035: Log stage completion with file size and channel count
+	s.log(ctx, slog.LevelInfo, "M3U generation complete",
+		slog.Int("channel_count", channelCount),
+		slog.Int("skipped_count", skippedCount),
+		slog.Int64("file_size_bytes", fileSize),
+		slog.String("output_path", outputPath))
+
 	// Create artifact
 	artifact := core.NewArtifact(core.ArtifactTypeM3U, core.ProcessingStageGenerated, StageID).
 		WithFilePath(outputPath).
@@ -107,6 +141,13 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	result.Artifacts = append(result.Artifacts, artifact)
 
 	return result, nil
+}
+
+// log logs a message if the logger is set.
+func (s *Stage) log(ctx context.Context, level slog.Level, msg string, attrs ...any) {
+	if s.logger != nil {
+		s.logger.Log(ctx, level, msg, attrs...)
+	}
 }
 
 // Ensure Stage implements core.Stage.

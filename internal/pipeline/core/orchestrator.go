@@ -81,6 +81,10 @@ func (o *Orchestrator) Execute(ctx context.Context) (*Result, error) {
 				slog.String("path", tempDir),
 				slog.String("error", err.Error()),
 			)
+		} else {
+			o.logger.Debug("removed temp directory",
+				slog.String("path", tempDir),
+			)
 		}
 	}()
 

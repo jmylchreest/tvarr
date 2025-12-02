@@ -78,16 +78,23 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	s.stats = Stats{}
 
 	if len(state.Channels) == 0 {
+		s.log(ctx, slog.LevelInfo, "no channels to process for logo caching, skipping")
 		result.Message = "No channels to process for logo caching"
 		return result, nil
 	}
 
 	// Handle disabled mode (no cacher)
 	if s.cacher == nil {
+		s.log(ctx, slog.LevelInfo, "logo caching disabled, skipping",
+			slog.Int("channel_count", len(state.Channels)))
 		result.RecordsProcessed = len(state.Channels)
 		result.Message = "Logo caching disabled (no cacher configured)"
 		return result, nil
 	}
+
+	// T034: Log stage start
+	s.log(ctx, slog.LevelInfo, "starting logo caching",
+		slog.Int("channel_count", len(state.Channels)))
 
 	// Collect unique logo URLs
 	logoURLs := make(map[string]struct{})
@@ -109,7 +116,11 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	s.stats.UniqueLogoURLs = len(logoURLs)
 
 	// Process each unique logo URL
+	// T038: DEBUG logging for batch progress
+	const batchSize = 100
+	totalLogos := len(logoURLs)
 	newlyCached := 0
+	processed := 0
 	for logoURL := range logoURLs {
 		// Check for context cancellation
 		select {
@@ -147,6 +158,18 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 				"url", logoURL,
 				"id", meta.GetID())
 		}
+
+		// T038: DEBUG logging for batch progress
+		processed++
+		if processed%batchSize == 0 {
+			batchNum := processed / batchSize
+			totalBatches := (totalLogos + batchSize - 1) / batchSize
+			s.log(ctx, slog.LevelDebug, "logo caching batch progress",
+				slog.Int("batch_num", batchNum),
+				slog.Int("total_batches", totalBatches),
+				slog.Int("items_processed", processed),
+				slog.Int("total_items", totalLogos))
+		}
 	}
 
 	result.RecordsProcessed = len(state.Channels)
@@ -160,6 +183,13 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 		result.Message = "No logos found in channels"
 	}
 
+	// T034: Log stage completion with cache hit/miss stats
+	s.log(ctx, slog.LevelInfo, "logo caching complete",
+		slog.Int("unique_logos", s.stats.UniqueLogoURLs),
+		slog.Int("newly_cached", s.stats.NewlyCached),
+		slog.Int("already_cached", s.stats.AlreadyCached),
+		slog.Int("errors", s.stats.Errors))
+
 	// Create artifact with metadata
 	artifact := core.NewArtifact(core.ArtifactTypeChannels, core.ProcessingStageFiltered, StageID).
 		WithRecordCount(len(state.Channels)).
@@ -170,6 +200,13 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	result.Artifacts = append(result.Artifacts, artifact)
 
 	return result, nil
+}
+
+// log logs a message if the logger is set.
+func (s *Stage) log(ctx context.Context, level slog.Level, msg string, attrs ...any) {
+	if s.logger != nil {
+		s.logger.Log(ctx, level, msg, attrs...)
+	}
 }
 
 // Ensure Stage implements core.Stage.

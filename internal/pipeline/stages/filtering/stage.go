@@ -4,6 +4,7 @@ package filtering
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/jmylchreest/tvarr/internal/expression"
@@ -57,6 +58,7 @@ type Stage struct {
 	shared.BaseStage
 	expressionFilters         []ExpressionFilter
 	compiledExpressionFilters []*compiledExpressionFilter
+	logger                    *slog.Logger
 }
 
 // New creates a new filtering stage.
@@ -73,6 +75,11 @@ func New() *Stage {
 func NewConstructor() core.StageConstructor {
 	return func(deps *core.Dependencies) core.Stage {
 		stage := New()
+
+		// Inject logger
+		if deps.Logger != nil {
+			stage.logger = deps.Logger.With("stage", StageID)
+		}
 
 		// Load filters from database if repository is available
 		if deps.FilterRepo != nil {
@@ -139,12 +146,21 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 
 	// Use configured filters, or skip if none
 	if len(s.expressionFilters) == 0 {
+		s.log(ctx, slog.LevelInfo, "no filters configured, skipping")
 		result.Message = "No filters configured"
 		return result, nil
 	}
 
+	// T031: Log filter stats at start
+	s.log(ctx, slog.LevelInfo, "starting filtering",
+		slog.Int("filter_count", len(s.expressionFilters)),
+		slog.Int("input_channels", len(state.Channels)),
+		slog.Int("input_programs", len(state.Programs)))
+
 	// Compile expression filters
 	if err := s.compileExpressionFilters(); err != nil {
+		s.log(ctx, slog.LevelError, "failed to compile expression filters",
+			slog.String("error", err.Error()))
 		return result, fmt.Errorf("compiling expression filters: %w", err)
 	}
 
@@ -206,6 +222,13 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 		channelsRemoved, originalChannelCount,
 		programsRemoved, originalProgramCount)
 
+	// T031: Log filter completion stats
+	s.log(ctx, slog.LevelInfo, "filtering complete",
+		slog.Int("channels_kept", len(state.Channels)),
+		slog.Int("channels_removed", channelsRemoved),
+		slog.Int("programs_kept", len(state.Programs)),
+		slog.Int("programs_removed", programsRemoved))
+
 	// Create artifact
 	artifact := core.NewArtifact(core.ArtifactTypeChannels, core.ProcessingStageFiltered, StageID).
 		WithRecordCount(len(state.Channels)).
@@ -214,6 +237,13 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	result.Artifacts = append(result.Artifacts, artifact)
 
 	return result, nil
+}
+
+// log logs a message if the logger is set.
+func (s *Stage) log(ctx context.Context, level slog.Level, msg string, attrs ...any) {
+	if s.logger != nil {
+		s.logger.Log(ctx, level, msg, attrs...)
+	}
 }
 
 // compileExpressionFilters pre-parses expression filters.

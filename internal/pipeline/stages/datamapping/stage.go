@@ -4,6 +4,7 @@ package datamapping
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/jmylchreest/tvarr/internal/expression"
@@ -47,9 +48,10 @@ type compiledRule struct {
 // Stage applies data mapping rules to channels and programs.
 type Stage struct {
 	shared.BaseStage
-	rules           []DataMappingRule
-	compiledRules   []*compiledRule
+	rules            []DataMappingRule
+	compiledRules    []*compiledRule
 	stopOnFirstMatch bool
+	logger           *slog.Logger
 }
 
 // New creates a new data mapping stage.
@@ -67,6 +69,11 @@ func New() *Stage {
 func NewConstructor() core.StageConstructor {
 	return func(deps *core.Dependencies) core.Stage {
 		stage := New()
+
+		// Inject logger
+		if deps.Logger != nil {
+			stage.logger = deps.Logger.With("stage", StageID)
+		}
 
 		// Load rules from database if repository is available
 		if deps.DataMappingRuleRepo != nil {
@@ -134,12 +141,23 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 
 	// Skip if no rules configured
 	if len(s.rules) == 0 {
+		s.log(ctx, slog.LevelInfo, "no data mapping rules configured, skipping")
 		result.Message = "No data mapping rules configured"
 		return result, nil
 	}
 
+	// T032: Log stage start
+	s.log(ctx, slog.LevelInfo, "starting data mapping",
+		slog.Int("rule_count", len(s.rules)),
+		slog.Int("input_channels", len(state.Channels)),
+		slog.Int("input_programs", len(state.Programs)))
+
 	// Compile rules
 	if err := s.compileRules(); err != nil {
+		// T039: ERROR logging with full context
+		s.log(ctx, slog.LevelError, "failed to compile data mapping rules",
+			slog.Int("rule_count", len(s.rules)),
+			slog.String("error", err.Error()))
 		return result, fmt.Errorf("compiling rules: %w", err)
 	}
 
@@ -189,6 +207,13 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	result.RecordsModified = channelsModified + programsModified
 	result.Message = fmt.Sprintf("Data mapping: %d channels, %d programs modified (%d total modifications)",
 		channelsModified, programsModified, totalModifications)
+
+	// T032: Log stage completion with rule application stats
+	s.log(ctx, slog.LevelInfo, "data mapping complete",
+		slog.Int("channels_modified", channelsModified),
+		slog.Int("programs_modified", programsModified),
+		slog.Int("total_modifications", totalModifications),
+		slog.Int("rules_applied", len(s.compiledRules)))
 
 	// Create artifact
 	artifact := core.NewArtifact(core.ArtifactTypeChannels, core.ProcessingStageTransformed, StageID).
@@ -427,6 +452,13 @@ func (s *Stage) applyProgramModifications(prog *models.EpgProgram, modifications
 			prog.Category = mod.NewValue
 		// Time fields are typically read-only
 		}
+	}
+}
+
+// log logs a message if the logger is set.
+func (s *Stage) log(ctx context.Context, level slog.Level, msg string, attrs ...any) {
+	if s.logger != nil {
+		s.logger.Log(ctx, level, msg, attrs...)
 	}
 }
 

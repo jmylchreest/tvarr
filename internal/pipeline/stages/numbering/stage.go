@@ -93,9 +93,15 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	s.conflicts = make([]ConflictResolution, 0)
 
 	if len(state.Channels) == 0 {
+		s.log(ctx, slog.LevelInfo, "no channels to number, skipping")
 		result.Message = "No channels to number"
 		return result, nil
 	}
+
+	// T033: Log stage start
+	s.log(ctx, slog.LevelInfo, "starting channel numbering",
+		slog.Int("channel_count", len(state.Channels)),
+		slog.String("mode", string(s.mode)))
 
 	startingNumber := state.Proxy.StartingChannelNumber
 	if startingNumber <= 0 {
@@ -140,6 +146,13 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	} else {
 		result.Message = fmt.Sprintf("Numbered %d channels starting from %d", numberedCount, startingNumber)
 	}
+
+	// T033: Log stage completion with numbering stats
+	s.log(ctx, slog.LevelInfo, "channel numbering complete",
+		slog.Int("channels_numbered", numberedCount),
+		slog.Int("starting_number", startingNumber),
+		slog.String("mode", string(mode)),
+		slog.Int("conflicts_resolved", len(s.conflicts)))
 
 	// Create artifact with conflict metadata
 	artifact := core.NewArtifact(core.ArtifactTypeChannels, core.ProcessingStageNumbered, StageID).
@@ -284,6 +297,13 @@ func (s *Stage) assignByGroup(channels []*models.Channel, startNum int, groupSiz
 	}
 
 	return modified
+}
+
+// log logs a message if the logger is set.
+func (s *Stage) log(ctx context.Context, level slog.Level, msg string, attrs ...any) {
+	if s.logger != nil {
+		s.logger.Log(ctx, level, msg, attrs...)
+	}
 }
 
 // Ensure Stage implements core.Stage.

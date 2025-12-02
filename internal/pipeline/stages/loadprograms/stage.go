@@ -4,6 +4,7 @@ package loadprograms
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jmylchreest/tvarr/internal/models"
@@ -26,6 +27,7 @@ type Stage struct {
 	shared.BaseStage
 	programRepo repository.EpgProgramRepository
 	epgDays     int
+	logger      *slog.Logger
 }
 
 // New creates a new load programs stage.
@@ -40,7 +42,11 @@ func New(programRepo repository.EpgProgramRepository) *Stage {
 // NewConstructor returns a stage constructor for use with the factory.
 func NewConstructor() core.StageConstructor {
 	return func(deps *core.Dependencies) core.Stage {
-		return New(deps.EpgProgramRepo)
+		s := New(deps.EpgProgramRepo)
+		if deps.Logger != nil {
+			s.logger = deps.Logger.With("stage", StageID)
+		}
+		return s
 	}
 }
 
@@ -55,9 +61,18 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	result := shared.NewResult()
 
 	if len(state.EpgSources) == 0 || len(state.ChannelMap) == 0 {
+		s.log(ctx, slog.LevelInfo, "skipping program load - no EPG sources or channels",
+			slog.Int("epg_source_count", len(state.EpgSources)),
+			slog.Int("channel_map_size", len(state.ChannelMap)))
 		result.Message = "No EPG sources or no channels with TvgIDs"
 		return result, nil
 	}
+
+	// T030: Log stage start
+	s.log(ctx, slog.LevelInfo, "starting program load",
+		slog.Int("epg_source_count", len(state.EpgSources)),
+		slog.Int("channel_count", len(state.ChannelMap)),
+		slog.Int("epg_days", s.epgDays))
 
 	// Get the set of TvgIDs we need programs for
 	tvgIDs := make(map[string]bool)
@@ -74,9 +89,13 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	// Load programs from each EPG source
 	for _, source := range state.EpgSources {
 		if !source.Enabled {
+			s.log(ctx, slog.LevelDebug, "skipping disabled EPG source",
+				slog.String("source_id", source.ID.String()),
+				slog.String("source_name", source.Name))
 			continue
 		}
 
+		sourceProgramCount := 0
 		err := s.programRepo.GetBySourceID(ctx, source.ID, func(prog *models.EpgProgram) error {
 			// Check for context cancellation
 			select {
@@ -96,13 +115,24 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 			}
 
 			programs = append(programs, prog)
+			sourceProgramCount++
 			return nil
 		})
 
 		if err != nil {
-			// Log error but continue with other sources
+			// T039: ERROR logging with full context
+			s.log(ctx, slog.LevelError, "failed to load programs from source",
+				slog.String("source_id", source.ID.String()),
+				slog.String("source_name", source.Name),
+				slog.String("error", err.Error()))
 			state.AddError(fmt.Errorf("loading programs from source %s (%s): %w", source.ID, source.Name, err))
+			continue
 		}
+
+		s.log(ctx, slog.LevelInfo, "loaded programs from EPG source",
+			slog.String("source_id", source.ID.String()),
+			slog.String("source_name", source.Name),
+			slog.Int("program_count", sourceProgramCount))
 	}
 
 	state.Programs = programs
@@ -110,12 +140,23 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	result.RecordsProcessed = len(programs)
 	result.Message = fmt.Sprintf("Loaded %d programs from %d EPG sources", len(programs), len(state.EpgSources))
 
+	// T030: Log stage completion
+	s.log(ctx, slog.LevelInfo, "program load complete",
+		slog.Int("total_programs", len(programs)))
+
 	// Create artifact for loaded programs
 	artifact := core.NewArtifact(core.ArtifactTypePrograms, core.ProcessingStageRaw, StageID).
 		WithRecordCount(len(programs))
 	result.Artifacts = append(result.Artifacts, artifact)
 
 	return result, nil
+}
+
+// log logs a message if the logger is set.
+func (s *Stage) log(ctx context.Context, level slog.Level, msg string, attrs ...any) {
+	if s.logger != nil {
+		s.logger.Log(ctx, level, msg, attrs...)
+	}
 }
 
 // Ensure Stage implements core.Stage.

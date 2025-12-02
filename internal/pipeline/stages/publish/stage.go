@@ -53,8 +53,16 @@ func NewConstructor() core.StageConstructor {
 func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResult, error) {
 	result := shared.NewResult()
 
+	// T037: Log stage start
+	s.log(slog.LevelInfo, "starting file publish",
+		slog.String("output_dir", state.OutputDir))
+
 	// Ensure output directory exists
 	if err := os.MkdirAll(state.OutputDir, 0755); err != nil {
+		// T039: ERROR logging with full context
+		s.log(slog.LevelError, "failed to create output directory",
+			slog.String("output_dir", state.OutputDir),
+			slog.String("error", err.Error()))
 		return result, fmt.Errorf("creating output directory: %w", err)
 	}
 
@@ -64,6 +72,11 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	if m3uPath, ok := state.GetMetadata(generatem3u.MetadataKeyTempPath); ok {
 		destName := fmt.Sprintf("%s.m3u", state.ProxyID)
 		if err := s.publishFile(ctx, m3uPath.(string), state.OutputDir, destName); err != nil {
+			// T039: ERROR logging with full context
+			s.log(slog.LevelError, "failed to publish M3U file",
+				slog.String("src_path", m3uPath.(string)),
+				slog.String("dest_name", destName),
+				slog.String("error", err.Error()))
 			return result, fmt.Errorf("publishing M3U: %w", err)
 		}
 		filesPublished++
@@ -78,6 +91,11 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	if xmltvPath, ok := state.GetMetadata(generatexmltv.MetadataKeyTempPath); ok {
 		destName := fmt.Sprintf("%s.xml", state.ProxyID)
 		if err := s.publishFile(ctx, xmltvPath.(string), state.OutputDir, destName); err != nil {
+			// T039: ERROR logging with full context
+			s.log(slog.LevelError, "failed to publish XMLTV file",
+				slog.String("src_path", xmltvPath.(string)),
+				slog.String("dest_name", destName),
+				slog.String("error", err.Error()))
 			return result, fmt.Errorf("publishing XMLTV: %w", err)
 		}
 		filesPublished++
@@ -90,6 +108,11 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 
 	result.RecordsProcessed = filesPublished
 	result.Message = fmt.Sprintf("Published %d files to %s", filesPublished, state.OutputDir)
+
+	// T037: Log stage completion with files copied
+	s.log(slog.LevelInfo, "file publish complete",
+		slog.Int("files_published", filesPublished),
+		slog.String("output_dir", state.OutputDir))
 
 	return result, nil
 }
