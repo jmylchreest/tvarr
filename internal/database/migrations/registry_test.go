@@ -26,9 +26,10 @@ func setupTestDB(t *testing.T) *gorm.DB {
 func TestAllMigrations_ReturnsExpectedCount(t *testing.T) {
 	migrations := AllMigrations()
 
-	// We have 13 migrations: 3 for stream sources, 2 for EPG, 5 for proxy, 3 for filters/rules
+	// We have 18 migrations: 3 for stream sources, 2 for EPG, 5 for proxy, 3 for filters/rules,
+	// 2 for relay, 1 for is_system column, 1 for EPG timezone fields, 1 for channel index fix
 	// (Logo caching uses file-based storage with in-memory indexing, no database tables)
-	assert.Len(t, migrations, 13)
+	assert.Len(t, migrations, 18)
 }
 
 func TestAllMigrations_VersionsAreUnique(t *testing.T) {
@@ -101,7 +102,7 @@ func TestMigrator_Status(t *testing.T) {
 	// Before running migrations
 	statuses, err := migrator.Status(ctx)
 	require.NoError(t, err)
-	assert.Len(t, statuses, 13)
+	assert.Len(t, statuses, 18)
 
 	for _, s := range statuses {
 		assert.False(t, s.Applied)
@@ -131,11 +132,19 @@ func TestMigrator_Down_RollsBackLastMigration(t *testing.T) {
 	err := migrator.Up(ctx)
 	require.NoError(t, err)
 
-	// Roll back last migration (013 - default filters/rules data)
-	err = migrator.Down(ctx)
-	require.NoError(t, err)
+	// Roll back migrations one by one until we've removed data_mapping_rules and filters tables
+	// Current order: 018, 017, 016, 015, 014, 013, 012, 011...
+	// Need to roll back through 018 (channel index fix), 017 (EPG timezone), 016 (is_system),
+	// 015 (default relay profiles), 014 (relay_profiles table), 013 (default filters/rules),
+	// 012 (data_mapping_rules), 011 (filters)
 
-	// Tables still exist, only the default data was removed
+	// Roll back 018-013 (channel index, EPG timezone, is_system, relay profiles, default data)
+	for i := 0; i < 6; i++ {
+		err = migrator.Down(ctx)
+		require.NoError(t, err)
+	}
+
+	// Tables still exist after rolling back to 012
 	assert.True(t, db.Migrator().HasTable("filters"))
 	assert.True(t, db.Migrator().HasTable("data_mapping_rules"))
 
@@ -163,7 +172,7 @@ func TestMigrator_Pending(t *testing.T) {
 	// All should be pending initially
 	pending, err := migrator.Pending(ctx)
 	require.NoError(t, err)
-	assert.Len(t, pending, 13)
+	assert.Len(t, pending, 18)
 
 	// Run migrations
 	err = migrator.Up(ctx)

@@ -30,6 +30,19 @@ func AllMigrations() []Migration {
 		migration012DataMappingRules(),
 		migration013DefaultFiltersAndRules(),
 
+		// Phase 12: Relay System
+		migration014RelayProfiles(),
+		migration015DefaultRelayProfiles(),
+
+		// Schema updates for system defaults protection
+		migration016AddIsSystemColumn(),
+
+		// Schema updates for EpgSource timezone fields
+		migration017EpgSourceTimezoneFields(),
+
+		// Fix channel unique index to be per-source
+		migration018ChannelCompositeUniqueIndex(),
+
 		// Note: Logo caching (Phase 10) uses file-based storage with
 		// in-memory indexing, no database tables required.
 	}
@@ -218,6 +231,7 @@ func migration013DefaultFiltersAndRules() Migration {
 					Expression: `stream_url starts_with "http"`,
 					Priority:   0,
 					IsEnabled:  true,
+					IsSystem:   true,
 				},
 				{
 					Name:        "Exclude Adult Content",
@@ -227,6 +241,7 @@ func migration013DefaultFiltersAndRules() Migration {
 					Expression:  `group_title contains "adult" OR group_title contains "xxx" OR group_title contains "porn" OR channel_name contains "adult" OR channel_name contains "xxx" OR channel_name contains "porn"`,
 					Priority:    1,
 					IsEnabled:   true,
+					IsSystem:    true,
 				},
 			}
 
@@ -246,6 +261,7 @@ func migration013DefaultFiltersAndRules() Migration {
 					Priority:    1,
 					StopOnMatch: false,
 					IsEnabled:   true,
+					IsSystem:    true,
 				},
 			}
 
@@ -275,4 +291,295 @@ func migration013DefaultFiltersAndRules() Migration {
 		},
 	}
 }
+
+// migration014RelayProfiles creates the relay_profiles table.
+func migration014RelayProfiles() Migration {
+	return Migration{
+		Version:     "014",
+		Description: "Create relay_profiles table",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.RelayProfile{})
+		},
+		Down: func(tx *gorm.DB) error {
+			return tx.Migrator().DropTable("relay_profiles")
+		},
+	}
+}
+
+// migration015DefaultRelayProfiles inserts default relay profiles matching m3u-proxy.
+func migration015DefaultRelayProfiles() Migration {
+	return Migration{
+		Version:     "015",
+		Description: "Insert default relay profiles",
+		Up: func(tx *gorm.DB) error {
+			// Create default relay profiles matching m3u-proxy
+			defaultProfiles := []models.RelayProfile{
+				{
+					Name:            "H.264 + AAC (Standard)",
+					Description:     "Maximum compatibility profile with H.264 video and AAC audio",
+					IsDefault:       true,
+					Enabled:         true,
+					IsSystem:        true,
+					VideoCodec:      models.VideoCodecH264,
+					VideoBitrate:    2000,
+					VideoPreset:     "fast",
+					VideoProfile:    "main",
+					AudioCodec:      models.AudioCodecAAC,
+					AudioBitrate:    128,
+					AudioSampleRate: 48000,
+					AudioChannels:   2,
+					OutputFormat:    models.OutputFormatMPEGTS,
+					Timeout:         30,
+				},
+				{
+					Name:            "H.265 + AAC (Standard)",
+					Description:     "Better compression with H.265 video and AAC audio",
+					IsDefault:       false,
+					Enabled:         true,
+					IsSystem:        true,
+					VideoCodec:      models.VideoCodecH265,
+					VideoBitrate:    1500,
+					VideoPreset:     "fast",
+					VideoProfile:    "main",
+					AudioCodec:      models.AudioCodecAAC,
+					AudioBitrate:    128,
+					AudioSampleRate: 48000,
+					AudioChannels:   2,
+					OutputFormat:    models.OutputFormatMPEGTS,
+					Timeout:         30,
+				},
+				{
+					Name:            "H.264 + AAC (High Quality)",
+					Description:     "High quality H.264 profile for better video quality",
+					IsDefault:       false,
+					Enabled:         true,
+					IsSystem:        true,
+					VideoCodec:      models.VideoCodecH264,
+					VideoBitrate:    4000,
+					VideoPreset:     "slower",
+					VideoProfile:    "high",
+					AudioCodec:      models.AudioCodecAAC,
+					AudioBitrate:    192,
+					AudioSampleRate: 48000,
+					AudioChannels:   2,
+					OutputFormat:    models.OutputFormatMPEGTS,
+					Timeout:         30,
+				},
+				{
+					Name:            "H.264 + AAC (Low Bitrate)",
+					Description:     "Low bitrate H.264 profile for mobile devices or limited bandwidth",
+					IsDefault:       false,
+					Enabled:         true,
+					IsSystem:        true,
+					VideoCodec:      models.VideoCodecH264,
+					VideoBitrate:    800,
+					VideoPreset:     "veryfast",
+					VideoProfile:    "baseline",
+					AudioCodec:      models.AudioCodecAAC,
+					AudioBitrate:    96,
+					AudioSampleRate: 48000,
+					AudioChannels:   2,
+					OutputFormat:    models.OutputFormatMPEGTS,
+					Timeout:         30,
+				},
+				{
+					Name:            "H.265 + AAC (High Quality)",
+					Description:     "High quality H.265/HEVC profile with better compression",
+					IsDefault:       false,
+					Enabled:         true,
+					IsSystem:        true,
+					VideoCodec:      models.VideoCodecH265,
+					VideoBitrate:    3000,
+					VideoPreset:     "slow",
+					VideoProfile:    "main",
+					AudioCodec:      models.AudioCodecAAC,
+					AudioBitrate:    192,
+					AudioSampleRate: 48000,
+					AudioChannels:   2,
+					OutputFormat:    models.OutputFormatMPEGTS,
+					Timeout:         30,
+				},
+				{
+					Name:            "AV1 + AAC (Next-gen)",
+					Description:     "Next-generation AV1 codec for best compression efficiency",
+					IsDefault:       false,
+					Enabled:         true,
+					IsSystem:        true,
+					VideoCodec:      models.VideoCodecAV1,
+					VideoBitrate:    2500,
+					VideoPreset:     "medium",
+					AudioCodec:      models.AudioCodecAAC,
+					AudioBitrate:    128,
+					AudioSampleRate: 48000,
+					AudioChannels:   2,
+					OutputFormat:    models.OutputFormatMPEGTS,
+					Timeout:         30,
+				},
+				{
+					Name:         "Copy Streams (No Transcoding)",
+					Description:  "Pass-through profile that copies streams without transcoding",
+					IsDefault:    false,
+					Enabled:      true,
+					IsSystem:     true,
+					VideoCodec:   models.VideoCodecCopy,
+					AudioCodec:   models.AudioCodecCopy,
+					OutputFormat: models.OutputFormatMPEGTS,
+					Timeout:      30,
+				},
+			}
+
+			for _, profile := range defaultProfiles {
+				if err := tx.Create(&profile).Error; err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			// Delete default relay profiles
+			return tx.Where("name IN ?", []string{
+				"H.264 + AAC (Standard)",
+				"H.265 + AAC (Standard)",
+				"H.264 + AAC (High Quality)",
+				"H.264 + AAC (Low Bitrate)",
+				"H.265 + AAC (High Quality)",
+				"AV1 + AAC (Next-gen)",
+				"Copy Streams (No Transcoding)",
+			}).Delete(&models.RelayProfile{}).Error
+		},
+	}
+}
+
+// migration016AddIsSystemColumn adds is_system column and marks existing defaults.
+func migration016AddIsSystemColumn() Migration {
+	return Migration{
+		Version:     "016",
+		Description: "Add is_system column to filters, data_mapping_rules, and relay_profiles",
+		Up: func(tx *gorm.DB) error {
+			// AutoMigrate will add the new column (is_system) to existing tables
+			if err := tx.AutoMigrate(&models.Filter{}); err != nil {
+				return err
+			}
+			if err := tx.AutoMigrate(&models.DataMappingRule{}); err != nil {
+				return err
+			}
+			if err := tx.AutoMigrate(&models.RelayProfile{}); err != nil {
+				return err
+			}
+
+			// Mark existing default filters as system (use UpdateColumn to bypass hooks)
+			defaultFilterNames := []string{
+				"Include All Valid Stream URLs",
+				"Exclude Adult Content",
+			}
+			if err := tx.Model(&models.Filter{}).
+				Where("name IN ?", defaultFilterNames).
+				UpdateColumn("is_system", true).Error; err != nil {
+				return err
+			}
+
+			// Mark existing default data mapping rules as system (use UpdateColumn to bypass hooks)
+			defaultRuleNames := []string{
+				"Default Timeshift Detection (Regex)",
+			}
+			if err := tx.Model(&models.DataMappingRule{}).
+				Where("name IN ?", defaultRuleNames).
+				UpdateColumn("is_system", true).Error; err != nil {
+				return err
+			}
+
+			// Mark existing default relay profiles as system (use UpdateColumn to bypass hooks)
+			defaultProfileNames := []string{
+				"H.264 + AAC (Standard)",
+				"H.265 + AAC (Standard)",
+				"H.264 + AAC (High Quality)",
+				"H.264 + AAC (Low Bitrate)",
+				"H.265 + AAC (High Quality)",
+				"AV1 + AAC (Next-gen)",
+				"Copy Streams (No Transcoding)",
+			}
+			if err := tx.Model(&models.RelayProfile{}).
+				Where("name IN ?", defaultProfileNames).
+				UpdateColumn("is_system", true).Error; err != nil {
+				return err
+			}
+
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			// Reset is_system to false (use UpdateColumn to bypass hooks)
+			if err := tx.Model(&models.Filter{}).Where("is_system = ?", true).UpdateColumn("is_system", false).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&models.DataMappingRule{}).Where("is_system = ?", true).UpdateColumn("is_system", false).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&models.RelayProfile{}).Where("is_system = ?", true).UpdateColumn("is_system", false).Error; err != nil {
+				return err
+			}
+			return nil
+		},
+	}
+}
+
+// migration017EpgSourceTimezoneFields adds timezone fields to epg_sources table.
+func migration017EpgSourceTimezoneFields() Migration {
+	return Migration{
+		Version:     "017",
+		Description: "Add original_timezone and time_offset columns to epg_sources",
+		Up: func(tx *gorm.DB) error {
+			// AutoMigrate will add the new columns to the existing table
+			return tx.AutoMigrate(&models.EpgSource{})
+		},
+		Down: func(tx *gorm.DB) error {
+			// Drop the columns (SQLite doesn't support DROP COLUMN directly,
+			// but GORM handles this appropriately for each database)
+			migrator := tx.Migrator()
+			if migrator.HasColumn(&models.EpgSource{}, "original_timezone") {
+				if err := migrator.DropColumn(&models.EpgSource{}, "original_timezone"); err != nil {
+					return err
+				}
+			}
+			if migrator.HasColumn(&models.EpgSource{}, "time_offset") {
+				if err := migrator.DropColumn(&models.EpgSource{}, "time_offset"); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+}
+
+// migration018ChannelCompositeUniqueIndex fixes the channel ext_id unique index
+// to be a composite unique index on (source_id, ext_id) instead of just ext_id.
+// This allows the same ext_id to exist across different sources.
+func migration018ChannelCompositeUniqueIndex() Migration {
+	return Migration{
+		Version:     "018",
+		Description: "Fix channel unique index to be per-source composite (source_id, ext_id)",
+		Up: func(tx *gorm.DB) error {
+			migrator := tx.Migrator()
+
+			// Drop the old unique index on ext_id if it exists
+			if migrator.HasIndex(&models.Channel{}, "idx_source_ext_id") {
+				if err := migrator.DropIndex(&models.Channel{}, "idx_source_ext_id"); err != nil {
+					// Ignore errors - the index might not exist or be named differently
+					tx.Logger.Warn(tx.Statement.Context, "failed to drop old index: %v", err)
+				}
+			}
+
+			// AutoMigrate will create the new composite unique index
+			return tx.AutoMigrate(&models.Channel{})
+		},
+		Down: func(tx *gorm.DB) error {
+			// This migration cannot be safely reverted without data loss
+			// as it would require a global unique constraint that might fail
+			// if there are duplicate ext_ids across sources.
+			// Just do nothing on down - the index will remain as composite.
+			return nil
+		},
+	}
+}
+
 
