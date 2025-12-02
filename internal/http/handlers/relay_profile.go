@@ -135,6 +135,8 @@ type RelayProfileResponse struct {
 	HWAccel         string `json:"hw_accel"`
 	OutputFormat    string `json:"output_format"`
 	IsDefault       bool   `json:"is_default"`
+	IsSystem        bool   `json:"is_system" doc:"Whether this is a system-provided profile (cannot be edited/deleted)"`
+	Enabled         bool   `json:"enabled"`
 	CreatedAt       string `json:"created_at"`
 	UpdatedAt       string `json:"updated_at"`
 }
@@ -158,6 +160,8 @@ func RelayProfileFromModel(p *models.RelayProfile) RelayProfileResponse {
 		HWAccel:         string(p.HWAccel),
 		OutputFormat:    string(p.OutputFormat),
 		IsDefault:       p.IsDefault,
+		IsSystem:        p.IsSystem,
+		Enabled:         p.Enabled,
 		CreatedAt:       p.CreatedAt.String(),
 		UpdatedAt:       p.UpdatedAt.String(),
 	}
@@ -329,6 +333,7 @@ type UpdateRelayProfileInput struct {
 		AudioChannels   int    `json:"audio_channels,omitempty" doc:"Audio channels"`
 		HWAccel         string `json:"hw_accel,omitempty" doc:"Hardware acceleration"`
 		OutputFormat    string `json:"output_format,omitempty" doc:"Output format"`
+		Enabled         *bool  `json:"enabled,omitempty" doc:"Whether the profile is enabled"`
 	}
 }
 
@@ -353,48 +358,68 @@ func (h *RelayProfileHandler) Update(ctx context.Context, input *UpdateRelayProf
 		return nil, huma.Error500InternalServerError("failed to get relay profile", err)
 	}
 
-	// Update fields if provided
-	if input.Body.Name != "" {
-		profile.Name = input.Body.Name
-	}
-	if input.Body.Description != "" {
-		profile.Description = input.Body.Description
-	}
-	if input.Body.VideoCodec != "" {
-		profile.VideoCodec = models.VideoCodec(input.Body.VideoCodec)
-	}
-	if input.Body.AudioCodec != "" {
-		profile.AudioCodec = models.AudioCodec(input.Body.AudioCodec)
-	}
-	if input.Body.VideoBitrate != 0 {
-		profile.VideoBitrate = input.Body.VideoBitrate
-	}
-	if input.Body.AudioBitrate != 0 {
-		profile.AudioBitrate = input.Body.AudioBitrate
-	}
-	if input.Body.VideoMaxrate != 0 {
-		profile.VideoMaxrate = input.Body.VideoMaxrate
-	}
-	if input.Body.VideoPreset != "" {
-		profile.VideoPreset = input.Body.VideoPreset
-	}
-	if input.Body.VideoWidth != 0 {
-		profile.VideoWidth = input.Body.VideoWidth
-	}
-	if input.Body.VideoHeight != 0 {
-		profile.VideoHeight = input.Body.VideoHeight
-	}
-	if input.Body.AudioSampleRate != 0 {
-		profile.AudioSampleRate = input.Body.AudioSampleRate
-	}
-	if input.Body.AudioChannels != 0 {
-		profile.AudioChannels = input.Body.AudioChannels
-	}
-	if input.Body.HWAccel != "" {
-		profile.HWAccel = models.HWAccelType(input.Body.HWAccel)
-	}
-	if input.Body.OutputFormat != "" {
-		profile.OutputFormat = models.OutputFormat(input.Body.OutputFormat)
+	// System profiles can only have Enabled toggled
+	if profile.IsSystem {
+		if input.Body.Name != "" || input.Body.Description != "" ||
+			input.Body.VideoCodec != "" || input.Body.AudioCodec != "" ||
+			input.Body.VideoBitrate != 0 || input.Body.AudioBitrate != 0 ||
+			input.Body.VideoMaxrate != 0 || input.Body.VideoPreset != "" ||
+			input.Body.VideoWidth != 0 || input.Body.VideoHeight != 0 ||
+			input.Body.AudioSampleRate != 0 || input.Body.AudioChannels != 0 ||
+			input.Body.HWAccel != "" || input.Body.OutputFormat != "" {
+			return nil, huma.Error403Forbidden("system profiles can only have enabled toggled")
+		}
+		// Only allow Enabled update
+		if input.Body.Enabled != nil {
+			profile.Enabled = *input.Body.Enabled
+		}
+	} else {
+		// Update fields if provided for non-system profiles
+		if input.Body.Name != "" {
+			profile.Name = input.Body.Name
+		}
+		if input.Body.Description != "" {
+			profile.Description = input.Body.Description
+		}
+		if input.Body.VideoCodec != "" {
+			profile.VideoCodec = models.VideoCodec(input.Body.VideoCodec)
+		}
+		if input.Body.AudioCodec != "" {
+			profile.AudioCodec = models.AudioCodec(input.Body.AudioCodec)
+		}
+		if input.Body.VideoBitrate != 0 {
+			profile.VideoBitrate = input.Body.VideoBitrate
+		}
+		if input.Body.AudioBitrate != 0 {
+			profile.AudioBitrate = input.Body.AudioBitrate
+		}
+		if input.Body.VideoMaxrate != 0 {
+			profile.VideoMaxrate = input.Body.VideoMaxrate
+		}
+		if input.Body.VideoPreset != "" {
+			profile.VideoPreset = input.Body.VideoPreset
+		}
+		if input.Body.VideoWidth != 0 {
+			profile.VideoWidth = input.Body.VideoWidth
+		}
+		if input.Body.VideoHeight != 0 {
+			profile.VideoHeight = input.Body.VideoHeight
+		}
+		if input.Body.AudioSampleRate != 0 {
+			profile.AudioSampleRate = input.Body.AudioSampleRate
+		}
+		if input.Body.AudioChannels != 0 {
+			profile.AudioChannels = input.Body.AudioChannels
+		}
+		if input.Body.HWAccel != "" {
+			profile.HWAccel = models.HWAccelType(input.Body.HWAccel)
+		}
+		if input.Body.OutputFormat != "" {
+			profile.OutputFormat = models.OutputFormat(input.Body.OutputFormat)
+		}
+		if input.Body.Enabled != nil {
+			profile.Enabled = *input.Body.Enabled
+		}
 	}
 
 	if err := h.relayService.UpdateProfile(ctx, profile); err != nil {
@@ -419,6 +444,20 @@ func (h *RelayProfileHandler) Delete(ctx context.Context, input *DeleteRelayProf
 	id, err := models.ParseULID(input.ID)
 	if err != nil {
 		return nil, huma.Error400BadRequest("invalid ID format", err)
+	}
+
+	// Check if profile exists and is not a system profile
+	profile, err := h.relayService.GetProfileByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, service.ErrRelayProfileNotFound) {
+			return nil, huma.Error404NotFound(fmt.Sprintf("relay profile %s not found", input.ID))
+		}
+		return nil, huma.Error500InternalServerError("failed to get relay profile", err)
+	}
+
+	// Prevent deletion of system profiles
+	if profile.IsSystem {
+		return nil, huma.Error403Forbidden("system profiles cannot be deleted")
 	}
 
 	if err := h.relayService.DeleteProfile(ctx, id); err != nil {

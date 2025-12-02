@@ -1,7 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Button } from '@/components/ui/button';
+import { useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -12,14 +11,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
 import {
   RelayProfile,
   CreateRelayProfileRequest,
   UpdateRelayProfileRequest,
-  VideoCodec,
-  AudioCodec,
-  RelayOutputFormat,
 } from '@/types/api';
 
 interface RelayProfileFormProps {
@@ -30,23 +25,22 @@ interface RelayProfileFormProps {
   loading?: boolean;
 }
 
-const VIDEO_CODECS: { value: VideoCodec; label: string }[] = [
-  { value: 'H264', label: 'H.264' },
-  { value: 'H265', label: 'H.265/HEVC' },
-  { value: 'AV1', label: 'AV1' },
-  { value: 'MPEG2', label: 'MPEG-2' },
-  { value: 'MPEG4', label: 'MPEG-4' },
-  { value: 'Copy', label: 'Copy (No transcode)' },
+// Backend uses FFmpeg codec names
+const VIDEO_CODECS = [
+  { value: 'libx264', label: 'H.264' },
+  { value: 'libx265', label: 'H.265/HEVC' },
+  { value: 'libaom-av1', label: 'AV1' },
+  { value: 'libvpx-vp9', label: 'VP9' },
+  { value: 'copy', label: 'Copy (No transcode)' },
 ];
 
-const AUDIO_CODECS: { value: AudioCodec; label: string }[] = [
-  { value: 'AAC', label: 'AAC' },
-  { value: 'MP3', label: 'MP3' },
-  { value: 'AC3', label: 'AC3' },
-  { value: 'EAC3', label: 'EAC3' },
-  { value: 'MPEG2Audio', label: 'MPEG-2 Audio' },
-  { value: 'DTS', label: 'DTS' },
-  { value: 'Copy', label: 'Copy (No transcode)' },
+const AUDIO_CODECS = [
+  { value: 'aac', label: 'AAC' },
+  { value: 'libmp3lame', label: 'MP3' },
+  { value: 'ac3', label: 'AC3' },
+  { value: 'eac3', label: 'EAC3' },
+  { value: 'libopus', label: 'Opus' },
+  { value: 'copy', label: 'Copy (No transcode)' },
 ];
 
 const VIDEO_PRESETS = [
@@ -61,17 +55,19 @@ const VIDEO_PRESETS = [
   { value: 'veryslow', label: 'Very Slow' },
 ];
 
-const VIDEO_PROFILES = [
-  { value: 'baseline', label: 'Baseline' },
-  { value: 'main', label: 'Main' },
-  { value: 'high', label: 'High' },
-  { value: 'main10', label: 'Main 10' },
+const OUTPUT_FORMATS = [
+  { value: 'mpegts', label: 'MPEG-TS' },
+  { value: 'hls', label: 'HLS' },
+  { value: 'flv', label: 'FLV' },
+  { value: 'matroska', label: 'Matroska (MKV)' },
+  { value: 'mp4', label: 'MP4' },
 ];
 
 const HWACCEL_OPTIONS = [
-  { value: 'nvenc', label: 'NVIDIA NVENC' },
-  { value: 'vaapi', label: 'VA-API' },
+  { value: 'none', label: 'None (Software)' },
+  { value: 'cuda', label: 'NVIDIA CUDA' },
   { value: 'qsv', label: 'Intel Quick Sync' },
+  { value: 'vaapi', label: 'VA-API' },
   { value: 'videotoolbox', label: 'VideoToolbox (macOS)' },
 ];
 
@@ -85,19 +81,15 @@ export function RelayProfileForm({
   const [formData, setFormData] = useState({
     name: profile?.name || '',
     description: profile?.description || '',
-    video_codec: profile?.video_codec || ('H264' as VideoCodec),
-    audio_codec: profile?.audio_codec || ('AAC' as AudioCodec),
-    video_profile: profile?.video_profile || '',
+    video_codec: profile?.video_codec || 'libx264',
+    audio_codec: profile?.audio_codec || 'aac',
     video_preset: profile?.video_preset || '',
     video_bitrate: profile?.video_bitrate?.toString() || '',
     audio_bitrate: profile?.audio_bitrate?.toString() || '',
     audio_sample_rate: profile?.audio_sample_rate?.toString() || '',
     audio_channels: profile?.audio_channels?.toString() || '',
-    enable_hardware_acceleration: profile?.enable_hardware_acceleration || false,
-    preferred_hwaccel: profile?.preferred_hwaccel || '',
-    manual_args: profile?.manual_args || '',
-    input_timeout: profile?.input_timeout?.toString() || '',
-    is_active: profile?.is_active ?? true,
+    hw_accel: profile?.hw_accel || 'none',
+    output_format: profile?.output_format || 'mpegts',
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -110,14 +102,6 @@ export function RelayProfileForm({
       alert('Profile name is required');
       return;
     }
-    if (!formData.video_codec) {
-      alert('Video codec is required');
-      return;
-    }
-    if (!formData.audio_codec) {
-      alert('Audio codec is required');
-      return;
-    }
 
     setIsSubmitting(true);
 
@@ -125,9 +109,8 @@ export function RelayProfileForm({
       const data: CreateRelayProfileRequest | UpdateRelayProfileRequest = {
         name: formData.name,
         description: formData.description || undefined,
-        video_codec: formData.video_codec,
-        audio_codec: formData.audio_codec,
-        video_profile: formData.video_profile || undefined,
+        video_codec: formData.video_codec || undefined,
+        audio_codec: formData.audio_codec || undefined,
         video_preset: formData.video_preset || undefined,
         video_bitrate: formData.video_bitrate ? parseInt(formData.video_bitrate) : undefined,
         audio_bitrate: formData.audio_bitrate ? parseInt(formData.audio_bitrate) : undefined,
@@ -135,12 +118,8 @@ export function RelayProfileForm({
           ? parseInt(formData.audio_sample_rate)
           : undefined,
         audio_channels: formData.audio_channels ? parseInt(formData.audio_channels) : undefined,
-        enable_hardware_acceleration: formData.enable_hardware_acceleration,
-        preferred_hwaccel: formData.preferred_hwaccel || undefined,
-        manual_args: formData.manual_args || undefined,
-        output_format: 'TransportStream' as RelayOutputFormat,
-        input_timeout: formData.input_timeout ? parseInt(formData.input_timeout) : undefined,
-        ...(profile ? { is_active: formData.is_active } : { is_system_default: false }),
+        hw_accel: formData.hw_accel || undefined,
+        output_format: formData.output_format || undefined,
       };
 
       await onSubmit(data);
@@ -149,8 +128,8 @@ export function RelayProfileForm({
     }
   };
 
-  const isVideoTranscode = formData.video_codec.toLowerCase() !== 'copy';
-  const isAudioTranscode = formData.audio_codec.toLowerCase() !== 'copy';
+  const isVideoTranscode = formData.video_codec !== 'copy';
+  const isAudioTranscode = formData.audio_codec !== 'copy';
 
   return (
     <form id={formId} onSubmit={handleSubmit} className="space-y-4 px-4">
@@ -179,17 +158,6 @@ export function RelayProfileForm({
             rows={2}
           />
         </div>
-
-        {profile && (
-          <div className="flex items-center space-x-2">
-            <Switch
-              id="is_active"
-              checked={formData.is_active}
-              onCheckedChange={(checked) => setFormData({ ...formData, is_active: checked })}
-            />
-            <Label htmlFor="is_active">Active</Label>
-          </div>
-        )}
       </div>
 
       {/* Video Settings */}
@@ -201,7 +169,7 @@ export function RelayProfileForm({
             </Label>
             <Select
               value={formData.video_codec}
-              onValueChange={(value: VideoCodec) =>
+              onValueChange={(value) =>
                 setFormData({ ...formData, video_codec: value })
               }
             >
@@ -235,48 +203,25 @@ export function RelayProfileForm({
         </div>
 
         {isVideoTranscode && (
-          <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="video_profile" className="italic">
-                Video Profile
-              </Label>
-              <Select
-                value={formData.video_profile}
-                onValueChange={(value) => setFormData({ ...formData, video_profile: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select profile" />
-                </SelectTrigger>
-                <SelectContent>
-                  {VIDEO_PROFILES.map((profile) => (
-                    <SelectItem key={profile.value} value={profile.value}>
-                      {profile.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="video_preset" className="italic">
-                Video Preset
-              </Label>
-              <Select
-                value={formData.video_preset}
-                onValueChange={(value) => setFormData({ ...formData, video_preset: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select preset" />
-                </SelectTrigger>
-                <SelectContent>
-                  {VIDEO_PRESETS.map((preset) => (
-                    <SelectItem key={preset.value} value={preset.value}>
-                      {preset.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="space-y-2">
+            <Label htmlFor="video_preset" className="italic">
+              Video Preset
+            </Label>
+            <Select
+              value={formData.video_preset}
+              onValueChange={(value) => setFormData({ ...formData, video_preset: value })}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select preset" />
+              </SelectTrigger>
+              <SelectContent>
+                {VIDEO_PRESETS.map((preset) => (
+                  <SelectItem key={preset.value} value={preset.value}>
+                    {preset.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         )}
       </div>
@@ -290,7 +235,7 @@ export function RelayProfileForm({
             </Label>
             <Select
               value={formData.audio_codec}
-              onValueChange={(value: AudioCodec) =>
+              onValueChange={(value) =>
                 setFormData({ ...formData, audio_codec: value })
               }
             >
@@ -355,69 +300,43 @@ export function RelayProfileForm({
       </div>
 
       {/* Hardware Acceleration */}
-      <div className="space-y-4">
-        <div className="flex items-center space-x-2">
-          <Switch
-            id="enable_hardware_acceleration"
-            checked={formData.enable_hardware_acceleration}
-            onCheckedChange={(checked) =>
-              setFormData({ ...formData, enable_hardware_acceleration: checked })
-            }
-          />
-          <Label htmlFor="enable_hardware_acceleration">Enable Hardware Acceleration</Label>
-        </div>
-
-        {formData.enable_hardware_acceleration && (
-          <div className="space-y-2">
-            <Label htmlFor="preferred_hwaccel">Preferred Hardware Accelerator</Label>
-            <Select
-              value={formData.preferred_hwaccel}
-              onValueChange={(value) => setFormData({ ...formData, preferred_hwaccel: value })}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Auto-detect" />
-              </SelectTrigger>
-              <SelectContent>
-                {HWACCEL_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
+      <div className="space-y-2">
+        <Label htmlFor="hw_accel">Hardware Acceleration</Label>
+        <Select
+          value={formData.hw_accel}
+          onValueChange={(value) => setFormData({ ...formData, hw_accel: value })}
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {HWACCEL_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
-      {/* Timeout Settings */}
+      {/* Output Format */}
       <div className="space-y-2">
-        <Label htmlFor="input_timeout" className="italic">
-          Input Timeout (seconds)
-        </Label>
-        <Input
-          id="input_timeout"
-          type="number"
-          value={formData.input_timeout}
-          onChange={(e) => setFormData({ ...formData, input_timeout: e.target.value })}
-          placeholder="e.g., 30"
-        />
-      </div>
-
-      {/* Advanced Settings */}
-      <div className="space-y-2">
-        <Label htmlFor="manual_args" className="italic">
-          Manual FFmpeg Arguments
-        </Label>
-        <Textarea
-          id="manual_args"
-          value={formData.manual_args}
-          onChange={(e) => setFormData({ ...formData, manual_args: e.target.value })}
-          placeholder="e.g., -threads 4 -buffer_size 64k"
-          rows={3}
-        />
-        <p className="text-xs text-muted-foreground">
-          Optional custom FFmpeg arguments. Use with caution as they override other settings.
-        </p>
+        <Label htmlFor="output_format">Output Format</Label>
+        <Select
+          value={formData.output_format}
+          onValueChange={(value) => setFormData({ ...formData, output_format: value })}
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {OUTPUT_FORMATS.map((format) => (
+              <SelectItem key={format.value} value={format.value}>
+                {format.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
     </form>
   );

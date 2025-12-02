@@ -31,6 +31,7 @@ import {
   Grid,
   List,
   Table as TableIcon,
+  Lock,
 } from 'lucide-react';
 import {
   RelayProfile,
@@ -57,18 +58,16 @@ function formatCodec(codec: string): string {
 function getProfileSummaryLabels(profile: RelayProfile): string[] {
   const labels = [];
 
-  if (profile.enable_hardware_acceleration) {
-    labels.push(
-      `HW Accel${profile.preferred_hwaccel ? ` (${profile.preferred_hwaccel.toUpperCase()})` : ''}`
-    );
+  if (profile.hw_accel && profile.hw_accel !== 'none') {
+    labels.push(`HW Accel (${profile.hw_accel.toUpperCase()})`);
   }
 
-  if (profile.is_system_default) {
-    labels.push('System Default');
+  if (profile.is_default) {
+    labels.push('Default');
   }
 
   labels.push(`${formatCodec(profile.video_codec)} + ${formatCodec(profile.audio_codec)}`);
-  labels.push('TS'); // Always Transport Stream
+  labels.push(profile.output_format === 'mpegts' ? 'TS' : profile.output_format.toUpperCase());
 
   if (profile.video_bitrate) {
     labels.push(`Video: ${formatBitrate(profile.video_bitrate)}`);
@@ -98,8 +97,9 @@ export function RelayProfiles() {
       const backendUrl = getBackendUrl();
       const response = await fetch(`${backendUrl}/api/v1/relay/profiles`);
       if (!response.ok) throw new Error('Failed to fetch relay profiles');
-      const data: RelayProfile[] = await response.json();
-      setProfiles(data || []);
+      // Backend returns { profiles: [...] }
+      const data = await response.json();
+      setProfiles(data.profiles || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error occurred');
     }
@@ -187,10 +187,10 @@ export function RelayProfiles() {
       );
     }
 
-    // Sort: manual profiles first, then system defaults
+    // Sort: custom profiles first, then defaults (by name)
     return filtered.sort((a, b) => {
-      if (a.is_system_default && !b.is_system_default) return 1;
-      if (!a.is_system_default && b.is_system_default) return -1;
+      if (a.is_default && !b.is_default) return 1;
+      if (!a.is_default && b.is_default) return -1;
       return a.name.localeCompare(b.name); // Secondary sort by name
     });
   }, [profiles, searchTerm]);
@@ -313,7 +313,7 @@ export function RelayProfiles() {
           <CardContent>
             <div className="text-2xl font-bold">{profiles.length}</div>
             <p className="text-xs text-muted-foreground">
-              {profiles.filter((p) => p.is_active).length} active profiles
+              {profiles.filter((p) => p.is_default).length} default profiles
             </p>
           </CardContent>
         </Card>
@@ -402,14 +402,19 @@ export function RelayProfiles() {
           {viewMode === 'table' && (
             <div className="space-y-4">
               {filteredProfiles.map((profile) => (
-                <Card key={profile.id} className={!profile.is_active ? 'opacity-60' : ''}>
+                <Card key={profile.id}>
                   <CardHeader>
                     <div className="flex items-start justify-between">
                       <div className="space-y-1 flex-1">
                         <CardTitle className="text-lg flex items-center gap-2">
                           {profile.name}
-                          {profile.is_system_default && <Badge variant="secondary">Default</Badge>}
-                          {!profile.is_active && <Badge variant="outline">Inactive</Badge>}
+                          {profile.is_default && <Badge variant="secondary">Default</Badge>}
+                          {profile.is_system && (
+                            <Badge variant="outline" className="text-purple-600 border-purple-600">
+                              <Lock className="h-3 w-3 mr-1" />
+                              System
+                            </Badge>
+                          )}
                         </CardTitle>
                         {profile.description && (
                           <CardDescription>{profile.description}</CardDescription>
@@ -417,63 +422,66 @@ export function RelayProfiles() {
                       </div>
 
                       <div className="flex items-center gap-1">
-                        {!profile.is_system_default && (
-                          <>
-                            <Sheet
-                              open={editProfile?.id === profile.id}
-                              onOpenChange={(open) => setEditProfile(open ? profile : null)}
-                            >
-                              <SheetTrigger asChild>
-                                <Button variant="ghost" size="sm">
-                                  <Edit className="h-4 w-4" />
-                                </Button>
-                              </SheetTrigger>
-                              <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
-                                <SheetHeader>
-                                  <SheetTitle>Edit Relay Profile</SheetTitle>
-                                  <SheetDescription>
-                                    Update the transcoding configuration for this profile.
-                                  </SheetDescription>
-                                </SheetHeader>
-                                <RelayProfileForm
-                                  formId="edit-relay-profile-form"
-                                  profile={profile}
-                                  onSubmit={(data) => handleUpdateProfile(profile.id, data)}
-                                  onCancel={() => setEditProfile(null)}
-                                  loading={editLoading}
-                                />
-                                <SheetFooter className="gap-2">
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    onClick={() => setEditProfile(null)}
-                                    disabled={editLoading}
-                                  >
-                                    Cancel
-                                  </Button>
-                                  <Button
-                                    form="edit-relay-profile-form"
-                                    type="submit"
-                                    disabled={editLoading}
-                                  >
-                                    {editLoading && (
-                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                    )}
-                                    Update Profile
-                                  </Button>
-                                </SheetFooter>
-                              </SheetContent>
-                            </Sheet>
-
+                        <Sheet
+                          open={editProfile?.id === profile.id}
+                          onOpenChange={(open) => setEditProfile(open ? profile : null)}
+                        >
+                          <SheetTrigger asChild>
                             <Button
                               variant="ghost"
                               size="sm"
-                              onClick={() => handleDeleteProfile(profile.id)}
+                              disabled={profile.is_system}
+                              title={profile.is_system ? "System profiles cannot be edited" : "Edit profile"}
                             >
-                              <Trash2 className="h-4 w-4" />
+                              <Edit className="h-4 w-4" />
                             </Button>
-                          </>
-                        )}
+                          </SheetTrigger>
+                          <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
+                            <SheetHeader>
+                              <SheetTitle>Edit Relay Profile</SheetTitle>
+                              <SheetDescription>
+                                Update the transcoding configuration for this profile.
+                              </SheetDescription>
+                            </SheetHeader>
+                            <RelayProfileForm
+                              formId="edit-relay-profile-form"
+                              profile={profile}
+                              onSubmit={(data) => handleUpdateProfile(profile.id, data)}
+                              onCancel={() => setEditProfile(null)}
+                              loading={editLoading}
+                            />
+                            <SheetFooter className="gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => setEditProfile(null)}
+                                disabled={editLoading}
+                              >
+                                Cancel
+                              </Button>
+                              <Button
+                                form="edit-relay-profile-form"
+                                type="submit"
+                                disabled={editLoading}
+                              >
+                                {editLoading && (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                )}
+                                Update Profile
+                              </Button>
+                            </SheetFooter>
+                          </SheetContent>
+                        </Sheet>
+
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDeleteProfile(profile.id)}
+                          disabled={profile.is_system}
+                          title={profile.is_system ? "System profiles cannot be deleted" : "Delete profile"}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </div>
                     </div>
                   </CardHeader>
@@ -529,15 +537,20 @@ export function RelayProfiles() {
               {filteredProfiles.map((profile) => (
                 <Card
                   key={profile.id}
-                  className={`transition-all hover:shadow-md ${!profile.is_active ? 'opacity-60' : ''}`}
+                  className="transition-all hover:shadow-md"
                 >
                   <CardHeader>
                     <div className="flex items-start justify-between">
                       <div className="space-y-1 flex-1">
                         <CardTitle className="text-base flex items-center gap-2">
                           {profile.name}
-                          {profile.is_system_default && <Badge variant="secondary">Default</Badge>}
-                          {!profile.is_active && <Badge variant="outline">Inactive</Badge>}
+                          {profile.is_default && <Badge variant="secondary">Default</Badge>}
+                          {profile.is_system && (
+                            <Badge variant="outline" className="text-purple-600 border-purple-600">
+                              <Lock className="h-3 w-3 mr-1" />
+                              System
+                            </Badge>
+                          )}
                         </CardTitle>
                         {profile.description && (
                           <CardDescription className="text-sm">
@@ -575,66 +588,72 @@ export function RelayProfiles() {
                       </div>
 
                       <div className="flex items-center justify-between pt-2 border-t">
-                        <div className="text-xs text-muted-foreground">Transport Stream</div>
+                        <div className="text-xs text-muted-foreground">
+                          {profile.output_format === 'mpegts' ? 'Transport Stream' : profile.output_format.toUpperCase()}
+                        </div>
                         <div className="flex items-center gap-1">
-                          {!profile.is_system_default && (
-                            <>
-                              <Sheet
-                                open={editProfile?.id === profile.id}
-                                onOpenChange={(open) => setEditProfile(open ? profile : null)}
-                              >
-                                <SheetTrigger asChild>
-                                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                                    <Edit className="h-4 w-4" />
-                                  </Button>
-                                </SheetTrigger>
-                                <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
-                                  <SheetHeader>
-                                    <SheetTitle>Edit Relay Profile</SheetTitle>
-                                    <SheetDescription>
-                                      Update the transcoding configuration for this profile.
-                                    </SheetDescription>
-                                  </SheetHeader>
-                                  <RelayProfileForm
-                                    formId="edit-relay-profile-form"
-                                    profile={profile}
-                                    onSubmit={(data) => handleUpdateProfile(profile.id, data)}
-                                    onCancel={() => setEditProfile(null)}
-                                    loading={editLoading}
-                                  />
-                                  <SheetFooter className="gap-2">
-                                    <Button
-                                      type="button"
-                                      variant="outline"
-                                      onClick={() => setEditProfile(null)}
-                                      disabled={editLoading}
-                                    >
-                                      Cancel
-                                    </Button>
-                                    <Button
-                                      form="edit-relay-profile-form"
-                                      type="submit"
-                                      disabled={editLoading}
-                                    >
-                                      {editLoading && (
-                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                      )}
-                                      Update Profile
-                                    </Button>
-                                  </SheetFooter>
-                                </SheetContent>
-                              </Sheet>
-
+                          <Sheet
+                            open={editProfile?.id === profile.id}
+                            onOpenChange={(open) => setEditProfile(open ? profile : null)}
+                          >
+                            <SheetTrigger asChild>
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                onClick={() => handleDeleteProfile(profile.id)}
+                                className="h-8 w-8 p-0"
+                                disabled={profile.is_system}
+                                title={profile.is_system ? "System profiles cannot be edited" : "Edit profile"}
                               >
-                                <Trash2 className="h-4 w-4" />
+                                <Edit className="h-4 w-4" />
                               </Button>
-                            </>
-                          )}
+                            </SheetTrigger>
+                            <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
+                              <SheetHeader>
+                                <SheetTitle>Edit Relay Profile</SheetTitle>
+                                <SheetDescription>
+                                  Update the transcoding configuration for this profile.
+                                </SheetDescription>
+                              </SheetHeader>
+                              <RelayProfileForm
+                                formId="edit-relay-profile-form"
+                                profile={profile}
+                                onSubmit={(data) => handleUpdateProfile(profile.id, data)}
+                                onCancel={() => setEditProfile(null)}
+                                loading={editLoading}
+                              />
+                              <SheetFooter className="gap-2">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={() => setEditProfile(null)}
+                                  disabled={editLoading}
+                                >
+                                  Cancel
+                                </Button>
+                                <Button
+                                  form="edit-relay-profile-form"
+                                  type="submit"
+                                  disabled={editLoading}
+                                >
+                                  {editLoading && (
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                  )}
+                                  Update Profile
+                                </Button>
+                              </SheetFooter>
+                            </SheetContent>
+                          </Sheet>
+
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                            onClick={() => handleDeleteProfile(profile.id)}
+                            disabled={profile.is_system}
+                            title={profile.is_system ? "System profiles cannot be deleted" : "Delete profile"}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         </div>
                       </div>
                     </div>
@@ -649,7 +668,7 @@ export function RelayProfiles() {
               {filteredProfiles.map((profile) => (
                 <Card
                   key={profile.id}
-                  className={`transition-all hover:shadow-sm ${!profile.is_active ? 'opacity-60' : ''}`}
+                  className="transition-all hover:shadow-sm"
                 >
                   <CardContent className="pt-4">
                     <div className="flex items-center justify-between">
@@ -662,21 +681,22 @@ export function RelayProfiles() {
                                 {profile.description && profile.description.length > 60
                                   ? `${profile.description.substring(0, 60)}...`
                                   : profile.description ||
-                                    `${formatCodec(profile.video_codec)} + ${formatCodec(profile.audio_codec)} to TS`}
+                                    `${formatCodec(profile.video_codec)} + ${formatCodec(profile.audio_codec)} to ${profile.output_format === 'mpegts' ? 'TS' : profile.output_format.toUpperCase()}`}
                               </p>
                             </div>
                             <div className="flex items-center gap-2">
-                              {profile.is_system_default && (
+                              {profile.is_default && (
                                 <Badge variant="secondary" className="text-xs">
                                   Default
                                 </Badge>
                               )}
-                              {!profile.is_active && (
-                                <Badge variant="outline" className="text-xs">
-                                  Inactive
+                              {profile.is_system && (
+                                <Badge variant="outline" className="text-xs text-purple-600 border-purple-600">
+                                  <Lock className="h-3 w-3 mr-1" />
+                                  System
                                 </Badge>
                               )}
-                              {profile.enable_hardware_acceleration && (
+                              {profile.hw_accel && profile.hw_accel !== 'none' && (
                                 <Badge variant="outline" className="text-xs">
                                   <Cpu className="h-3 w-3 mr-1" />
                                   HW Accel
@@ -694,64 +714,68 @@ export function RelayProfiles() {
                       </div>
                       <div className="flex items-center gap-2 ml-4">
                         <div className="flex items-center gap-1">
-                          {!profile.is_system_default && (
-                            <>
-                              <Sheet
-                                open={editProfile?.id === profile.id}
-                                onOpenChange={(open) => setEditProfile(open ? profile : null)}
-                              >
-                                <SheetTrigger asChild>
-                                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                                    <Edit className="h-4 w-4" />
-                                  </Button>
-                                </SheetTrigger>
-                                <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
-                                  <SheetHeader>
-                                    <SheetTitle>Edit Relay Profile</SheetTitle>
-                                    <SheetDescription>
-                                      Update the transcoding configuration for this profile.
-                                    </SheetDescription>
-                                  </SheetHeader>
-                                  <RelayProfileForm
-                                    formId="edit-relay-profile-form"
-                                    profile={profile}
-                                    onSubmit={(data) => handleUpdateProfile(profile.id, data)}
-                                    onCancel={() => setEditProfile(null)}
-                                    loading={editLoading}
-                                  />
-                                  <SheetFooter className="gap-2">
-                                    <Button
-                                      type="button"
-                                      variant="outline"
-                                      onClick={() => setEditProfile(null)}
-                                      disabled={editLoading}
-                                    >
-                                      Cancel
-                                    </Button>
-                                    <Button
-                                      form="edit-relay-profile-form"
-                                      type="submit"
-                                      disabled={editLoading}
-                                    >
-                                      {editLoading && (
-                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                      )}
-                                      Update Profile
-                                    </Button>
-                                  </SheetFooter>
-                                </SheetContent>
-                              </Sheet>
-
+                          <Sheet
+                            open={editProfile?.id === profile.id}
+                            onOpenChange={(open) => setEditProfile(open ? profile : null)}
+                          >
+                            <SheetTrigger asChild>
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                onClick={() => handleDeleteProfile(profile.id)}
+                                className="h-8 w-8 p-0"
+                                disabled={profile.is_system}
+                                title={profile.is_system ? "System profiles cannot be edited" : "Edit profile"}
                               >
-                                <Trash2 className="h-4 w-4" />
+                                <Edit className="h-4 w-4" />
                               </Button>
-                            </>
-                          )}
+                            </SheetTrigger>
+                            <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
+                              <SheetHeader>
+                                <SheetTitle>Edit Relay Profile</SheetTitle>
+                                <SheetDescription>
+                                  Update the transcoding configuration for this profile.
+                                </SheetDescription>
+                              </SheetHeader>
+                              <RelayProfileForm
+                                formId="edit-relay-profile-form"
+                                profile={profile}
+                                onSubmit={(data) => handleUpdateProfile(profile.id, data)}
+                                onCancel={() => setEditProfile(null)}
+                                loading={editLoading}
+                              />
+                              <SheetFooter className="gap-2">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={() => setEditProfile(null)}
+                                  disabled={editLoading}
+                                >
+                                  Cancel
+                                </Button>
+                                <Button
+                                  form="edit-relay-profile-form"
+                                  type="submit"
+                                  disabled={editLoading}
+                                >
+                                  {editLoading && (
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                  )}
+                                  Update Profile
+                                </Button>
+                              </SheetFooter>
+                            </SheetContent>
+                          </Sheet>
+
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                            onClick={() => handleDeleteProfile(profile.id)}
+                            disabled={profile.is_system}
+                            title={profile.is_system ? "System profiles cannot be deleted" : "Delete profile"}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         </div>
                       </div>
                     </div>
