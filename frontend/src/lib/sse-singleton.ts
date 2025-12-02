@@ -8,17 +8,29 @@ export interface ProgressEvent extends APIProgressEvent {
 }
 
 type EventCallback = (event: ProgressEvent) => void;
+type ConnectionStateCallback = (connected: boolean) => void;
 
+/**
+ * SSE Singleton - manages a single SSE connection for the entire application.
+ *
+ * Design principles:
+ * 1. Lazy connection - only connects when there are active subscribers
+ * 2. Auto-disconnect - closes connection when all subscribers unsubscribe
+ * 3. Resilient - automatically reconnects on errors with exponential backoff
+ * 4. React-safe - handles Strict Mode double-mounting and HMR gracefully
+ *
+ * The singleton does NOT need external lifecycle management (no reset/destroy calls).
+ * Connection lifecycle is driven entirely by subscriber count.
+ */
 class SSESingleton {
   private eventSource: EventSource | null = null;
   private subscribers: Map<string, Set<EventCallback>> = new Map();
   private allSubscribers: Set<EventCallback> = new Set();
+  private connectionStateSubscribers: Set<ConnectionStateCallback> = new Set();
   private connected: boolean = false;
   private debug = Debug.createLogger('SSESingleton');
-  private setupPromise: Promise<void> | null = null;
   private reconnectAttempts: number = 0;
-  private destroyed: boolean = false;
-  private reconnectTimeoutId: NodeJS.Timeout | null = null;
+  private reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
     // Bind methods to ensure correct 'this' context
@@ -27,86 +39,138 @@ class SSESingleton {
     this.handleOpen = this.handleOpen.bind(this);
   }
 
-  async ensureConnection(): Promise<void> {
-    // Don't try to connect if we've been destroyed
-    if (this.destroyed) {
-      this.debug.log('SSE singleton has been destroyed, not connecting');
-      return Promise.reject(new Error('SSE singleton destroyed'));
+  /**
+   * Get total subscriber count across all subscription types
+   */
+  private getTotalSubscriberCount(): number {
+    let count = this.allSubscribers.size;
+    for (const subscribers of this.subscribers.values()) {
+      count += subscribers.size;
     }
+    return count;
+  }
 
-    if (this.eventSource && this.eventSource.readyState === EventSource.OPEN) {
-      this.debug.log('SSE connection already established');
+  /**
+   * Check if we should have an active connection (has subscribers)
+   */
+  private shouldBeConnected(): boolean {
+    return this.getTotalSubscriberCount() > 0;
+  }
+
+  /**
+   * Notify connection state subscribers of changes
+   */
+  private notifyConnectionState(connected: boolean) {
+    this.connected = connected;
+    this.connectionStateSubscribers.forEach((callback) => {
+      try {
+        callback(connected);
+      } catch (error) {
+        this.debug.error('Error in connection state subscriber:', error);
+      }
+    });
+  }
+
+  /**
+   * Connect to SSE endpoint if we have subscribers and aren't already connected
+   */
+  private connect(): void {
+    // Don't connect if no subscribers
+    if (!this.shouldBeConnected()) {
+      this.debug.log('No subscribers, skipping connection');
       return;
     }
 
-    if (this.setupPromise) {
-      this.debug.log('SSE connection setup already in progress');
-      return this.setupPromise;
+    // Already connected or connecting
+    if (this.eventSource) {
+      const state = this.eventSource.readyState;
+      if (state === EventSource.CONNECTING || state === EventSource.OPEN) {
+        this.debug.log('Already connected or connecting, skipping');
+        return;
+      }
+      // Clean up closed connection
+      this.eventSource = null;
+    }
+
+    // Clear any pending reconnect
+    if (this.reconnectTimeoutId) {
+      clearTimeout(this.reconnectTimeoutId);
+      this.reconnectTimeoutId = null;
     }
 
     this.debug.log('Creating new SSE connection');
 
-    this.setupPromise = new Promise(async (resolve, reject) => {
-      try {
-        const backendUrl = getBackendUrl();
-        const sseUrl = `${backendUrl}/api/v1/progress/events`;
+    try {
+      const backendUrl = getBackendUrl();
+      const sseUrl = `${backendUrl}/api/v1/progress/events`;
 
-        this.debug.log('Establishing SSE connection to:', sseUrl);
-        this.eventSource = new EventSource(sseUrl);
+      this.debug.log('Establishing SSE connection to:', sseUrl);
+      this.eventSource = new EventSource(sseUrl);
 
-        const connectionTimeout = setTimeout(() => {
-          this.debug.error('SSE connection timeout');
-          if (this.eventSource) {
-            this.eventSource.close();
-            this.eventSource = null;
-          }
-          this.connected = false;
-          this.setupPromise = null;
-          reject(new Error('SSE connection timeout'));
-        }, 5000);
-
-        this.eventSource.onopen = () => {
-          clearTimeout(connectionTimeout);
-          this.handleOpen();
-          this.setupPromise = null;
-          resolve();
-        };
-
-        this.eventSource.onerror = (error) => {
-          clearTimeout(connectionTimeout);
-          this.handleError(error);
-          this.setupPromise = null;
-          reject(error);
-        };
-
-        this.eventSource.onmessage = this.handleMessage;
-        this.eventSource.addEventListener('progress', this.handleMessage);
-        this.eventSource.addEventListener('heartbeat', (event) => {
-          this.debug.log('Heartbeat received');
+      // Set up event handlers
+      this.eventSource.onopen = this.handleOpen;
+      this.eventSource.onerror = this.handleError;
+      // Log unnamed message events (should not happen with named events)
+      this.eventSource.onmessage = (event: MessageEvent) => {
+        console.log('[SSE RAW] Received UNNAMED message event', {
+          data: event.data?.substring?.(0, 100) || event.data,
+          type: event.type,
         });
-      } catch (error) {
-        this.debug.error('Failed to create EventSource:', error);
-        this.setupPromise = null;
-        reject(error);
-      }
-    });
+        this.handleMessage(event);
+      };
 
-    return this.setupPromise;
+      // Listen to all SSE event types from backend
+      // Wrap handlers to log the raw event type for debugging
+      const wrapHandler = (eventType: string) => (event: MessageEvent) => {
+        console.log(`[SSE RAW] Received event type: "${eventType}"`, {
+          data: event.data?.substring?.(0, 100) || event.data,
+          type: event.type,
+        });
+        this.handleMessage(event);
+      };
+
+      this.eventSource.addEventListener('progress', wrapHandler('progress'));
+      this.eventSource.addEventListener('error', wrapHandler('error'));
+      this.eventSource.addEventListener('completed', wrapHandler('completed'));
+      this.eventSource.addEventListener('cancelled', wrapHandler('cancelled'));
+      this.eventSource.addEventListener('heartbeat', () => {
+        console.log('[SSE RAW] Received heartbeat');
+        this.debug.log('Heartbeat received');
+      });
+    } catch (error) {
+      this.debug.error('Failed to create EventSource:', error);
+      this.scheduleReconnect();
+    }
   }
 
-  private handleOpen() {
-    this.debug.log('Global SSE connection established successfully');
-    this.connected = true;
-    this.reconnectAttempts = 0; // Reset on successful connection
+  /**
+   * Disconnect from SSE endpoint
+   */
+  private disconnect(): void {
+    this.debug.log('Disconnecting SSE');
+
+    // Clear any pending reconnect
+    if (this.reconnectTimeoutId) {
+      clearTimeout(this.reconnectTimeoutId);
+      this.reconnectTimeoutId = null;
+    }
+
+    if (this.eventSource) {
+      this.eventSource.close();
+      this.eventSource = null;
+    }
+
+    this.reconnectAttempts = 0;
+    this.notifyConnectionState(false);
   }
 
-  private handleError(error: Event) {
-    this.debug.log('SSE connection error:', error);
-    this.connected = false;
-
-    // Don't try to reconnect if we've been destroyed
-    if (this.destroyed) {
-      this.debug.log('SSE singleton destroyed, not attempting reconnection');
+  /**
+   * Schedule a reconnection attempt with exponential backoff
+   */
+  private scheduleReconnect(): void {
+    // Don't reconnect if no subscribers
+    if (!this.shouldBeConnected()) {
+      this.debug.log('No subscribers, not scheduling reconnect');
       return;
     }
 
@@ -116,37 +180,68 @@ class SSESingleton {
       this.reconnectTimeoutId = null;
     }
 
-    // Exponential backoff for reconnection
-    const reconnectDelay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
-    this.reconnectAttempts++;
-
     // Stop reconnecting after too many failures
-    if (this.reconnectAttempts > 10) {
+    if (this.reconnectAttempts >= 10) {
       this.debug.error('Too many reconnection attempts, stopping');
       return;
     }
 
-    // Auto-reconnect after delay with backoff
+    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s (max)
+    const reconnectDelay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
+    this.reconnectAttempts++;
+
+    this.debug.log(`Scheduling reconnect attempt ${this.reconnectAttempts} in ${reconnectDelay}ms`);
+
     this.reconnectTimeoutId = setTimeout(() => {
       this.reconnectTimeoutId = null;
-      if (!this.destroyed && !this.connected && !this.setupPromise) {
-        this.debug.log(`Attempting to reconnect SSE (attempt ${this.reconnectAttempts})`);
-        this.ensureConnection().catch((err) => {
-          this.debug.error('Failed to reconnect:', err);
-        });
+      if (this.shouldBeConnected()) {
+        this.debug.log(`Attempting reconnect (attempt ${this.reconnectAttempts})`);
+        this.connect();
       }
     }, reconnectDelay);
+  }
+
+  private handleOpen() {
+    this.debug.log('SSE connection established successfully');
+    this.reconnectAttempts = 0; // Reset on successful connection
+    this.notifyConnectionState(true);
+  }
+
+  private handleError(error: Event) {
+    this.debug.log('SSE connection error:', error);
+    this.notifyConnectionState(false);
+
+    // Clean up the failed connection
+    if (this.eventSource) {
+      this.eventSource.close();
+      this.eventSource = null;
+    }
+
+    // Schedule reconnect if we still have subscribers
+    this.scheduleReconnect();
   }
 
   private handleMessage(event: MessageEvent) {
     try {
       const progressEvent: ProgressEvent = JSON.parse(event.data);
 
+      // Always log terminal events (completed, error, cancelled) for debugging
+      const isTerminal = ['completed', 'error', 'cancelled'].includes(progressEvent.state);
+      if (isTerminal) {
+        console.log('[SSE] Terminal event received:', {
+          eventId: progressEvent.id,
+          ownerId: progressEvent.owner_id,
+          state: progressEvent.state,
+          subscriberCount: this.getTotalSubscriberCount(),
+        });
+      }
+
       this.debug.log('Broadcasting event to subscribers:', {
         eventId: progressEvent.id,
         ownerId: progressEvent.owner_id,
         operationType: progressEvent.operation_type,
-        subscriberCount: this.subscribers.size + this.allSubscribers.size,
+        state: progressEvent.state,
+        subscriberCount: this.getTotalSubscriberCount(),
       });
 
       // Route to resource-specific subscribers
@@ -184,6 +279,9 @@ class SSESingleton {
     }
   }
 
+  /**
+   * Subscribe to events for a specific key (resource ID or operation type)
+   */
   subscribe(key: string, callback: EventCallback): () => void {
     this.debug.log(`Subscribing to key: ${key}`);
 
@@ -193,10 +291,8 @@ class SSESingleton {
 
     this.subscribers.get(key)!.add(callback);
 
-    // Ensure connection is established
-    this.ensureConnection().catch((err) => {
-      this.debug.error('Failed to establish connection for subscription:', err);
-    });
+    // Connect if this is the first subscriber
+    this.connect();
 
     // Return unsubscribe function
     return () => {
@@ -208,60 +304,77 @@ class SSESingleton {
           this.subscribers.delete(key);
         }
       }
+
+      // Disconnect if no more subscribers
+      if (!this.shouldBeConnected()) {
+        this.disconnect();
+      }
     };
   }
 
+  /**
+   * Subscribe to all events
+   */
   subscribeToAll(callback: EventCallback): () => void {
     this.debug.log('Subscribing to all events');
     this.allSubscribers.add(callback);
 
-    // Ensure connection is established
-    this.ensureConnection().catch((err) => {
-      this.debug.error('Failed to establish connection for all subscription:', err);
-    });
+    // Connect if this is the first subscriber
+    this.connect();
 
     return () => {
       this.debug.log('Unsubscribing from all events');
       this.allSubscribers.delete(callback);
+
+      // Disconnect if no more subscribers
+      if (!this.shouldBeConnected()) {
+        this.disconnect();
+      }
     };
   }
 
+  /**
+   * Subscribe to connection state changes
+   */
+  subscribeToConnectionState(callback: ConnectionStateCallback): () => void {
+    this.connectionStateSubscribers.add(callback);
+    // Immediately notify of current state
+    callback(this.connected);
+
+    return () => {
+      this.connectionStateSubscribers.delete(callback);
+    };
+  }
+
+  /**
+   * Check if currently connected
+   */
   isConnected(): boolean {
     return this.connected;
   }
 
-  // Only call this when the entire application is being closed/refreshed or backend is down
-  destroy() {
-    this.debug.log('Destroying SSE connection');
-    this.destroyed = true;
+  /**
+   * Force reconnection (use sparingly - e.g., when backend comes back online)
+   */
+  forceReconnect(): void {
+    this.debug.log('Force reconnect requested');
+    this.reconnectAttempts = 0;
 
-    // Clear any pending reconnect timeout
-    if (this.reconnectTimeoutId) {
-      clearTimeout(this.reconnectTimeoutId);
-      this.reconnectTimeoutId = null;
-    }
-
+    // Close existing connection
     if (this.eventSource) {
       this.eventSource.close();
       this.eventSource = null;
     }
-    this.connected = false;
-    this.subscribers.clear();
-    this.allSubscribers.clear();
-    this.setupPromise = null;
-    this.reconnectAttempts = 0; // Reset reconnect attempts when destroyed
-  }
 
-  // Reset state to allow reconnection (called when backend comes back up)
-  reset() {
-    this.debug.log('Resetting SSE singleton for reconnection');
-    this.destroyed = false;
-    this.reconnectAttempts = 0;
-
-    // Clear any pending reconnect timeout
+    // Clear any pending reconnect
     if (this.reconnectTimeoutId) {
       clearTimeout(this.reconnectTimeoutId);
       this.reconnectTimeoutId = null;
+    }
+
+    // Reconnect if we have subscribers
+    if (this.shouldBeConnected()) {
+      this.connect();
     }
   }
 }
@@ -269,9 +382,10 @@ class SSESingleton {
 // Global singleton instance
 export const sseManager = new SSESingleton();
 
-// Cleanup on page unload
+// Cleanup on page unload to avoid connection leaks
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => {
-    sseManager.destroy();
+    // Note: We don't call disconnect() here because the browser
+    // will automatically close the connection on unload
   });
 }

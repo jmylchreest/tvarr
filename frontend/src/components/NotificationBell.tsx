@@ -164,9 +164,13 @@ export function NotificationBell({
     return `${diffDays}d ago`;
   };
 
-  const getEventStatusColor = (state: string) => {
+  const getEventStatusColor = (state: string, event?: NotificationEvent) => {
     switch (state) {
       case 'completed':
+        // T050: Show amber/warning color if there are warnings
+        if (event?.warning_count && event.warning_count > 0) {
+          return 'text-amber-600 dark:text-amber-400';
+        }
         return 'text-green-600 dark:text-green-400';
       case 'error':
         return 'text-destructive';
@@ -311,7 +315,7 @@ export function NotificationBell({
                     </div>
 
                     <div className="flex items-center justify-between text-sm">
-                      <span className={cn('font-medium', getEventStatusColor(event.state))}>
+                      <span className={cn('font-medium', getEventStatusColor(event.state, event))}>
                         {event.state.charAt(0).toUpperCase() + event.state.slice(1)}
                       </span>
                       <span className="text-muted-foreground">
@@ -389,11 +393,37 @@ export function NotificationBell({
                       </div>
                     )}
 
-                    {event.error && (
-                      <div className="text-xs mt-2 p-2 bg-accent/20 border border-accent/30 rounded text-accent-foreground">
-                        <span className="text-destructive font-medium">Error:</span> {event.error}
+                    {/* T047: Show error_detail with message and suggestion */}
+                    {event.state === 'error' && (
+                      <div className="text-xs mt-2 p-2 bg-destructive/10 border border-destructive/30 rounded">
+                        <span className="text-destructive font-medium">Error:</span>{' '}
+                        {event.error_detail?.message || event.error || 'Unknown error'}
+                        {event.error_detail?.suggestion && (
+                          <div className="mt-1 text-muted-foreground italic">
+                            {event.error_detail.suggestion}
+                          </div>
+                        )}
                       </div>
                     )}
+
+                    {/* T050: Show warning indicator when warnings are present */}
+                    {event.state === 'completed' &&
+                      event.warning_count != null &&
+                      event.warning_count > 0 && (
+                        <div className="text-xs mt-2 p-2 bg-amber-500/10 border border-amber-500/30 rounded text-amber-600 dark:text-amber-400">
+                          <span className="font-medium">Completed with {event.warning_count} warning(s)</span>
+                          {event.warnings && event.warnings.length > 0 && (
+                            <ul className="mt-1 list-disc list-inside text-muted-foreground">
+                              {event.warnings.slice(0, 3).map((warning, i) => (
+                                <li key={i}>{warning}</li>
+                              ))}
+                              {event.warnings.length > 3 && (
+                                <li>...and {event.warnings.length - 3} more</li>
+                              )}
+                            </ul>
+                          )}
+                        </div>
+                      )}
                   </div>
                 ))}
               </div>

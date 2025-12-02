@@ -642,6 +642,14 @@ export interface ProgressStage {
   stage_step: string | null;
 }
 
+// T043: ErrorDetail interface for structured error information
+export interface ErrorDetail {
+  stage: string;
+  message: string;
+  technical?: string;
+  suggestion?: string;
+}
+
 // Updated Progress Event Types for SSE
 export interface ProgressEvent {
   id: string;
@@ -667,6 +675,10 @@ export interface ProgressEvent {
   last_update: string;
   completed_at: string | null;
   error: string | null;
+  // T044: Structured error and warning fields for UI feedback
+  error_detail?: ErrorDetail;
+  warning_count?: number;
+  warnings?: string[];
 }
 
 export type EventHandler = (event: ServiceEvent | ProgressEvent) => void;

@@ -21,6 +21,14 @@ export function useProgressEvents(resourceId: string): ProgressEvent | null {
 
     // Subscribe to updates
     const unsubscribe = context.subscribe(resourceId, (newEvent) => {
+      // Log terminal events for debugging
+      if (['completed', 'error', 'cancelled'].includes(newEvent.state)) {
+        console.log('[useProgressEvents] Terminal event received for resource:', {
+          resourceId,
+          eventId: newEvent.id,
+          state: newEvent.state,
+        });
+      }
       setEvent(newEvent);
     });
 

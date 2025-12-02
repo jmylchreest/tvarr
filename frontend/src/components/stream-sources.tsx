@@ -52,6 +52,7 @@ import {
   Table as TableIcon,
 } from 'lucide-react';
 import { RefreshButton } from '@/components/RefreshButton';
+import { OperationStatusIndicator } from '@/components/OperationStatusIndicator';
 import { useConflictHandler } from '@/hooks/useConflictHandler';
 import { ConflictNotification } from '@/components/ConflictNotification';
 import { useProgressContext } from '@/providers/ProgressProvider';
@@ -1355,9 +1356,13 @@ export function StreamSources() {
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            <Badge className={getStatusColor(source.is_active)}>
-                              {source.is_active ? 'Active' : 'Inactive'}
-                            </Badge>
+                            <div className="flex items-center gap-2">
+                              <Badge className={getStatusColor(source.is_active)}>
+                                {source.is_active ? 'Active' : 'Inactive'}
+                              </Badge>
+                              {/* T049: Operation error/warning indicator */}
+                              <OperationStatusIndicator resourceId={source.id} />
+                            </div>
                           </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-1">
@@ -1469,9 +1474,13 @@ export function StreamSources() {
                                 {source.source_type.toUpperCase()}
                               </Badge>
                             </div>
-                            <Badge className={getStatusColor(source.is_active)}>
-                              {source.is_active ? 'Active' : 'Inactive'}
-                            </Badge>
+                            <div className="flex items-center gap-2">
+                              <Badge className={getStatusColor(source.is_active)}>
+                                {source.is_active ? 'Active' : 'Inactive'}
+                              </Badge>
+                              {/* T049: Operation error/warning indicator */}
+                              <OperationStatusIndicator resourceId={source.id} />
+                            </div>
                           </div>
                         </CardHeader>
                         <CardContent className="pt-0">
@@ -1555,6 +1564,8 @@ export function StreamSources() {
                                 <Badge className={getStatusColor(source.is_active)}>
                                   {source.is_active ? 'Active' : 'Inactive'}
                                 </Badge>
+                                {/* T049: Operation error/warning indicator */}
+                                <OperationStatusIndicator resourceId={source.id} />
                               </div>
                               <p className="text-sm text-muted-foreground truncate">{source.url}</p>
                               <div className="flex gap-4 text-xs text-muted-foreground">

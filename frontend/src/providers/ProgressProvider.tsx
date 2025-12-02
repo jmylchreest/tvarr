@@ -14,7 +14,6 @@ import { usePathname } from 'next/navigation';
 import { sseManager, ProgressEvent as SSEProgressEvent } from '@/lib/sse-singleton';
 import { ProgressEvent as APIProgressEvent, ProgressStage } from '@/types/api';
 import { Debug } from '@/utils/debug';
-import { useBackendConnectivity } from '@/providers/backend-connectivity-provider';
 import { getBackendUrl } from '@/lib/config';
 
 // Extend the API type for UI-specific functionality
@@ -111,7 +110,7 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
   const notificationSubscribersRef = useRef<Set<{ current: (event: NotificationEvent) => void }>>(
     new Set()
   );
-  const { isConnected: backendConnected } = useBackendConnectivity();
+  const hasInitializedRef = useRef(false);
 
   // Clean up old localStorage entries on startup
   useEffect(() => {
@@ -285,25 +284,20 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
     debug.log('Event processed, stored in local events map, and sent to notification subscribers');
   }, []); // NO DEPENDENCIES - stable callback to prevent SSE reconnections
 
-  // Use global SSE singleton - no more per-component connections
+  // Use global SSE singleton - subscriber-driven connection lifecycle
+  // The SSE singleton handles its own connection management based on subscriber count
   useEffect(() => {
-    // Don't attempt SSE connection if backend is not available
-    if (!backendConnected) {
-      debug.log('ProgressProvider: Backend not connected, destroying SSE connection');
-      setConnected(false);
-      // Destroy any existing SSE connection when backend goes down
-      sseManager.destroy();
-      return;
-    }
+    debug.log('ProgressProvider: Setting up SSE subscriptions');
 
-    debug.log('ProgressProvider: Backend connected, setting up SSE singleton');
-
-    // Only reset and connect if backend is actually connected
-    // Reset the SSE singleton to allow reconnection (in case backend came back up)
-    sseManager.reset();
-
-    // First, fetch initial state from REST endpoint
+    // Fetch initial state from REST endpoint (only once)
     const fetchInitialState = async () => {
+      // Skip if already initialized (handles React Strict Mode double-mount)
+      if (hasInitializedRef.current) {
+        debug.log('ProgressProvider: Already initialized, skipping initial fetch');
+        return;
+      }
+      hasInitializedRef.current = true;
+
       try {
         const backendUrl = getBackendUrl();
         const response = await fetch(`${backendUrl}/api/v1/progress/operations`);
@@ -312,7 +306,9 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
-        const activeOperations: NotificationEvent[] = await response.json();
+        const data = await response.json();
+        // API returns {operations: [...]} wrapper
+        const activeOperations: NotificationEvent[] = data.operations || [];
         debug.log('ProgressProvider: Fetched initial active operations:', activeOperations.length);
 
         // Clear localStorage and rebuild from server state
@@ -339,41 +335,29 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
       }
     };
 
-    // Fetch initial state first, then establish SSE connection
-    fetchInitialState()
-      .then(() => {
-        return sseManager.ensureConnection();
-      })
-      .then(() => {
-        debug.log('ProgressProvider: SSE connection established for real-time updates');
-      })
-      .catch((err) => {
-        debug.error('ProgressProvider: Failed to establish SSE connection', err);
-      });
+    // Fetch initial state (doesn't depend on SSE)
+    fetchInitialState();
 
     // Subscribe to all events from the singleton
+    // This automatically triggers SSE connection when first subscriber joins
     const unsubscribeFromAll = sseManager.subscribeToAll((event) => {
       handleProgressEvent(event);
     });
 
-    // Monitor connection status
-    const checkConnectionStatus = () => {
-      setConnected(sseManager.isConnected());
-    };
+    // Subscribe to connection state changes (reactive instead of polling)
+    const unsubscribeConnectionState = sseManager.subscribeToConnectionState((isConnected) => {
+      debug.log('ProgressProvider: SSE connection state changed:', isConnected);
+      setConnected(isConnected);
+    });
 
-    // Initial connection status check
-    checkConnectionStatus();
-
-    // Poll connection status periodically
-    const statusInterval = setInterval(checkConnectionStatus, 1000);
-
-    // Cleanup on unmount or when backend disconnects
+    // Cleanup on unmount
+    // When we unsubscribe, the singleton will auto-disconnect if no other subscribers
     return () => {
-      debug.log('ProgressProvider: Cleaning up SSE singleton subscriptions');
+      debug.log('ProgressProvider: Cleaning up SSE subscriptions');
       unsubscribeFromAll();
-      clearInterval(statusInterval);
+      unsubscribeConnectionState();
     };
-  }, [handleProgressEvent, backendConnected]);
+  }, [handleProgressEvent]);
 
   // Subscribe to events for specific resource ID using global singleton
   const subscribe = useCallback((resourceId: string, callback: (event: ProgressEvent) => void) => {

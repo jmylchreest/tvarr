@@ -76,6 +76,7 @@ import {
 import { apiClient, ApiError } from '@/lib/api-client';
 import { DEFAULT_PAGE_SIZE, API_CONFIG } from '@/lib/config';
 import { RefreshButton } from '@/components/RefreshButton';
+import { OperationStatusIndicator } from '@/components/OperationStatusIndicator';
 import { useProgressContext } from '@/providers/ProgressProvider';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
 import { CreateProxyModal, ProxySheet, ProxyFormData } from '@/components/CreateProxyModal';
@@ -717,9 +718,13 @@ export function Proxies() {
                             )}
                           </TableCell>
                           <TableCell>
-                            <Badge className={getStatusColor(proxy.is_active)}>
-                              {proxy.is_active ? 'Active' : 'Inactive'}
-                            </Badge>
+                            <div className="flex items-center gap-2">
+                              <Badge className={getStatusColor(proxy.is_active)}>
+                                {proxy.is_active ? 'Active' : 'Inactive'}
+                              </Badge>
+                              {/* T048: Operation error/warning indicator */}
+                              <OperationStatusIndicator resourceId={proxy.id} />
+                            </div>
                           </TableCell>
                           <TableCell>
                             <div className="text-sm">Ch {proxy.starting_channel_number}+</div>
@@ -880,6 +885,8 @@ export function Proxies() {
                                 <Badge className={getStatusColor(proxy.is_active)}>
                                   {proxy.is_active ? 'Active' : 'Inactive'}
                                 </Badge>
+                                {/* T048: Operation error/warning indicator */}
+                                <OperationStatusIndicator resourceId={proxy.id} />
                               </CardTitle>
                               {proxy.description && (
                                 <CardDescription className="line-clamp-2">
@@ -1100,6 +1107,8 @@ export function Proxies() {
                                     <Badge className={getStatusColor(proxy.is_active)}>
                                       {proxy.is_active ? 'Active' : 'Inactive'}
                                     </Badge>
+                                    {/* T048: Operation error/warning indicator */}
+                                    <OperationStatusIndicator resourceId={proxy.id} />
                                     <Badge variant="secondary" className="text-xs">
                                       Ch {proxy.starting_channel_number}+
                                     </Badge>
