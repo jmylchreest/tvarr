@@ -9,12 +9,13 @@ type Channel struct {
 	BaseModel
 
 	// SourceID is the foreign key to the parent StreamSource.
-	SourceID ULID `gorm:"type:varchar(26);not null;index" json:"source_id"`
+	SourceID ULID `gorm:"type:varchar(26);not null;index;uniqueIndex:idx_source_ext_id,priority:1" json:"source_id"`
 
 	// ExtID is an external identifier used for deduplication within a source.
 	// For M3U this might be derived from tvg-id or stream URL.
 	// For Xtream this is the stream ID from the API.
-	ExtID string `gorm:"size:255;index:idx_source_ext_id,unique" json:"ext_id"`
+	// Unique per source (composite unique index with SourceID).
+	ExtID string `gorm:"size:255;uniqueIndex:idx_source_ext_id,priority:2" json:"ext_id"`
 
 	// TvgID is the EPG channel identifier for matching with program data.
 	TvgID string `gorm:"size:255;index" json:"tvg_id,omitempty"`

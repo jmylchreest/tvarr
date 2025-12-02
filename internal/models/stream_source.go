@@ -1,6 +1,9 @@
 package models
 
 import (
+	"net/url"
+	"strings"
+
 	"gorm.io/gorm"
 )
 
@@ -37,6 +40,7 @@ type StreamSource struct {
 	BaseModel
 
 	// Name is a user-friendly name for the source.
+	// Must be unique across all stream sources.
 	Name string `gorm:"uniqueIndex;not null;size:255" json:"name"`
 
 	// Type indicates whether this is an M3U or Xtream source.
@@ -124,14 +128,32 @@ func (s *StreamSource) MarkFailed(err error) {
 	}
 }
 
+// Sanitize trims whitespace from user-provided fields.
+func (s *StreamSource) Sanitize() {
+	s.Name = strings.TrimSpace(s.Name)
+	s.URL = strings.TrimSpace(s.URL)
+	s.Username = strings.TrimSpace(s.Username)
+	s.Password = strings.TrimSpace(s.Password)
+	s.UserAgent = strings.TrimSpace(s.UserAgent)
+}
+
 // Validate performs basic validation on the source.
 func (s *StreamSource) Validate() error {
+	// Sanitize inputs first
+	s.Sanitize()
+
 	if s.Name == "" {
 		return ErrNameRequired
 	}
 	// URL is required for M3U and Xtream sources, optional for Manual sources
 	if s.URL == "" && s.Type != SourceTypeManual {
 		return ErrURLRequired
+	}
+	// Validate URL format if provided
+	if s.URL != "" {
+		if _, err := url.Parse(s.URL); err != nil {
+			return ErrInvalidURL
+		}
 	}
 	if s.Type != SourceTypeM3U && s.Type != SourceTypeXtream && s.Type != SourceTypeManual {
 		return ErrInvalidSourceType

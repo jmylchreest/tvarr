@@ -24,6 +24,9 @@ var (
 	// ErrURLRequired indicates a required URL field is empty.
 	ErrURLRequired = errors.New("url is required")
 
+	// ErrInvalidURL indicates a malformed URL.
+	ErrInvalidURL = errors.New("invalid URL format")
+
 	// ErrInvalidSourceType indicates an invalid source type.
 	ErrInvalidSourceType = errors.New("invalid source type: must be 'm3u' or 'xtream'")
 

@@ -71,6 +71,10 @@ type RelayProfile struct {
 	// Enabled indicates if this profile can be used.
 	Enabled bool `gorm:"default:true" json:"enabled"`
 
+	// IsSystem indicates this is a system-provided default that cannot be edited or deleted.
+	// Only Enabled can be toggled for system profiles.
+	IsSystem bool `gorm:"default:false" json:"is_system"`
+
 	// Video settings
 	VideoCodec     VideoCodec `gorm:"size:50;default:'copy'" json:"video_codec"`
 	VideoBitrate   int        `gorm:"default:0" json:"video_bitrate,omitempty"`        // kbps, 0 = auto

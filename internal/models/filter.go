@@ -47,6 +47,10 @@ type Filter struct {
 	// IsEnabled determines if the filter is active.
 	IsEnabled bool `gorm:"default:true" json:"is_enabled"`
 
+	// IsSystem indicates this is a system-provided default that cannot be edited or deleted.
+	// Only IsEnabled can be toggled for system filters.
+	IsSystem bool `gorm:"default:false" json:"is_system"`
+
 	// SourceID optionally restricts this filter to a specific source.
 	// If nil, the filter applies to all sources of the matching SourceType.
 	SourceID *ULID `gorm:"type:varchar(26);index" json:"source_id,omitempty"`

@@ -1,6 +1,9 @@
 package models
 
 import (
+	"net/url"
+	"strings"
+
 	"gorm.io/gorm"
 )
 
@@ -33,6 +36,7 @@ type EpgSource struct {
 	BaseModel
 
 	// Name is a user-friendly name for the source.
+	// Must be unique across all EPG sources.
 	Name string `gorm:"uniqueIndex;not null;size:255" json:"name"`
 
 	// Type indicates whether this is an XMLTV or Xtream source.
@@ -49,6 +53,12 @@ type EpgSource struct {
 
 	// UserAgent to use when fetching the source (optional).
 	UserAgent string `gorm:"size:512" json:"user_agent,omitempty"`
+
+	// OriginalTimezone is the timezone of the EPG data (e.g., "UTC", "Europe/London").
+	OriginalTimezone string `gorm:"size:50" json:"original_timezone,omitempty"`
+
+	// TimeOffset is a manual time offset adjustment (e.g., "+00:00", "-05:00").
+	TimeOffset string `gorm:"size:10" json:"time_offset,omitempty"`
 
 	// Enabled indicates whether this source should be included in ingestion.
 	Enabled bool `gorm:"default:true" json:"enabled"`
@@ -114,13 +124,29 @@ func (s *EpgSource) MarkFailed(err error) {
 	}
 }
 
+// Sanitize trims whitespace from user-provided fields.
+func (s *EpgSource) Sanitize() {
+	s.Name = strings.TrimSpace(s.Name)
+	s.URL = strings.TrimSpace(s.URL)
+	s.Username = strings.TrimSpace(s.Username)
+	s.Password = strings.TrimSpace(s.Password)
+	s.UserAgent = strings.TrimSpace(s.UserAgent)
+}
+
 // Validate performs basic validation on the EPG source.
 func (s *EpgSource) Validate() error {
+	// Sanitize inputs first
+	s.Sanitize()
+
 	if s.Name == "" {
 		return ErrNameRequired
 	}
 	if s.URL == "" {
 		return ErrURLRequired
+	}
+	// Validate URL format
+	if _, err := url.Parse(s.URL); err != nil {
+		return ErrInvalidURL
 	}
 	if s.Type != EpgSourceTypeXMLTV && s.Type != EpgSourceTypeXtream {
 		return ErrInvalidEpgSourceType

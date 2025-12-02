@@ -39,6 +39,10 @@ type DataMappingRule struct {
 	// IsEnabled determines if the rule is active.
 	IsEnabled bool `gorm:"default:true" json:"is_enabled"`
 
+	// IsSystem indicates this is a system-provided default that cannot be edited or deleted.
+	// Only IsEnabled can be toggled for system rules.
+	IsSystem bool `gorm:"default:false" json:"is_system"`
+
 	// SourceID optionally restricts this rule to a specific source.
 	// If nil, the rule applies to all sources of the matching SourceType.
 	SourceID *ULID `gorm:"type:varchar(26);index" json:"source_id,omitempty"`
