@@ -355,9 +355,26 @@ func (s *EpgService) performIngestion(ctx context.Context, source *models.EpgSou
 		return
 	}
 
+	// Start progress tracking if service is available
+	var progressMgr *progress.OperationManager
+	if s.progressService != nil {
+		stages := getEpgIngestionStages()
+		progressMgr, err = s.progressService.StartOperation(progress.OpEpgIngestion, id, "epg_source", stages)
+		if err != nil {
+			s.logger.Warn("failed to start progress tracking",
+				"source_id", id.String(),
+				"error", err.Error(),
+			)
+			progressMgr = nil
+		}
+	}
+
 	// Mark source as ingesting
 	source.MarkIngesting()
 	if err := s.epgSourceRepo.Update(ctx, source); err != nil {
+		if progressMgr != nil {
+			progressMgr.Fail(err)
+		}
 		s.stateManager.Fail(id, err)
 		return
 	}
@@ -367,12 +384,29 @@ func (s *EpgService) performIngestion(ctx context.Context, source *models.EpgSou
 		"source_name", source.Name,
 	)
 
+	// Stage 1: Connect
+	if progressMgr != nil {
+		progressMgr.StartStage("connect")
+		progressMgr.SetMessage(fmt.Sprintf("Connecting to %s", source.Name))
+	}
+
 	// Delete existing programs
 	if err := s.epgProgramRepo.DeleteBySourceID(ctx, id); err != nil {
+		if progressMgr != nil {
+			progressMgr.Fail(err)
+		}
 		s.stateManager.Fail(id, err)
 		source.MarkFailed(err)
 		_ = s.epgSourceRepo.Update(ctx, source)
 		return
+	}
+
+	// Stage 2: Download
+	if progressMgr != nil {
+		connectStage := progressMgr.StartStage("connect")
+		connectStage.Complete()
+		progressMgr.StartStage("download")
+		progressMgr.SetMessage("Downloading EPG data...")
 	}
 
 	// Perform ingestion
@@ -386,6 +420,9 @@ func (s *EpgService) performIngestion(ctx context.Context, source *models.EpgSou
 
 		if programCount%500 == 0 {
 			s.stateManager.UpdateProgress(id, programCount, 0)
+			if progressMgr != nil {
+				progressMgr.SetMessage(fmt.Sprintf("Downloaded %d programs", programCount))
+			}
 		}
 
 		if len(batchPrograms) >= batchSize {
@@ -398,7 +435,22 @@ func (s *EpgService) performIngestion(ctx context.Context, source *models.EpgSou
 		return nil
 	})
 
-	// Flush remaining
+	// Stage 3: Process
+	if progressMgr != nil {
+		downloadStage := progressMgr.StartStage("download")
+		downloadStage.Complete()
+		progressMgr.StartStage("process")
+		progressMgr.SetMessage("Processing EPG data...")
+	}
+
+	// Stage 4: Save - flush remaining
+	if progressMgr != nil {
+		processStage := progressMgr.StartStage("process")
+		processStage.Complete()
+		progressMgr.StartStage("save")
+		progressMgr.SetMessage("Saving programs to database...")
+	}
+
 	if len(batchPrograms) > 0 {
 		if batchErr := s.epgProgramRepo.CreateBatch(ctx, batchPrograms); batchErr != nil {
 			if err == nil {
@@ -408,6 +460,9 @@ func (s *EpgService) performIngestion(ctx context.Context, source *models.EpgSou
 	}
 
 	if err != nil {
+		if progressMgr != nil {
+			progressMgr.Fail(err)
+		}
 		s.stateManager.Fail(id, err)
 		source.MarkFailed(err)
 		_ = s.epgSourceRepo.Update(ctx, source)
@@ -421,6 +476,11 @@ func (s *EpgService) performIngestion(ctx context.Context, source *models.EpgSou
 	source.MarkSuccess(programCount)
 	_ = s.epgSourceRepo.Update(ctx, source)
 	s.stateManager.Complete(id, programCount)
+
+	// Complete progress tracking
+	if progressMgr != nil {
+		progressMgr.Complete(fmt.Sprintf("Ingested %d programs from %s", programCount, source.Name))
+	}
 
 	s.logger.Info("async EPG ingestion completed",
 		"source_id", id.String(),
