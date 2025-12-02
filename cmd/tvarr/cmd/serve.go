@@ -22,7 +22,9 @@ import (
 	"github.com/jmylchreest/tvarr/internal/pipeline"
 	"github.com/jmylchreest/tvarr/internal/repository"
 	"github.com/jmylchreest/tvarr/internal/service"
+	"github.com/jmylchreest/tvarr/internal/service/logs"
 	"github.com/jmylchreest/tvarr/internal/service/progress"
+	"github.com/jmylchreest/tvarr/internal/startup"
 	"github.com/jmylchreest/tvarr/internal/storage"
 	"github.com/jmylchreest/tvarr/internal/version"
 	"github.com/jmylchreest/tvarr/pkg/duration"
@@ -62,7 +64,24 @@ func init() {
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
+	// Initialize logs service and wrap the default slog handler
+	logsService := logs.New()
+	wrappedHandler := logsService.WrapHandler(slog.Default().Handler())
+	slog.SetDefault(slog.New(wrappedHandler))
+
 	logger := slog.Default()
+
+	// T055/T057: Clean up orphaned temp directories from previous runs
+	orphansRemoved, err := startup.CleanupSystemTempDirs(logger)
+	if err != nil {
+		logger.Warn("failed to clean orphaned temp directories",
+			slog.String("error", err.Error()),
+		)
+	} else if orphansRemoved > 0 {
+		logger.Info("cleaned orphaned temp directories on startup",
+			slog.Int("removed_count", orphansRemoved),
+		)
+	}
 
 	// Initialize database
 	db, err := initDatabase(viper.GetString("database.path"))
@@ -259,6 +278,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	circuitBreakerHandler := handlers.NewCircuitBreakerHandler(httpclient.DefaultManager)
 	circuitBreakerHandler.Register(server.API())
+
+	logsHandler := handlers.NewLogsHandler(logsService)
+	logsHandler.Register(server.API())
+	logsHandler.RegisterSSE(server.Router())
 
 	// Setup graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())

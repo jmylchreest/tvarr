@@ -339,15 +339,19 @@ func (s *SourceService) Ingest(ctx context.Context, id models.ULID) error {
 		"type", source.Type,
 	)
 
-	// Stage 1: Connect (handled by handler)
-	if progressMgr != nil {
-		progressMgr.StartStage("connect")
-	}
-
 	// Perform ingestion within a transaction for atomicity.
 	// This ensures delete + all inserts are atomic - if any fails, everything is rolled back.
 	var channelCount int
 	const batchSize = 1000
+
+	// Stage updaters - declared outside transaction to maintain references
+	var connectStage, downloadStage, processStage, saveStage *progress.StageUpdater
+
+	// Stage 1: Connect
+	if progressMgr != nil {
+		connectStage = progressMgr.StartStage("connect")
+		progressMgr.SetMessage(fmt.Sprintf("Connecting to %s", source.Name))
+	}
 
 	err = s.channelRepo.Transaction(ctx, func(txRepo repository.ChannelRepository) error {
 		// Delete existing channels within the transaction
@@ -355,11 +359,11 @@ func (s *SourceService) Ingest(ctx context.Context, id models.ULID) error {
 			return fmt.Errorf("deleting existing channels: %w", err)
 		}
 
-		// Stage 2: Download (mark progress as we receive channels)
-		if progressMgr != nil {
-			connectStage := progressMgr.StartStage("connect")
+		// Stage 2: Download - complete connect, start download
+		if progressMgr != nil && connectStage != nil {
 			connectStage.Complete()
-			progressMgr.StartStage("download")
+			downloadStage = progressMgr.StartStage("download")
+			progressMgr.SetMessage("Downloading channels...")
 		}
 
 		// Collect channels in batches
@@ -370,17 +374,9 @@ func (s *SourceService) Ingest(ctx context.Context, id models.ULID) error {
 			batchChannels = append(batchChannels, channel)
 			channelCount++
 
-			// Update progress periodically
-			if channelCount%100 == 0 {
-				s.stateManager.UpdateProgress(id, channelCount, 0)
-				if progressMgr != nil {
-					progressMgr.SetMessage(fmt.Sprintf("Downloaded %d channels", channelCount))
-				}
-			}
-
 			// Flush batch when full
 			if len(batchChannels) >= batchSize {
-				if err := txRepo.CreateBatch(ctx, batchChannels); err != nil {
+				if err := txRepo.UpsertBatch(ctx, batchChannels); err != nil {
 					return fmt.Errorf("batch insert: %w", err)
 				}
 				batchChannels = batchChannels[:0]
@@ -392,21 +388,19 @@ func (s *SourceService) Ingest(ctx context.Context, id models.ULID) error {
 		}
 
 		// Stage 3: Process (transition after download)
-		if progressMgr != nil {
-			downloadStage := progressMgr.StartStage("download")
+		if progressMgr != nil && downloadStage != nil {
 			downloadStage.Complete()
-			progressMgr.StartStage("process")
+			processStage = progressMgr.StartStage("process")
 		}
 
 		// Stage 4: Save - flush remaining channels
-		if progressMgr != nil {
-			processStage := progressMgr.StartStage("process")
+		if progressMgr != nil && processStage != nil {
 			processStage.Complete()
-			progressMgr.StartStage("save")
+			saveStage = progressMgr.StartStage("save")
 		}
 
 		if len(batchChannels) > 0 {
-			if err := txRepo.CreateBatch(ctx, batchChannels); err != nil {
+			if err := txRepo.UpsertBatch(ctx, batchChannels); err != nil {
 				return fmt.Errorf("final batch insert: %w", err)
 			}
 		}
@@ -441,6 +435,10 @@ func (s *SourceService) Ingest(ctx context.Context, id models.ULID) error {
 
 	// Complete progress tracking
 	if progressMgr != nil {
+		// Complete the save stage before finalizing
+		if saveStage != nil {
+			saveStage.Complete()
+		}
 		progressMgr.Complete(fmt.Sprintf("Ingested %d channels", channelCount))
 	}
 
@@ -535,16 +533,19 @@ func (s *SourceService) performIngestion(ctx context.Context, source *models.Str
 		"source_name", source.Name,
 	)
 
-	// Stage 1: Connect
-	if progressMgr != nil {
-		progressMgr.StartStage("connect")
-		progressMgr.SetMessage(fmt.Sprintf("Connecting to %s", source.Name))
-	}
-
 	// Perform ingestion within a transaction for atomicity.
 	// This ensures delete + all inserts are atomic - if any fails, everything is rolled back.
 	var channelCount int
 	const batchSize = 1000
+
+	// Stage updaters - declared outside transaction to maintain references
+	var connectStage, downloadStage, processStage, saveStage *progress.StageUpdater
+
+	// Stage 1: Connect
+	if progressMgr != nil {
+		connectStage = progressMgr.StartStage("connect")
+		progressMgr.SetMessage(fmt.Sprintf("Connecting to %s", source.Name))
+	}
 
 	err = s.channelRepo.Transaction(ctx, func(txRepo repository.ChannelRepository) error {
 		// Delete existing channels within the transaction
@@ -552,11 +553,10 @@ func (s *SourceService) performIngestion(ctx context.Context, source *models.Str
 			return fmt.Errorf("deleting existing channels: %w", err)
 		}
 
-		// Stage 2: Download
-		if progressMgr != nil {
-			connectStage := progressMgr.StartStage("connect")
+		// Stage 2: Download - complete connect, start download
+		if progressMgr != nil && connectStage != nil {
 			connectStage.Complete()
-			progressMgr.StartStage("download")
+			downloadStage = progressMgr.StartStage("download")
 			progressMgr.SetMessage("Downloading channels...")
 		}
 
@@ -576,7 +576,7 @@ func (s *SourceService) performIngestion(ctx context.Context, source *models.Str
 			}
 
 			if len(batchChannels) >= batchSize {
-				if err := txRepo.CreateBatch(ctx, batchChannels); err != nil {
+				if err := txRepo.UpsertBatch(ctx, batchChannels); err != nil {
 					return err
 				}
 				batchChannels = batchChannels[:0]
@@ -587,24 +587,22 @@ func (s *SourceService) performIngestion(ctx context.Context, source *models.Str
 			return fmt.Errorf("ingesting channels: %w", err)
 		}
 
-		// Stage 3: Process
-		if progressMgr != nil {
-			downloadStage := progressMgr.StartStage("download")
+		// Stage 3: Process - complete download, start process
+		if progressMgr != nil && downloadStage != nil {
 			downloadStage.Complete()
-			progressMgr.StartStage("process")
+			processStage = progressMgr.StartStage("process")
 			progressMgr.SetMessage("Processing channels...")
 		}
 
-		// Stage 4: Save - flush remaining channels
-		if progressMgr != nil {
-			processStage := progressMgr.StartStage("process")
+		// Stage 4: Save - complete process, start save
+		if progressMgr != nil && processStage != nil {
 			processStage.Complete()
-			progressMgr.StartStage("save")
+			saveStage = progressMgr.StartStage("save")
 			progressMgr.SetMessage("Saving channels to database...")
 		}
 
 		if len(batchChannels) > 0 {
-			if err := txRepo.CreateBatch(ctx, batchChannels); err != nil {
+			if err := txRepo.UpsertBatch(ctx, batchChannels); err != nil {
 				return fmt.Errorf("final batch insert: %w", err)
 			}
 		}
@@ -632,6 +630,10 @@ func (s *SourceService) performIngestion(ctx context.Context, source *models.Str
 
 	// Complete progress tracking
 	if progressMgr != nil {
+		// Complete the save stage before finalizing the operation
+		if saveStage != nil {
+			saveStage.Complete()
+		}
 		progressMgr.Complete(fmt.Sprintf("Ingested %d channels from %s", channelCount, source.Name))
 	}
 

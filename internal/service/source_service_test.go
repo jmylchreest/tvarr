@@ -106,6 +106,40 @@ func (r *mockChannelRepo) CreateBatch(ctx context.Context, channels []*models.Ch
 	return nil
 }
 
+func (r *mockChannelRepo) UpsertBatch(ctx context.Context, channels []*models.Channel) error {
+	for _, ch := range channels {
+		// Find existing channel by source_id + ext_id
+		var existing *models.Channel
+		for _, existingCh := range r.channels {
+			if existingCh.SourceID == ch.SourceID && existingCh.ExtID == ch.ExtID {
+				existing = existingCh
+				break
+			}
+		}
+		if existing != nil {
+			// Update existing channel
+			existing.TvgID = ch.TvgID
+			existing.TvgName = ch.TvgName
+			existing.TvgLogo = ch.TvgLogo
+			existing.GroupTitle = ch.GroupTitle
+			existing.ChannelName = ch.ChannelName
+			existing.ChannelNumber = ch.ChannelNumber
+			existing.StreamURL = ch.StreamURL
+			existing.StreamType = ch.StreamType
+			existing.Language = ch.Language
+			existing.Country = ch.Country
+			existing.IsAdult = ch.IsAdult
+			existing.Extra = ch.Extra
+		} else {
+			// Create new channel
+			if err := r.Create(ctx, ch); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (r *mockChannelRepo) Update(ctx context.Context, channel *models.Channel) error {
 	r.channels[channel.ID] = channel
 	return nil

@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/pipeline"
+	"github.com/jmylchreest/tvarr/internal/pipeline/core"
 	"github.com/jmylchreest/tvarr/internal/repository"
 	"github.com/jmylchreest/tvarr/internal/service/progress"
 )
@@ -243,7 +245,9 @@ func (s *ProxyService) Generate(ctx context.Context, proxyID models.ULID) (*pipe
 	result, err := orchestrator.Execute(ctx)
 	if err != nil {
 		if progressMgr != nil {
-			progressMgr.Fail(err)
+			// T040: Use FailWithDetail for structured error information
+			detail := s.createErrorDetail(err)
+			progressMgr.FailWithDetail(detail)
 		}
 		s.proxyRepo.UpdateStatus(ctx, proxyID, models.StreamProxyStatusFailed, err.Error())
 		return result, fmt.Errorf("executing pipeline: %w", err)
@@ -303,4 +307,67 @@ func (s *ProxyService) GenerateAll(ctx context.Context) (map[models.ULID]*pipeli
 	}
 
 	return results, nil
+}
+
+// createErrorDetail converts an error into a structured ErrorDetail for UI display.
+// T041: Maps stage errors to user-friendly messages with suggestions.
+func (s *ProxyService) createErrorDetail(err error) progress.ErrorDetail {
+	detail := progress.ErrorDetail{
+		Technical: err.Error(),
+	}
+
+	// Check if this is a StageError with stage context
+	var stageErr *core.StageError
+	if errors.As(err, &stageErr) {
+		detail.Stage = stageErr.StageID
+		detail.Message = fmt.Sprintf("Pipeline failed in %s stage", stageErr.StageName)
+		detail.Suggestion = s.getSuggestionForStage(stageErr.StageID, stageErr.Err)
+	} else if errors.Is(err, core.ErrNoSources) {
+		detail.Stage = "load_channels"
+		detail.Message = "No stream sources configured"
+		detail.Suggestion = "Add at least one stream source to this proxy"
+	} else if errors.Is(err, core.ErrPipelineAlreadyRunning) {
+		detail.Stage = "initialization"
+		detail.Message = "Pipeline is already running"
+		detail.Suggestion = "Wait for the current generation to complete"
+	} else if errors.Is(err, context.Canceled) {
+		detail.Stage = "execution"
+		detail.Message = "Generation was cancelled"
+		detail.Suggestion = "Restart generation if needed"
+	} else {
+		detail.Stage = "unknown"
+		detail.Message = "Pipeline generation failed"
+		detail.Suggestion = "Check server logs for more details"
+	}
+
+	return detail
+}
+
+// getSuggestionForStage provides actionable suggestions based on the stage and error.
+func (s *ProxyService) getSuggestionForStage(stageID string, err error) string {
+	switch stageID {
+	case "load_channels":
+		if errors.Is(err, core.ErrNoSources) {
+			return "Add at least one stream source to this proxy"
+		}
+		return "Check that your stream sources are accessible"
+	case "load_programs":
+		return "Check that your EPG sources are configured and accessible"
+	case "filtering":
+		return "Review your filter rules configuration"
+	case "data_mapping":
+		return "Review your data mapping rules configuration"
+	case "numbering":
+		return "Check channel numbering settings"
+	case "logo_caching":
+		return "Check network connectivity for logo downloads"
+	case "generate_m3u":
+		return "Check output directory permissions"
+	case "generate_xmltv":
+		return "Check output directory permissions"
+	case "publish":
+		return "Verify output directory exists and is writable"
+	default:
+		return "Check server logs for more details"
+	}
 }

@@ -36,6 +36,9 @@ type ChannelRepository interface {
 	Create(ctx context.Context, channel *models.Channel) error
 	// CreateBatch creates multiple channels in a single batch.
 	CreateBatch(ctx context.Context, channels []*models.Channel) error
+	// UpsertBatch creates or updates multiple channels, handling duplicates gracefully.
+	// Uses ON CONFLICT to update existing channels based on (source_id, ext_id).
+	UpsertBatch(ctx context.Context, channels []*models.Channel) error
 	// GetByID retrieves a channel by ID.
 	GetByID(ctx context.Context, id models.ULID) (*models.Channel, error)
 	// GetBySourceID retrieves all channels for a source using a callback for streaming.
