@@ -67,6 +67,18 @@ const (
 	OpDatabase OperationType = "database"
 )
 
+// ErrorDetail provides structured error information for UI display.
+type ErrorDetail struct {
+	// Stage is the stage that failed (e.g., "generate_m3u").
+	Stage string `json:"stage"`
+	// Message is the user-friendly error message.
+	Message string `json:"message"`
+	// Technical contains technical details for debugging.
+	Technical string `json:"technical,omitempty"`
+	// Suggestion is actionable guidance for resolution.
+	Suggestion string `json:"suggestion,omitempty"`
+}
+
 // StageInfo describes a single stage within an operation.
 type StageInfo struct {
 	// ID is the unique identifier for the stage.
@@ -123,6 +135,12 @@ type UniversalProgress struct {
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 	// Error contains error details if State is StateError.
 	Error string `json:"error,omitempty"`
+	// ErrorDetail provides structured error information for UI display.
+	ErrorDetail *ErrorDetail `json:"error_detail,omitempty"`
+	// WarningCount is the count of non-fatal warnings.
+	WarningCount int `json:"warning_count,omitempty"`
+	// Warnings contains detailed warning messages.
+	Warnings []string `json:"warnings,omitempty"`
 	// Metadata contains operation-specific data.
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
@@ -132,6 +150,14 @@ func (p *UniversalProgress) Clone() *UniversalProgress {
 	clone := *p
 	clone.Stages = make([]StageInfo, len(p.Stages))
 	copy(clone.Stages, p.Stages)
+	if p.ErrorDetail != nil {
+		detailCopy := *p.ErrorDetail
+		clone.ErrorDetail = &detailCopy
+	}
+	if p.Warnings != nil {
+		clone.Warnings = make([]string, len(p.Warnings))
+		copy(clone.Warnings, p.Warnings)
+	}
 	if p.Metadata != nil {
 		clone.Metadata = make(map[string]any, len(p.Metadata))
 		for k, v := range p.Metadata {

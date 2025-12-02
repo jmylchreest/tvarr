@@ -1,6 +1,7 @@
 package progress
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -222,6 +223,151 @@ func TestOperationFilter_Matches(t *testing.T) {
 		otherType := OpStreamIngestion
 		f.OperationType = &otherType
 		assert.False(t, f.Matches(progress))
+	})
+}
+
+// T004-TEST: Test ErrorDetail type JSON serialization
+func TestErrorDetail_JSONSerialization(t *testing.T) {
+	t.Run("serializes all fields", func(t *testing.T) {
+		detail := &ErrorDetail{
+			Stage:      "generate_m3u",
+			Message:    "Failed to write M3U file",
+			Technical:  "permission denied: /output/proxy.m3u",
+			Suggestion: "Check output directory permissions",
+		}
+
+		data, err := json.Marshal(detail)
+		assert.NoError(t, err)
+
+		var parsed map[string]string
+		err = json.Unmarshal(data, &parsed)
+		assert.NoError(t, err)
+
+		assert.Equal(t, "generate_m3u", parsed["stage"])
+		assert.Equal(t, "Failed to write M3U file", parsed["message"])
+		assert.Equal(t, "permission denied: /output/proxy.m3u", parsed["technical"])
+		assert.Equal(t, "Check output directory permissions", parsed["suggestion"])
+	})
+
+	t.Run("omits empty optional fields", func(t *testing.T) {
+		detail := &ErrorDetail{
+			Stage:   "load_channels",
+			Message: "Failed to load channels",
+		}
+
+		data, err := json.Marshal(detail)
+		assert.NoError(t, err)
+
+		var parsed map[string]any
+		err = json.Unmarshal(data, &parsed)
+		assert.NoError(t, err)
+
+		assert.Equal(t, "load_channels", parsed["stage"])
+		assert.Equal(t, "Failed to load channels", parsed["message"])
+		// Technical and Suggestion should be omitted when empty
+		_, hasTechnical := parsed["technical"]
+		_, hasSuggestion := parsed["suggestion"]
+		assert.False(t, hasTechnical, "technical should be omitted when empty")
+		assert.False(t, hasSuggestion, "suggestion should be omitted when empty")
+	})
+}
+
+// T005-TEST: Test UniversalProgress with error fields
+func TestUniversalProgress_ErrorFields(t *testing.T) {
+	t.Run("includes ErrorDetail in JSON", func(t *testing.T) {
+		progress := &UniversalProgress{
+			OperationID:   "op-123",
+			OperationType: OpProxyRegeneration,
+			OwnerID:       models.NewULID(),
+			State:         StateError,
+			Error:         "Pipeline failed",
+			ErrorDetail: &ErrorDetail{
+				Stage:      "generate_m3u",
+				Message:    "Failed to write M3U file",
+				Technical:  "permission denied",
+				Suggestion: "Check permissions",
+			},
+			WarningCount: 2,
+			Warnings:     []string{"Channel X skipped", "Channel Y skipped"},
+			StartedAt:    time.Now(),
+			UpdatedAt:    time.Now(),
+		}
+
+		data, err := json.Marshal(progress)
+		assert.NoError(t, err)
+
+		var parsed map[string]any
+		err = json.Unmarshal(data, &parsed)
+		assert.NoError(t, err)
+
+		// Verify error_detail is present
+		errorDetail, ok := parsed["error_detail"].(map[string]any)
+		assert.True(t, ok, "error_detail should be present")
+		assert.Equal(t, "generate_m3u", errorDetail["stage"])
+		assert.Equal(t, "Failed to write M3U file", errorDetail["message"])
+
+		// Verify warning fields
+		assert.Equal(t, float64(2), parsed["warning_count"])
+		warnings, ok := parsed["warnings"].([]any)
+		assert.True(t, ok, "warnings should be an array")
+		assert.Len(t, warnings, 2)
+	})
+
+	t.Run("omits error fields when nil or empty", func(t *testing.T) {
+		progress := &UniversalProgress{
+			OperationID:   "op-456",
+			OperationType: OpProxyRegeneration,
+			OwnerID:       models.NewULID(),
+			State:         StateCompleted,
+			StartedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
+		}
+
+		data, err := json.Marshal(progress)
+		assert.NoError(t, err)
+
+		var parsed map[string]any
+		err = json.Unmarshal(data, &parsed)
+		assert.NoError(t, err)
+
+		_, hasErrorDetail := parsed["error_detail"]
+		_, hasWarningCount := parsed["warning_count"]
+		_, hasWarnings := parsed["warnings"]
+		assert.False(t, hasErrorDetail, "error_detail should be omitted when nil")
+		assert.False(t, hasWarningCount, "warning_count should be omitted when zero")
+		assert.False(t, hasWarnings, "warnings should be omitted when empty")
+	})
+
+	t.Run("Clone preserves error fields", func(t *testing.T) {
+		original := &UniversalProgress{
+			OperationID:   "op-789",
+			OperationType: OpProxyRegeneration,
+			OwnerID:       models.NewULID(),
+			State:         StateError,
+			ErrorDetail: &ErrorDetail{
+				Stage:   "test_stage",
+				Message: "Test error",
+			},
+			WarningCount: 3,
+			Warnings:     []string{"Warning 1", "Warning 2", "Warning 3"},
+			StartedAt:    time.Now(),
+			UpdatedAt:    time.Now(),
+		}
+
+		clone := original.Clone()
+
+		// Verify clone has same values
+		assert.NotNil(t, clone.ErrorDetail)
+		assert.Equal(t, original.ErrorDetail.Stage, clone.ErrorDetail.Stage)
+		assert.Equal(t, original.ErrorDetail.Message, clone.ErrorDetail.Message)
+		assert.Equal(t, original.WarningCount, clone.WarningCount)
+		assert.Equal(t, original.Warnings, clone.Warnings)
+
+		// Verify modifying clone doesn't affect original
+		clone.ErrorDetail.Stage = "modified"
+		clone.Warnings[0] = "Modified"
+		assert.Equal(t, "test_stage", original.ErrorDetail.Stage)
+		assert.Equal(t, "Warning 1", original.Warnings[0])
 	})
 }
 

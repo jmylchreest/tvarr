@@ -239,3 +239,116 @@ func TestStartPipelineOperation(t *testing.T) {
 		assert.Equal(t, 0.5, op.Stages[0].Progress)
 	})
 }
+
+// T006-TEST: Test FailWithDetail method
+func TestOperationManager_FailWithDetail(t *testing.T) {
+	t.Run("sets error state with structured detail", func(t *testing.T) {
+		svc := newTestProgressService()
+		ownerID := models.NewULID()
+
+		stages := []core.Stage{
+			&mockStage{id: "generate_m3u", name: "Generate M3U"},
+		}
+
+		stageInfos := progress.CreateStagesFromPipeline(stages)
+		mgr, err := svc.StartOperation(progress.OpPipeline, ownerID, "test", stageInfos)
+		require.NoError(t, err)
+
+		// Call FailWithDetail with structured error
+		detail := progress.ErrorDetail{
+			Stage:      "generate_m3u",
+			Message:    "Failed to write M3U file",
+			Technical:  "permission denied: /output/proxy.m3u",
+			Suggestion: "Check output directory permissions",
+		}
+		mgr.FailWithDetail(detail)
+
+		// Verify operation state
+		op, err := svc.GetOperation(mgr.OperationID())
+		require.NoError(t, err)
+		assert.Equal(t, progress.StateError, op.State)
+		assert.NotNil(t, op.ErrorDetail)
+		assert.Equal(t, "generate_m3u", op.ErrorDetail.Stage)
+		assert.Equal(t, "Failed to write M3U file", op.ErrorDetail.Message)
+		assert.Equal(t, "permission denied: /output/proxy.m3u", op.ErrorDetail.Technical)
+		assert.Equal(t, "Check output directory permissions", op.ErrorDetail.Suggestion)
+		assert.NotNil(t, op.CompletedAt)
+	})
+
+	t.Run("sets error message from detail message", func(t *testing.T) {
+		svc := newTestProgressService()
+		ownerID := models.NewULID()
+
+		stages := []core.Stage{
+			&mockStage{id: "load", name: "Load"},
+		}
+
+		stageInfos := progress.CreateStagesFromPipeline(stages)
+		mgr, err := svc.StartOperation(progress.OpPipeline, ownerID, "test", stageInfos)
+		require.NoError(t, err)
+
+		detail := progress.ErrorDetail{
+			Stage:   "load",
+			Message: "Network connection failed",
+		}
+		mgr.FailWithDetail(detail)
+
+		op, err := svc.GetOperation(mgr.OperationID())
+		require.NoError(t, err)
+		assert.Contains(t, op.Error, "Network connection failed")
+		assert.Contains(t, op.Message, "Network connection failed")
+	})
+}
+
+// T007-TEST: Test AddWarning method
+func TestOperationManager_AddWarning(t *testing.T) {
+	t.Run("adds warning to warnings list", func(t *testing.T) {
+		svc := newTestProgressService()
+		ownerID := models.NewULID()
+
+		stages := []core.Stage{
+			&mockStage{id: "filter", name: "Filter"},
+		}
+
+		stageInfos := progress.CreateStagesFromPipeline(stages)
+		mgr, err := svc.StartOperation(progress.OpPipeline, ownerID, "test", stageInfos)
+		require.NoError(t, err)
+
+		// Add multiple warnings
+		mgr.AddWarning("Channel 'Test1' skipped: missing stream URL")
+		mgr.AddWarning("Channel 'Test2' skipped: invalid format")
+		mgr.AddWarning("Channel 'Test3' skipped: duplicate ID")
+
+		op, err := svc.GetOperation(mgr.OperationID())
+		require.NoError(t, err)
+		assert.Equal(t, 3, op.WarningCount)
+		assert.Len(t, op.Warnings, 3)
+		assert.Equal(t, "Channel 'Test1' skipped: missing stream URL", op.Warnings[0])
+		assert.Equal(t, "Channel 'Test2' skipped: invalid format", op.Warnings[1])
+		assert.Equal(t, "Channel 'Test3' skipped: duplicate ID", op.Warnings[2])
+	})
+
+	t.Run("increments warning count correctly", func(t *testing.T) {
+		svc := newTestProgressService()
+		ownerID := models.NewULID()
+
+		stages := []core.Stage{
+			&mockStage{id: "load", name: "Load"},
+		}
+
+		stageInfos := progress.CreateStagesFromPipeline(stages)
+		mgr, err := svc.StartOperation(progress.OpPipeline, ownerID, "test", stageInfos)
+		require.NoError(t, err)
+
+		// Add warnings one by one and check count
+		mgr.AddWarning("Warning 1")
+		op, err := svc.GetOperation(mgr.OperationID())
+		require.NoError(t, err)
+		assert.Equal(t, 1, op.WarningCount)
+
+		mgr.AddWarning("Warning 2")
+		op, err = svc.GetOperation(mgr.OperationID())
+		require.NoError(t, err)
+		assert.Equal(t, 2, op.WarningCount)
+	})
+}
