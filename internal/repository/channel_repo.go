@@ -203,5 +203,15 @@ func (r *channelRepo) GetDistinctGroups(ctx context.Context) ([]string, error) {
 	return groups, nil
 }
 
+// Transaction executes the given function within a database transaction.
+// The provided function receives a transactional repository.
+// If the function returns an error, the transaction is rolled back.
+func (r *channelRepo) Transaction(ctx context.Context, fn func(ChannelRepository) error) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txRepo := &channelRepo{db: tx}
+		return fn(txRepo)
+	})
+}
+
 // Ensure channelRepo implements ChannelRepository at compile time.
 var _ ChannelRepository = (*channelRepo)(nil)

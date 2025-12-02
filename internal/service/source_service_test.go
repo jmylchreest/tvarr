@@ -7,6 +7,7 @@ import (
 
 	"github.com/jmylchreest/tvarr/internal/ingestor"
 	"github.com/jmylchreest/tvarr/internal/models"
+	"github.com/jmylchreest/tvarr/internal/repository"
 )
 
 // mockStreamSourceRepo is a mock implementation of StreamSourceRepository
@@ -181,6 +182,12 @@ func (r *mockChannelRepo) CountBySourceID(ctx context.Context, sourceID models.U
 		}
 	}
 	return count, nil
+}
+
+func (r *mockChannelRepo) Transaction(ctx context.Context, fn func(repository.ChannelRepository) error) error {
+	// For the mock, just execute the function directly with this repo
+	// In real usage, this would wrap in a database transaction
+	return fn(r)
 }
 
 func TestSourceService_CreateSource(t *testing.T) {

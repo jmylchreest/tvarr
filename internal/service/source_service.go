@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/jmylchreest/tvarr/internal/ingestor"
@@ -65,6 +66,7 @@ type SourceService struct {
 	progressService *progress.Service
 	epgChecker      EPGChecker
 	logger          *slog.Logger
+	ingestionLocks  sync.Map // map[models.ULID]bool - tracks sources currently being ingested
 }
 
 // NewSourceService creates a new source service.
@@ -342,73 +344,75 @@ func (s *SourceService) Ingest(ctx context.Context, id models.ULID) error {
 		progressMgr.StartStage("connect")
 	}
 
-	// Delete existing channels before re-ingesting
-	if err := s.channelRepo.DeleteBySourceID(ctx, id); err != nil {
-		if progressMgr != nil {
-			progressMgr.Fail(err)
-		}
-		s.stateManager.Fail(id, err)
-		source.MarkFailed(err)
-		_ = s.sourceRepo.Update(ctx, source)
-		return fmt.Errorf("deleting existing channels: %w", err)
-	}
-
-	// Stage 2: Download (mark progress as we receive channels)
-	if progressMgr != nil {
-		connectStage := progressMgr.StartStage("connect")
-		connectStage.Complete()
-		progressMgr.StartStage("download")
-	}
-
-	// Perform ingestion
+	// Perform ingestion within a transaction for atomicity.
+	// This ensures delete + all inserts are atomic - if any fails, everything is rolled back.
 	var channelCount int
-	var batchChannels []*models.Channel
 	const batchSize = 1000
 
-	err = handler.Ingest(ctx, source, func(channel *models.Channel) error {
-		batchChannels = append(batchChannels, channel)
-		channelCount++
-
-		// Update progress periodically
-		if channelCount%100 == 0 {
-			s.stateManager.UpdateProgress(id, channelCount, 0)
-			if progressMgr != nil {
-				progressMgr.SetMessage(fmt.Sprintf("Downloaded %d channels", channelCount))
-			}
+	err = s.channelRepo.Transaction(ctx, func(txRepo repository.ChannelRepository) error {
+		// Delete existing channels within the transaction
+		if err := txRepo.DeleteBySourceID(ctx, id); err != nil {
+			return fmt.Errorf("deleting existing channels: %w", err)
 		}
 
-		// Flush batch when full
-		if len(batchChannels) >= batchSize {
-			if err := s.channelRepo.CreateBatch(ctx, batchChannels); err != nil {
-				return fmt.Errorf("batch insert: %w", err)
+		// Stage 2: Download (mark progress as we receive channels)
+		if progressMgr != nil {
+			connectStage := progressMgr.StartStage("connect")
+			connectStage.Complete()
+			progressMgr.StartStage("download")
+		}
+
+		// Collect channels in batches
+		var batchChannels []*models.Channel
+
+		// Perform ingestion with callback
+		if err := handler.Ingest(ctx, source, func(channel *models.Channel) error {
+			batchChannels = append(batchChannels, channel)
+			channelCount++
+
+			// Update progress periodically
+			if channelCount%100 == 0 {
+				s.stateManager.UpdateProgress(id, channelCount, 0)
+				if progressMgr != nil {
+					progressMgr.SetMessage(fmt.Sprintf("Downloaded %d channels", channelCount))
+				}
 			}
-			batchChannels = batchChannels[:0]
+
+			// Flush batch when full
+			if len(batchChannels) >= batchSize {
+				if err := txRepo.CreateBatch(ctx, batchChannels); err != nil {
+					return fmt.Errorf("batch insert: %w", err)
+				}
+				batchChannels = batchChannels[:0]
+			}
+
+			return nil
+		}); err != nil {
+			return fmt.Errorf("ingesting channels: %w", err)
+		}
+
+		// Stage 3: Process (transition after download)
+		if progressMgr != nil {
+			downloadStage := progressMgr.StartStage("download")
+			downloadStage.Complete()
+			progressMgr.StartStage("process")
+		}
+
+		// Stage 4: Save - flush remaining channels
+		if progressMgr != nil {
+			processStage := progressMgr.StartStage("process")
+			processStage.Complete()
+			progressMgr.StartStage("save")
+		}
+
+		if len(batchChannels) > 0 {
+			if err := txRepo.CreateBatch(ctx, batchChannels); err != nil {
+				return fmt.Errorf("final batch insert: %w", err)
+			}
 		}
 
 		return nil
 	})
-
-	// Stage 3: Process (transition after download)
-	if progressMgr != nil {
-		downloadStage := progressMgr.StartStage("download")
-		downloadStage.Complete()
-		progressMgr.StartStage("process")
-	}
-
-	// Stage 4: Save - flush remaining channels
-	if progressMgr != nil {
-		processStage := progressMgr.StartStage("process")
-		processStage.Complete()
-		progressMgr.StartStage("save")
-	}
-
-	if len(batchChannels) > 0 {
-		if batchErr := s.channelRepo.CreateBatch(ctx, batchChannels); batchErr != nil {
-			if err == nil {
-				err = fmt.Errorf("final batch insert: %w", batchErr)
-			}
-		}
-	}
 
 	if err != nil {
 		if progressMgr != nil {
@@ -457,18 +461,29 @@ func (s *SourceService) IngestAsync(ctx context.Context, id models.ULID) error {
 		return fmt.Errorf("getting source: %w", err)
 	}
 
-	// Check if already ingesting
+	// Atomically check if already ingesting using sync.Map
+	// This prevents race conditions where two ingestions start simultaneously
+	if _, loaded := s.ingestionLocks.LoadOrStore(id, true); loaded {
+		return fmt.Errorf("ingestion already in progress for source %s", id)
+	}
+
+	// Also check state manager (for consistency with existing logic)
 	if s.stateManager.IsIngesting(id) {
+		s.ingestionLocks.Delete(id)
 		return fmt.Errorf("ingestion already in progress for source %s", id)
 	}
 
 	// Start state tracking immediately
 	if err := s.stateManager.Start(source); err != nil {
+		s.ingestionLocks.Delete(id)
 		return fmt.Errorf("starting state tracking: %w", err)
 	}
 
 	// Run ingestion in background
 	go func() {
+		// Ensure we release the lock when done
+		defer s.ingestionLocks.Delete(id)
+
 		// Create a new context that isn't tied to the request
 		bgCtx := context.Background()
 
@@ -491,9 +506,26 @@ func (s *SourceService) performIngestion(ctx context.Context, source *models.Str
 		return
 	}
 
+	// Start progress tracking if service is available
+	var progressMgr *progress.OperationManager
+	if s.progressService != nil {
+		stages := getIngestionStages()
+		progressMgr, err = s.progressService.StartOperation(progress.OpStreamIngestion, id, "stream_source", stages)
+		if err != nil {
+			s.logger.Warn("failed to start progress tracking",
+				"source_id", id.String(),
+				"error", err.Error(),
+			)
+			progressMgr = nil
+		}
+	}
+
 	// Mark source as ingesting
 	source.MarkIngesting()
 	if err := s.sourceRepo.Update(ctx, source); err != nil {
+		if progressMgr != nil {
+			progressMgr.Fail(err)
+		}
 		s.stateManager.Fail(id, err)
 		return
 	}
@@ -503,47 +535,87 @@ func (s *SourceService) performIngestion(ctx context.Context, source *models.Str
 		"source_name", source.Name,
 	)
 
-	// Delete existing channels
-	if err := s.channelRepo.DeleteBySourceID(ctx, id); err != nil {
-		s.stateManager.Fail(id, err)
-		source.MarkFailed(err)
-		_ = s.sourceRepo.Update(ctx, source)
-		return
+	// Stage 1: Connect
+	if progressMgr != nil {
+		progressMgr.StartStage("connect")
+		progressMgr.SetMessage(fmt.Sprintf("Connecting to %s", source.Name))
 	}
 
-	// Perform ingestion
+	// Perform ingestion within a transaction for atomicity.
+	// This ensures delete + all inserts are atomic - if any fails, everything is rolled back.
 	var channelCount int
-	var batchChannels []*models.Channel
 	const batchSize = 1000
 
-	err = handler.Ingest(ctx, source, func(channel *models.Channel) error {
-		batchChannels = append(batchChannels, channel)
-		channelCount++
-
-		if channelCount%100 == 0 {
-			s.stateManager.UpdateProgress(id, channelCount, 0)
+	err = s.channelRepo.Transaction(ctx, func(txRepo repository.ChannelRepository) error {
+		// Delete existing channels within the transaction
+		if err := txRepo.DeleteBySourceID(ctx, id); err != nil {
+			return fmt.Errorf("deleting existing channels: %w", err)
 		}
 
-		if len(batchChannels) >= batchSize {
-			if err := s.channelRepo.CreateBatch(ctx, batchChannels); err != nil {
-				return err
+		// Stage 2: Download
+		if progressMgr != nil {
+			connectStage := progressMgr.StartStage("connect")
+			connectStage.Complete()
+			progressMgr.StartStage("download")
+			progressMgr.SetMessage("Downloading channels...")
+		}
+
+		// Collect channels in batches
+		var batchChannels []*models.Channel
+
+		// Perform ingestion with callback
+		if err := handler.Ingest(ctx, source, func(channel *models.Channel) error {
+			batchChannels = append(batchChannels, channel)
+			channelCount++
+
+			if channelCount%100 == 0 {
+				s.stateManager.UpdateProgress(id, channelCount, 0)
+				if progressMgr != nil {
+					progressMgr.SetMessage(fmt.Sprintf("Downloaded %d channels", channelCount))
+				}
 			}
-			batchChannels = batchChannels[:0]
+
+			if len(batchChannels) >= batchSize {
+				if err := txRepo.CreateBatch(ctx, batchChannels); err != nil {
+					return err
+				}
+				batchChannels = batchChannels[:0]
+			}
+
+			return nil
+		}); err != nil {
+			return fmt.Errorf("ingesting channels: %w", err)
+		}
+
+		// Stage 3: Process
+		if progressMgr != nil {
+			downloadStage := progressMgr.StartStage("download")
+			downloadStage.Complete()
+			progressMgr.StartStage("process")
+			progressMgr.SetMessage("Processing channels...")
+		}
+
+		// Stage 4: Save - flush remaining channels
+		if progressMgr != nil {
+			processStage := progressMgr.StartStage("process")
+			processStage.Complete()
+			progressMgr.StartStage("save")
+			progressMgr.SetMessage("Saving channels to database...")
+		}
+
+		if len(batchChannels) > 0 {
+			if err := txRepo.CreateBatch(ctx, batchChannels); err != nil {
+				return fmt.Errorf("final batch insert: %w", err)
+			}
 		}
 
 		return nil
 	})
 
-	// Flush remaining
-	if len(batchChannels) > 0 {
-		if batchErr := s.channelRepo.CreateBatch(ctx, batchChannels); batchErr != nil {
-			if err == nil {
-				err = batchErr
-			}
-		}
-	}
-
 	if err != nil {
+		if progressMgr != nil {
+			progressMgr.Fail(err)
+		}
 		s.stateManager.Fail(id, err)
 		source.MarkFailed(err)
 		_ = s.sourceRepo.Update(ctx, source)
@@ -557,6 +629,11 @@ func (s *SourceService) performIngestion(ctx context.Context, source *models.Str
 	source.MarkSuccess(channelCount)
 	_ = s.sourceRepo.Update(ctx, source)
 	s.stateManager.Complete(id, channelCount)
+
+	// Complete progress tracking
+	if progressMgr != nil {
+		progressMgr.Complete(fmt.Sprintf("Ingested %d channels from %s", channelCount, source.Name))
+	}
 
 	s.logger.Info("async ingestion completed",
 		"source_id", id.String(),

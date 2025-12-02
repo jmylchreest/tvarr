@@ -52,6 +52,10 @@ type ChannelRepository interface {
 	CountBySourceID(ctx context.Context, sourceID models.ULID) (int64, error)
 	// GetByExtID retrieves a channel by source ID and external ID.
 	GetByExtID(ctx context.Context, sourceID models.ULID, extID string) (*models.Channel, error)
+	// Transaction executes the given function within a database transaction.
+	// The provided function receives a transactional repository.
+	// If the function returns an error, the transaction is rolled back.
+	Transaction(ctx context.Context, fn func(ChannelRepository) error) error
 }
 
 // ManualStreamChannelRepository defines operations for manual channel persistence.
