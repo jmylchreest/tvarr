@@ -245,14 +245,10 @@ test.describe('Data Mapping Rule Validation Tests', () => {
     const nameField = page.locator('input[id="name"]');
     await nameField.fill('Modified Test Rule');
     const nameValue = await nameField.inputValue();
-    console.log(`Name field is interactive: ${nameValue === 'Modified Test Rule'}`);
-
-    return {
-      consoleErrors: consoleCapture.errors,
-      networkErrors: consoleCapture.networkErrors,
-      isHanging: spinnerCount > 0 && isSubmitDisabled,
-      canInteract: nameValue === 'Modified Test Rule',
-    };
+    const canInteract = nameValue === 'Modified Test Rule';
+    const isHanging = spinnerCount > 0 && isSubmitDisabled;
+    console.log(`Name field is interactive: ${canInteract}`);
+    console.log(`Test results: consoleErrors=${consoleCapture.errors.length}, networkErrors=${consoleCapture.networkErrors.length}, isHanging=${isHanging}, canInteract=${canInteract}`);
   });
 
   test('should test editing existing rule (if any exist)', async ({ page }) => {
@@ -319,20 +315,11 @@ test.describe('Data Mapping Rule Validation Tests', () => {
       const isUpdateDisabled = await updateButton.isDisabled();
       console.log(`Update button is disabled: ${isUpdateDisabled}`);
 
-      return {
-        editDialogOpened: true,
-        canEditFields: canEditName,
-        isHanging: spinnerCount > 0 && isUpdateDisabled,
-        consoleErrors: consoleCapture.errors,
-        networkErrors: consoleCapture.networkErrors,
-      };
+      const isHanging = spinnerCount > 0 && isUpdateDisabled;
+      console.log(`Edit test results: editDialogOpened=true, canEditFields=${canEditName}, isHanging=${isHanging}, consoleErrors=${consoleCapture.errors.length}, networkErrors=${consoleCapture.networkErrors.length}`);
     } else {
       console.log('Edit dialog did not open');
-      return {
-        editDialogOpened: false,
-        consoleErrors: consoleCapture.errors,
-        networkErrors: consoleCapture.networkErrors,
-      };
+      console.log(`Edit test results: editDialogOpened=false, consoleErrors=${consoleCapture.errors.length}, networkErrors=${consoleCapture.networkErrors.length}`);
     }
   });
 
@@ -389,12 +376,6 @@ test.describe('Data Mapping Rule Validation Tests', () => {
     const failedRequests = responses.filter((r) => !r.ok);
     console.log(`Failed API requests: ${failedRequests.length}`);
 
-    return {
-      totalRequests: requests.length,
-      totalResponses: responses.length,
-      failedRequests: failedRequests.length,
-      consoleErrors: consoleCapture.errors,
-      networkErrors: consoleCapture.networkErrors,
-    };
+    console.log(`Network test results: totalRequests=${requests.length}, totalResponses=${responses.length}, failedRequests=${failedRequests.length}, consoleErrors=${consoleCapture.errors.length}, networkErrors=${consoleCapture.networkErrors.length}`);
   });
 });

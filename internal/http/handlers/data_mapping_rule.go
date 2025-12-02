@@ -77,6 +77,7 @@ type DataMappingRuleResponse struct {
 	Priority    int     `json:"priority" doc:"Priority (lower = higher priority)"`
 	StopOnMatch bool    `json:"stop_on_match" doc:"Stop processing subsequent rules when this rule matches"`
 	IsEnabled   bool    `json:"is_enabled" doc:"Whether the rule is enabled"`
+	IsSystem    bool    `json:"is_system" doc:"Whether this is a system-provided rule (cannot be edited/deleted)"`
 	SourceID    *string `json:"source_id,omitempty" doc:"Source ID to restrict rule to (optional)"`
 	CreatedAt   string  `json:"created_at" doc:"Creation timestamp"`
 	UpdatedAt   string  `json:"updated_at" doc:"Last update timestamp"`
@@ -93,6 +94,7 @@ func DataMappingRuleFromModel(r *models.DataMappingRule) DataMappingRuleResponse
 		Priority:    r.Priority,
 		StopOnMatch: r.StopOnMatch,
 		IsEnabled:   r.IsEnabled,
+		IsSystem:    r.IsSystem,
 		CreatedAt:   r.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:   r.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
@@ -279,37 +281,51 @@ func (h *DataMappingRuleHandler) Update(ctx context.Context, input *UpdateDataMa
 		return nil, huma.Error404NotFound(fmt.Sprintf("data mapping rule %s not found", input.ID))
 	}
 
-	// Apply updates
-	if input.Body.Name != nil {
-		rule.Name = *input.Body.Name
-	}
-	if input.Body.Description != nil {
-		rule.Description = *input.Body.Description
-	}
-	if input.Body.SourceType != nil {
-		rule.SourceType = models.DataMappingRuleSourceType(*input.Body.SourceType)
-	}
-	if input.Body.Expression != nil {
-		rule.Expression = *input.Body.Expression
-	}
-	if input.Body.Priority != nil {
-		rule.Priority = *input.Body.Priority
-	}
-	if input.Body.StopOnMatch != nil {
-		rule.StopOnMatch = *input.Body.StopOnMatch
-	}
-	if input.Body.IsEnabled != nil {
-		rule.IsEnabled = *input.Body.IsEnabled
-	}
-	if input.Body.SourceID != nil {
-		if *input.Body.SourceID == "" {
-			rule.SourceID = nil
-		} else {
-			sourceID, err := models.ParseULID(*input.Body.SourceID)
-			if err != nil {
-				return nil, huma.Error400BadRequest("invalid source_id format", err)
+	// System defaults can only have is_enabled toggled
+	if rule.IsSystem {
+		if input.Body.Name != nil || input.Body.Description != nil ||
+			input.Body.SourceType != nil || input.Body.Expression != nil ||
+			input.Body.Priority != nil || input.Body.StopOnMatch != nil ||
+			input.Body.SourceID != nil {
+			return nil, huma.Error403Forbidden("system rules can only have is_enabled toggled")
+		}
+		// Only allow is_enabled update
+		if input.Body.IsEnabled != nil {
+			rule.IsEnabled = *input.Body.IsEnabled
+		}
+	} else {
+		// Apply updates for non-system rules
+		if input.Body.Name != nil {
+			rule.Name = *input.Body.Name
+		}
+		if input.Body.Description != nil {
+			rule.Description = *input.Body.Description
+		}
+		if input.Body.SourceType != nil {
+			rule.SourceType = models.DataMappingRuleSourceType(*input.Body.SourceType)
+		}
+		if input.Body.Expression != nil {
+			rule.Expression = *input.Body.Expression
+		}
+		if input.Body.Priority != nil {
+			rule.Priority = *input.Body.Priority
+		}
+		if input.Body.StopOnMatch != nil {
+			rule.StopOnMatch = *input.Body.StopOnMatch
+		}
+		if input.Body.IsEnabled != nil {
+			rule.IsEnabled = *input.Body.IsEnabled
+		}
+		if input.Body.SourceID != nil {
+			if *input.Body.SourceID == "" {
+				rule.SourceID = nil
+			} else {
+				sourceID, err := models.ParseULID(*input.Body.SourceID)
+				if err != nil {
+					return nil, huma.Error400BadRequest("invalid source_id format", err)
+				}
+				rule.SourceID = &sourceID
 			}
-			rule.SourceID = &sourceID
 		}
 	}
 
@@ -347,6 +363,11 @@ func (h *DataMappingRuleHandler) Delete(ctx context.Context, input *DeleteDataMa
 	}
 	if rule == nil {
 		return nil, huma.Error404NotFound(fmt.Sprintf("data mapping rule %s not found", input.ID))
+	}
+
+	// Prevent deletion of system rules
+	if rule.IsSystem {
+		return nil, huma.Error403Forbidden("system rules cannot be deleted")
 	}
 
 	if err := h.repo.Delete(ctx, id); err != nil {

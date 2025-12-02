@@ -77,6 +77,7 @@ type FilterResponse struct {
 	Expression  string  `json:"expression" doc:"Filter expression"`
 	Priority    int     `json:"priority" doc:"Priority (lower = higher priority)"`
 	IsEnabled   bool    `json:"is_enabled" doc:"Whether the filter is enabled"`
+	IsSystem    bool    `json:"is_system" doc:"Whether this is a system-provided filter (cannot be edited/deleted)"`
 	SourceID    *string `json:"source_id,omitempty" doc:"Source ID to restrict filter to (optional)"`
 	CreatedAt   string  `json:"created_at" doc:"Creation timestamp"`
 	UpdatedAt   string  `json:"updated_at" doc:"Last update timestamp"`
@@ -93,6 +94,7 @@ func FilterFromModel(f *models.Filter) FilterResponse {
 		Expression:  f.Expression,
 		Priority:    f.Priority,
 		IsEnabled:   f.IsEnabled,
+		IsSystem:    f.IsSystem,
 		CreatedAt:   f.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:   f.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
@@ -275,37 +277,51 @@ func (h *FilterHandler) Update(ctx context.Context, input *UpdateFilterInput) (*
 		return nil, huma.Error404NotFound(fmt.Sprintf("filter %s not found", input.ID))
 	}
 
-	// Apply updates
-	if input.Body.Name != nil {
-		filter.Name = *input.Body.Name
-	}
-	if input.Body.Description != nil {
-		filter.Description = *input.Body.Description
-	}
-	if input.Body.SourceType != nil {
-		filter.SourceType = models.FilterSourceType(*input.Body.SourceType)
-	}
-	if input.Body.Action != nil {
-		filter.Action = models.FilterAction(*input.Body.Action)
-	}
-	if input.Body.Expression != nil {
-		filter.Expression = *input.Body.Expression
-	}
-	if input.Body.Priority != nil {
-		filter.Priority = *input.Body.Priority
-	}
-	if input.Body.IsEnabled != nil {
-		filter.IsEnabled = *input.Body.IsEnabled
-	}
-	if input.Body.SourceID != nil {
-		if *input.Body.SourceID == "" {
-			filter.SourceID = nil
-		} else {
-			sourceID, err := models.ParseULID(*input.Body.SourceID)
-			if err != nil {
-				return nil, huma.Error400BadRequest("invalid source_id format", err)
+	// System defaults can only have is_enabled toggled
+	if filter.IsSystem {
+		if input.Body.Name != nil || input.Body.Description != nil ||
+			input.Body.SourceType != nil || input.Body.Action != nil ||
+			input.Body.Expression != nil || input.Body.Priority != nil ||
+			input.Body.SourceID != nil {
+			return nil, huma.Error403Forbidden("system filters can only have is_enabled toggled")
+		}
+		// Only allow is_enabled update
+		if input.Body.IsEnabled != nil {
+			filter.IsEnabled = *input.Body.IsEnabled
+		}
+	} else {
+		// Apply updates for non-system filters
+		if input.Body.Name != nil {
+			filter.Name = *input.Body.Name
+		}
+		if input.Body.Description != nil {
+			filter.Description = *input.Body.Description
+		}
+		if input.Body.SourceType != nil {
+			filter.SourceType = models.FilterSourceType(*input.Body.SourceType)
+		}
+		if input.Body.Action != nil {
+			filter.Action = models.FilterAction(*input.Body.Action)
+		}
+		if input.Body.Expression != nil {
+			filter.Expression = *input.Body.Expression
+		}
+		if input.Body.Priority != nil {
+			filter.Priority = *input.Body.Priority
+		}
+		if input.Body.IsEnabled != nil {
+			filter.IsEnabled = *input.Body.IsEnabled
+		}
+		if input.Body.SourceID != nil {
+			if *input.Body.SourceID == "" {
+				filter.SourceID = nil
+			} else {
+				sourceID, err := models.ParseULID(*input.Body.SourceID)
+				if err != nil {
+					return nil, huma.Error400BadRequest("invalid source_id format", err)
+				}
+				filter.SourceID = &sourceID
 			}
-			filter.SourceID = &sourceID
 		}
 	}
 
@@ -343,6 +359,11 @@ func (h *FilterHandler) Delete(ctx context.Context, input *DeleteFilterInput) (*
 	}
 	if filter == nil {
 		return nil, huma.Error404NotFound(fmt.Sprintf("filter %s not found", input.ID))
+	}
+
+	// Prevent deletion of system filters
+	if filter.IsSystem {
+		return nil, huma.Error403Forbidden("system filters cannot be deleted")
 	}
 
 	if err := h.repo.Delete(ctx, id); err != nil {

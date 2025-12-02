@@ -47,6 +47,7 @@ import {
   Grid,
   List,
   Table as TableIcon,
+  Lock,
 } from 'lucide-react';
 import { DataMappingRule, DataMappingSourceType, PaginatedResponse } from '@/types/api';
 import { apiClient, ApiError } from '@/lib/api-client';
@@ -115,8 +116,9 @@ function CreateDataMappingSheet({
     source_type: 'stream',
     expression: '',
     description: '',
-    is_active: true,
-    sort_order: 0,
+    is_enabled: true,
+    priority: 0,
+    stop_on_match: false,
   });
   const [mappingExpression, setMappingExpression] = useState('');
 
@@ -130,8 +132,9 @@ function CreateDataMappingSheet({
         source_type: 'stream',
         expression: '',
         description: '',
-        is_active: true,
-        sort_order: 0,
+        is_enabled: true,
+        priority: 0,
+        stop_on_match: false,
       });
       setMappingExpression('');
     }
@@ -219,14 +222,14 @@ function CreateDataMappingSheet({
 
           <div className="flex items-center space-x-2">
             <input
-              id="is_active"
+              id="is_enabled"
               type="checkbox"
-              checked={formData.is_active}
-              onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
+              checked={formData.is_enabled}
+              onChange={(e) => setFormData({ ...formData, is_enabled: e.target.checked })}
               className="rounded border-gray-300"
               disabled={loading}
             />
-            <Label htmlFor="is_active">Active Rule</Label>
+            <Label htmlFor="is_enabled">Active Rule</Label>
           </div>
         </form>
 
@@ -269,8 +272,9 @@ function EditDataMappingSheet({
     source_type: rule.source_type,
     expression: rule.expression || '',
     description: rule.description || '',
-    is_active: rule.is_active,
-    sort_order: rule.sort_order,
+    is_enabled: rule.is_enabled,
+    priority: rule.priority,
+    stop_on_match: rule.stop_on_match,
   });
   const [mappingExpression, setMappingExpression] = useState(() => {
     try {
@@ -287,8 +291,9 @@ function EditDataMappingSheet({
       source_type: rule.source_type,
       expression: rule.expression || '',
       description: rule.description || '',
-      is_active: rule.is_active,
-      sort_order: rule.sort_order,
+      is_enabled: rule.is_enabled,
+      priority: rule.priority,
+      stop_on_match: rule.stop_on_match,
     });
     try {
       setMappingExpression(rule.expression || '');
@@ -381,14 +386,14 @@ function EditDataMappingSheet({
           <div className="flex items-center space-x-6">
             <div className="flex items-center space-x-2">
               <input
-                id="edit-is_active"
+                id="edit-is_enabled"
                 type="checkbox"
-                checked={formData.is_active}
-                onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
+                checked={formData.is_enabled}
+                onChange={(e) => setFormData({ ...formData, is_enabled: e.target.checked })}
                 className="rounded border-gray-300"
                 disabled={loading}
               />
-              <Label htmlFor="edit-is_active">Active Rule</Label>
+              <Label htmlFor="edit-is_enabled">Active Rule</Label>
             </div>
           </div>
         </form>
@@ -480,7 +485,7 @@ export function DataMapping() {
 
         // Search in rule options/labels
         const optionMatches = [];
-        if (r.is_active) optionMatches.push('active', 'enabled');
+        if (r.is_enabled) optionMatches.push('active', 'enabled');
         else optionMatches.push('inactive', 'disabled');
 
         // Combine all searchable text
@@ -491,8 +496,8 @@ export function DataMapping() {
       });
     }
 
-    // Sort by sort order
-    return filtered.sort((a, b) => a.sort_order - b.sort_order);
+    // Sort by priority
+    return filtered.sort((a, b) => a.priority - b.priority);
   }, [allRules, searchTerm, filterSourceType]);
 
   const loadRules = useCallback(async () => {
@@ -556,11 +561,11 @@ export function DataMapping() {
     setErrors((prev) => ({ ...prev, create: null }));
 
     try {
-      // Set sort order to be the highest + 1
-      const maxSortOrder = allRules.length > 0 ? Math.max(...allRules.map((r) => r.sort_order)) : 0;
-      const ruleWithSortOrder = { ...newRule, sort_order: maxSortOrder + 1 };
+      // Set priority to be the highest + 1
+      const maxPriority = allRules.length > 0 ? Math.max(...allRules.map((r) => r.priority)) : 0;
+      const ruleWithPriority = { ...newRule, priority: maxPriority + 1 };
 
-      await apiClient.createDataMappingRule(ruleWithSortOrder);
+      await apiClient.createDataMappingRule(ruleWithPriority);
       await loadRules(); // Reload rules after creation
     } catch (error) {
       const apiError = error as ApiError;
@@ -640,10 +645,10 @@ export function DataMapping() {
         newOrder[currentIndex],
       ];
 
-      // Update sort orders
+      // Update priorities
       const reorderRequest = newOrder.map((rule, index) => ({
         id: rule.id,
-        sort_order: index + 1,
+        priority: index + 1,
       }));
 
       await apiClient.reorderDataMappingRules(reorderRequest);
@@ -699,10 +704,10 @@ export function DataMapping() {
       newOrder.splice(draggedIndex, 1);
       newOrder.splice(targetIndex, 0, draggedItem);
 
-      // Update sort orders
+      // Update priorities
       const reorderRequest = newOrder.map((rule, index) => ({
         id: rule.id,
-        sort_order: index + 1,
+        priority: index + 1,
       }));
 
       await apiClient.reorderDataMappingRules(reorderRequest);
@@ -721,7 +726,7 @@ export function DataMapping() {
 
   const streamRules = allRules?.filter((r) => r.source_type.toLowerCase() === 'stream').length || 0;
   const epgRules = allRules?.filter((r) => r.source_type.toLowerCase() === 'epg').length || 0;
-  const activeRules = allRules?.filter((r) => r.is_active).length || 0;
+  const activeRules = allRules?.filter((r) => r.is_enabled).length || 0;
   const totalRules = allRules?.length || 0;
 
   return (
@@ -961,13 +966,22 @@ export function DataMapping() {
                                     variant="secondary"
                                     className="text-xs font-mono bg-muted text-muted-foreground"
                                   >
-                                    {rule.sort_order}
+                                    {rule.priority}
                                   </Badge>
                                   <CardTitle className="text-lg">{rule.name}</CardTitle>
                                   <Badge className={getSourceTypeColor(rule.source_type)}>
                                     {rule.source_type.toUpperCase()}
                                   </Badge>
-                                  {rule.is_active ? (
+                                  {rule.is_system && (
+                                    <Badge
+                                      variant="outline"
+                                      className="text-purple-600 border-purple-600"
+                                    >
+                                      <Lock className="h-3 w-3 mr-1" />
+                                      System
+                                    </Badge>
+                                  )}
+                                  {rule.is_enabled ? (
                                     <Badge
                                       variant="outline"
                                       className="text-green-600 border-green-600"
@@ -1041,8 +1055,8 @@ export function DataMapping() {
                                   setIsEditSheetOpen(true);
                                 }}
                                 className="h-8 w-8 p-0"
-                                disabled={!isOnline}
-                                title="Edit rule"
+                                disabled={!isOnline || rule.is_system}
+                                title={rule.is_system ? "System rules cannot be edited" : "Edit rule"}
                               >
                                 <Edit className="h-4 w-4" />
                               </Button>
@@ -1051,8 +1065,8 @@ export function DataMapping() {
                                 size="sm"
                                 onClick={() => handleDeleteRule(rule.id)}
                                 className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                disabled={loading.delete === rule.id || !isOnline}
-                                title="Delete rule"
+                                disabled={loading.delete === rule.id || !isOnline || rule.is_system}
+                                title={rule.is_system ? "System rules cannot be deleted" : "Delete rule"}
                               >
                                 {loading.delete === rule.id ? (
                                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -1115,7 +1129,7 @@ export function DataMapping() {
                               <div className="flex items-center gap-2">
                                 <GripVertical className="h-3 w-3 text-muted-foreground cursor-grab" />
                                 <Badge variant="secondary" className="text-xs font-mono">
-                                  #{rule.sort_order}
+                                  #{rule.priority}
                                 </Badge>
                                 <CardTitle className="text-base">{rule.name}</CardTitle>
                               </div>
@@ -1123,7 +1137,16 @@ export function DataMapping() {
                                 <Badge className={getSourceTypeColor(rule.source_type)}>
                                   {rule.source_type.toUpperCase()}
                                 </Badge>
-                                {rule.is_active ? (
+                                {rule.is_system && (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-purple-600 border-purple-600"
+                                  >
+                                    <Lock className="h-3 w-3 mr-1" />
+                                    System
+                                  </Badge>
+                                )}
+                                {rule.is_enabled ? (
                                   <Badge
                                     variant="outline"
                                     className="text-green-600 border-green-600"
@@ -1204,7 +1227,8 @@ export function DataMapping() {
                                     setIsEditSheetOpen(true);
                                   }}
                                   className="h-8 w-8 p-0"
-                                  disabled={!isOnline}
+                                  disabled={!isOnline || rule.is_system}
+                                  title={rule.is_system ? "System rules cannot be edited" : "Edit rule"}
                                 >
                                   <Edit className="h-4 w-4" />
                                 </Button>
@@ -1213,7 +1237,8 @@ export function DataMapping() {
                                   size="sm"
                                   onClick={() => handleDeleteRule(rule.id)}
                                   className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                  disabled={loading.delete === rule.id || !isOnline}
+                                  disabled={loading.delete === rule.id || !isOnline || rule.is_system}
+                                  title={rule.is_system ? "System rules cannot be deleted" : "Delete rule"}
                                 >
                                   {loading.delete === rule.id ? (
                                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -1277,7 +1302,7 @@ export function DataMapping() {
                               <div className="flex items-center">
                                 <GripVertical className="h-4 w-4 text-muted-foreground cursor-grab mr-2" />
                                 <Badge variant="secondary" className="text-xs font-mono">
-                                  #{rule.sort_order}
+                                  #{rule.priority}
                                 </Badge>
                               </div>
                               <div className="flex-1 min-w-0">
@@ -1294,7 +1319,16 @@ export function DataMapping() {
                                     <Badge className={getSourceTypeColor(rule.source_type)}>
                                       {rule.source_type.toUpperCase()}
                                     </Badge>
-                                    {rule.is_active ? (
+                                    {rule.is_system && (
+                                      <Badge
+                                        variant="outline"
+                                        className="text-purple-600 border-purple-600 text-xs"
+                                      >
+                                        <Lock className="h-3 w-3 mr-1" />
+                                        System
+                                      </Badge>
+                                    )}
+                                    {rule.is_enabled ? (
                                       <Badge
                                         variant="outline"
                                         className="text-green-600 border-green-600 text-xs"
@@ -1357,7 +1391,8 @@ export function DataMapping() {
                                     setIsEditSheetOpen(true);
                                   }}
                                   className="h-8 w-8 p-0"
-                                  disabled={!isOnline}
+                                  disabled={!isOnline || rule.is_system}
+                                  title={rule.is_system ? "System rules cannot be edited" : "Edit rule"}
                                 >
                                   <Edit className="h-4 w-4" />
                                 </Button>
@@ -1366,7 +1401,8 @@ export function DataMapping() {
                                   size="sm"
                                   onClick={() => handleDeleteRule(rule.id)}
                                   className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                  disabled={loading.delete === rule.id || !isOnline}
+                                  disabled={loading.delete === rule.id || !isOnline || rule.is_system}
+                                  title={rule.is_system ? "System rules cannot be deleted" : "Delete rule"}
                                 >
                                   {loading.delete === rule.id ? (
                                     <Loader2 className="h-4 w-4 animate-spin" />
