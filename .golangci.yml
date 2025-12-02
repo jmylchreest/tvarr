@@ -1,0 +1,278 @@
+# golangci-lint configuration for tvarr
+# https://golangci-lint.run/usage/configuration/
+# Compatible with golangci-lint v2.x
+
+version: "2"
+
+# Linters configuration
+linters:
+  # Default set: 'standard' (enabled by default), 'all', or 'none'
+  default: none
+
+  # Enable specific linters
+  enable:
+    # Bugs and correctness
+    - errcheck        # Check for unchecked errors
+    - govet           # Reports suspicious constructs
+    - ineffassign     # Detect ineffectual assignments
+    - staticcheck     # Go static analysis (includes gosimple in v2)
+    - unused          # Check for unused constants, variables, functions and types
+
+    # Style and formatting
+    - misspell        # Find commonly misspelled English words
+    - whitespace      # Check for trailing whitespace
+
+    # Complexity
+    - gocyclo         # Check cyclomatic complexity
+    - gocognit        # Check cognitive complexity
+    - nestif          # Check deeply nested if statements
+
+    # Performance
+    - prealloc        # Find slice declarations that could potentially be preallocated
+
+    # Best practices
+    - errname         # Check error naming conventions
+    - errorlint       # Find code that will cause problems with error wrapping
+    - goconst         # Find repeated strings that could be replaced by a constant
+    - gocritic        # The most opinionated Go linter
+    - goprintffuncname # Check printf-like functions are named with f at the end
+    - nolintlint      # Ensure nolint directives are properly used
+    - revive          # Fast, configurable, extensible, flexible linter
+    - unconvert       # Remove unnecessary type conversions
+    - unparam         # Find unused function parameters
+
+    # Security
+    - gosec           # Security problems
+
+    # Comments and documentation
+    - godot           # Check if comments end in a period
+
+    # Modern Go features
+    - gomoddirectives # Manage replace, retract directives in go.mod
+    - gomodguard      # Check for blocked dependencies
+
+    # Testing
+    - tparallel       # Detects inappropriate usage of t.Parallel()
+
+    # Error handling
+    - wrapcheck       # Check that errors from external packages are wrapped
+
+    # Modern Go features and simplifications
+    - modernize       # Suggest simplifications using modern Go constructs (v2.6.0+)
+
+  # Linters settings
+  settings:
+    # Error checking
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+      exclude-functions:
+        - (io.Closer).Close
+        - (*database/sql.Rows).Close
+        - (*github.com/spf13/cobra.Command).MarkFlagRequired
+
+    # Cyclomatic complexity
+    gocyclo:
+      min-complexity: 15
+
+    # Cognitive complexity
+    gocognit:
+      min-complexity: 20
+
+    # Constants detection
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+
+    # Go critic
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+        - experimental
+      disabled-checks:
+        - commentedOutCode
+        - whyNoLint
+        - hugeParam
+
+    # Security
+    gosec:
+      excludes:
+        - G104  # Audit errors not checked (covered by errcheck)
+      config:
+        global:
+          audit: true
+
+    # Nested if depth
+    nestif:
+      min-complexity: 5
+
+    # Revive configuration
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+        - name: if-return
+        - name: increment-decrement
+        - name: var-naming
+        - name: var-declaration
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unused-parameter
+        - name: unreachable-code
+        - name: redefines-builtin-id
+
+    # Static check
+    staticcheck:
+      checks:
+        - all
+        - -SA1019  # Allow deprecated packages (we'll handle these explicitly)
+
+    # Unused code
+    unused:
+      field-writes-are-uses: true
+      exported-fields-are-used: false
+
+    # Whitespace
+    whitespace:
+      multi-if: true
+      multi-func: true
+
+    # Error wrapping
+    wrapcheck:
+      ignore-sigs:
+        - .Errorf(
+        - errors.New(
+        - errors.Unwrap(
+        - errors.Join(
+        - .Wrap(
+        - .Wrapf(
+        - .WithMessage(
+        - .WithMessagef(
+        - .WithStack(
+      ignore-package-globs:
+        - github.com/jmylchreest/tvarr/*
+
+  # Exclusions configuration
+  exclusions:
+    # Mode of the generated files analysis
+    # Options: strict, lax, disable
+    generated: lax
+
+    # Log a warning if an exclusion rule is unused
+    warn-unused: true
+
+    # Predefined exclusion rules
+    presets:
+      - comments
+      - std-error-handling
+      - common-false-positives
+      - legacy
+
+    # Excluding configuration per-path, per-linter, per-text and per-source
+    rules:
+      # Exclude some linters from running on tests files
+      - path: _test\.go
+        linters:
+          - gocyclo
+          - errcheck
+          - dupl
+          - gosec
+          - goconst
+          - gocognit
+
+      # Exclude magic number warnings in tests
+      - path: _test\.go
+        text: "mnd: Magic number"
+
+      # Exclude some staticcheck messages
+      - linters:
+          - staticcheck
+        text: "SA9003:"
+
+      # Exclude lll issues for long lines with go:generate
+      - linters:
+          - lll
+        source: "^//go:generate "
+
+      # Exclude godot issues for TODO comments
+      - linters:
+          - godot
+        source: "^// TODO"
+
+      # Allow blank identifiers in cmd package
+      - path: cmd/
+        text: "G104:"
+        linters:
+          - gosec
+
+      # Allow error shadowing in certain contexts
+      - text: 'shadow: declaration of "err"'
+        linters:
+          - govet
+
+      # Exclude wrapcheck for internal packages
+      - path: internal/
+        linters:
+          - wrapcheck
+
+# Formatters configuration
+formatters:
+  # Enable specific formatters
+  enable:
+    - gofmt  # Format code with gofmt
+
+# Issues configuration
+issues:
+  # Maximum issues count per one linter
+  # Set to 0 to disable
+  max-issues-per-linter: 0
+
+  # Maximum count of issues with the same text
+  # Set to 0 to disable
+  max-same-issues: 0
+
+  # Make issues output unique by line
+  uniq-by-line: true
+
+  # Show only new issues
+  new: false
+
+# Options for analysis running
+run:
+  # Timeout for analysis
+  timeout: 5m
+
+  # Include test files
+  tests: true
+
+  # Allow multiple parallel golangci-lint instances
+  allow-parallel-runners: true
+
+  # The mode used to evaluate relative paths
+  relative-path-mode: gomod
+
+# Severity settings
+severity:
+  # Set default severity
+  default: error
+
+  # Severity rules
+  rules:
+    - linters:
+        - goconst
+      severity: warning

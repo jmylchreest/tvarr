@@ -1,0 +1,226 @@
+package repository
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/jmylchreest/tvarr/internal/models"
+	"gorm.io/gorm"
+)
+
+// streamProxyRepo implements StreamProxyRepository using GORM.
+type streamProxyRepo struct {
+	db *gorm.DB
+}
+
+// NewStreamProxyRepository creates a new StreamProxyRepository.
+func NewStreamProxyRepository(db *gorm.DB) *streamProxyRepo {
+	return &streamProxyRepo{db: db}
+}
+
+// Create creates a new stream proxy.
+func (r *streamProxyRepo) Create(ctx context.Context, proxy *models.StreamProxy) error {
+	if err := r.db.WithContext(ctx).Create(proxy).Error; err != nil {
+		return fmt.Errorf("creating stream proxy: %w", err)
+	}
+	return nil
+}
+
+// GetByID retrieves a stream proxy by ID.
+func (r *streamProxyRepo) GetByID(ctx context.Context, id models.ULID) (*models.StreamProxy, error) {
+	var proxy models.StreamProxy
+	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&proxy).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("getting stream proxy by ID: %w", err)
+	}
+	return &proxy, nil
+}
+
+// GetByIDWithRelations retrieves a stream proxy with its sources and EPG sources.
+func (r *streamProxyRepo) GetByIDWithRelations(ctx context.Context, id models.ULID) (*models.StreamProxy, error) {
+	var proxy models.StreamProxy
+	if err := r.db.WithContext(ctx).
+		Preload("Sources").
+		Preload("EpgSources").
+		Where("id = ?", id).
+		First(&proxy).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("getting stream proxy with relations: %w", err)
+	}
+	return &proxy, nil
+}
+
+// GetAll retrieves all stream proxies.
+func (r *streamProxyRepo) GetAll(ctx context.Context) ([]*models.StreamProxy, error) {
+	var proxies []*models.StreamProxy
+	if err := r.db.WithContext(ctx).Order("name ASC").Find(&proxies).Error; err != nil {
+		return nil, fmt.Errorf("getting all stream proxies: %w", err)
+	}
+	return proxies, nil
+}
+
+// GetActive retrieves all active stream proxies.
+func (r *streamProxyRepo) GetActive(ctx context.Context) ([]*models.StreamProxy, error) {
+	var proxies []*models.StreamProxy
+	if err := r.db.WithContext(ctx).Where("is_active = ?", true).Order("name ASC").Find(&proxies).Error; err != nil {
+		return nil, fmt.Errorf("getting active stream proxies: %w", err)
+	}
+	return proxies, nil
+}
+
+// Update updates an existing stream proxy.
+func (r *streamProxyRepo) Update(ctx context.Context, proxy *models.StreamProxy) error {
+	if err := r.db.WithContext(ctx).Save(proxy).Error; err != nil {
+		return fmt.Errorf("updating stream proxy: %w", err)
+	}
+	return nil
+}
+
+// Delete deletes a stream proxy by ID.
+func (r *streamProxyRepo) Delete(ctx context.Context, id models.ULID) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Delete association records first
+		if err := tx.Where("proxy_id = ?", id).Delete(&models.ProxySource{}).Error; err != nil {
+			return fmt.Errorf("deleting proxy sources: %w", err)
+		}
+		if err := tx.Where("proxy_id = ?", id).Delete(&models.ProxyEpgSource{}).Error; err != nil {
+			return fmt.Errorf("deleting proxy epg sources: %w", err)
+		}
+		// Delete the proxy itself
+		if err := tx.Where("id = ?", id).Delete(&models.StreamProxy{}).Error; err != nil {
+			return fmt.Errorf("deleting stream proxy: %w", err)
+		}
+		return nil
+	})
+}
+
+// GetByName retrieves a stream proxy by name.
+func (r *streamProxyRepo) GetByName(ctx context.Context, name string) (*models.StreamProxy, error) {
+	var proxy models.StreamProxy
+	if err := r.db.WithContext(ctx).Where("name = ?", name).First(&proxy).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("getting stream proxy by name: %w", err)
+	}
+	return &proxy, nil
+}
+
+// UpdateStatus updates the generation status.
+func (r *streamProxyRepo) UpdateStatus(ctx context.Context, id models.ULID, status models.StreamProxyStatus, lastError string) error {
+	// Use UpdateColumns to skip hooks (BeforeUpdate validation requires full model)
+	if err := r.db.WithContext(ctx).Model(&models.StreamProxy{}).Where("id = ?", id).UpdateColumns(map[string]interface{}{
+		"status":     status,
+		"last_error": lastError,
+	}).Error; err != nil {
+		return fmt.Errorf("updating proxy status: %w", err)
+	}
+	return nil
+}
+
+// UpdateLastGeneration updates the last generation timestamp and counts.
+func (r *streamProxyRepo) UpdateLastGeneration(ctx context.Context, id models.ULID, channelCount, programCount int) error {
+	now := models.Now()
+	// Use UpdateColumns to skip hooks (BeforeUpdate validation requires full model)
+	if err := r.db.WithContext(ctx).Model(&models.StreamProxy{}).Where("id = ?", id).UpdateColumns(map[string]interface{}{
+		"status":            models.StreamProxyStatusSuccess,
+		"last_generated_at": now,
+		"channel_count":     channelCount,
+		"program_count":     programCount,
+		"last_error":        "",
+	}).Error; err != nil {
+		return fmt.Errorf("updating last generation: %w", err)
+	}
+	return nil
+}
+
+// SetSources sets the stream sources for a proxy (replaces existing).
+func (r *streamProxyRepo) SetSources(ctx context.Context, proxyID models.ULID, sourceIDs []models.ULID, priorities map[models.ULID]int) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Hard delete existing associations (these are junction tables, no need for soft delete)
+		if err := tx.Unscoped().Where("proxy_id = ?", proxyID).Delete(&models.ProxySource{}).Error; err != nil {
+			return fmt.Errorf("clearing existing sources: %w", err)
+		}
+
+		// Create new associations
+		for _, sourceID := range sourceIDs {
+			priority := 0
+			if priorities != nil {
+				if p, ok := priorities[sourceID]; ok {
+					priority = p
+				}
+			}
+			ps := &models.ProxySource{
+				ProxyID:  proxyID,
+				SourceID: sourceID,
+				Priority: priority,
+			}
+			if err := tx.Create(ps).Error; err != nil {
+				return fmt.Errorf("adding source %s: %w", sourceID, err)
+			}
+		}
+		return nil
+	})
+}
+
+// SetEpgSources sets the EPG sources for a proxy (replaces existing).
+func (r *streamProxyRepo) SetEpgSources(ctx context.Context, proxyID models.ULID, sourceIDs []models.ULID, priorities map[models.ULID]int) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Hard delete existing associations (these are junction tables, no need for soft delete)
+		if err := tx.Unscoped().Where("proxy_id = ?", proxyID).Delete(&models.ProxyEpgSource{}).Error; err != nil {
+			return fmt.Errorf("clearing existing EPG sources: %w", err)
+		}
+
+		// Create new associations
+		for _, sourceID := range sourceIDs {
+			priority := 0
+			if priorities != nil {
+				if p, ok := priorities[sourceID]; ok {
+					priority = p
+				}
+			}
+			pes := &models.ProxyEpgSource{
+				ProxyID:     proxyID,
+				EpgSourceID: sourceID,
+				Priority:    priority,
+			}
+			if err := tx.Create(pes).Error; err != nil {
+				return fmt.Errorf("adding EPG source %s: %w", sourceID, err)
+			}
+		}
+		return nil
+	})
+}
+
+// GetSources retrieves the stream sources for a proxy with priority ordering.
+func (r *streamProxyRepo) GetSources(ctx context.Context, proxyID models.ULID) ([]*models.StreamSource, error) {
+	var sources []*models.StreamSource
+	if err := r.db.WithContext(ctx).
+		Joins("JOIN proxy_sources ON proxy_sources.source_id = stream_sources.id AND proxy_sources.deleted_at IS NULL").
+		Where("proxy_sources.proxy_id = ?", proxyID).
+		Order("proxy_sources.priority DESC, stream_sources.name ASC").
+		Find(&sources).Error; err != nil {
+		return nil, fmt.Errorf("getting proxy sources: %w", err)
+	}
+	return sources, nil
+}
+
+// GetEpgSources retrieves the EPG sources for a proxy with priority ordering.
+func (r *streamProxyRepo) GetEpgSources(ctx context.Context, proxyID models.ULID) ([]*models.EpgSource, error) {
+	var sources []*models.EpgSource
+	if err := r.db.WithContext(ctx).
+		Joins("JOIN proxy_epg_sources ON proxy_epg_sources.epg_source_id = epg_sources.id AND proxy_epg_sources.deleted_at IS NULL").
+		Where("proxy_epg_sources.proxy_id = ?", proxyID).
+		Order("proxy_epg_sources.priority DESC, epg_sources.name ASC").
+		Find(&sources).Error; err != nil {
+		return nil, fmt.Errorf("getting proxy EPG sources: %w", err)
+	}
+	return sources, nil
+}
+
+// Ensure streamProxyRepo implements StreamProxyRepository at compile time.
+var _ StreamProxyRepository = (*streamProxyRepo)(nil)

@@ -1,0 +1,908 @@
+# https://taskfile.dev
+#
+# NOTE: This Taskfile uses POSIX shell commands and requires bash/sh.
+# Windows users should use WSL, Git Bash, or rely on GitHub Actions for builds.
+
+version: "3"
+
+vars:
+  BINARY_NAME: tvarr
+  DIST_DIR: dist
+  DEBUG_DIR: "{{.DIST_DIR}}/debug"
+  RELEASE_DIR: "{{.DIST_DIR}}/release"
+  MODULE: github.com/jmylchreest/tvarr
+  VERSION_PKG: "{{.MODULE}}/internal/version"
+  FRONTEND_DIR: frontend
+  ASSETS_DIR: internal/assets/static
+
+  # Version detection aligned with GitHub Actions
+  # Release: X.Y.Z (from exact git tag)
+  # Snapshot: X.Y.Z-dev.{commits}+{hash} (SemVer pre-release with build metadata)
+  GIT_TAG:
+    sh: git describe --tags --exact-match 2>/dev/null || echo ""
+  GIT_DESCRIBE:
+    sh: git describe --tags --always --long 2>/dev/null || echo ""
+  VERSION:
+    sh: |
+      if [ -n "{{.GIT_TAG}}" ]; then
+        echo "{{.GIT_TAG}}" | sed 's/^v//'
+      elif echo "{{.GIT_DESCRIBE}}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+-[0-9]+-g[a-f0-9]+$'; then
+        # Parse: vMAJOR.MINOR.PATCH-COMMITS-gHASH
+        MAJOR=$(echo "{{.GIT_DESCRIBE}}" | sed -E 's/^v([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9]+)-g([a-f0-9]+)$/\1/')
+        MINOR=$(echo "{{.GIT_DESCRIBE}}" | sed -E 's/^v([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9]+)-g([a-f0-9]+)$/\2/')
+        PATCH=$(echo "{{.GIT_DESCRIBE}}" | sed -E 's/^v([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9]+)-g([a-f0-9]+)$/\3/')
+        COMMITS=$(echo "{{.GIT_DESCRIBE}}" | sed -E 's/^v([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9]+)-g([a-f0-9]+)$/\4/')
+        HASH=$(echo "{{.GIT_DESCRIBE}}" | sed -E 's/^v([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9]+)-g([a-f0-9]+)$/\5/')
+        NEXT_PATCH=$((PATCH + 1))
+        echo "${MAJOR}.${MINOR}.${NEXT_PATCH}-dev.${COMMITS}+${HASH}"
+      else
+        SHORT_SHA=$(git rev-parse --short=7 HEAD 2>/dev/null || echo "unknown")
+        echo "0.0.1-dev.0+${SHORT_SHA}"
+      fi
+
+  # Build metadata
+  COMMIT:
+    sh: git rev-parse HEAD 2>/dev/null || echo "unknown"
+  SHORT_SHA:
+    sh: git rev-parse --short=7 HEAD 2>/dev/null || echo "unknown"
+  BUILD_DATE:
+    sh: date -u '+%Y-%m-%dT%H:%M:%SZ'
+  BRANCH:
+    sh: git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"
+  TREE_STATE:
+    sh: if git diff --quiet 2>/dev/null; then echo "clean"; else echo "dirty"; fi
+
+  # LDFLAGS for version injection (aligned with GitHub Actions)
+  LDFLAGS: >-
+    -s -w
+    -X {{.VERSION_PKG}}.Version={{.VERSION}}
+    -X {{.VERSION_PKG}}.Commit={{.COMMIT}}
+    -X {{.VERSION_PKG}}.Date={{.BUILD_DATE}}
+    -X {{.VERSION_PKG}}.Branch={{.BRANCH}}
+    -X {{.VERSION_PKG}}.TreeState={{.TREE_STATE}}
+
+  COVERAGE_FILE: coverage.out
+
+tasks:
+  default:
+    desc: Run lint, test, and build
+    cmds:
+      - task: lint
+      - task: test
+      - task: build
+
+  # ============================================
+  # Build Tasks
+  # ============================================
+
+  build:
+    desc: Build the application binary (debug, uncompressed)
+    cmds:
+      - mkdir -p {{.DEBUG_DIR}}
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.DEBUG_DIR}}/{{.BINARY_NAME}} ./cmd/tvarr
+    sources:
+      - ./**/*.go
+      - go.mod
+      - go.sum
+    generates:
+      - "{{.DEBUG_DIR}}/{{.BINARY_NAME}}"
+
+  build:linux:amd64:
+    desc: Cross-compile for Linux amd64
+    env:
+      CGO_ENABLED: "0"
+      GOOS: linux
+      GOARCH: amd64
+    cmds:
+      - mkdir -p {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_linux_amd64
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_linux_amd64/{{.BINARY_NAME}} ./cmd/tvarr
+
+  build:linux:arm64:
+    desc: Cross-compile for Linux arm64
+    env:
+      CGO_ENABLED: "0"
+      GOOS: linux
+      GOARCH: arm64
+    cmds:
+      - mkdir -p {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_linux_arm64
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_linux_arm64/{{.BINARY_NAME}} ./cmd/tvarr
+
+  build:darwin:amd64:
+    desc: Cross-compile for macOS amd64
+    env:
+      CGO_ENABLED: "0"
+      GOOS: darwin
+      GOARCH: amd64
+    cmds:
+      - mkdir -p {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_darwin_amd64
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_darwin_amd64/{{.BINARY_NAME}} ./cmd/tvarr
+
+  build:darwin:arm64:
+    desc: Cross-compile for macOS arm64 (Apple Silicon)
+    env:
+      CGO_ENABLED: "0"
+      GOOS: darwin
+      GOARCH: arm64
+    cmds:
+      - mkdir -p {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_darwin_arm64
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_darwin_arm64/{{.BINARY_NAME}} ./cmd/tvarr
+
+  build:windows:amd64:
+    desc: Cross-compile for Windows amd64
+    env:
+      CGO_ENABLED: "0"
+      GOOS: windows
+      GOARCH: amd64
+    cmds:
+      - mkdir -p {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_windows_amd64
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_windows_amd64/{{.BINARY_NAME}}.exe ./cmd/tvarr
+
+  build:windows:arm64:
+    desc: Cross-compile for Windows arm64
+    env:
+      CGO_ENABLED: "0"
+      GOOS: windows
+      GOARCH: arm64
+    cmds:
+      - mkdir -p {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_windows_arm64
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.RELEASE_DIR}}/{{.BINARY_NAME}}_{{.VERSION}}_windows_arm64/{{.BINARY_NAME}}.exe ./cmd/tvarr
+
+  build:all:
+    desc: Build for all platforms (matches GitHub Actions matrix)
+    cmds:
+      - task: build:linux:amd64
+      - task: build:linux:arm64
+      - task: build:darwin:amd64
+      - task: build:darwin:arm64
+      - task: build:windows:amd64
+      - task: build:windows:arm64
+
+  # ============================================
+  # UPX Compression Tasks
+  # ============================================
+
+  upx:install:
+    desc: Install UPX if not present
+    cmds:
+      - |
+        if ! command -v upx &> /dev/null; then
+          echo "Installing UPX..."
+          if command -v apt-get &> /dev/null; then
+            sudo apt-get update && sudo apt-get install -y upx
+          elif command -v brew &> /dev/null; then
+            brew install upx
+          elif command -v pacman &> /dev/null; then
+            sudo pacman -S upx
+          else
+            echo "Please install UPX manually: https://github.com/upx/upx/releases"
+            exit 1
+          fi
+        fi
+    status:
+      - command -v upx
+
+  upx:compress:
+    desc: Compress all release binaries with UPX
+    deps: [upx:install]
+    cmds:
+      - |
+        echo "Compressing binaries with UPX..."
+        for dir in {{.RELEASE_DIR}}/{{.BINARY_NAME}}_*; do
+          if [ -d "$dir" ]; then
+            for binary in "$dir"/{{.BINARY_NAME}} "$dir"/{{.BINARY_NAME}}.exe; do
+              if [ -f "$binary" ]; then
+                original_size=$(stat -c%s "$binary" 2>/dev/null || stat -f%z "$binary")
+                upx --best --lzma "$binary" 2>/dev/null || upx --best "$binary" || echo "UPX failed for $binary"
+                compressed_size=$(stat -c%s "$binary" 2>/dev/null || stat -f%z "$binary")
+                ratio=$((100 - (compressed_size * 100 / original_size)))
+                echo "  $binary: ${ratio}% reduction"
+              fi
+            done
+          fi
+        done
+
+  # ============================================
+  # Frontend Tasks
+  # ============================================
+
+  frontend:install:
+    desc: Install frontend dependencies
+    dir: "{{.FRONTEND_DIR}}"
+    cmds:
+      - npm install
+    sources:
+      - package.json
+      - package-lock.json
+    generates:
+      - node_modules/.package-lock.json
+
+  frontend:dev:
+    desc: Run frontend in development mode
+    dir: "{{.FRONTEND_DIR}}"
+    cmds:
+      - npm run dev
+
+  frontend:build:
+    desc: Build frontend for production
+    dir: "{{.FRONTEND_DIR}}"
+    deps: [frontend:install]
+    env:
+      VERSION: "{{.VERSION}}"
+    cmds:
+      - npm run build
+
+  frontend:embed:
+    desc: Build frontend and copy to assets for Go embedding
+    dir: "{{.FRONTEND_DIR}}"
+    deps: [frontend:install]
+    env:
+      VERSION: "{{.VERSION}}"
+    cmds:
+      - npm run build:embed
+    sources:
+      - src/**/*
+      - public/**/*
+      - package.json
+      - next.config.js
+      - tailwind.config.ts
+    generates:
+      - ../{{.ASSETS_DIR}}/**/*
+
+  frontend:lint:
+    desc: Lint frontend code
+    dir: "{{.FRONTEND_DIR}}"
+    cmds:
+      - npm run lint
+
+  frontend:typecheck:
+    desc: Run TypeScript type checking
+    dir: "{{.FRONTEND_DIR}}"
+    cmds:
+      - npm run type-check
+
+  # ============================================
+  # Release Tasks
+  # ============================================
+
+  release:archive:
+    desc: Create release archives (tar.gz for unix, zip for windows)
+    cmds:
+      - |
+        cd {{.RELEASE_DIR}}
+        for dir in {{.BINARY_NAME}}_*_linux_* {{.BINARY_NAME}}_*_darwin_*; do
+          if [ -d "$dir" ]; then
+            tar -czvf "${dir}.tar.gz" "$dir"
+          fi
+        done
+        for dir in {{.BINARY_NAME}}_*_windows_*; do
+          if [ -d "$dir" ]; then
+            zip -r "${dir}.zip" "$dir"
+          fi
+        done
+
+  release:checksums:
+    desc: Generate SHA256 checksums for release archives
+    cmds:
+      - |
+        cd {{.RELEASE_DIR}}
+        sha256sum *.tar.gz *.zip 2>/dev/null > checksums.txt || true
+        cat checksums.txt
+
+  release:local:
+    desc: Build a full local release (all platforms + UPX + archives + checksums)
+    cmds:
+      - task: clean:release
+      - task: frontend:embed
+      - task: build:all
+      - task: upx:compress
+      - task: release:archive
+      - task: release:checksums
+      - echo "Release artifacts in {{.RELEASE_DIR}}/"
+
+  release:local:fast:
+    desc: Build local release without UPX compression (faster)
+    cmds:
+      - task: clean:release
+      - task: frontend:embed
+      - task: build:all
+      - task: release:archive
+      - task: release:checksums
+      - echo "Release artifacts in {{.RELEASE_DIR}}/"
+
+  # ============================================
+  # Test Tasks
+  # ============================================
+
+  test:
+    desc: Run all tests with coverage
+    cmds:
+      - go test -v -coverprofile={{.COVERAGE_FILE}} ./...
+
+  test:race:
+    desc: Run tests with race detector (matches CI)
+    env:
+      CGO_ENABLED: "1"
+    cmds:
+      - go test -v -race -coverprofile={{.COVERAGE_FILE}} ./...
+
+  test:short:
+    desc: Run tests without verbose output (faster)
+    cmds:
+      - go test -short ./...
+
+  test:coverage:
+    desc: Generate and open coverage report
+    cmds:
+      - task: test
+      - go tool cover -html={{.COVERAGE_FILE}} -o coverage.html
+      - echo "Coverage report generated at coverage.html"
+
+  bench:
+    desc: Run benchmarks
+    cmds:
+      - go test -bench=. -benchmem ./...
+
+  # ============================================
+  # Lint & Verify Tasks
+  # ============================================
+
+  lint:
+    desc: Run golangci-lint (v2)
+    cmds:
+      - |
+        if ! command -v golangci-lint &> /dev/null; then
+          echo "Installing golangci-lint v2..."
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+        fi
+      - golangci-lint run ./...
+
+  lint:fix:
+    desc: Run golangci-lint with auto-fix
+    cmds:
+      - golangci-lint run --fix ./...
+
+  lint:install:
+    desc: Install or update golangci-lint v2
+    cmds:
+      - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+      - golangci-lint version
+
+  fmt:
+    desc: Format code with gofmt
+    cmds:
+      - go fmt ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  verify:
+    desc: Verify go.mod is tidy and code compiles (matches CI)
+    cmds:
+      - go mod tidy
+      - git diff --exit-code go.mod go.sum || (echo "go.mod/go.sum not tidy" && exit 1)
+      - go build ./...
+
+  # ============================================
+  # Security Tasks
+  # ============================================
+
+  security:
+    desc: Run all security checks (matches CI security job)
+    cmds:
+      - task: security:gosec
+      - task: security:vulncheck
+
+  security:gosec:
+    desc: Run gosec security scanner
+    cmds:
+      - |
+        if ! command -v gosec &> /dev/null; then
+          echo "Installing gosec..."
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+        fi
+      - gosec -no-fail ./...
+
+  security:vulncheck:
+    desc: Run govulncheck for known vulnerabilities
+    cmds:
+      - |
+        if ! command -v govulncheck &> /dev/null; then
+          echo "Installing govulncheck..."
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+        fi
+      - govulncheck ./...
+
+  security:install:
+    desc: Install security scanning tools
+    cmds:
+      - go install github.com/securego/gosec/v2/cmd/gosec@latest
+      - go install golang.org/x/vuln/cmd/govulncheck@latest
+      - echo "Security tools installed"
+
+  # ============================================
+  # CI Tasks (matches GitHub Actions ci.yml)
+  # ============================================
+
+  ci:
+    desc: Run full CI pipeline (matches GitHub Actions)
+    cmds:
+      - task: lint
+      - task: test:race
+      - task: security
+      - task: verify
+
+  ci:quick:
+    desc: Quick CI check (no race detector, no security)
+    cmds:
+      - task: lint
+      - task: test:short
+      - task: verify
+
+  # ============================================
+  # Run Tasks
+  # ============================================
+
+  run:
+    desc: Build and run the application
+    deps: [build]
+    cmds:
+      - ./{{.DEBUG_DIR}}/{{.BINARY_NAME}} serve
+
+  run:dev:
+    desc: Run Go backend with hot reload (API only, no frontend)
+    summary: |
+      Runs the Go backend server with hot reload using air.
+
+      For full-stack development:
+        Terminal 1: task run:dev       (Go backend on :8080)
+        Terminal 2: task frontend:dev  (Next.js on :3000)
+
+      The frontend dev server proxies API requests to the backend.
+      For production builds, use 'task frontend:embed' to embed the UI.
+    cmds:
+      - |
+        if ! command -v air &> /dev/null; then
+          echo "Installing air..."
+          go install github.com/air-verse/air@latest
+        fi
+      - air
+
+  run:prod:
+    desc: Build with embedded frontend and run (production-like)
+    cmds:
+      - task: frontend:embed
+      - task: build
+      - ./{{.DEBUG_DIR}}/{{.BINARY_NAME}} serve
+
+  # ============================================
+  # Dependency Tasks
+  # ============================================
+
+  deps:
+    desc: Download and tidy dependencies
+    cmds:
+      - go mod download
+      - go mod tidy
+
+  deps:update:
+    desc: Update all Go dependencies to latest versions
+    cmds:
+      - go get -u ./...
+      - go mod tidy
+
+  deps:update:all:
+    desc: Update all dependencies (Go + frontend)
+    cmds:
+      - task: deps:update
+      - task: frontend:deps:update
+
+  deps:check:
+    desc: Check for available Go dependency updates (like cargo outdated)
+    cmds:
+      - |
+        if ! command -v go-mod-upgrade &> /dev/null; then
+          echo "Installing go-mod-upgrade..."
+          go install github.com/oligot/go-mod-upgrade@latest
+        fi
+      - go-mod-upgrade
+
+  deps:vuln:
+    desc: Check for vulnerabilities in dependencies (alias for security:vulncheck)
+    cmds:
+      - task: security:vulncheck
+
+  # Frontend dependency tasks
+  frontend:deps:update:
+    desc: Update frontend dependencies (npm)
+    dir: "{{.FRONTEND_DIR}}"
+    cmds:
+      - npm update
+
+  frontend:deps:check:
+    desc: Check for available frontend dependency updates (like cargo outdated)
+    dir: "{{.FRONTEND_DIR}}"
+    cmds:
+      - npm outdated || true
+
+  frontend:deps:upgrade:
+    desc: Interactively upgrade frontend dependencies to latest versions
+    dir: "{{.FRONTEND_DIR}}"
+    cmds:
+      - |
+        if ! command -v npm-check-updates &> /dev/null; then
+          echo "Installing npm-check-updates globally..."
+          npm install -g npm-check-updates
+        fi
+      - ncu
+
+  frontend:deps:upgrade:apply:
+    desc: Apply all frontend dependency upgrades (may have breaking changes)
+    dir: "{{.FRONTEND_DIR}}"
+    cmds:
+      - |
+        if ! command -v npm-check-updates &> /dev/null; then
+          echo "Installing npm-check-updates globally..."
+          npm install -g npm-check-updates
+        fi
+      - ncu -u
+      - npm install
+
+  # ============================================
+  # Code Generation Tasks
+  # ============================================
+
+  generate:
+    desc: Run go generate
+    cmds:
+      - go generate ./...
+
+  # ============================================
+  # Clean Tasks
+  # ============================================
+
+  clean:
+    desc: Clean debug build artifacts
+    cmds:
+      - rm -rf {{.DEBUG_DIR}}
+      - rm -f {{.COVERAGE_FILE}} coverage.html
+      - rm -f cpu.prof mem.prof
+
+  clean:release:
+    desc: Clean release artifacts
+    cmds:
+      - rm -rf {{.RELEASE_DIR}}
+
+  clean:dist:
+    desc: Clean all distribution artifacts (debug + release)
+    cmds:
+      - rm -rf {{.DIST_DIR}}
+
+  clean:frontend:
+    desc: Clean frontend build artifacts
+    cmds:
+      - rm -rf {{.FRONTEND_DIR}}/.next
+      - rm -rf {{.FRONTEND_DIR}}/out
+      - rm -rf {{.ASSETS_DIR}}/*
+      - touch {{.ASSETS_DIR}}/.gitkeep
+
+  clean:all:
+    desc: Clean everything including caches
+    cmds:
+      - task: clean
+      - task: clean:dist
+      - task: clean:frontend
+      - go clean -cache -testcache
+
+  # ============================================
+  # Version Info
+  # ============================================
+
+  info:
+    desc: Show version information that would be built
+    cmds:
+      - 'echo "Version:    {{.VERSION}}"'
+      - 'echo "Commit:     {{.COMMIT}}"'
+      - 'echo "Branch:     {{.BRANCH}}"'
+      - 'echo "Tree State: {{.TREE_STATE}}"'
+      - 'echo "Build Date: {{.BUILD_DATE}}"'
+
+  # ============================================
+  # Version Sync Tasks
+  # ============================================
+
+  version:
+    desc: Show current version information
+    cmds:
+      - |
+        PKG_JSON="{{.FRONTEND_DIR}}/package.json"
+        PKG_VERSION=$(grep -o '"version": "[^"]*"' "$PKG_JSON" | cut -d'"' -f4)
+        GIT_VERSION="{{.VERSION}}"
+
+        echo "=== Version Info ==="
+        echo ""
+        echo "Git-derived version: ${GIT_VERSION}"
+        echo "Frontend package.json: ${PKG_VERSION}"
+        echo ""
+        if [ "$PKG_VERSION" = "$GIT_VERSION" ]; then
+          echo "Status: IN SYNC"
+        else
+          echo "Status: OUT OF SYNC"
+          echo ""
+          echo "To sync: task version:sync"
+        fi
+
+  version:sync:
+    desc: Sync frontend package.json version with git version
+    summary: |
+      Updates frontend/package.json to match the current git-derived version.
+      Use FORCE=true to allow setting a lower version than current.
+
+      Examples:
+        task version:sync                    # Sync to current git version
+        task version:sync VERSION=1.2.3     # Set specific version
+        task version:sync VERSION=0.1.0 FORCE=true  # Force lower version
+    cmds:
+      - |
+        TARGET="{{.VERSION}}"
+        FORCE="{{.FORCE}}"
+        PKG_JSON="{{.FRONTEND_DIR}}/package.json"
+
+        # Get current package.json version
+        CURRENT=$(grep -o '"version": "[^"]*"' "$PKG_JSON" | cut -d'"' -f4)
+
+        echo "Current package.json version: ${CURRENT}"
+        echo "Target version:               ${TARGET}"
+
+        # Skip if already at target
+        if [ "$CURRENT" = "$TARGET" ]; then
+          echo "Already at target version. Nothing to do."
+          exit 0
+        fi
+
+        # Version comparison function (returns 0 if $1 >= $2)
+        version_gte() {
+          [ "$(printf '%s\n' "$1" "$2" | sort -V | head -n1)" = "$2" ]
+        }
+
+        # Check if downgrading without force
+        if [ "$FORCE" != "true" ] && version_gte "$CURRENT" "$TARGET" && [ "$CURRENT" != "$TARGET" ]; then
+          echo ""
+          echo "Error: Target version ($TARGET) is lower than current ($CURRENT)"
+          echo "Use FORCE=true to override: task version:sync VERSION=$TARGET FORCE=true"
+          exit 1
+        fi
+
+        # Update package.json using sed (portable)
+        sed -i "s/\"version\": \"${CURRENT}\"/\"version\": \"${TARGET}\"/" "$PKG_JSON"
+
+        echo ""
+        echo "Updated $PKG_JSON to version ${TARGET}"
+
+  version:check:
+    desc: Check if frontend version matches git version
+    cmds:
+      - |
+        PKG_JSON="{{.FRONTEND_DIR}}/package.json"
+        CURRENT=$(grep -o '"version": "[^"]*"' "$PKG_JSON" | cut -d'"' -f4)
+        GIT_VERSION="{{.VERSION}}"
+
+        echo "Frontend package.json: ${CURRENT}"
+        echo "Git-derived version:   ${GIT_VERSION}"
+
+        if [ "$CURRENT" = "$GIT_VERSION" ]; then
+          echo ""
+          echo "Versions are in sync."
+        else
+          echo ""
+          echo "Warning: Versions are out of sync!"
+          echo "Run 'task version:sync' to update package.json"
+          exit 1
+        fi
+
+  # ============================================
+  # Version Bump & Release Tasks
+  # ============================================
+
+  bump:major:
+    desc: Bump major version (X.0.0)
+    cmds:
+      - task: _bump
+        vars:
+          BUMP_TYPE: major
+
+  bump:minor:
+    desc: Bump minor version (X.Y.0)
+    cmds:
+      - task: _bump
+        vars:
+          BUMP_TYPE: minor
+
+  bump:patch:
+    desc: Bump patch version (X.Y.Z)
+    cmds:
+      - task: _bump
+        vars:
+          BUMP_TYPE: patch
+
+  bump:
+    desc: Bump patch version (alias for bump:patch)
+    cmds:
+      - task: bump:patch
+
+  _bump:
+    internal: true
+    cmds:
+      - |
+        # Get current version from last tag
+        LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+        CURRENT_VERSION="${LAST_TAG#v}"
+
+        # Parse version components
+        IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+        MAJOR=${MAJOR:-0}
+        MINOR=${MINOR:-0}
+        PATCH=${PATCH:-0}
+
+        # Calculate new version based on bump type
+        case "{{.BUMP_TYPE}}" in
+          major)
+            NEW_VERSION="$((MAJOR + 1)).0.0"
+            ;;
+          minor)
+            NEW_VERSION="${MAJOR}.$((MINOR + 1)).0"
+            ;;
+          patch|*)
+            NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+            ;;
+        esac
+
+        echo "Current version: ${CURRENT_VERSION}"
+        echo "New version:     ${NEW_VERSION}"
+        echo ""
+        echo "To create a release, run: task release VERSION=${NEW_VERSION}"
+
+  release:
+    desc: Create a release (VERSION required, e.g., task release VERSION=1.2.3)
+    requires:
+      vars: [VERSION]
+    cmds:
+      - |
+        VERSION="{{.VERSION}}"
+        TAG="v${VERSION}"
+        PKG_JSON="{{.FRONTEND_DIR}}/package.json"
+
+        # Validate version format
+        if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+          echo "Error: VERSION must be in format X.Y.Z (e.g., 1.2.3)"
+          exit 1
+        fi
+
+        # Check if tag already exists
+        if git rev-parse "$TAG" >/dev/null 2>&1; then
+          echo "Error: Tag $TAG already exists"
+          exit 1
+        fi
+
+        # Check for uncommitted changes (excluding package.json which we'll update)
+        DIRTY_FILES=$(git diff --name-only; git diff --cached --name-only)
+        DIRTY_NON_PKG=$(echo "$DIRTY_FILES" | grep -v "^${PKG_JSON}$" | grep -v "^$" || true)
+        if [ -n "$DIRTY_NON_PKG" ]; then
+          echo "Error: You have uncommitted changes:"
+          echo "$DIRTY_NON_PKG"
+          echo ""
+          echo "Please commit or stash them first."
+          exit 1
+        fi
+
+        # Sync frontend package.json version
+        echo "Syncing frontend version to ${VERSION}..."
+        CURRENT_PKG_VERSION=$(grep -o '"version": "[^"]*"' "$PKG_JSON" | cut -d'"' -f4)
+        if [ "$CURRENT_PKG_VERSION" != "$VERSION" ]; then
+          sed -i "s/\"version\": \"${CURRENT_PKG_VERSION}\"/\"version\": \"${VERSION}\"/" "$PKG_JSON"
+          git add "$PKG_JSON"
+          git commit -m "chore: bump frontend version to ${VERSION}"
+          echo "Committed package.json version update"
+        else
+          echo "Frontend version already at ${VERSION}"
+        fi
+
+        # Get the previous tag for changelog
+        PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+        echo "Creating release ${VERSION}..."
+        echo ""
+
+        # Generate changelog
+        echo "## Changelog"
+        echo ""
+        if [ -n "$PREV_TAG" ]; then
+          echo "Changes since ${PREV_TAG}:"
+          echo ""
+          git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges
+        else
+          echo "Initial release"
+          echo ""
+          git log --pretty=format:"- %s (%h)" --no-merges
+        fi
+        echo ""
+        echo ""
+
+        # Confirm
+        read -p "Create tag ${TAG} and push? [y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+          echo "Aborted."
+          exit 1
+        fi
+
+        # Create annotated tag with changelog
+        CHANGELOG=$(
+          if [ -n "$PREV_TAG" ]; then
+            echo "Release ${VERSION}"
+            echo ""
+            echo "Changes since ${PREV_TAG}:"
+            echo ""
+            git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges
+          else
+            echo "Release ${VERSION}"
+            echo ""
+            echo "Initial release"
+          fi
+        )
+
+        git tag -a "${TAG}" -m "${CHANGELOG}"
+        echo ""
+        echo "Tag ${TAG} created locally."
+        echo ""
+        echo "To push the release:"
+        echo "  git push origin ${TAG}"
+
+  release:auto:
+    desc: Auto-release with patch bump if there are changes since last tag
+    cmds:
+      - |
+        # Get last tag
+        LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+        # Check if there are any commits since last tag
+        if [ -n "$LAST_TAG" ]; then
+          COMMITS_SINCE=$(git rev-list "${LAST_TAG}..HEAD" --count)
+          if [ "$COMMITS_SINCE" -eq 0 ]; then
+            echo "No commits since ${LAST_TAG}. Nothing to release."
+            exit 0
+          fi
+          echo "Found ${COMMITS_SINCE} commits since ${LAST_TAG}"
+        else
+          echo "No previous tags found. This will be the first release."
+        fi
+
+        # Check for uncommitted changes
+        if ! git diff --quiet || ! git diff --cached --quiet; then
+          echo "Error: You have uncommitted changes. Please commit or stash them first."
+          exit 1
+        fi
+
+        # Calculate next patch version
+        CURRENT_VERSION="${LAST_TAG#v}"
+        if [ -z "$CURRENT_VERSION" ]; then
+          CURRENT_VERSION="0.0.0"
+        fi
+
+        IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+        MAJOR=${MAJOR:-0}
+        MINOR=${MINOR:-0}
+        PATCH=${PATCH:-0}
+        NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+
+        echo "Will create release: ${NEW_VERSION}"
+        echo ""
+
+        # Call release task
+        task release VERSION="${NEW_VERSION}"
+
+  help:
+    desc: Show all available tasks
+    cmds:
+      - task --list-all

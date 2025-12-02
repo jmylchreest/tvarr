@@ -1,0 +1,313 @@
+# Snapshot Build workflow for tvarr
+# Builds development binaries on main branch pushes
+# Uses SemVer pre-release format: {major}.{minor}.{next_patch}-dev.{commits}+{hash}
+
+name: Build Snapshot
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      snapshot_retention:
+        description: "Number of snapshot releases to keep"
+        required: false
+        default: "5"
+        type: string
+      node_version:
+        description: "Node.js version for frontend build"
+        required: false
+        default: "lts/*"
+        type: string
+      go_version:
+        description: "Go version for backend build"
+        required: false
+        default: "stable"
+        type: string
+
+# Cancel in-progress runs for the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: ${{ inputs.go_version || 'stable' }}
+  NODE_VERSION: ${{ inputs.node_version || 'lts/*' }}
+  SNAPSHOT_RETENTION: ${{ inputs.snapshot_retention || '5' }}
+
+jobs:
+  # Determine version using git describe
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      version_tag: ${{ steps.version.outputs.version_tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        run: |
+          # SemVer pre-release format: {major}.{minor}.{patch}-dev.{commits}+{hash}
+          # The pre-release identifier is "dev.{commits}"
+          # The build metadata is the commit hash (after +)
+
+          if git describe --tags --always --long 2>/dev/null | grep -q '^v'; then
+            DESCRIBE=$(git describe --tags --always --long 2>/dev/null)
+            # Parse: vMAJOR.MINOR.PATCH-COMMITS-gHASH
+            if [[ $DESCRIBE =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9]+)-g([a-f0-9]+)$ ]]; then
+              MAJOR=${BASH_REMATCH[1]}
+              MINOR=${BASH_REMATCH[2]}
+              PATCH=${BASH_REMATCH[3]}
+              COMMITS=${BASH_REMATCH[4]}
+              HASH=${BASH_REMATCH[5]}
+              # Increment patch for dev version
+              NEXT_PATCH=$((PATCH + 1))
+              # SemVer format: pre-release after -, build metadata after +
+              VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}-dev.${COMMITS}+${HASH}"
+              VERSION_TAG="v${MAJOR}.${MINOR}.${NEXT_PATCH}-dev.${COMMITS}"
+            else
+              # Fallback if pattern doesn't match
+              SHORT_SHA=$(git rev-parse --short=7 HEAD)
+              VERSION="0.0.1-dev.0+${SHORT_SHA}"
+              VERSION_TAG="v0.0.1-dev.0-${SHORT_SHA}"
+            fi
+          else
+            # No tags: initial dev version
+            SHORT_SHA=$(git rev-parse --short=7 HEAD)
+            VERSION="0.0.1-dev.0+${SHORT_SHA}"
+            VERSION_TAG="v0.0.1-dev.0-${SHORT_SHA}"
+          fi
+
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "version_tag=${VERSION_TAG}" >> $GITHUB_OUTPUT
+          echo "Determined version: ${VERSION}"
+          echo "Release tag: ${VERSION_TAG}"
+
+  # Build frontend once (shared across all platform builds)
+  frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    needs: prepare
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: npm run build:embed
+
+      - name: Upload frontend assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-assets
+          path: internal/assets/static/
+          if-no-files-found: error
+
+  # Build binaries for all platforms
+  build:
+    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    needs: [prepare, frontend]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux builds (primary)
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          # macOS builds
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          # Windows builds
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Download frontend assets
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-assets
+          path: internal/assets/static/
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          COMMIT_SHA="${{ github.sha }}"
+          BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          BRANCH="${{ github.ref_name }}"
+          TREE_STATE="clean"
+
+          LDFLAGS="-s -w"
+          LDFLAGS="${LDFLAGS} -X github.com/jmylchreest/tvarr/internal/version.Version=${VERSION}"
+          LDFLAGS="${LDFLAGS} -X github.com/jmylchreest/tvarr/internal/version.Commit=${COMMIT_SHA}"
+          LDFLAGS="${LDFLAGS} -X github.com/jmylchreest/tvarr/internal/version.Date=${BUILD_TIME}"
+          LDFLAGS="${LDFLAGS} -X github.com/jmylchreest/tvarr/internal/version.Branch=${BRANCH}"
+          LDFLAGS="${LDFLAGS} -X github.com/jmylchreest/tvarr/internal/version.TreeState=${TREE_STATE}"
+
+          BINARY_NAME="tvarr"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            BINARY_NAME="tvarr.exe"
+          fi
+
+          OUTPUT_DIR="dist/tvarr_${{ needs.prepare.outputs.version }}_${{ matrix.goos }}_${{ matrix.goarch }}"
+          mkdir -p "${OUTPUT_DIR}"
+
+          go build -ldflags="${LDFLAGS}" -o "${OUTPUT_DIR}/${BINARY_NAME}" ./cmd/tvarr
+
+      - name: Install UPX
+        if: matrix.goos != 'darwin'
+        run: |
+          sudo apt-get update && sudo apt-get install -y upx
+
+      - name: Compress binary with UPX
+        if: matrix.goos != 'darwin'
+        run: |
+          BINARY_NAME="tvarr"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            BINARY_NAME="tvarr.exe"
+          fi
+          OUTPUT_DIR="dist/tvarr_${{ needs.prepare.outputs.version }}_${{ matrix.goos }}_${{ matrix.goarch }}"
+
+          echo "Compressing ${OUTPUT_DIR}/${BINARY_NAME} with UPX..."
+          original_size=$(stat -c%s "${OUTPUT_DIR}/${BINARY_NAME}")
+          upx --best --lzma "${OUTPUT_DIR}/${BINARY_NAME}" || upx --best "${OUTPUT_DIR}/${BINARY_NAME}" || echo "UPX compression failed, continuing with uncompressed binary"
+          compressed_size=$(stat -c%s "${OUTPUT_DIR}/${BINARY_NAME}")
+          echo "Size reduction: $((100 - (compressed_size * 100 / original_size)))%"
+
+      - name: Create archive
+        run: |
+          cd dist
+          DIR_NAME="tvarr_${{ needs.prepare.outputs.version }}_${{ matrix.goos }}_${{ matrix.goarch }}"
+
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            zip -r "${DIR_NAME}.zip" "${DIR_NAME}"
+          else
+            tar -czvf "${DIR_NAME}.tar.gz" "${DIR_NAME}"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tvarr_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  # Create snapshot release
+  release:
+    name: Snapshot Release
+    runs-on: ubuntu-latest
+    needs: [prepare, build]
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Set up Go for SBOM
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          artifact-name: sbom-${{ needs.prepare.outputs.version }}.spdx.json
+          output-file: artifacts/sbom-${{ needs.prepare.outputs.version }}.spdx.json
+          format: spdx-json
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum tvarr_*.tar.gz tvarr_*.zip sbom-*.spdx.json 2>/dev/null > checksums.txt || true
+
+      - name: Create snapshot release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.version_tag }}
+          name: Snapshot ${{ needs.prepare.outputs.version }}
+          draft: false
+          prerelease: true
+          body: |
+            **Automated snapshot build from main branch**
+
+            Version: `${{ needs.prepare.outputs.version }}`
+            Commit: `${{ github.sha }}`
+
+            This is an unstable development build. Use at your own risk.
+          files: |
+            artifacts/tvarr_*.tar.gz
+            artifacts/tvarr_*.zip
+            artifacts/sbom-*.spdx.json
+            artifacts/checksums.txt
+
+      - name: Cleanup old snapshot releases
+        run: |
+          RETENTION=${{ env.SNAPSHOT_RETENTION }}
+          echo "Keeping ${RETENTION} most recent snapshot releases"
+
+          # List all prerelease tags matching our pattern, sorted by creation date (newest first)
+          # Filter for tags that look like: v0.0.1-dev.0-abc1234 or v1.2.3-dev.5
+          SNAPSHOTS=$(gh release list --limit 100 | grep -E "v[0-9]+\.[0-9]+\.[0-9]+-dev\." | grep "Pre-release" | awk '{print $1}' | head -n 100)
+
+          COUNT=0
+          for TAG in $SNAPSHOTS; do
+            COUNT=$((COUNT + 1))
+            if [ $COUNT -gt $RETENTION ]; then
+              echo "Deleting old snapshot release: ${TAG}"
+              gh release delete "${TAG}" --yes --cleanup-tag 2>/dev/null || true
+            fi
+          done
+
+          echo "Cleanup complete. Kept ${RETENTION} most recent snapshots."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

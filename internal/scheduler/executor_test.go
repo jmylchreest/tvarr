@@ -1,0 +1,264 @@
+package scheduler
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/jmylchreest/tvarr/internal/models"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// mockJobHandler implements JobHandler for testing.
+type mockJobHandler struct {
+	executeResult string
+	executeErr    error
+	executeCalled bool
+}
+
+func (m *mockJobHandler) Execute(ctx context.Context, job *models.Job) (string, error) {
+	m.executeCalled = true
+	return m.executeResult, m.executeErr
+}
+
+// mockSourceService implements SourceIngestService for testing.
+type mockSourceService struct {
+	ingestErr    error
+	ingestCalled bool
+}
+
+func (m *mockSourceService) Ingest(ctx context.Context, sourceID models.ULID) error {
+	m.ingestCalled = true
+	return m.ingestErr
+}
+
+// mockEpgService implements EpgIngestService for testing.
+type mockEpgService struct {
+	ingestErr    error
+	ingestCalled bool
+}
+
+func (m *mockEpgService) Ingest(ctx context.Context, sourceID models.ULID) error {
+	m.ingestCalled = true
+	return m.ingestErr
+}
+
+// mockProxyService implements ProxyGenerateService for testing.
+type mockProxyService struct {
+	generateErr    error
+	generateCalled bool
+}
+
+func (m *mockProxyService) Generate(ctx context.Context, proxyID models.ULID) error {
+	m.generateCalled = true
+	return m.generateErr
+}
+
+func TestExecutor_RegisterHandler(t *testing.T) {
+	jobRepo := newMockJobRepo()
+	executor := NewExecutor(jobRepo)
+
+	handler := &mockJobHandler{}
+	executor.RegisterHandler(models.JobTypeStreamIngestion, handler)
+
+	// Handler should be registered
+	assert.NotNil(t, executor.handlers[models.JobTypeStreamIngestion])
+}
+
+func TestExecutor_Execute_Success(t *testing.T) {
+	jobRepo := newMockJobRepo()
+	executor := NewExecutor(jobRepo)
+
+	handler := &mockJobHandler{executeResult: "success"}
+	executor.RegisterHandler(models.JobTypeStreamIngestion, handler)
+
+	job := &models.Job{
+		Type:       models.JobTypeStreamIngestion,
+		TargetID:   models.NewULID(),
+		TargetName: "Test Source",
+		Status:     models.JobStatusRunning,
+	}
+	job.ID = models.NewULID()
+	jobRepo.jobs[job.ID] = job
+
+	ctx := context.Background()
+	err := executor.Execute(ctx, job)
+	require.NoError(t, err)
+
+	assert.True(t, handler.executeCalled)
+	assert.Equal(t, models.JobStatusCompleted, job.Status)
+	assert.Equal(t, "success", job.Result)
+	assert.NotNil(t, job.CompletedAt)
+
+	// History should be created
+	assert.Len(t, jobRepo.history, 1)
+	assert.Equal(t, models.JobStatusCompleted, jobRepo.history[0].Status)
+}
+
+func TestExecutor_Execute_Failure(t *testing.T) {
+	jobRepo := newMockJobRepo()
+	executor := NewExecutor(jobRepo)
+
+	handler := &mockJobHandler{executeErr: errors.New("ingestion failed")}
+	executor.RegisterHandler(models.JobTypeStreamIngestion, handler)
+
+	now := models.Now()
+	job := &models.Job{
+		Type:         models.JobTypeStreamIngestion,
+		TargetID:     models.NewULID(),
+		TargetName:   "Test Source",
+		Status:       models.JobStatusRunning,
+		StartedAt:    &now,
+		AttemptCount: 1, // Already attempted once
+		MaxAttempts:  1, // No retries allowed
+	}
+	job.ID = models.NewULID()
+	jobRepo.jobs[job.ID] = job
+
+	ctx := context.Background()
+	err := executor.Execute(ctx, job)
+	require.NoError(t, err) // Execute returns nil, error is recorded in job
+
+	assert.True(t, handler.executeCalled)
+	assert.Equal(t, models.JobStatusFailed, job.Status)
+	assert.Equal(t, "ingestion failed", job.LastError)
+	assert.NotNil(t, job.CompletedAt)
+
+	// History should be created
+	assert.Len(t, jobRepo.history, 1)
+	assert.Equal(t, models.JobStatusFailed, jobRepo.history[0].Status)
+}
+
+func TestExecutor_Execute_FailureWithRetry(t *testing.T) {
+	jobRepo := newMockJobRepo()
+	executor := NewExecutor(jobRepo)
+
+	handler := &mockJobHandler{executeErr: errors.New("temporary error")}
+	executor.RegisterHandler(models.JobTypeStreamIngestion, handler)
+
+	now := models.Now()
+	job := &models.Job{
+		Type:           models.JobTypeStreamIngestion,
+		TargetID:       models.NewULID(),
+		TargetName:     "Test Source",
+		Status:         models.JobStatusRunning,
+		StartedAt:      &now,
+		AttemptCount:   1,
+		MaxAttempts:    3,
+		BackoffSeconds: 10,
+	}
+	job.ID = models.NewULID()
+	jobRepo.jobs[job.ID] = job
+
+	ctx := context.Background()
+	err := executor.Execute(ctx, job)
+	require.NoError(t, err)
+
+	// Should be scheduled for retry
+	assert.Equal(t, models.JobStatusScheduled, job.Status)
+	assert.NotNil(t, job.NextRunAt)
+}
+
+func TestExecutor_Execute_NoHandler(t *testing.T) {
+	jobRepo := newMockJobRepo()
+	executor := NewExecutor(jobRepo)
+
+	job := &models.Job{
+		Type:       models.JobTypeStreamIngestion,
+		TargetID:   models.NewULID(),
+		TargetName: "Test Source",
+		Status:     models.JobStatusRunning,
+	}
+	job.ID = models.NewULID()
+
+	ctx := context.Background()
+	err := executor.Execute(ctx, job)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no handler registered")
+}
+
+func TestStreamIngestionHandler(t *testing.T) {
+	service := &mockSourceService{}
+	handler := NewStreamIngestionHandler(service)
+
+	job := &models.Job{
+		Type:       models.JobTypeStreamIngestion,
+		TargetID:   models.NewULID(),
+		TargetName: "Test Source",
+	}
+	job.ID = models.NewULID()
+
+	ctx := context.Background()
+
+	t.Run("success", func(t *testing.T) {
+		service.ingestErr = nil
+		result, err := handler.Execute(ctx, job)
+		require.NoError(t, err)
+		assert.Contains(t, result, "ingested source")
+		assert.True(t, service.ingestCalled)
+	})
+
+	t.Run("failure", func(t *testing.T) {
+		service.ingestErr = errors.New("connection error")
+		_, err := handler.Execute(ctx, job)
+		assert.Error(t, err)
+		assert.Equal(t, "connection error", err.Error())
+	})
+}
+
+func TestEpgIngestionHandler(t *testing.T) {
+	service := &mockEpgService{}
+	handler := NewEpgIngestionHandler(service)
+
+	job := &models.Job{
+		Type:       models.JobTypeEpgIngestion,
+		TargetID:   models.NewULID(),
+		TargetName: "Test EPG",
+	}
+	job.ID = models.NewULID()
+
+	ctx := context.Background()
+
+	t.Run("success", func(t *testing.T) {
+		service.ingestErr = nil
+		result, err := handler.Execute(ctx, job)
+		require.NoError(t, err)
+		assert.Contains(t, result, "ingested EPG source")
+		assert.True(t, service.ingestCalled)
+	})
+
+	t.Run("failure", func(t *testing.T) {
+		service.ingestErr = errors.New("parse error")
+		_, err := handler.Execute(ctx, job)
+		assert.Error(t, err)
+	})
+}
+
+func TestProxyGenerationHandler(t *testing.T) {
+	service := &mockProxyService{}
+	handler := NewProxyGenerationHandler(service)
+
+	job := &models.Job{
+		Type:       models.JobTypeProxyGeneration,
+		TargetID:   models.NewULID(),
+		TargetName: "Test Proxy",
+	}
+	job.ID = models.NewULID()
+
+	ctx := context.Background()
+
+	t.Run("success", func(t *testing.T) {
+		service.generateErr = nil
+		result, err := handler.Execute(ctx, job)
+		require.NoError(t, err)
+		assert.Contains(t, result, "generated proxy")
+		assert.True(t, service.generateCalled)
+	})
+
+	t.Run("failure", func(t *testing.T) {
+		service.generateErr = errors.New("pipeline error")
+		_, err := handler.Execute(ctx, job)
+		assert.Error(t, err)
+	})
+}
