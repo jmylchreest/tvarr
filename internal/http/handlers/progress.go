@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/sse"
 
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/service/progress"
@@ -61,6 +62,20 @@ type StageResponse struct {
 	Percentage float64 `json:"percentage"`
 	StageStep  string  `json:"stage_step,omitempty"`
 }
+
+// SSE Event Type Wrappers - required by Huma for OpenAPI schema generation.
+// Each event type must be a unique Go type for Huma to generate distinct schemas.
+// These types serialize identically to ProgressResponse for frontend compatibility.
+type (
+	// ProgressProgressEvent is sent for progress updates (state: starting, running).
+	ProgressProgressEvent ProgressResponse
+	// ProgressCompletedEvent is sent when operation completes successfully.
+	ProgressCompletedEvent ProgressResponse
+	// ProgressErrorEvent is sent when operation fails.
+	ProgressErrorEvent ProgressResponse
+	// ProgressCancelledEvent is sent when operation is cancelled.
+	ProgressCancelledEvent ProgressResponse
+)
 
 // ProgressFromService converts a service progress to a response.
 func ProgressFromService(p *progress.UniversalProgress) ProgressResponse {
@@ -163,6 +178,44 @@ func (h *ProgressHandler) Register(api huma.API) {
 		Description: "Returns details for a specific progress operation",
 		Tags:        []string{"Progress"},
 	}, h.GetOperation)
+
+	// Register SSE endpoint with Huma for OpenAPI documentation.
+	// The actual handler is registered separately via RegisterSSE on the chi router,
+	// which takes precedence. This registration provides OpenAPI schema generation.
+	sse.Register(api, huma.Operation{
+		OperationID: "progressEvents",
+		Method:      "GET",
+		Path:        "/api/v1/progress/events",
+		Summary:     "Subscribe to progress events",
+		Description: `Server-Sent Events stream for real-time progress updates.
+
+## Connection Protocol
+- On connect: receives ` + "`" + `:connected` + "`" + ` comment
+- Every 30s without events: receives ` + "`" + `:heartbeat <unix_epoch>` + "`" + ` comment (Unix timestamp in seconds)
+
+## Event Types
+- ` + "`" + `progress` + "`" + `: Operation in progress (state: starting, running)
+- ` + "`" + `completed` + "`" + `: Operation finished successfully (state: completed)
+- ` + "`" + `error` + "`" + `: Operation failed (state: error)
+- ` + "`" + `cancelled` + "`" + `: Operation was cancelled (state: cancelled)
+
+## Usage Example
+` + "```" + `javascript
+const eventSource = new EventSource('/api/v1/progress/events?owner_id=abc123');
+eventSource.addEventListener('progress', (e) => console.log(JSON.parse(e.data)));
+eventSource.addEventListener('completed', (e) => console.log(JSON.parse(e.data)));
+` + "```",
+		Tags: []string{"Progress"},
+	}, map[string]any{
+		"progress":  ProgressProgressEvent{},
+		"completed": ProgressCompletedEvent{},
+		"error":     ProgressErrorEvent{},
+		"cancelled": ProgressCancelledEvent{},
+	}, func(ctx context.Context, input *SSEEventsInput, send sse.Sender) {
+		// This handler is a placeholder for OpenAPI schema generation.
+		// The actual SSE handling is done by RegisterSSE on the chi router.
+		<-ctx.Done()
+	})
 }
 
 // RegisterSSE registers the SSE endpoint on a chi router.

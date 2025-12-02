@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/sse"
 
 	"github.com/jmylchreest/tvarr/internal/service/logs"
 )
@@ -51,13 +52,24 @@ type LogEntryResponse struct {
 // LogStatsResponse represents log statistics in API responses.
 // Matches frontend LogStats type.
 type LogStatsResponse struct {
-	TotalLogs          int64             `json:"total_logs"`
-	LogsByLevel        map[string]int64  `json:"logs_by_level"`
-	LogsByModule       map[string]int64  `json:"logs_by_module"`
+	TotalLogs          int64              `json:"total_logs"`
+	LogsByLevel        map[string]int64   `json:"logs_by_level"`
+	LogsByModule       map[string]int64   `json:"logs_by_module"`
 	RecentErrors       []LogEntryResponse `json:"recent_errors"`
-	LogRatePerMinute   float64           `json:"log_rate_per_minute"`
-	OldestLogTimestamp *time.Time        `json:"oldest_log_timestamp,omitempty"`
-	NewestLogTimestamp *time.Time        `json:"newest_log_timestamp,omitempty"`
+	LogRatePerMinute   float64            `json:"log_rate_per_minute"`
+	OldestLogTimestamp *time.Time         `json:"oldest_log_timestamp,omitempty"`
+	NewestLogTimestamp *time.Time         `json:"newest_log_timestamp,omitempty"`
+}
+
+// SSE Event Type Wrapper - required by Huma for OpenAPI schema generation.
+// LogLogEvent is sent for each log entry streamed via SSE.
+type LogLogEvent LogEntryResponse
+
+// SSELogsStreamInput defines query parameters for the logs SSE endpoint.
+type SSELogsStreamInput struct {
+	Level   string `query:"level" doc:"Filter by minimum log level (trace, debug, info, warn, error)"`
+	Module  string `query:"module" doc:"Filter by module name"`
+	Initial int    `query:"initial" default:"50" minimum:"0" maximum:"500" doc:"Number of recent logs to send on connect (0-500)"`
 }
 
 // LogEntryFromService converts a service log entry to a response.
@@ -138,6 +150,38 @@ func (h *LogsHandler) Register(api huma.API) {
 		Description: "Returns the most recent log entries",
 		Tags:        []string{"Logs"},
 	}, h.GetRecentLogs)
+
+	// Register SSE endpoint with Huma for OpenAPI documentation.
+	// The actual handler is registered separately via RegisterSSE on the chi router,
+	// which takes precedence. This registration provides OpenAPI schema generation.
+	sse.Register(api, huma.Operation{
+		OperationID: "logsStream",
+		Method:      "GET",
+		Path:        "/api/v1/logs/stream",
+		Summary:     "Subscribe to log events",
+		Description: `Server-Sent Events stream for real-time log entries.
+
+## Connection Protocol
+- On connect: receives ` + "`" + `:connected` + "`" + ` comment
+- On connect with ` + "`" + `initial=N` + "`" + `: receives up to N recent log entries before live streaming
+- Every 30s without events: receives ` + "`" + `:heartbeat <unix_epoch>` + "`" + ` comment (Unix timestamp in seconds)
+
+## Event Type
+- ` + "`" + `log` + "`" + `: A log entry
+
+## Usage Example
+` + "```" + `javascript
+const eventSource = new EventSource('/api/v1/logs/stream?level=error&initial=100');
+eventSource.addEventListener('log', (e) => console.log(JSON.parse(e.data)));
+` + "```",
+		Tags: []string{"Logs"},
+	}, map[string]any{
+		"log": LogLogEvent{},
+	}, func(ctx context.Context, input *SSELogsStreamInput, send sse.Sender) {
+		// This handler is a placeholder for OpenAPI schema generation.
+		// The actual SSE handling is done by RegisterSSE on the chi router.
+		<-ctx.Done()
+	})
 }
 
 // RegisterSSE registers the SSE endpoint on a chi router.

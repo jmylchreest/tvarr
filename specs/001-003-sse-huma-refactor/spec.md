@@ -5,6 +5,12 @@
 **Status**: Draft
 **Input**: Refactor SSE endpoints to use Huma's native `sse.Register` for automatic OpenAPI documentation
 
+## Clarifications
+
+### Session 2025-12-02
+
+- Q: How should heartbeats be implemented with Huma's sse.Sender? → A: Send custom heartbeats as SSE comments in format `:heartbeat <unix_epoch>` every 30 seconds
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - API Documentation Discovery (Priority: P1)
@@ -67,7 +73,7 @@ As a frontend developer, I want the SSE connection to send heartbeats so I can d
 
 **Acceptance Scenarios**:
 
-1. **Given** I'm connected to an SSE endpoint, **When** 30 seconds pass without events, **Then** I receive a heartbeat comment
+1. **Given** I'm connected to an SSE endpoint, **When** 30 seconds pass without events, **Then** I receive a heartbeat comment in format `:heartbeat <unix_epoch>`
 2. **Given** I'm connected to an SSE endpoint, **When** the connection is first established, **Then** I receive a `:connected` comment immediately
 
 ---
@@ -86,7 +92,7 @@ As a frontend developer, I want the SSE connection to send heartbeats so I can d
 - **FR-002**: System MUST document all SSE event types in the OpenAPI specification
 - **FR-003**: System MUST support the same query parameters currently available (`operation_type`, `owner_id`, `resource_id` for progress; `level`, `module`, `initial` for logs)
 - **FR-004**: System MUST send a `:connected` comment immediately on connection
-- **FR-005**: System MUST send heartbeat comments every 30 seconds
+- **FR-005**: System MUST send heartbeat comments every 30 seconds in format `:heartbeat <unix_epoch>`
 - **FR-006**: System MUST properly close subscriber channels on client disconnect
 - **FR-007**: System MUST maintain backward compatibility with existing frontend SSE consumers
 
