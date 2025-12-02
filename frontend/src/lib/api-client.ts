@@ -12,9 +12,10 @@ import {
   CreateStreamProxyRequest,
   UpdateStreamProxyRequest,
   Filter,
-  FilterWithMeta,
+  FilterListResponse,
   FilterTestRequest,
   DataMappingRule,
+  DataMappingRuleListResponse,
   RelayProfile,
   RelayHealthApiResponse,
   RuntimeSettings,
@@ -37,6 +38,25 @@ class ApiError extends Error {
     super(message);
     this.name = 'ApiError';
   }
+}
+
+// Transform backend stream source response to frontend format
+function transformStreamSourceResponse(source: any): StreamSourceResponse {
+  return {
+    ...source,
+    source_type: source.type || source.source_type,
+    update_cron: source.cron_schedule || source.update_cron || '',
+    max_concurrent_streams: source.max_concurrent_streams || 0,
+  };
+}
+
+// Transform backend EPG source response to frontend format
+function transformEpgSourceResponse(source: any): EpgSourceResponse {
+  return {
+    ...source,
+    source_type: source.type || source.source_type,
+    update_cron: source.cron_schedule || source.update_cron || '',
+  };
 }
 
 class ApiClient {
@@ -83,8 +103,16 @@ class ApiClient {
 
         try {
           errorData = await response.json();
-          if (errorData.error) {
+          // Check for different error formats:
+          // - Huma RFC 7807 problem details: { detail: "message" }
+          // - Standard error: { error: "message" }
+          // - Message field: { message: "message" }
+          if (errorData.detail) {
+            errorMessage = errorData.detail;
+          } else if (errorData.error) {
             errorMessage = errorData.error;
+          } else if (errorData.message) {
+            errorMessage = errorData.message;
           }
         } catch {
           // Response is not JSON, use status text
@@ -133,23 +161,38 @@ class ApiClient {
     if (params?.page) searchParams.set('page', params.page.toString());
     if (params?.limit) searchParams.set('limit', params.limit.toString());
     if (params?.search) searchParams.set('search', params.search);
-    if (params?.source_type) searchParams.set('source_type', params.source_type);
+    if (params?.source_type) searchParams.set('type', params.source_type); // Backend uses 'type'
 
     const queryString = searchParams.toString();
     const endpoint = `${API_CONFIG.endpoints.streamSources}${queryString ? `?${queryString}` : ''}`;
 
-    return this.request<PaginatedResponse<StreamSourceResponse>>(endpoint);
+    const response = await this.request<any>(endpoint);
+    // Backend returns 'sources' array, frontend expects 'items'
+    const sources = response.sources || response.items || [];
+    const transformedSources = sources.map(transformStreamSourceResponse);
+
+    // Return in the format expected by frontend PaginatedResponse
+    return {
+      items: transformedSources,
+      total: response.total || transformedSources.length,
+      page: response.page || 1,
+      per_page: response.per_page || response.limit || transformedSources.length,
+      total_pages: response.total_pages || 1,
+      has_next: response.has_next || false,
+      has_previous: response.has_previous || false,
+    } as PaginatedResponse<StreamSourceResponse>;
   }
 
-  async getStreamSource(id: string): Promise<ApiResponse<StreamSourceResponse>> {
-    return this.request<ApiResponse<StreamSourceResponse>>(
+  async getStreamSource(id: string): Promise<StreamSourceResponse> {
+    const response = await this.request<any>(
       `${API_CONFIG.endpoints.streamSources}/${id}`
     );
+    return transformStreamSourceResponse(response);
   }
 
   async createStreamSource(
     source: CreateStreamSourceRequest
-  ): Promise<ApiResponse<StreamSourceResponse>> {
+  ): Promise<StreamSourceResponse> {
     // Manual source normalization:
     // - If source_type==='manual': require >=1 manual_channels; strip empty url (backend treats as optional)
     // - If not manual: remove accidental manual_channels to avoid 400 from backend
@@ -167,16 +210,30 @@ class ApiClient {
     } else if ('manual_channels' in payload) {
       delete payload.manual_channels;
     }
-    return this.request<ApiResponse<StreamSourceResponse>>(API_CONFIG.endpoints.streamSources, {
+
+    // Transform frontend field names to backend field names
+    if ('source_type' in payload) {
+      payload.type = payload.source_type;
+      delete payload.source_type;
+    }
+    if ('update_cron' in payload) {
+      payload.cron_schedule = payload.update_cron;
+      delete payload.update_cron;
+    }
+    // Backend doesn't have max_concurrent_streams on source
+    delete payload.max_concurrent_streams;
+
+    const response = await this.request<any>(API_CONFIG.endpoints.streamSources, {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+    return transformStreamSourceResponse(response);
   }
 
   async updateStreamSource(
     id: string,
     source: UpdateStreamSourceRequest
-  ): Promise<ApiResponse<StreamSourceResponse>> {
+  ): Promise<StreamSourceResponse> {
     // Normalize manual update semantics:
     // - If manual & manual_channels provided:
     //     * Reject explicit empty array to prevent accidental wipe (omit field for no change)
@@ -196,13 +253,27 @@ class ApiClient {
     } else if ('manual_channels' in payload) {
       delete payload.manual_channels;
     }
-    return this.request<ApiResponse<StreamSourceResponse>>(
+
+    // Transform frontend field names to backend field names
+    if ('source_type' in payload) {
+      payload.type = payload.source_type;
+      delete payload.source_type;
+    }
+    if ('update_cron' in payload) {
+      payload.cron_schedule = payload.update_cron;
+      delete payload.update_cron;
+    }
+    // Backend doesn't have max_concurrent_streams on source
+    delete payload.max_concurrent_streams;
+
+    const response = await this.request<any>(
       `${API_CONFIG.endpoints.streamSources}/${id}`,
       {
         method: 'PUT',
         body: JSON.stringify(payload),
       }
     );
+    return transformStreamSourceResponse(response);
   }
 
   async deleteStreamSource(id: string): Promise<void> {
@@ -212,7 +283,7 @@ class ApiClient {
   }
 
   async refreshStreamSource(id: string): Promise<void> {
-    await this.request<void>(`${API_CONFIG.endpoints.streamSources}/${id}/refresh`, {
+    await this.request<void>(`${API_CONFIG.endpoints.streamSources}/${id}/ingest`, {
       method: 'POST',
     });
   }
@@ -303,36 +374,75 @@ class ApiClient {
     if (params?.page) searchParams.set('page', params.page.toString());
     if (params?.limit) searchParams.set('limit', params.limit.toString());
     if (params?.search) searchParams.set('search', params.search);
-    if (params?.source_type) searchParams.set('source_type', params.source_type);
+    if (params?.source_type) searchParams.set('type', params.source_type); // Backend uses 'type'
 
     const queryString = searchParams.toString();
     const endpoint = `${API_CONFIG.endpoints.epgSources}${queryString ? `?${queryString}` : ''}`;
 
-    return this.request<PaginatedResponse<EpgSourceResponse>>(endpoint);
+    const response = await this.request<any>(endpoint);
+    // Backend returns 'sources' array, frontend expects 'items'
+    const sources = response.sources || response.items || [];
+    const transformedSources = sources.map(transformEpgSourceResponse);
+
+    // Return in the format expected by frontend PaginatedResponse
+    return {
+      items: transformedSources,
+      total: response.total || transformedSources.length,
+      page: response.page || 1,
+      per_page: response.per_page || response.limit || transformedSources.length,
+      total_pages: response.total_pages || 1,
+      has_next: response.has_next || false,
+      has_previous: response.has_previous || false,
+    } as PaginatedResponse<EpgSourceResponse>;
   }
 
-  async getEpgSource(id: string): Promise<ApiResponse<EpgSourceResponse>> {
-    return this.request<ApiResponse<EpgSourceResponse>>(`${API_CONFIG.endpoints.epgSources}/${id}`);
+  async getEpgSource(id: string): Promise<EpgSourceResponse> {
+    const response = await this.request<any>(`${API_CONFIG.endpoints.epgSources}/${id}`);
+    return transformEpgSourceResponse(response);
   }
 
-  async createEpgSource(source: CreateEpgSourceRequest): Promise<ApiResponse<EpgSourceResponse>> {
-    return this.request<ApiResponse<EpgSourceResponse>>(API_CONFIG.endpoints.epgSources, {
+  async createEpgSource(source: CreateEpgSourceRequest): Promise<EpgSourceResponse> {
+    // Transform frontend field names to backend field names
+    const payload: any = { ...source };
+    if ('source_type' in payload) {
+      payload.type = payload.source_type;
+      delete payload.source_type;
+    }
+    if ('update_cron' in payload) {
+      payload.cron_schedule = payload.update_cron;
+      delete payload.update_cron;
+    }
+
+    const response = await this.request<any>(API_CONFIG.endpoints.epgSources, {
       method: 'POST',
-      body: JSON.stringify(source),
+      body: JSON.stringify(payload),
     });
+    return transformEpgSourceResponse(response);
   }
 
   async updateEpgSource(
     id: string,
     source: CreateEpgSourceRequest
-  ): Promise<ApiResponse<EpgSourceResponse>> {
-    return this.request<ApiResponse<EpgSourceResponse>>(
+  ): Promise<EpgSourceResponse> {
+    // Transform frontend field names to backend field names
+    const payload: any = { ...source };
+    if ('source_type' in payload) {
+      payload.type = payload.source_type;
+      delete payload.source_type;
+    }
+    if ('update_cron' in payload) {
+      payload.cron_schedule = payload.update_cron;
+      delete payload.update_cron;
+    }
+
+    const response = await this.request<any>(
       `${API_CONFIG.endpoints.epgSources}/${id}`,
       {
         method: 'PUT',
-        body: JSON.stringify(source),
+        body: JSON.stringify(payload),
       }
     );
+    return transformEpgSourceResponse(response);
   }
 
   async deleteEpgSource(id: string): Promise<void> {
@@ -342,7 +452,7 @@ class ApiClient {
   }
 
   async refreshEpgSource(id: string): Promise<void> {
-    await this.request<void>(`${API_CONFIG.endpoints.epgSources}/${id}/refresh`, {
+    await this.request<void>(`${API_CONFIG.endpoints.epgSources}/${id}/ingest`, {
       method: 'POST',
     });
   }
@@ -362,7 +472,24 @@ class ApiClient {
     const queryString = searchParams.toString();
     const endpoint = `${API_CONFIG.endpoints.proxies}${queryString ? `?${queryString}` : ''}`;
 
-    return this.request<PaginatedResponse<StreamProxy>>(endpoint);
+    const response = await this.request<any>(endpoint);
+
+    // Backend returns 'proxies' array, frontend expects 'items'
+    const proxies = response.proxies || response.items || [];
+    const total = response.total || proxies.length;
+    const page = response.page || params?.page || 1;
+    const limit = response.limit || params?.limit || 50;
+    const totalPages = response.total_pages || Math.ceil(total / limit);
+    return {
+      items: proxies,
+      total,
+      page,
+      limit,
+      per_page: limit,
+      total_pages: totalPages,
+      has_next: page < totalPages,
+      has_previous: page > 1,
+    } as PaginatedResponse<StreamProxy>;
   }
 
   async getProxy(id: string): Promise<ApiResponse<StreamProxy>> {
@@ -370,9 +497,27 @@ class ApiClient {
   }
 
   async createProxy(proxy: CreateStreamProxyRequest): Promise<ApiResponse<StreamProxy>> {
+    // Transform frontend field names to backend field names
+    const payload: any = { ...proxy };
+
+    // Convert stream_sources array to source_ids array of ULIDs
+    if ('stream_sources' in payload) {
+      payload.source_ids = (payload.stream_sources || []).map((s: any) => s.id || s);
+      delete payload.stream_sources;
+    }
+
+    // Convert epg_sources array to epg_source_ids array of ULIDs
+    if ('epg_sources' in payload) {
+      payload.epg_source_ids = (payload.epg_sources || []).map((s: any) => s.id || s);
+      delete payload.epg_sources;
+    }
+
+    // Remove filters - handled separately via setProxyFilters
+    delete payload.filters;
+
     return this.request<ApiResponse<StreamProxy>>(API_CONFIG.endpoints.proxies, {
       method: 'POST',
-      body: JSON.stringify(proxy),
+      body: JSON.stringify(payload),
     });
   }
 
@@ -380,9 +525,24 @@ class ApiClient {
     id: string,
     proxy: UpdateStreamProxyRequest
   ): Promise<ApiResponse<StreamProxy>> {
+    // Transform frontend field names to backend field names
+    const payload: any = { ...proxy };
+
+    // Remove source-related fields - update doesn't support them, use setProxySources instead
+    delete payload.stream_sources;
+    delete payload.source_ids;
+    delete payload.epg_sources;
+    delete payload.epg_source_ids;
+    delete payload.filters;
+
+    // Remove empty relay_profile_id - backend expects ULID or null, not empty string
+    if (payload.relay_profile_id === '' || payload.relay_profile_id === null) {
+      delete payload.relay_profile_id;
+    }
+
     return this.request<ApiResponse<StreamProxy>>(`${API_CONFIG.endpoints.proxies}/${id}`, {
       method: 'PUT',
-      body: JSON.stringify(proxy),
+      body: JSON.stringify(payload),
     });
   }
 
@@ -432,18 +592,21 @@ class ApiClient {
     limit?: number;
     search?: string;
     source_type?: string;
-  }): Promise<FilterWithMeta[]> {
+    enabled?: boolean;
+  }): Promise<Filter[]> {
     const searchParams = new URLSearchParams();
 
     if (params?.page) searchParams.set('page', params.page.toString());
     if (params?.limit) searchParams.set('limit', params.limit.toString());
     if (params?.search) searchParams.set('search', params.search);
     if (params?.source_type) searchParams.set('source_type', params.source_type);
+    if (params?.enabled !== undefined) searchParams.set('enabled', params.enabled.toString());
 
     const queryString = searchParams.toString();
     const endpoint = `${API_CONFIG.endpoints.filters}${queryString ? `?${queryString}` : ''}`;
 
-    return this.request<FilterWithMeta[]>(endpoint);
+    const response = await this.request<FilterListResponse>(endpoint);
+    return response.filters;
   }
 
   async getFilter(id: string): Promise<ApiResponse<Filter>> {
@@ -515,7 +678,8 @@ class ApiClient {
     const queryString = searchParams.toString();
     const endpoint = `${API_CONFIG.endpoints.dataMapping}${queryString ? `?${queryString}` : ''}`;
 
-    return this.request<DataMappingRule[]>(endpoint);
+    const response = await this.request<DataMappingRuleListResponse>(endpoint);
+    return response.rules;
   }
 
   async getDataMappingRule(id: string): Promise<ApiResponse<DataMappingRule>> {
@@ -547,7 +711,7 @@ class ApiClient {
     });
   }
 
-  async reorderDataMappingRules(rules: { id: string; sort_order: number }[]): Promise<void> {
+  async reorderDataMappingRules(rules: { id: string; priority: number }[]): Promise<void> {
     await this.request<void>(`${API_CONFIG.endpoints.dataMapping}/reorder`, {
       method: 'PUT',
       body: JSON.stringify({ rules }),
@@ -629,7 +793,10 @@ class ApiClient {
 
   // Relay Profiles API
   async getRelayProfiles(): Promise<RelayProfile[]> {
-    return this.request<RelayProfile[]>(`${API_CONFIG.endpoints.relays}/profiles`);
+    const response = await this.request<{ profiles: RelayProfile[] }>(
+      `${API_CONFIG.endpoints.relays}/profiles`
+    );
+    return response.profiles || [];
   }
 
   // Settings API
@@ -694,7 +861,7 @@ class ApiClient {
     if (name) formData.append('name', name);
     if (description) formData.append('description', description);
 
-    return this.request(`${API_CONFIG.endpoints.logos}/${id}/image`, {
+    return this.request(`${API_CONFIG.endpoints.logos}/${id}/replace`, {
       method: 'PUT',
       body: formData,
     });

@@ -137,15 +137,15 @@ function MultiSelectModal({
         data = response.items || [];
       } else if (type === 'filter') {
         const response = await apiClient.getFilters();
-        // Handle the nested filter structure from API
+        // Filters are returned directly as an array
         data = Array.isArray(response)
-          ? response.map((item) => ({
-              id: item.filter.id,
-              name: item.filter.name,
-              source_type: item.filter.source_type,
-              is_inverse: item.filter.is_inverse,
-              is_system_default: item.filter.is_system_default,
-              is_active: true,
+          ? response.map((filter) => ({
+              id: filter.id,
+              name: filter.name,
+              source_type: filter.source_type,
+              action: filter.action,
+              is_enabled: filter.is_enabled,
+              is_active: filter.is_enabled,
             }))
           : [];
       }
@@ -178,11 +178,11 @@ function MultiSelectModal({
       if (source.source_type) {
         labels.push(source.source_type.toUpperCase());
       }
-      if (source.is_inverse) {
-        labels.push('Inverse');
+      if (source.action) {
+        labels.push(source.action.toUpperCase());
       }
-      if (source.is_system_default) {
-        labels.push('System Default');
+      if (!source.is_enabled) {
+        labels.push('Disabled');
       }
       return labels;
     } else {
@@ -332,9 +332,9 @@ function AssignedItemsList({
         } else if (type === 'filter') {
           const response = await apiClient.getFilters();
           sources = Array.isArray(response)
-            ? response.map((item) => ({
-                id: item.filter.id,
-                name: item.filter.name,
+            ? response.map((filter) => ({
+                id: filter.id,
+                name: filter.name,
               }))
             : [];
         }
@@ -465,7 +465,7 @@ export function ProxySheet({
     description: '',
     proxy_mode: 'proxy',
     upstream_timeout: 30,
-    max_concurrent_streams: 10,
+    max_concurrent_streams: 0,
     starting_channel_number: 1,
     stream_sources: [],
     epg_sources: [],
@@ -542,7 +542,7 @@ export function ProxySheet({
               description: sourceProxyData.description || '',
               proxy_mode: sourceProxyData.proxy_mode as 'redirect' | 'proxy' | 'relay',
               upstream_timeout: sourceProxyData.upstream_timeout || 30,
-              max_concurrent_streams: sourceProxyData.max_concurrent_streams || 10,
+              max_concurrent_streams: sourceProxyData.max_concurrent_streams ?? 0,
               starting_channel_number: sourceProxyData.starting_channel_number,
               stream_sources: streamSources,
               epg_sources: epgSources,
@@ -560,7 +560,7 @@ export function ProxySheet({
               description: '',
               proxy_mode: 'proxy',
               upstream_timeout: 30,
-              max_concurrent_streams: 10,
+              max_concurrent_streams: 0,
               starting_channel_number: 1,
               stream_sources: [],
               epg_sources: [],
@@ -667,7 +667,7 @@ export function ProxySheet({
             description: '',
             proxy_mode: 'proxy',
             upstream_timeout: 30,
-            max_concurrent_streams: 10,
+            max_concurrent_streams: 0,
             starting_channel_number: 1,
             stream_sources: [],
             epg_sources: [],
@@ -934,16 +934,17 @@ export function ProxySheet({
                   value={formData.max_concurrent_streams.toString()}
                   onChange={(e) => {
                     const value = e.target.value.replace(/[^0-9]/g, '');
-                    if (value === '' || (parseInt(value) >= 1 && parseInt(value) <= 1000)) {
+                    if (value === '' || (parseInt(value) >= 0 && parseInt(value) <= 1000)) {
                       setFormData((prev) => ({
                         ...prev,
-                        max_concurrent_streams: value === '' ? 10 : parseInt(value),
+                        max_concurrent_streams: value === '' ? 0 : parseInt(value),
                       }));
                     }
                   }}
                   onFocus={(e) => e.target.select()}
-                  placeholder="10"
+                  placeholder="0"
                 />
+                <p className="text-xs text-muted-foreground">0 = unlimited</p>
               </div>
             </div>
           </div>

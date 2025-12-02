@@ -223,17 +223,18 @@ export default function ChannelsPage() {
           throw new Error(`Failed to fetch channels: ${response.status} ${response.statusText}`);
         }
 
-        const data: { success: boolean; data: ChannelsResponse } = await response.json();
+        // Backend returns { success, items, total, page, per_page, has_next, has_previous }
+        const data = await response.json();
         if (!data.success) {
           throw new Error('API returned unsuccessful response');
         }
 
-        const channelsData = data.data.channels;
+        const channelsData = data.items || [];
 
         if (append) {
           setChannels((prev) => {
             const existing = new Set(prev.map((c) => c.id));
-            const merged = channelsData.filter((c) => !existing.has(c.id));
+            const merged = channelsData.filter((c: Channel) => !existing.has(c.id));
             return [...prev, ...merged];
           });
         } else if (isSearchChange && pageNum === 1) {
@@ -243,12 +244,12 @@ export default function ChannelsPage() {
         }
 
         setCurrentPage(pageNum);
-        setTotal(data.data.total);
-        setHasMore(data.data.has_more);
+        setTotal(data.total || 0);
+        setHasMore(data.has_next || false);
 
         if (!append) {
           const uniqueGroups = Array.from(
-            new Set(channelsData.map((c) => c.group).filter(Boolean))
+            new Set(channelsData.map((c: Channel) => c.group).filter(Boolean))
           ) as string[];
           setGroups(uniqueGroups);
         }

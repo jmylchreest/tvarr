@@ -127,18 +127,27 @@ export interface ProxyFilterRequest {
 
 // Filter Types
 export type FilterSourceType = 'stream' | 'epg';
+export type FilterAction = 'include' | 'exclude';
 
 export interface Filter {
   id: string;
   name: string;
+  description?: string;
   source_type: FilterSourceType;
-  is_inverse: boolean;
+  action: FilterAction;
   expression: string;
-  condition_tree: string | object;
-  usage_count: number;
-  is_system_default?: boolean;
+  priority: number;
+  is_enabled: boolean;
+  is_system?: boolean;  // Optional - set by backend, not API
+  source_id?: string;
   created_at: string;
   updated_at: string;
+}
+
+// Response wrapper for filter list endpoint
+export interface FilterListResponse {
+  filters: Filter[];
+  count: number;
 }
 
 export interface FilterExpressionTree {
@@ -151,14 +160,17 @@ export interface FilterExpressionTree {
   children?: FilterExpressionTree[];
 }
 
+// Deprecated - keeping for backward compatibility during migration
 export interface FilterWithMeta {
   filter: Filter;
 }
 
 // Relay Types
-export type VideoCodec = 'H264' | 'H265' | 'AV1' | 'MPEG2' | 'MPEG4' | 'Copy';
-export type AudioCodec = 'AAC' | 'MP3' | 'AC3' | 'EAC3' | 'MPEG2Audio' | 'DTS' | 'Copy';
-export type RelayOutputFormat = 'TransportStream' | 'HLS' | 'Dash' | 'Copy';
+// Backend uses FFmpeg codec names like 'libx264', 'libx265', 'copy', 'aac', etc.
+export type VideoCodec = string;
+export type AudioCodec = string;
+export type RelayOutputFormat = string;
+export type HWAccelType = string;
 
 export interface RelayProfile {
   id: string;
@@ -166,21 +178,19 @@ export interface RelayProfile {
   description?: string;
   video_codec: VideoCodec;
   audio_codec: AudioCodec;
-  video_profile?: string;
-  video_preset?: string;
   video_bitrate?: number;
   audio_bitrate?: number;
+  video_maxrate?: number;
+  video_preset?: string;
+  video_width?: number;
+  video_height?: number;
   audio_sample_rate?: number;
   audio_channels?: number;
-  enable_hardware_acceleration: boolean;
-  preferred_hwaccel?: string;
-  manual_args?: string;
+  hw_accel: HWAccelType;
   output_format: RelayOutputFormat;
-  segment_duration?: number;
-  max_segments?: number;
-  input_timeout?: number;
-  is_system_default: boolean;
-  is_active: boolean;
+  is_default: boolean;
+  is_system?: boolean;  // Optional - set by backend, not API
+  enabled: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -188,22 +198,19 @@ export interface RelayProfile {
 export interface CreateRelayProfileRequest {
   name: string;
   description?: string;
-  video_codec: VideoCodec;
-  audio_codec: AudioCodec;
-  video_profile?: string;
+  video_codec?: VideoCodec;
+  audio_codec?: AudioCodec;
   video_preset?: string;
   video_bitrate?: number;
   audio_bitrate?: number;
+  video_maxrate?: number;
+  video_width?: number;
+  video_height?: number;
   audio_sample_rate?: number;
   audio_channels?: number;
-  enable_hardware_acceleration?: boolean;
-  preferred_hwaccel?: string;
-  manual_args?: string;
-  output_format: RelayOutputFormat;
-  segment_duration?: number;
-  max_segments?: number;
-  input_timeout?: number;
-  is_system_default?: boolean;
+  hw_accel?: HWAccelType;
+  output_format?: RelayOutputFormat;
+  is_default?: boolean;
 }
 
 export interface UpdateRelayProfileRequest {
@@ -211,20 +218,16 @@ export interface UpdateRelayProfileRequest {
   description?: string;
   video_codec?: VideoCodec;
   audio_codec?: AudioCodec;
-  video_profile?: string;
   video_preset?: string;
   video_bitrate?: number;
   audio_bitrate?: number;
+  video_maxrate?: number;
+  video_width?: number;
+  video_height?: number;
   audio_sample_rate?: number;
   audio_channels?: number;
-  enable_hardware_acceleration?: boolean;
-  preferred_hwaccel?: string;
-  manual_args?: string;
+  hw_accel?: HWAccelType;
   output_format?: RelayOutputFormat;
-  segment_duration?: number;
-  max_segments?: number;
-  input_timeout?: number;
-  is_active?: boolean;
 }
 
 export interface ConnectedClient {
@@ -298,6 +301,14 @@ export interface RelayConnectedClient {
 }
 
 // Logo Types
+export interface LinkedAsset {
+  type: string;
+  path: string;
+  content_type: string;
+  size: number;
+  url: string;
+}
+
 export interface LogoAsset {
   id: string;
   name: string;
@@ -306,6 +317,8 @@ export interface LogoAsset {
   file_path: string;
   file_size: number;
   mime_type: string;
+  original_mime_type?: string;
+  original_file_size?: number;
   asset_type: 'uploaded' | 'cached';
   source_url?: string;
   width: number | null;
@@ -315,6 +328,9 @@ export interface LogoAsset {
   created_at: string;
   updated_at: string;
   url: string;
+  linked_assets?: LinkedAsset[];
+  linked_assets_count: number;
+  total_linked_size: number;
 }
 
 export interface LogoAssetsResponse {
@@ -352,13 +368,22 @@ export type DataMappingSourceType = 'stream' | 'epg';
 export interface DataMappingRule {
   id: string;
   name: string;
-  source_type: DataMappingSourceType;
-  expression?: string;
   description?: string;
-  is_active: boolean;
-  sort_order: number;
+  source_type: DataMappingSourceType;
+  expression: string;
+  priority: number;
+  stop_on_match: boolean;
+  is_enabled: boolean;
+  is_system?: boolean;  // Optional - set by backend, not API
+  source_id?: string;
   created_at: string;
   updated_at: string;
+}
+
+// Response wrapper for data mapping rule list endpoint
+export interface DataMappingRuleListResponse {
+  rules: DataMappingRule[];
+  count: number;
 }
 
 // Dashboard Metrics Types
