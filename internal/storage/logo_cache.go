@@ -217,8 +217,8 @@ func ContentTypeFromPath(path string) string {
 }
 
 // StoreWithMetadata stores a logo with its metadata.
-// The image is stored at logos/{shard}/{id}.{ext} and
-// metadata at logos/{shard}/{id}.json.
+// The image is stored at logos/{source}/{id}.{ext} and
+// metadata at logos/{source}/{id}.json.
 func (c *LogoCache) StoreWithMetadata(meta *CachedLogoMetadata, imageData io.Reader) error {
 	// Store the image file
 	if err := c.sandbox.AtomicWriteReader(meta.RelativeImagePath(), imageData); err != nil {
@@ -232,6 +232,9 @@ func (c *LogoCache) StoreWithMetadata(meta *CachedLogoMetadata, imageData io.Rea
 	}
 	meta.FileSize = size
 
+	// Build linked assets list
+	meta.BuildLinkedAssets()
+
 	// Marshal metadata to JSON
 	metaJSON, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
@@ -242,6 +245,67 @@ func (c *LogoCache) StoreWithMetadata(meta *CachedLogoMetadata, imageData io.Rea
 	if err := c.sandbox.AtomicWrite(meta.RelativeMetadataPath(), metaJSON); err != nil {
 		// Try to clean up image file on error
 		_ = c.sandbox.Remove(meta.RelativeImagePath())
+		return fmt.Errorf("writing metadata: %w", err)
+	}
+
+	return nil
+}
+
+// StoreWithMetadataAndOriginal stores both the converted and original images with metadata.
+// The converted image is stored at logos/{source}/{id}.{ext}
+// The original image is stored at logos/{source}/{id}_original.{orig_ext}
+// Metadata is stored at logos/{source}/{id}.json with linked_assets list.
+func (c *LogoCache) StoreWithMetadataAndOriginal(meta *CachedLogoMetadata, convertedData, originalData io.Reader) error {
+	// Store the converted/display image file
+	if err := c.sandbox.AtomicWriteReader(meta.RelativeImagePath(), convertedData); err != nil {
+		return fmt.Errorf("writing converted logo image: %w", err)
+	}
+
+	// Get and set converted file size
+	convertedSize, err := c.sandbox.Size(meta.RelativeImagePath())
+	if err != nil {
+		return fmt.Errorf("getting converted file size: %w", err)
+	}
+	meta.FileSize = convertedSize
+
+	// Store original image if present and different format
+	if originalData != nil && meta.HasOriginalImage() {
+		originalPath := meta.RelativeOriginalImagePath()
+		if originalPath != "" {
+			if err := c.sandbox.AtomicWriteReader(originalPath, originalData); err != nil {
+				// Clean up converted file on error
+				_ = c.sandbox.Remove(meta.RelativeImagePath())
+				return fmt.Errorf("writing original logo image: %w", err)
+			}
+
+			// Get and set original file size
+			originalSize, err := c.sandbox.Size(originalPath)
+			if err != nil {
+				// Clean up on error
+				_ = c.sandbox.Remove(meta.RelativeImagePath())
+				_ = c.sandbox.Remove(originalPath)
+				return fmt.Errorf("getting original file size: %w", err)
+			}
+			meta.OriginalFileSize = originalSize
+		}
+	}
+
+	// Build linked assets list
+	meta.BuildLinkedAssets()
+
+	// Marshal metadata to JSON
+	metaJSON, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling metadata: %w", err)
+	}
+
+	// Store the metadata file
+	if err := c.sandbox.AtomicWrite(meta.RelativeMetadataPath(), metaJSON); err != nil {
+		// Try to clean up all files on error
+		_ = c.sandbox.Remove(meta.RelativeImagePath())
+		if origPath := meta.RelativeOriginalImagePath(); origPath != "" {
+			_ = c.sandbox.Remove(origPath)
+		}
 		return fmt.Errorf("writing metadata: %w", err)
 	}
 
@@ -260,6 +324,9 @@ func (c *LogoCache) LoadMetadataByPath(metaPath string) (*CachedLogoMetadata, er
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return nil, fmt.Errorf("unmarshaling metadata: %w", err)
 	}
+
+	// Ensure linked_assets is populated from current metadata fields
+	meta.BuildLinkedAssets()
 
 	return &meta, nil
 }
@@ -280,6 +347,7 @@ func (c *LogoCache) LoadMetadata(id string) (*CachedLogoMetadata, error) {
 
 // DeleteWithMetadata deletes both the logo image and its metadata file.
 // Uses the metadata's source to determine the correct directory.
+// Also deletes any linked assets (original image, etc.).
 func (c *LogoCache) DeleteWithMetadata(id string, contentType string) error {
 	ext := extensionFromContentType(contentType)
 	if ext == "" {
@@ -297,9 +365,27 @@ func (c *LogoCache) DeleteWithMetadata(id string, contentType string) error {
 			continue
 		}
 
-		// Delete image file
+		// Load metadata to find all linked assets
+		meta, _ := c.LoadMetadataByPath(metaPath)
+
+		// Delete all linked assets if metadata was loaded
+		if meta != nil && len(meta.LinkedAssets) > 0 {
+			for _, asset := range meta.LinkedAssets {
+				if asset.Path != "" {
+					_ = c.sandbox.Remove(asset.Path)
+				}
+			}
+		}
+
+		// Delete main image file (in case it wasn't in linked assets)
 		if err := c.sandbox.Remove(imagePath); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("deleting image file: %w", err)
+			// Log but continue - file might have been deleted via linked assets
+		}
+
+		// Delete original image file if present (legacy cleanup)
+		for _, origExt := range []string{".webp", ".jpg", ".jpeg", ".gif"} {
+			origPath := filepath.Join("logos", string(source), id+"_original"+origExt)
+			_ = c.sandbox.Remove(origPath)
 		}
 
 		// Delete metadata file
@@ -311,6 +397,32 @@ func (c *LogoCache) DeleteWithMetadata(id string, contentType string) error {
 	}
 
 	return nil // Nothing to delete
+}
+
+// DeleteAllLinkedAssets deletes all files associated with a logo's linked assets.
+// Does not delete the metadata file itself.
+func (c *LogoCache) DeleteAllLinkedAssets(meta *CachedLogoMetadata) error {
+	if meta == nil {
+		return nil
+	}
+
+	for _, asset := range meta.LinkedAssets {
+		if asset.Path != "" {
+			if err := c.sandbox.Remove(asset.Path); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("deleting linked asset %s: %w", asset.Path, err)
+			}
+		}
+	}
+
+	// Also try standard paths in case linked assets list is incomplete
+	if imagePath := meta.RelativeImagePath(); imagePath != "" {
+		_ = c.sandbox.Remove(imagePath)
+	}
+	if origPath := meta.RelativeOriginalImagePath(); origPath != "" {
+		_ = c.sandbox.Remove(origPath)
+	}
+
+	return nil
 }
 
 // TouchMetadata updates the LastSeenAt timestamp in metadata and the file's mtime.
@@ -426,6 +538,10 @@ func (c *LogoCache) ScanLogos() ([]*CachedLogoMetadata, error) {
 		if err := json.Unmarshal(data, &meta); err != nil {
 			return nil // Skip invalid JSON
 		}
+
+		// Ensure linked_assets is populated from current metadata fields
+		// This handles older metadata files that may not have this field stored
+		meta.BuildLinkedAssets()
 
 		logos = append(logos, &meta)
 		return nil

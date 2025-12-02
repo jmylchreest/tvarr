@@ -1,12 +1,17 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
+	"io"
+	"mime/multipart"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/go-chi/chi/v5"
 	"github.com/jmylchreest/tvarr/internal/service"
 	"github.com/jmylchreest/tvarr/internal/storage"
 )
@@ -76,26 +81,109 @@ func (h *LogoHandler) Register(api huma.API) {
 		Description: "Deletes a logo asset",
 		Tags:        []string{"Logos"},
 	}, h.DeleteLogo)
+
+	huma.Register(api, huma.Operation{
+		OperationID:      "uploadLogo",
+		Method:           "POST",
+		Path:             "/api/v1/logos/upload",
+		Summary:          "Upload logo",
+		Description:      "Uploads a new logo asset",
+		Tags:             []string{"Logos"},
+		RequestBody:      &huma.RequestBody{Content: map[string]*huma.MediaType{"multipart/form-data": {}}},
+		SkipValidateBody: true,
+	}, h.UploadLogo)
+
+	huma.Register(api, huma.Operation{
+		OperationID:      "replaceLogo",
+		Method:           "PUT",
+		Path:             "/api/v1/logos/{id}/replace",
+		Summary:          "Replace logo image",
+		Description:      "Replaces an existing logo's image files. Old linked assets are deleted.",
+		Tags:             []string{"Logos"},
+		RequestBody:      &huma.RequestBody{Content: map[string]*huma.MediaType{"multipart/form-data": {}}},
+		SkipValidateBody: true,
+	}, h.ReplaceLogo)
+}
+
+// RegisterFileServer registers a file server route to serve logo images.
+// This serves files at /logos/{filename} from the logo cache.
+func (h *LogoHandler) RegisterFileServer(router chi.Router) {
+	router.Get("/logos/{filename}", h.ServeLogoFile)
+	router.Head("/logos/{filename}", h.ServeLogoFile) // Support HEAD requests for browsers
+}
+
+// ServeLogoFile serves a logo image file by filename.
+func (h *LogoHandler) ServeLogoFile(w http.ResponseWriter, r *http.Request) {
+	filename := chi.URLParam(r, "filename")
+	if filename == "" {
+		http.Error(w, "filename required", http.StatusBadRequest)
+		return
+	}
+
+	// Extract ID from filename (remove extension)
+	id := strings.TrimSuffix(filename, filepath.Ext(filename))
+
+	// Look up the logo metadata
+	meta := h.logoService.GetLogoByID(id)
+	if meta == nil {
+		http.Error(w, "logo not found", http.StatusNotFound)
+		return
+	}
+
+	// Get the file
+	file, err := h.logoService.GetLogoFile(meta)
+	if err != nil {
+		http.Error(w, "failed to read logo file", http.StatusInternalServerError)
+		return
+	}
+	defer file.Close()
+
+	// Set content type
+	contentType := meta.ContentType
+	if contentType == "" {
+		contentType = "image/png"
+	}
+	w.Header().Set("Content-Type", contentType)
+
+	// Set cache headers (logos are immutable once cached)
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+
+	// Copy the file to the response
+	io.Copy(w, file)
+}
+
+// LinkedAssetResponse represents a linked asset in API responses.
+type LinkedAssetResponse struct {
+	Type        string `json:"type"`
+	Path        string `json:"path"`
+	ContentType string `json:"content_type"`
+	Size        int64  `json:"size"`
+	URL         string `json:"url"`
 }
 
 // LogoAsset represents a logo asset in API responses.
 type LogoAsset struct {
-	ID            string  `json:"id"`
-	Name          string  `json:"name"`
-	Description   *string `json:"description,omitempty"`
-	FileName      string  `json:"file_name"`
-	FilePath      string  `json:"file_path"`
-	FileSize      int64   `json:"file_size"`
-	MimeType      string  `json:"mime_type"`
-	AssetType     string  `json:"asset_type"` // 'uploaded' | 'cached'
-	SourceURL     *string `json:"source_url,omitempty"`
-	Width         *int    `json:"width,omitempty"`
-	Height        *int    `json:"height,omitempty"`
-	ParentAssetID *string `json:"parent_asset_id,omitempty"`
-	FormatType    string  `json:"format_type"`
-	CreatedAt     string  `json:"created_at"`
-	UpdatedAt     string  `json:"updated_at"`
-	URL           string  `json:"url"`
+	ID                  string                `json:"id"`
+	Name                string                `json:"name"`
+	Description         *string               `json:"description,omitempty"`
+	FileName            string                `json:"file_name"`
+	FilePath            string                `json:"file_path"`
+	FileSize            int64                 `json:"file_size"`
+	MimeType            string                `json:"mime_type"`
+	OriginalMimeType    *string               `json:"original_mime_type,omitempty"`
+	OriginalFileSize    *int64                `json:"original_file_size,omitempty"`
+	AssetType           string                `json:"asset_type"` // 'uploaded' | 'cached'
+	SourceURL           *string               `json:"source_url,omitempty"`
+	Width               *int                  `json:"width,omitempty"`
+	Height              *int                  `json:"height,omitempty"`
+	ParentAssetID       *string               `json:"parent_asset_id,omitempty"`
+	FormatType          string                `json:"format_type"`
+	CreatedAt           string                `json:"created_at"`
+	UpdatedAt           string                `json:"updated_at"`
+	URL                 string                `json:"url"`
+	LinkedAssets        []LinkedAssetResponse `json:"linked_assets,omitempty"`
+	LinkedAssetsCount   int                   `json:"linked_assets_count"`
+	TotalLinkedSize     int64                 `json:"total_linked_size"`
 }
 
 // logoMetadataToAsset converts storage.CachedLogoMetadata to LogoAsset.
@@ -127,22 +215,64 @@ func logoMetadataToAsset(meta *storage.CachedLogoMetadata) LogoAsset {
 		sourceURL = &meta.OriginalURL
 	}
 
+	// Original content type (if different from display type)
+	var originalMimeType *string
+	if meta.OriginalContentType != "" && meta.OriginalContentType != meta.ContentType {
+		originalMimeType = &meta.OriginalContentType
+	}
+
+	// Original file size (if original was stored)
+	var originalFileSize *int64
+	if meta.OriginalFileSize > 0 {
+		originalFileSize = &meta.OriginalFileSize
+	}
+
 	// Use relative path for serving
 	relPath := meta.RelativeImagePath()
 
+	// Convert linked assets to response format
+	linkedAssets := make([]LinkedAssetResponse, 0, len(meta.LinkedAssets))
+	var totalLinkedSize int64
+	for _, asset := range meta.LinkedAssets {
+		linkedAssets = append(linkedAssets, LinkedAssetResponse{
+			Type:        asset.Type,
+			Path:        asset.Path,
+			ContentType: asset.ContentType,
+			Size:        asset.Size,
+			URL:         "/logos/" + filepath.Base(asset.Path),
+		})
+		totalLinkedSize += asset.Size
+	}
+
+	// Width and height pointers
+	var width, height *int
+	if meta.Width > 0 {
+		width = &meta.Width
+	}
+	if meta.Height > 0 {
+		height = &meta.Height
+	}
+
 	return LogoAsset{
-		ID:          meta.GetID(),
-		Name:        extractNameFromURL(meta.OriginalURL, meta.GetID()),
-		FileName:    fileName,
-		FilePath:    relPath,
-		FileSize:    meta.FileSize,
-		MimeType:    meta.ContentType,
-		AssetType:   assetType,
-		SourceURL:   sourceURL,
-		FormatType:  formatType,
-		CreatedAt:   meta.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:   meta.LastSeenAt.Format(time.RFC3339),
-		URL:         "/logos/" + filepath.Base(relPath),
+		ID:                meta.GetID(),
+		Name:              extractNameFromURL(meta.OriginalURL, meta.GetID()),
+		FileName:          fileName,
+		FilePath:          relPath,
+		FileSize:          meta.FileSize,
+		MimeType:          meta.ContentType,
+		OriginalMimeType:  originalMimeType,
+		OriginalFileSize:  originalFileSize,
+		AssetType:         assetType,
+		SourceURL:         sourceURL,
+		Width:             width,
+		Height:            height,
+		FormatType:        formatType,
+		CreatedAt:         meta.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:         meta.LastSeenAt.Format(time.RFC3339),
+		URL:               "/logos/" + filepath.Base(relPath),
+		LinkedAssets:      linkedAssets,
+		LinkedAssetsCount: len(linkedAssets),
+		TotalLinkedSize:   totalLinkedSize,
 	}
 }
 
@@ -412,5 +542,164 @@ func (h *LogoHandler) DeleteLogo(ctx context.Context, input *DeleteLogoInput) (*
 			Success: true,
 			Message: "Logo deleted",
 		},
+	}, nil
+}
+
+// UploadLogoInput is the input for uploading a logo.
+type UploadLogoInput struct {
+	RawBody multipart.Form
+}
+
+// UploadLogoOutput is the output for uploading a logo.
+type UploadLogoOutput struct {
+	Body LogoAsset
+}
+
+// UploadLogo handles logo file upload.
+func (h *LogoHandler) UploadLogo(ctx context.Context, input *UploadLogoInput) (*UploadLogoOutput, error) {
+	// Get file from multipart form
+	files := input.RawBody.File["file"]
+	if len(files) == 0 {
+		return nil, huma.Error400BadRequest("No file provided")
+	}
+
+	fileHeader := files[0]
+
+	// Open the file
+	file, err := fileHeader.Open()
+	if err != nil {
+		return nil, huma.Error400BadRequest("Failed to open uploaded file")
+	}
+	defer file.Close()
+
+	// Read content to determine content type
+	content, err := io.ReadAll(file)
+	if err != nil {
+		return nil, huma.Error400BadRequest("Failed to read uploaded file")
+	}
+
+	// Get content type from header or detect from content
+	contentType := fileHeader.Header.Get("Content-Type")
+	if contentType == "" || contentType == "application/octet-stream" {
+		// Detect content type from first bytes
+		contentType = detectImageContentType(content)
+	}
+
+	// Validate it's an image
+	if !strings.HasPrefix(contentType, "image/") {
+		return nil, huma.Error400BadRequest("Invalid file type: must be an image")
+	}
+
+	// Get name from form or filename
+	name := fileHeader.Filename
+	if names := input.RawBody.Value["name"]; len(names) > 0 && names[0] != "" {
+		name = names[0]
+	}
+
+	// Upload the logo
+	meta, err := h.logoService.UploadLogo(ctx, name, contentType, bytes.NewReader(content))
+	if err != nil {
+		return nil, huma.Error500InternalServerError("Failed to upload logo: " + err.Error())
+	}
+
+	return &UploadLogoOutput{
+		Body: logoMetadataToAsset(meta),
+	}, nil
+}
+
+// detectImageContentType detects the content type from image magic bytes.
+func detectImageContentType(data []byte) string {
+	if len(data) < 8 {
+		return "application/octet-stream"
+	}
+
+	// Check magic bytes
+	switch {
+	case data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47:
+		return "image/png"
+	case data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF:
+		return "image/jpeg"
+	case data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46:
+		return "image/gif"
+	case data[0] == 0x52 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x46:
+		// Could be WEBP
+		if len(data) >= 12 && data[8] == 0x57 && data[9] == 0x45 && data[10] == 0x42 && data[11] == 0x50 {
+			return "image/webp"
+		}
+		return "application/octet-stream"
+	case data[0] == 0x00 && data[1] == 0x00 && data[2] == 0x01 && data[3] == 0x00:
+		return "image/x-icon"
+	default:
+		// Check for SVG (text-based)
+		if bytes.Contains(data[:min(len(data), 256)], []byte("<svg")) {
+			return "image/svg+xml"
+		}
+		return "application/octet-stream"
+	}
+}
+
+// ReplaceLogoInput is the input for replacing a logo image.
+type ReplaceLogoInput struct {
+	ID      string `path:"id" required:"true"`
+	RawBody multipart.Form
+}
+
+// ReplaceLogoOutput is the output for replacing a logo image.
+type ReplaceLogoOutput struct {
+	Body LogoAsset
+}
+
+// ReplaceLogo handles logo image replacement.
+func (h *LogoHandler) ReplaceLogo(ctx context.Context, input *ReplaceLogoInput) (*ReplaceLogoOutput, error) {
+	// Get file from multipart form
+	files := input.RawBody.File["file"]
+	if len(files) == 0 {
+		return nil, huma.Error400BadRequest("No file provided")
+	}
+
+	fileHeader := files[0]
+
+	// Open the file
+	file, err := fileHeader.Open()
+	if err != nil {
+		return nil, huma.Error400BadRequest("Failed to open uploaded file")
+	}
+	defer file.Close()
+
+	// Read content to determine content type
+	content, err := io.ReadAll(file)
+	if err != nil {
+		return nil, huma.Error400BadRequest("Failed to read uploaded file")
+	}
+
+	// Get content type from header or detect from content
+	contentType := fileHeader.Header.Get("Content-Type")
+	if contentType == "" || contentType == "application/octet-stream" {
+		// Detect content type from first bytes
+		contentType = detectImageContentType(content)
+	}
+
+	// Validate it's an image
+	if !strings.HasPrefix(contentType, "image/") {
+		return nil, huma.Error400BadRequest("Invalid file type: must be an image")
+	}
+
+	// Get name from form or filename
+	name := fileHeader.Filename
+	if names := input.RawBody.Value["name"]; len(names) > 0 && names[0] != "" {
+		name = names[0]
+	}
+
+	// Replace the logo
+	meta, err := h.logoService.ReplaceLogo(ctx, input.ID, name, contentType, bytes.NewReader(content))
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return nil, huma.Error404NotFound("Logo not found")
+		}
+		return nil, huma.Error500InternalServerError("Failed to replace logo: " + err.Error())
+	}
+
+	return &ReplaceLogoOutput{
+		Body: logoMetadataToAsset(meta),
 	}, nil
 }

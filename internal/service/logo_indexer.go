@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jmylchreest/tvarr/internal/storage"
+	"github.com/jmylchreest/tvarr/pkg/duration"
 )
 
 // LogoIndexerOptions configures behavior when loading the logo index.
@@ -95,7 +96,7 @@ func (idx *LogoIndexer) LoadFromDisk(ctx context.Context) error {
 func (idx *LogoIndexer) LoadFromDiskWithOptions(ctx context.Context, opts LogoIndexerOptions) (*LogoIndexerLoadResult, error) {
 	idx.logger.Info("loading logo index from disk",
 		"prune_enabled", opts.PruneStaleLogos,
-		"staleness_threshold", opts.StalenessThreshold)
+		"staleness_threshold", duration.Format(opts.StalenessThreshold))
 
 	logos, err := idx.cache.ScanLogos()
 	if err != nil {

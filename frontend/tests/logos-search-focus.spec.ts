@@ -1,4 +1,9 @@
-import { test, expect, Page } from '@playwright/test';
+import { test, expect, Page, Locator } from '@playwright/test';
+
+// Helper function to check if an element is focused
+async function isFocused(locator: Locator): Promise<boolean> {
+  return locator.evaluate((el) => document.activeElement === el);
+}
 
 test.describe('Logos Search Focus Investigation', () => {
   test.beforeEach(async ({ page }) => {
@@ -149,7 +154,7 @@ test.describe('Logos Search Focus Investigation', () => {
     // Wait for all debounced operations to complete
     await page.waitForTimeout(1000);
 
-    const finalFocusState = await searchInput.isFocused();
+    const finalFocusState = await isFocused(searchInput);
 
     console.log(
       `[TEST] Rapid typing completed. Focus lost during typing: ${focusLostDuringTyping} at position ${focusLostAt}`
@@ -226,7 +231,7 @@ test.describe('Logos Search Focus Investigation', () => {
       });
     }
 
-    const finalFocusState = await searchInput.isFocused();
+    const finalFocusState = await isFocused(searchInput);
     expect(finalFocusState).toBe(true);
   });
 
@@ -294,32 +299,33 @@ test.describe('Logos Search Focus Investigation', () => {
     await gridViewButton.click();
     await page.waitForTimeout(200);
 
-    let focusState1 = await searchInput.isFocused();
+    let focusState1 = await isFocused(searchInput);
     console.log(`[TEST] Focus after switching to grid view: ${focusState1}`);
 
     // Switch to list view during search
     await listViewButton.click();
     await page.waitForTimeout(200);
 
-    let focusState2 = await searchInput.isFocused();
+    let focusState2 = await isFocused(searchInput);
     console.log(`[TEST] Focus after switching to list view: ${focusState2}`);
 
     // Switch to table view during search
     await tableViewButton.click();
     await page.waitForTimeout(200);
 
-    let focusState3 = await searchInput.isFocused();
+    let focusState3 = await isFocused(searchInput);
     console.log(`[TEST] Focus after switching to table view: ${focusState3}`);
 
     // Final wait for debounced search
     await page.waitForTimeout(500);
 
-    const finalFocusState = await searchInput.isFocused();
+    const finalFocusState = await isFocused(searchInput);
     console.log(`[TEST] Final focus state after view mode changes: ${finalFocusState}`);
 
     // The input should ideally maintain focus through view mode changes
     // But this might be expected behavior to lose focus when clicking view buttons
-    expect(await searchInput.hasAttribute('value')).toBeTruthy();
+    const inputValue = await searchInput.getAttribute('value');
+    expect(inputValue).toBeTruthy();
     await expect(searchInput).toHaveValue('view mode test');
   });
 });

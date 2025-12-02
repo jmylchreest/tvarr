@@ -154,6 +154,7 @@ function UploadLogoSheet({
 
   const [isDragOver, setIsDragOver] = useState(false);
   const [showFileError, setShowFileError] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Reset drag state and form when sheet opens/closes
   useEffect(() => {
@@ -288,29 +289,27 @@ function UploadLogoSheet({
 
         <form id="upload-logo-form" onSubmit={handleSubmit} className="space-y-4 px-4">
           <div className="space-y-2">
-            <Label htmlFor="file">Logo File</Label>
+            <Label>Logo File</Label>
             <div
-              className={`border-2 border-dashed rounded-lg p-4 text-center transition-colors ${
+              className={`relative border-2 border-dashed rounded-lg p-4 text-center transition-colors cursor-pointer ${
                 showFileError
                   ? 'border-destructive bg-destructive/5'
                   : 'border-muted-foreground/30 hover:border-muted-foreground/50'
               }`}
             >
-              <Input
-                id="file"
+              <input
+                ref={fileInputRef}
                 type="file"
                 accept="image/*"
                 onChange={handleFileChange}
                 disabled={loading}
-                className="hidden"
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
               />
-              <label htmlFor="file" className="cursor-pointer block">
-                <Upload className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                <p className="text-sm font-medium">Click to browse files</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Or drag and drop an image anywhere on this dialog
-                </p>
-              </label>
+              <Upload className="h-8 w-8 mx-auto mb-2 text-muted-foreground pointer-events-none" />
+              <p className="text-sm font-medium pointer-events-none">Click to browse files</p>
+              <p className="text-xs text-muted-foreground mt-1 pointer-events-none">
+                Or drag and drop an image anywhere on this dialog
+              </p>
             </div>
             {showFileError && (
               <p className="text-sm text-destructive">Please select an image file to upload.</p>
@@ -371,6 +370,7 @@ function UploadLogoSheet({
 function EditLogoSheet({
   logo,
   onUpdateLogo,
+  onReplaceLogo,
   loading,
   error,
   open,
@@ -378,6 +378,7 @@ function EditLogoSheet({
 }: {
   logo: LogoAsset | null;
   onUpdateLogo: (id: string, data: LogoAssetUpdateRequest) => Promise<void>;
+  onReplaceLogo: (id: string, file: File, name: string, description?: string) => Promise<void>;
   loading: boolean;
   error: string | null;
   open: boolean;
@@ -392,21 +393,29 @@ function EditLogoSheet({
   });
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Reset form data when logo changes
+  // Reset form data when logo changes (not when previewUrl changes)
   useEffect(() => {
     if (logo) {
       setFormData({
         name: logo.name,
         description: logo.description || '',
       });
+      // Only reset file state when switching to a different logo
       setSelectedFile(null);
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl);
+      setPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+      setIsDragOver(false);
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
       }
-      setPreviewUrl(null);
     }
-  }, [logo, previewUrl]);
+  }, [logo?.id]); // Only depend on logo.id, not the entire logo object or previewUrl
 
   // Cleanup preview URL when component unmounts
   useEffect(() => {
@@ -415,7 +424,7 @@ function EditLogoSheet({
         URL.revokeObjectURL(previewUrl);
       }
     };
-  }, [previewUrl]);
+  }, []); // Empty dependency - only cleanup on unmount
 
   // Handle file selection
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -431,14 +440,55 @@ function EditLogoSheet({
     }
   };
 
+  const isValidImageFile = (file: File) => {
+    return file.type.startsWith('image/');
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDragOver) {
+      setIsDragOver(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only set to false if we're leaving the drop zone entirely
+    const relatedTarget = e.relatedTarget as Node;
+    if (!relatedTarget || !e.currentTarget.contains(relatedTarget)) {
+      setIsDragOver(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    const files = Array.from(e.dataTransfer.files);
+    const imageFile = files.find(isValidImageFile);
+
+    if (imageFile) {
+      // Clean up previous preview URL
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+      setSelectedFile(imageFile);
+      const url = URL.createObjectURL(imageFile);
+      setPreviewUrl(url);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!logo) return;
 
     try {
       if (selectedFile) {
-        // Replace image and update metadata
-        await apiClient.replaceLogoImage(
+        // Replace image and update metadata via parent callback
+        await onReplaceLogo(
           logo.id,
           selectedFile,
           formData.name,
@@ -452,9 +502,8 @@ function EditLogoSheet({
         });
       }
 
-      if (!error) {
-        onOpenChange(false);
-      }
+      // Close sheet on success (error state will prevent this in the parent)
+      onOpenChange(false);
     } catch (err) {
       console.error('Failed to update logo:', err);
     }
@@ -464,10 +513,19 @@ function EditLogoSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full sm:max-w-lg overflow-y-auto">
+      <SheetContent
+        side="right"
+        className="w-full sm:max-w-lg overflow-y-auto"
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
         <SheetHeader>
           <SheetTitle>Edit Logo</SheetTitle>
-          <SheetDescription>Update the logo information</SheetDescription>
+          <SheetDescription>
+            Update the logo information and metadata. You can drag and drop image files directly
+            onto this dialog to replace the image.
+          </SheetDescription>
         </SheetHeader>
 
         {error && (
@@ -478,7 +536,73 @@ function EditLogoSheet({
           </Alert>
         )}
 
+        {isDragOver && (
+          <div className="fixed inset-0 bg-primary/10 flex items-center justify-center z-[60] pointer-events-none">
+            <div className="bg-background border border-border rounded-lg p-6 shadow-lg">
+              <div className="text-center">
+                <Upload className="h-12 w-12 mx-auto mb-2 text-primary" />
+                <p className="text-lg font-semibold text-primary">Drop image file to replace</p>
+                <p className="text-sm text-muted-foreground">
+                  Supports JPG, PNG, WebP, and other image formats
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         <form id="edit-logo-form" onSubmit={handleSubmit} className="space-y-4 px-4">
+          {/* Logo preview at top */}
+          <div className="space-y-2">
+            <Label>Preview</Label>
+            <div className="flex items-start gap-4">
+              <div className="w-24 h-24 bg-muted rounded-md flex items-center justify-center overflow-hidden flex-shrink-0">
+                <img
+                  src={
+                    previewUrl ||
+                    (logo.url.startsWith('http') ? logo.url : `${API_CONFIG.baseUrl}${logo.url}`)
+                  }
+                  alt={logo.name}
+                  className="max-w-full max-h-full object-contain"
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none';
+                    const nextElement = e.currentTarget.nextElementSibling as HTMLElement;
+                    if (nextElement) {
+                      nextElement.style.display = 'flex';
+                    }
+                  }}
+                />
+                <div
+                  className="w-full h-full flex items-center justify-center text-muted-foreground"
+                  style={{ display: 'none' }}
+                >
+                  <FileImage className="h-8 w-8" />
+                </div>
+              </div>
+              <div className="flex-1 text-sm space-y-1">
+                {selectedFile ? (
+                  <>
+                    <p className="font-medium text-primary">New file selected:</p>
+                    <p>{selectedFile.name}</p>
+                    <p className="text-muted-foreground">{formatFileSize(selectedFile.size)}</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="font-medium">{logo.file_name}</p>
+                    <div className="flex gap-2">
+                      <Badge variant="outline">{getFormatFromMimeType(logo.mime_type)}</Badge>
+                      <Badge variant="secondary">{formatFileSize(logo.file_size)}</Badge>
+                    </div>
+                    {logo.width && logo.height && (
+                      <p className="text-muted-foreground">
+                        {logo.width} x {logo.height} px
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="edit-name">Name</Label>
             <Input
@@ -504,59 +628,138 @@ function EditLogoSheet({
 
           {/* File replacement */}
           <div className="space-y-2">
-            <Label htmlFor="replace-image">Replace Image (optional)</Label>
-            <Input
-              id="replace-image"
-              type="file"
-              accept="image/*"
-              onChange={handleFileChange}
-              disabled={loading}
-            />
-            {selectedFile && (
-              <p className="text-sm text-muted-foreground">
-                Selected: {selectedFile.name} ({formatFileSize(selectedFile.size)})
+            <Label>Replace Image (optional)</Label>
+            <div className="relative border-2 border-dashed rounded-lg p-4 text-center transition-colors cursor-pointer border-muted-foreground/30 hover:border-muted-foreground/50">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleFileChange}
+                disabled={loading}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+              />
+              <Upload className="h-8 w-8 mx-auto mb-2 text-muted-foreground pointer-events-none" />
+              <p className="text-sm font-medium pointer-events-none">Click to browse files</p>
+              <p className="text-xs text-muted-foreground mt-1 pointer-events-none">
+                Or drag and drop an image anywhere on this dialog
               </p>
+            </div>
+            {selectedFile && (
+              <div className="flex items-center justify-between gap-2 bg-muted p-2 rounded">
+                <div className="flex items-center gap-2">
+                  <FileImage className="h-4 w-4" />
+                  <span className="text-sm truncate">{selectedFile.name}</span>
+                  <Badge variant="default" className="bg-primary">
+                    {getFormatFromMimeType(selectedFile.type)}
+                  </Badge>
+                  <span className="text-sm text-muted-foreground">
+                    {formatFileSize(selectedFile.size)}
+                  </span>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-xs"
+                  onClick={() => {
+                    setSelectedFile(null);
+                    if (previewUrl) URL.revokeObjectURL(previewUrl);
+                    setPreviewUrl(null);
+                    if (fileInputRef.current) fileInputRef.current.value = '';
+                  }}
+                >
+                  Clear
+                </Button>
+              </div>
             )}
           </div>
 
-          {/* Logo preview */}
+          {/* Metadata section */}
           <div className="space-y-2">
-            <Label>Preview</Label>
-            <div className="aspect-square bg-muted rounded-md flex items-center justify-center overflow-hidden max-w-32">
-              <img
-                src={
-                  previewUrl ||
-                  (logo.url.startsWith('http') ? logo.url : `${API_CONFIG.baseUrl}${logo.url}`)
-                }
-                alt={logo.name}
-                className="w-full h-full object-contain"
-                onError={(e) => {
-                  e.currentTarget.style.display = 'none';
-                  const nextElement = e.currentTarget.nextElementSibling as HTMLElement;
-                  if (nextElement) {
-                    nextElement.style.display = 'flex';
-                  }
-                }}
-              />
-              <div
-                className="w-full h-full flex items-center justify-center text-muted-foreground"
-                style={{ display: 'none' }}
-              >
-                <FileImage className="h-8 w-8" />
+            <Label>Metadata</Label>
+            <div className="bg-muted p-3 rounded-md space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">ID:</span>
+                <code className="text-xs bg-background px-1 rounded">{logo.id}</code>
               </div>
-            </div>
-            <div className="text-sm text-muted-foreground">
-              {selectedFile ? (
-                <>
-                  New: {selectedFile.name} ({formatFileSize(selectedFile.size)})
-                </>
-              ) : (
-                <>
-                  Current: {logo.file_name} ({formatFileSize(logo.file_size)})
-                </>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Type:</span>
+                <Badge className={getAssetTypeColor(logo.asset_type)}>
+                  {logo.asset_type === 'cached' ? 'Cached' : 'Uploaded'}
+                </Badge>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Format:</span>
+                <span>{getFormatFromMimeType(logo.mime_type)}</span>
+              </div>
+              {logo.original_mime_type && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Original Format:</span>
+                  <span>{getFormatFromMimeType(logo.original_mime_type)}</span>
+                </div>
+              )}
+              {logo.width && logo.height && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Dimensions:</span>
+                  <span>
+                    {logo.width} x {logo.height} px
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">File Size:</span>
+                <span>{formatFileSize(logo.file_size)}</span>
+              </div>
+              {logo.original_file_size && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Original Size:</span>
+                  <span>{formatFileSize(logo.original_file_size)}</span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Created:</span>
+                <span>{formatDate(logo.created_at)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Updated:</span>
+                <span>{formatDate(logo.updated_at)}</span>
+              </div>
+              {logo.source_url && (
+                <div className="pt-2 border-t">
+                  <span className="text-muted-foreground block mb-1">Source URL:</span>
+                  <code className="text-xs bg-background px-1 rounded break-all block">
+                    {logo.source_url}
+                  </code>
+                </div>
               )}
             </div>
           </div>
+
+          {/* Linked Assets Info */}
+          {logo.linked_assets && logo.linked_assets.length > 0 && (
+            <div className="space-y-2">
+              <Label>Linked Assets ({logo.linked_assets.length})</Label>
+              <div className="bg-muted p-3 rounded-md space-y-2">
+                {logo.linked_assets.map((asset, idx) => (
+                  <div key={idx} className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="text-xs capitalize">
+                        {asset.type}
+                      </Badge>
+                      <Badge variant="secondary" className="text-xs">
+                        {getFormatFromMimeType(asset.content_type)}
+                      </Badge>
+                    </div>
+                    <span className="text-muted-foreground">{formatFileSize(asset.size)}</span>
+                  </div>
+                ))}
+                <div className="flex justify-between text-sm font-medium border-t pt-2 mt-2">
+                  <span>Total Storage:</span>
+                  <span>{formatFileSize(logo.total_linked_size || 0)}</span>
+                </div>
+              </div>
+            </div>
+          )}
         </form>
 
         <SheetFooter className="gap-2">
@@ -867,6 +1070,31 @@ export function Logos() {
       setErrors((prev) => ({
         ...prev,
         edit: `Failed to update logo: ${apiError.message}`,
+      }));
+      throw error; // Re-throw to prevent dialog from closing
+    } finally {
+      setLoading((prev) => ({ ...prev, edit: false }));
+    }
+  };
+
+  const handleReplaceLogo = async (
+    id: string,
+    file: File,
+    name: string,
+    description?: string
+  ) => {
+    setLoading((prev) => ({ ...prev, edit: true }));
+    setErrors((prev) => ({ ...prev, edit: null }));
+
+    try {
+      await apiClient.replaceLogoImage(id, file, name, description);
+      await loadLogos(1, false); // Reload first page
+      await loadStats(); // Update stats
+    } catch (error) {
+      const apiError = error as ApiError;
+      setErrors((prev) => ({
+        ...prev,
+        edit: `Failed to replace logo: ${apiError.message}`,
       }));
       throw error; // Re-throw to prevent dialog from closing
     } finally {
@@ -1386,14 +1614,36 @@ export function Logos() {
                                 </div>
                               </div>
                               <div className="space-y-2 flex-1">
-                                <div className="flex items-center gap-2">
+                                <div className="flex flex-wrap items-center gap-2">
                                   <CardTitle className="text-lg">{logo.name}</CardTitle>
                                   <Badge className={getAssetTypeColor(logo.asset_type)}>
                                     {logo.asset_type === 'cached' ? 'Cached' : 'Uploaded'}
                                   </Badge>
-                                  <Badge variant="outline">
-                                    {getFormatFromMimeType(logo.mime_type)}
-                                  </Badge>
+                                  {/* Show format badges for linked assets */}
+                                  {logo.linked_assets && logo.linked_assets.length > 0 ? (
+                                    logo.linked_assets.map((asset, idx) => (
+                                      <Tooltip key={idx}>
+                                        <TooltipTrigger asChild>
+                                          <Badge
+                                            variant={asset.type === 'display' ? 'default' : 'outline'}
+                                            className="cursor-help"
+                                          >
+                                            {getFormatFromMimeType(asset.content_type)}
+                                          </Badge>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top" className="text-xs">
+                                          <p className="capitalize">{asset.type}</p>
+                                          <p className="text-muted-foreground">
+                                            {formatFileSize(asset.size)}
+                                          </p>
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    ))
+                                  ) : (
+                                    <Badge variant="outline">
+                                      {getFormatFromMimeType(logo.mime_type)}
+                                    </Badge>
+                                  )}
                                 </div>
                                 {logo.description && (
                                   <p className="text-sm text-muted-foreground">
@@ -1401,7 +1651,9 @@ export function Logos() {
                                   </p>
                                 )}
                                 <div className="flex gap-4 text-sm text-muted-foreground">
-                                  <span>Size: {formatFileSize(logo.file_size)}</span>
+                                  <span>
+                                    Size: {formatFileSize(logo.total_linked_size || logo.file_size)}
+                                  </span>
                                   {logo.width && logo.height && (
                                     <span>
                                       Dimensions: {logo.width}×{logo.height}
@@ -1455,13 +1707,33 @@ export function Logos() {
                       <Card key={logo.id} className="relative group transition-all hover:shadow-md">
                         <CardHeader className="pb-2">
                           <div className="flex items-start justify-between">
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-1">
                               <Badge className={getAssetTypeColor(logo.asset_type)}>
                                 {logo.asset_type === 'cached' ? 'Cached' : 'Uploaded'}
                               </Badge>
-                              <Badge variant="outline">
-                                {getFormatFromMimeType(logo.mime_type)}
-                              </Badge>
+                              {/* Show format badges for linked assets */}
+                              {logo.linked_assets && logo.linked_assets.length > 0 ? (
+                                logo.linked_assets.map((asset, idx) => (
+                                  <Tooltip key={idx}>
+                                    <TooltipTrigger asChild>
+                                      <Badge
+                                        variant={asset.type === 'display' ? 'default' : 'outline'}
+                                        className="text-xs cursor-help"
+                                      >
+                                        {getFormatFromMimeType(asset.content_type)}
+                                      </Badge>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" className="text-xs">
+                                      <p className="capitalize">{asset.type}</p>
+                                      <p className="text-muted-foreground">{formatFileSize(asset.size)}</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                ))
+                              ) : (
+                                <Badge variant="outline">
+                                  {getFormatFromMimeType(logo.mime_type)}
+                                </Badge>
+                              )}
                             </div>
                             <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-popover border border-border rounded-md p-1 shadow-md">
                               {logo.asset_type === 'uploaded' && (
@@ -1498,25 +1770,84 @@ export function Logos() {
                         </CardHeader>
 
                         <CardContent className="space-y-3">
-                          <div className="aspect-square bg-muted rounded-md flex items-center justify-center overflow-hidden">
-                            <img
-                              src={
-                                logo.url.startsWith('http')
-                                  ? logo.url
-                                  : `${API_CONFIG.baseUrl}${logo.url}`
-                              }
-                              alt={logo.name}
-                              className="max-w-full max-h-full object-contain"
-                              onError={(e) => {
-                                e.currentTarget.style.display = 'none';
-                                e.currentTarget.nextElementSibling?.classList.remove('hidden');
-                              }}
-                            />
-                            <div className="hidden flex-col items-center gap-2 text-muted-foreground">
-                              <FileImage className="h-8 w-8" />
-                              <span className="text-xs">Preview unavailable</span>
-                            </div>
-                          </div>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div className="aspect-square bg-muted rounded-md flex items-center justify-center overflow-hidden cursor-help">
+                                <img
+                                  src={
+                                    logo.url.startsWith('http')
+                                      ? logo.url
+                                      : `${API_CONFIG.baseUrl}${logo.url}`
+                                  }
+                                  alt={logo.name}
+                                  className="max-w-full max-h-full object-contain"
+                                  onError={(e) => {
+                                    e.currentTarget.style.display = 'none';
+                                    e.currentTarget.nextElementSibling?.classList.remove('hidden');
+                                  }}
+                                />
+                                <div className="hidden flex-col items-center gap-2 text-muted-foreground">
+                                  <FileImage className="h-8 w-8" />
+                                  <span className="text-xs">Preview unavailable</span>
+                                </div>
+                              </div>
+                            </TooltipTrigger>
+                            <TooltipContent side="right" className="max-w-xs">
+                              <div className="space-y-2 text-xs">
+                                <p className="font-semibold">{logo.name}</p>
+                                <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                                  <span className="text-muted-foreground">Format:</span>
+                                  <span>{getFormatFromMimeType(logo.mime_type)}</span>
+                                  {logo.original_mime_type && (
+                                    <>
+                                      <span className="text-muted-foreground">Original:</span>
+                                      <span>{getFormatFromMimeType(logo.original_mime_type)}</span>
+                                    </>
+                                  )}
+                                  <span className="text-muted-foreground">Display Size:</span>
+                                  <span>{formatFileSize(logo.file_size)}</span>
+                                  {logo.original_file_size && (
+                                    <>
+                                      <span className="text-muted-foreground">Original Size:</span>
+                                      <span>{formatFileSize(logo.original_file_size)}</span>
+                                    </>
+                                  )}
+                                  {logo.width && logo.height && (
+                                    <>
+                                      <span className="text-muted-foreground">Dimensions:</span>
+                                      <span>
+                                        {logo.width}x{logo.height}
+                                      </span>
+                                    </>
+                                  )}
+                                  <span className="text-muted-foreground">Linked Assets:</span>
+                                  <span>{logo.linked_assets_count || 0}</span>
+                                  {(logo.total_linked_size || 0) > 0 && (
+                                    <>
+                                      <span className="text-muted-foreground">Total Size:</span>
+                                      <span>{formatFileSize(logo.total_linked_size || 0)}</span>
+                                    </>
+                                  )}
+                                </div>
+                                {logo.linked_assets && logo.linked_assets.length > 0 && (
+                                  <div className="border-t pt-1 mt-1">
+                                    <p className="font-medium mb-1">Assets:</p>
+                                    {logo.linked_assets.map((asset, idx) => (
+                                      <div key={idx} className="flex justify-between">
+                                        <span className="text-muted-foreground capitalize">
+                                          {asset.type}:
+                                        </span>
+                                        <span>
+                                          {getFormatFromMimeType(asset.content_type)} (
+                                          {formatFileSize(asset.size)})
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
 
                           <div className="space-y-2">
                             <div>
@@ -1618,15 +1949,37 @@ export function Logos() {
                                         : logo.description || logo.file_name}
                                     </p>
                                   </div>
-                                  <div className="flex items-center gap-2">
+                                  <div className="flex flex-wrap items-center gap-1">
                                     <Badge className={getAssetTypeColor(logo.asset_type)}>
                                       {logo.asset_type === 'cached' ? 'Cached' : 'Uploaded'}
                                     </Badge>
-                                    <Badge variant="outline" className="text-xs">
-                                      {getFormatFromMimeType(logo.mime_type)}
-                                    </Badge>
+                                    {/* Show format badges for linked assets */}
+                                    {logo.linked_assets && logo.linked_assets.length > 0 ? (
+                                      logo.linked_assets.map((asset, idx) => (
+                                        <Tooltip key={idx}>
+                                          <TooltipTrigger asChild>
+                                            <Badge
+                                              variant={asset.type === 'display' ? 'default' : 'outline'}
+                                              className="text-xs cursor-help"
+                                            >
+                                              {getFormatFromMimeType(asset.content_type)}
+                                            </Badge>
+                                          </TooltipTrigger>
+                                          <TooltipContent side="top" className="text-xs">
+                                            <p className="capitalize">{asset.type}</p>
+                                            <p className="text-muted-foreground">
+                                              {formatFileSize(asset.size)}
+                                            </p>
+                                          </TooltipContent>
+                                        </Tooltip>
+                                      ))
+                                    ) : (
+                                      <Badge variant="outline" className="text-xs">
+                                        {getFormatFromMimeType(logo.mime_type)}
+                                      </Badge>
+                                    )}
                                     <Badge variant="secondary" className="text-xs">
-                                      {formatFileSize(logo.file_size)}
+                                      {formatFileSize(logo.total_linked_size || logo.file_size)}
                                     </Badge>
                                     {logo.width && logo.height && (
                                       <Badge variant="outline" className="text-xs">
@@ -1736,6 +2089,7 @@ export function Logos() {
       <EditLogoSheet
         logo={editingLogo}
         onUpdateLogo={handleUpdateLogo}
+        onReplaceLogo={handleReplaceLogo}
         loading={loading.edit}
         error={errors.edit}
         open={isEditSheetOpen}

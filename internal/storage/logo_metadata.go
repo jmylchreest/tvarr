@@ -25,6 +25,21 @@ const (
 	LogoSourceUploaded LogoSource = "uploaded"
 )
 
+// LinkedAsset represents a single file linked to a logo.
+type LinkedAsset struct {
+	// Type identifies the asset variant: "converted", "original", etc.
+	Type string `json:"type"`
+
+	// Path is the relative path to the asset file from the data directory.
+	Path string `json:"path"`
+
+	// ContentType is the MIME type of this specific asset.
+	ContentType string `json:"content_type"`
+
+	// Size is the file size in bytes.
+	Size int64 `json:"size"`
+}
+
 // CachedLogoMetadata represents metadata stored alongside a cached logo file.
 // Each logo has a hash-based filename derived from the normalized URL.
 //
@@ -56,11 +71,20 @@ type CachedLogoMetadata struct {
 	// For new entries, this equals ID when logo was fetched from URL.
 	URLHash string `json:"url_hash,omitempty"`
 
-	// ContentType is the MIME type of the image (e.g., "image/png").
+	// ContentType is the MIME type of the display image (e.g., "image/png").
+	// This is the converted/display format, typically PNG.
 	ContentType string `json:"content_type,omitempty"`
 
-	// FileSize is the size of the cached image in bytes.
+	// OriginalContentType is the MIME type of the original source image.
+	// May differ from ContentType if the image was converted.
+	OriginalContentType string `json:"original_content_type,omitempty"`
+
+	// FileSize is the size of the display/converted image in bytes.
 	FileSize int64 `json:"file_size,omitempty"`
+
+	// OriginalFileSize is the size of the original image in bytes.
+	// Zero if original was not retained (e.g., already PNG).
+	OriginalFileSize int64 `json:"original_file_size,omitempty"`
 
 	// Width is the image width in pixels (if known).
 	Width int `json:"width,omitempty"`
@@ -79,6 +103,10 @@ type CachedLogoMetadata struct {
 	// SourceHint is optional context about where this logo came from.
 	// Examples: "channel:BBC One", "program:News at Ten"
 	SourceHint string `json:"source_hint,omitempty"`
+
+	// LinkedAssets is the list of all files associated with this logo.
+	// Includes the converted/display image and optionally the original.
+	LinkedAssets []LinkedAsset `json:"linked_assets,omitempty"`
 }
 
 // NewCachedLogoMetadata creates a new metadata entry for a logo URL.
@@ -228,6 +256,93 @@ func (m *CachedLogoMetadata) extension() string {
 		return ".png" // Default to PNG
 	}
 	return ext
+}
+
+// originalExtension returns the file extension for the original image.
+func (m *CachedLogoMetadata) originalExtension() string {
+	if m.OriginalContentType == "" {
+		return ""
+	}
+	return extensionFromContentType(m.OriginalContentType)
+}
+
+// OriginalImagePath returns just the filename for the original image file.
+// Returns empty string if no original was stored.
+func (m *CachedLogoMetadata) OriginalImagePath() string {
+	ext := m.originalExtension()
+	if ext == "" || ext == m.extension() {
+		return "" // No separate original (same format or not stored)
+	}
+	return m.GetID() + "_original" + ext
+}
+
+// RelativeOriginalImagePath returns the full relative path for the original image file.
+// Returns empty string if no original was stored.
+func (m *CachedLogoMetadata) RelativeOriginalImagePath() string {
+	originalPath := m.OriginalImagePath()
+	if originalPath == "" {
+		return ""
+	}
+	return filepath.Join("logos", m.SourceDir(), originalPath)
+}
+
+// HasOriginalImage returns true if an original image file was stored separately.
+func (m *CachedLogoMetadata) HasOriginalImage() bool {
+	return m.OriginalContentType != "" && m.OriginalContentType != m.ContentType
+}
+
+// AddLinkedAsset adds or updates a linked asset in the list.
+func (m *CachedLogoMetadata) AddLinkedAsset(asset LinkedAsset) {
+	// Check if this asset type already exists and update it
+	for i, existing := range m.LinkedAssets {
+		if existing.Type == asset.Type {
+			m.LinkedAssets[i] = asset
+			return
+		}
+	}
+	// Add new asset
+	m.LinkedAssets = append(m.LinkedAssets, asset)
+}
+
+// GetLinkedAsset returns the linked asset of the given type, or nil if not found.
+func (m *CachedLogoMetadata) GetLinkedAsset(assetType string) *LinkedAsset {
+	for i, asset := range m.LinkedAssets {
+		if asset.Type == assetType {
+			return &m.LinkedAssets[i]
+		}
+	}
+	return nil
+}
+
+// ClearLinkedAssets removes all linked assets.
+func (m *CachedLogoMetadata) ClearLinkedAssets() {
+	m.LinkedAssets = nil
+}
+
+// BuildLinkedAssets populates the LinkedAssets list from current metadata.
+// This ensures the linked_assets field reflects the actual stored files.
+func (m *CachedLogoMetadata) BuildLinkedAssets() {
+	m.LinkedAssets = nil
+
+	// Add converted/display image
+	if m.ContentType != "" {
+		m.LinkedAssets = append(m.LinkedAssets, LinkedAsset{
+			Type:        "converted",
+			Path:        m.RelativeImagePath(),
+			ContentType: m.ContentType,
+			Size:        m.FileSize,
+		})
+	}
+
+	// Add original image if stored separately
+	if m.HasOriginalImage() {
+		m.LinkedAssets = append(m.LinkedAssets, LinkedAsset{
+			Type:        "original",
+			Path:        m.RelativeOriginalImagePath(),
+			ContentType: m.OriginalContentType,
+			Size:        m.OriginalFileSize,
+		})
+	}
 }
 
 // computeURLHash creates a SHA256 hash of a URL for fast lookups.
