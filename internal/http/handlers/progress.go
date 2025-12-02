@@ -33,58 +33,70 @@ func (h *ProgressHandler) SetHeartbeatInterval(interval time.Duration) {
 }
 
 // ProgressResponse represents a progress operation in API responses.
+// Field names match frontend ProgressEvent type.
 type ProgressResponse struct {
-	OperationID       string            `json:"operation_id"`
+	ID                string            `json:"id"`
+	OperationName     string            `json:"operation_name"`
 	OperationType     string            `json:"operation_type"`
 	OwnerID           string            `json:"owner_id"`
 	OwnerType         string            `json:"owner_type"`
 	State             string            `json:"state"`
-	Progress          float64           `json:"progress"`
-	Message           string            `json:"message"`
+	OverallPercentage float64           `json:"overall_percentage"`
 	Error             string            `json:"error,omitempty"`
 	Stages            []StageResponse   `json:"stages,omitempty"`
-	CurrentStageIndex int               `json:"current_stage_index"`
+	CurrentStage      string            `json:"current_stage"`
 	StartedAt         time.Time         `json:"started_at"`
-	UpdatedAt         time.Time         `json:"updated_at"`
+	LastUpdate        time.Time         `json:"last_update"`
 	CompletedAt       *time.Time        `json:"completed_at,omitempty"`
 	Metadata          map[string]any    `json:"metadata,omitempty"`
 }
 
 // StageResponse represents a stage in API responses.
+// Field names match frontend ProgressStage type.
 type StageResponse struct {
-	ID       string  `json:"id"`
-	Name     string  `json:"name"`
-	State    string  `json:"state"`
-	Progress float64 `json:"progress"`
-	Message  string  `json:"message,omitempty"`
-	Weight   float64 `json:"weight"`
+	ID         string  `json:"id"`
+	Name       string  `json:"name"`
+	State      string  `json:"state"`
+	Percentage float64 `json:"percentage"`
+	StageStep  string  `json:"stage_step,omitempty"`
 }
 
 // ProgressFromService converts a service progress to a response.
 func ProgressFromService(p *progress.UniversalProgress) ProgressResponse {
+	// Determine the current stage ID from the index
+	currentStage := ""
+	if p.CurrentStageIndex >= 0 && p.CurrentStageIndex < len(p.Stages) {
+		currentStage = p.Stages[p.CurrentStageIndex].ID
+	}
+
+	// Generate an operation name from metadata or use a default
+	operationName := p.Message
+	if operationName == "" {
+		operationName = string(p.OperationType)
+	}
+
 	resp := ProgressResponse{
-		OperationID:       p.OperationID,
+		ID:                p.OperationID,
+		OperationName:     operationName,
 		OperationType:     string(p.OperationType),
 		OwnerID:           p.OwnerID.String(),
 		OwnerType:         p.OwnerType,
 		State:             string(p.State),
-		Progress:          p.Progress,
-		Message:           p.Message,
+		OverallPercentage: p.Progress * 100, // Convert 0-1 to 0-100
 		Error:             p.Error,
-		CurrentStageIndex: p.CurrentStageIndex,
+		CurrentStage:      currentStage,
 		StartedAt:         p.StartedAt,
-		UpdatedAt:         p.UpdatedAt,
+		LastUpdate:        p.UpdatedAt,
 		CompletedAt:       p.CompletedAt,
 		Metadata:          p.Metadata,
 	}
 	for _, s := range p.Stages {
 		resp.Stages = append(resp.Stages, StageResponse{
-			ID:       s.ID,
-			Name:     s.Name,
-			State:    string(s.State),
-			Progress: s.Progress,
-			Message:  s.Message,
-			Weight:   s.Weight,
+			ID:         s.ID,
+			Name:       s.Name,
+			State:      string(s.State),
+			Percentage: s.Progress * 100, // Convert 0-1 to 0-100
+			StageStep:  s.Message,
 		})
 	}
 	return resp
@@ -225,6 +237,11 @@ func (h *ProgressHandler) GetOperation(ctx context.Context, input *GetOperationI
 
 // handleSSEEvents is the raw HTTP handler for SSE streaming.
 func (h *ProgressHandler) handleSSEEvents(w http.ResponseWriter, r *http.Request) {
+	// Set CORS headers for cross-origin requests (frontend on different port)
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Cache-Control")
+	w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
+
 	// Set SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -251,7 +268,8 @@ func (h *ProgressHandler) handleSSEEvents(w http.ResponseWriter, r *http.Request
 
 	ctx := r.Context()
 
-	// Send initial flush to establish connection
+	// Send initial comment to establish connection and trigger onopen in browser
+	fmt.Fprintf(w, ":connected\n\n")
 	flusher.Flush()
 
 	for {
