@@ -16,6 +16,19 @@ type StreamProxyHandler struct {
 	proxyService *service.ProxyService
 }
 
+// buildOrderMapFromIDs creates an order map from array indices.
+// The order is derived from the position in the array (index 0 = order 0, etc.).
+func buildOrderMapFromIDs(ids []models.ULID) map[models.ULID]int {
+	if len(ids) == 0 {
+		return nil
+	}
+	orders := make(map[models.ULID]int, len(ids))
+	for i, id := range ids {
+		orders[id] = i
+	}
+	return orders
+}
+
 // NewStreamProxyHandler creates a new stream proxy handler.
 func NewStreamProxyHandler(proxyService *service.ProxyService) *StreamProxyHandler {
 	return &StreamProxyHandler{
@@ -172,17 +185,27 @@ func (h *StreamProxyHandler) Create(ctx context.Context, input *CreateStreamProx
 		return nil, huma.Error500InternalServerError("failed to create proxy", err)
 	}
 
-	// Set sources if provided
+	// Set sources if provided (order derived from array index)
 	if len(input.Body.SourceIDs) > 0 {
-		if err := h.proxyService.SetSources(ctx, proxy.ID, input.Body.SourceIDs, nil); err != nil {
+		priorities := buildOrderMapFromIDs(input.Body.SourceIDs)
+		if err := h.proxyService.SetSources(ctx, proxy.ID, input.Body.SourceIDs, priorities); err != nil {
 			return nil, huma.Error500InternalServerError("failed to set sources", err)
 		}
 	}
 
-	// Set EPG sources if provided
+	// Set EPG sources if provided (order derived from array index)
 	if len(input.Body.EpgSourceIDs) > 0 {
-		if err := h.proxyService.SetEpgSources(ctx, proxy.ID, input.Body.EpgSourceIDs, nil); err != nil {
+		priorities := buildOrderMapFromIDs(input.Body.EpgSourceIDs)
+		if err := h.proxyService.SetEpgSources(ctx, proxy.ID, input.Body.EpgSourceIDs, priorities); err != nil {
 			return nil, huma.Error500InternalServerError("failed to set EPG sources", err)
+		}
+	}
+
+	// Set filters if provided (order derived from array index)
+	if len(input.Body.FilterIDs) > 0 {
+		orders := buildOrderMapFromIDs(input.Body.FilterIDs)
+		if err := h.proxyService.SetFilters(ctx, proxy.ID, input.Body.FilterIDs, orders); err != nil {
+			return nil, huma.Error500InternalServerError("failed to set filters", err)
 		}
 	}
 
@@ -221,6 +244,30 @@ func (h *StreamProxyHandler) Update(ctx context.Context, input *UpdateStreamProx
 
 	if err := h.proxyService.Update(ctx, proxy); err != nil {
 		return nil, huma.Error500InternalServerError("failed to update proxy", err)
+	}
+
+	// Set sources if provided (order derived from array index)
+	if input.Body.SourceIDs != nil {
+		priorities := buildOrderMapFromIDs(input.Body.SourceIDs)
+		if err := h.proxyService.SetSources(ctx, id, input.Body.SourceIDs, priorities); err != nil {
+			return nil, huma.Error500InternalServerError("failed to set sources", err)
+		}
+	}
+
+	// Set EPG sources if provided (order derived from array index)
+	if input.Body.EpgSourceIDs != nil {
+		priorities := buildOrderMapFromIDs(input.Body.EpgSourceIDs)
+		if err := h.proxyService.SetEpgSources(ctx, id, input.Body.EpgSourceIDs, priorities); err != nil {
+			return nil, huma.Error500InternalServerError("failed to set EPG sources", err)
+		}
+	}
+
+	// Set filters if provided (order derived from array index)
+	if input.Body.FilterIDs != nil {
+		orders := buildOrderMapFromIDs(input.Body.FilterIDs)
+		if err := h.proxyService.SetFilters(ctx, id, input.Body.FilterIDs, orders); err != nil {
+			return nil, huma.Error500InternalServerError("failed to set filters", err)
+		}
 	}
 
 	return &UpdateStreamProxyOutput{

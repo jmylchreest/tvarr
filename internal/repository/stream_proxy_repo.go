@@ -38,12 +38,23 @@ func (r *streamProxyRepo) GetByID(ctx context.Context, id models.ULID) (*models.
 	return &proxy, nil
 }
 
-// GetByIDWithRelations retrieves a stream proxy with its sources and EPG sources.
+// GetByIDWithRelations retrieves a stream proxy with its sources, EPG sources, and filters.
+// Relations are sorted by their priority/order fields for correct UI display.
 func (r *streamProxyRepo) GetByIDWithRelations(ctx context.Context, id models.ULID) (*models.StreamProxy, error) {
 	var proxy models.StreamProxy
 	if err := r.db.WithContext(ctx).
-		Preload("Sources").
-		Preload("EpgSources").
+		Preload("Sources", func(db *gorm.DB) *gorm.DB {
+			return db.Order("proxy_sources.priority ASC")
+		}).
+		Preload("Sources.Source").
+		Preload("EpgSources", func(db *gorm.DB) *gorm.DB {
+			return db.Order("proxy_epg_sources.priority ASC")
+		}).
+		Preload("EpgSources.EpgSource").
+		Preload("Filters", func(db *gorm.DB) *gorm.DB {
+			return db.Order("proxy_filters.priority ASC")
+		}).
+		Preload("Filters.Filter").
 		Where("id = ?", id).
 		First(&proxy).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -220,6 +231,48 @@ func (r *streamProxyRepo) GetEpgSources(ctx context.Context, proxyID models.ULID
 		return nil, fmt.Errorf("getting proxy EPG sources: %w", err)
 	}
 	return sources, nil
+}
+
+// SetFilters sets the filters for a proxy (replaces existing).
+func (r *streamProxyRepo) SetFilters(ctx context.Context, proxyID models.ULID, filterIDs []models.ULID, priorities map[models.ULID]int) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Hard delete existing associations (these are junction tables, no need for soft delete)
+		if err := tx.Unscoped().Where("proxy_id = ?", proxyID).Delete(&models.ProxyFilter{}).Error; err != nil {
+			return fmt.Errorf("clearing existing filters: %w", err)
+		}
+
+		// Create new associations
+		for _, filterID := range filterIDs {
+			priority := 0
+			if priorities != nil {
+				if p, ok := priorities[filterID]; ok {
+					priority = p
+				}
+			}
+			pf := &models.ProxyFilter{
+				ProxyID:  proxyID,
+				FilterID: filterID,
+				Priority: priority,
+			}
+			if err := tx.Create(pf).Error; err != nil {
+				return fmt.Errorf("adding filter %s: %w", filterID, err)
+			}
+		}
+		return nil
+	})
+}
+
+// GetFilters retrieves the filters for a proxy with priority ordering.
+func (r *streamProxyRepo) GetFilters(ctx context.Context, proxyID models.ULID) ([]*models.Filter, error) {
+	var filters []*models.Filter
+	if err := r.db.WithContext(ctx).
+		Joins("JOIN proxy_filters ON proxy_filters.filter_id = filters.id AND proxy_filters.deleted_at IS NULL").
+		Where("proxy_filters.proxy_id = ?", proxyID).
+		Order("proxy_filters.priority ASC, filters.name ASC").
+		Find(&filters).Error; err != nil {
+		return nil, fmt.Errorf("getting proxy filters: %w", err)
+	}
+	return filters, nil
 }
 
 // Ensure streamProxyRepo implements StreamProxyRepository at compile time.

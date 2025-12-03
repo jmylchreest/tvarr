@@ -168,6 +168,20 @@ func (s *ProxyService) SetEpgSources(ctx context.Context, proxyID models.ULID, s
 	return nil
 }
 
+// SetFilters sets the filters for a proxy.
+func (s *ProxyService) SetFilters(ctx context.Context, proxyID models.ULID, filterIDs []models.ULID, orders map[models.ULID]int) error {
+	if err := s.proxyRepo.SetFilters(ctx, proxyID, filterIDs, orders); err != nil {
+		return fmt.Errorf("setting filters: %w", err)
+	}
+
+	s.logger.InfoContext(ctx, "set proxy filters",
+		slog.String("proxy_id", proxyID.String()),
+		slog.Int("filter_count", len(filterIDs)),
+	)
+
+	return nil
+}
+
 // Generate runs the proxy generation pipeline.
 func (s *ProxyService) Generate(ctx context.Context, proxyID models.ULID) (*pipeline.Result, error) {
 	// Get proxy with relations

@@ -352,27 +352,81 @@ func StreamProxyFromModel(p *models.StreamProxy) StreamProxyResponse {
 	}
 }
 
-// StreamProxyDetailResponse includes related sources in the response.
+// ProxySourceAssignmentResponse represents a stream source assignment in a proxy.
+// This matches the frontend's expected format with source_id and priority_order.
+type ProxySourceAssignmentResponse struct {
+	SourceID      string `json:"source_id" doc:"ID of the stream source"`
+	SourceName    string `json:"source_name" doc:"Name of the stream source"`
+	PriorityOrder int    `json:"priority_order" doc:"Priority for merging channels"`
+}
+
+// ProxyEpgSourceAssignmentResponse represents an EPG source assignment in a proxy.
+// This matches the frontend's expected format with epg_source_id and priority_order.
+type ProxyEpgSourceAssignmentResponse struct {
+	EpgSourceID   string `json:"epg_source_id" doc:"ID of the EPG source"`
+	EpgSourceName string `json:"epg_source_name" doc:"Name of the EPG source"`
+	PriorityOrder int    `json:"priority_order" doc:"Priority for merging EPG data"`
+}
+
+// ProxyFilterAssignmentResponse represents a filter assignment in a proxy.
+// This matches the frontend's expected format with filter_id and priority_order.
+type ProxyFilterAssignmentResponse struct {
+	FilterID      string `json:"filter_id" doc:"ID of the filter"`
+	FilterName    string `json:"filter_name" doc:"Name of the filter"`
+	PriorityOrder int    `json:"priority_order" doc:"Order in which filters are applied"`
+	IsActive      bool   `json:"is_active" doc:"Whether the filter is active"`
+}
+
+// StreamProxyDetailResponse includes related sources and filters in the response.
+// Field names match the original Rust API contract for frontend compatibility.
 type StreamProxyDetailResponse struct {
 	StreamProxyResponse
-	Sources    []StreamSourceResponse `json:"sources,omitempty"`
-	EpgSources []EpgSourceResponse    `json:"epg_sources,omitempty"`
+	StreamSources []ProxySourceAssignmentResponse    `json:"stream_sources,omitempty"`
+	EpgSources    []ProxyEpgSourceAssignmentResponse `json:"epg_sources,omitempty"`
+	Filters       []ProxyFilterAssignmentResponse    `json:"filters,omitempty"`
 }
 
 // StreamProxyDetailFromModel converts a model with relations to a detail response.
 func StreamProxyDetailFromModel(p *models.StreamProxy) StreamProxyDetailResponse {
 	resp := StreamProxyDetailResponse{
 		StreamProxyResponse: StreamProxyFromModel(p),
+		StreamSources:       make([]ProxySourceAssignmentResponse, 0, len(p.Sources)),
+		EpgSources:          make([]ProxyEpgSourceAssignmentResponse, 0, len(p.EpgSources)),
+		Filters:             make([]ProxyFilterAssignmentResponse, 0, len(p.Filters)),
 	}
 	for _, ps := range p.Sources {
+		sourceName := ""
 		if ps.Source != nil {
-			resp.Sources = append(resp.Sources, StreamSourceFromModel(ps.Source))
+			sourceName = ps.Source.Name
 		}
+		resp.StreamSources = append(resp.StreamSources, ProxySourceAssignmentResponse{
+			SourceID:      ps.SourceID.String(),
+			SourceName:    sourceName,
+			PriorityOrder: ps.Priority,
+		})
 	}
 	for _, pes := range p.EpgSources {
+		epgSourceName := ""
 		if pes.EpgSource != nil {
-			resp.EpgSources = append(resp.EpgSources, EpgSourceFromModel(pes.EpgSource))
+			epgSourceName = pes.EpgSource.Name
 		}
+		resp.EpgSources = append(resp.EpgSources, ProxyEpgSourceAssignmentResponse{
+			EpgSourceID:   pes.EpgSourceID.String(),
+			EpgSourceName: epgSourceName,
+			PriorityOrder: pes.Priority,
+		})
+	}
+	for _, pf := range p.Filters {
+		filterName := ""
+		if pf.Filter != nil {
+			filterName = pf.Filter.Name
+		}
+		resp.Filters = append(resp.Filters, ProxyFilterAssignmentResponse{
+			FilterID:      pf.FilterID.String(),
+			FilterName:    filterName,
+			PriorityOrder: pf.Priority,
+			IsActive:      true, // Default to active since model doesn't have this field
+		})
 	}
 	return resp
 }
@@ -394,6 +448,7 @@ type CreateStreamProxyRequest struct {
 	OutputPath            string                 `json:"output_path,omitempty" doc:"Path for generated files" maxLength:"512"`
 	SourceIDs             []models.ULID          `json:"source_ids,omitempty" doc:"Stream source IDs to include"`
 	EpgSourceIDs          []models.ULID          `json:"epg_source_ids,omitempty" doc:"EPG source IDs to include"`
+	FilterIDs             []models.ULID          `json:"filter_ids,omitempty" doc:"Filter IDs to include"`
 }
 
 // ToModel converts the request to a model.
@@ -460,6 +515,9 @@ type UpdateStreamProxyRequest struct {
 	CacheProgramLogos     *bool                   `json:"cache_program_logos,omitempty" doc:"Cache EPG program logos locally"`
 	RelayProfileID        *models.ULID            `json:"relay_profile_id,omitempty" doc:"Relay profile for transcoding settings"`
 	OutputPath            *string                 `json:"output_path,omitempty" doc:"Path for generated files" maxLength:"512"`
+	SourceIDs             []models.ULID           `json:"source_ids,omitempty" doc:"Stream source IDs to include"`
+	EpgSourceIDs          []models.ULID           `json:"epg_source_ids,omitempty" doc:"EPG source IDs to include"`
+	FilterIDs             []models.ULID           `json:"filter_ids,omitempty" doc:"Filter IDs to include"`
 }
 
 // ApplyToModel applies the update request to an existing model.

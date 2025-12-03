@@ -43,6 +43,9 @@ func AllMigrations() []Migration {
 		// Fix channel unique index to be per-source
 		migration018ChannelCompositeUniqueIndex(),
 
+		// Rename order column to priority for consistency
+		migration019RenameProxyFilterOrderToPriority(),
+
 		// Note: Logo caching (Phase 10) uses file-based storage with
 		// in-memory indexing, no database tables required.
 	}
@@ -582,4 +585,50 @@ func migration018ChannelCompositeUniqueIndex() Migration {
 	}
 }
 
+// migration019RenameProxyFilterOrderToPriority renames the 'order' column to 'priority'
+// in proxy_filters and proxy_mapping_rules tables for consistency with other proxy tables.
+func migration019RenameProxyFilterOrderToPriority() Migration {
+	return Migration{
+		Version:     "019",
+		Description: "Rename order column to priority in proxy_filters and proxy_mapping_rules",
+		Up: func(tx *gorm.DB) error {
+			migrator := tx.Migrator()
+
+			// Rename 'order' to 'priority' in proxy_filters
+			if migrator.HasColumn(&models.ProxyFilter{}, "order") {
+				if err := migrator.RenameColumn(&models.ProxyFilter{}, "order", "priority"); err != nil {
+					return err
+				}
+			}
+
+			// Rename 'order' to 'priority' in proxy_mapping_rules
+			if migrator.HasColumn(&models.ProxyMappingRule{}, "order") {
+				if err := migrator.RenameColumn(&models.ProxyMappingRule{}, "order", "priority"); err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			migrator := tx.Migrator()
+
+			// Rename 'priority' back to 'order' in proxy_filters
+			if migrator.HasColumn(&models.ProxyFilter{}, "priority") {
+				if err := migrator.RenameColumn(&models.ProxyFilter{}, "priority", "order"); err != nil {
+					return err
+				}
+			}
+
+			// Rename 'priority' back to 'order' in proxy_mapping_rules
+			if migrator.HasColumn(&models.ProxyMappingRule{}, "priority") {
+				if err := migrator.RenameColumn(&models.ProxyMappingRule{}, "priority", "order"); err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+	}
+}
 

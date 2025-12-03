@@ -269,13 +269,14 @@ type ProxyFilter struct {
 	// FilterID is the ID of the filter.
 	FilterID ULID `gorm:"not null;index:idx_proxy_filter,unique" json:"filter_id"`
 
-	// Order determines the order in which filters are applied.
-	Order int `gorm:"default:0" json:"order"`
+	// Priority determines the order in which filters are applied (lower = first).
+	Priority int `gorm:"column:priority;default:0" json:"priority"`
 
 	// Proxy is the relationship to the parent proxy.
 	Proxy *StreamProxy `gorm:"foreignKey:ProxyID" json:"proxy,omitempty"`
 
-	// Note: Filter relationship will be added when Filter model is implemented in Phase 8
+	// Filter is the relationship to the filter.
+	Filter *Filter `gorm:"foreignKey:FilterID" json:"filter,omitempty"`
 }
 
 // TableName returns the table name for ProxyFilter.
@@ -312,8 +313,8 @@ type ProxyMappingRule struct {
 	// MappingRuleID is the ID of the data mapping rule.
 	MappingRuleID ULID `gorm:"not null;index:idx_proxy_mapping_rule,unique" json:"mapping_rule_id"`
 
-	// Order determines the order in which mapping rules are applied.
-	Order int `gorm:"default:0" json:"order"`
+	// Priority determines the order in which mapping rules are applied (lower = first).
+	Priority int `gorm:"column:priority;default:0" json:"priority"`
 
 	// Proxy is the relationship to the parent proxy.
 	Proxy *StreamProxy `gorm:"foreignKey:ProxyID" json:"proxy,omitempty"`
