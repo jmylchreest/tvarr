@@ -204,7 +204,10 @@ type TestResult struct {
 type ProgressEvent struct {
 	Timestamp         time.Time
 	OwnerID           string
+	OwnerType         string
+	OwnerName         string
 	OperationName     string
+	OperationType     string
 	State             string
 	CurrentStage      string
 	OverallPercentage float64
@@ -269,8 +272,17 @@ func (c *SSECollector) Start(ctx context.Context) error {
 				if v, ok := event["owner_id"].(string); ok {
 					pe.OwnerID = v
 				}
+				if v, ok := event["owner_type"].(string); ok {
+					pe.OwnerType = v
+				}
+				if v, ok := event["owner_name"].(string); ok {
+					pe.OwnerName = v
+				}
 				if v, ok := event["operation_name"].(string); ok {
 					pe.OperationName = v
+				}
+				if v, ok := event["operation_type"].(string); ok {
+					pe.OperationType = v
 				}
 				if v, ok := event["state"].(string); ok {
 					pe.State = v
@@ -348,13 +360,16 @@ func truncateString(s string, maxLen int) string {
 
 // operationInfo holds processed information about an operation for the waterfall view
 type operationInfo struct {
-	name       string
-	ownerID    string
-	firstTime  time.Time
-	lastTime   time.Time
-	finalState string
-	error      string
-	stages     []stageInfo
+	name          string
+	ownerID       string
+	ownerType     string
+	ownerName     string
+	operationType string
+	firstTime     time.Time
+	lastTime      time.Time
+	finalState    string
+	error         string
+	stages        []stageInfo
 }
 
 // stageInfo holds information about a stage within an operation
@@ -405,10 +420,22 @@ func (c *SSECollector) PrintTimeline() {
 			lastTime:  opEvents[len(opEvents)-1].Timestamp,
 		}
 
-		// Get operation name (use the most descriptive one)
+		// Get operation name, type, owner type, and owner name (use the most descriptive ones)
 		for _, e := range opEvents {
 			if e.OperationName != "" {
 				op.name = e.OperationName
+			}
+			if e.OperationType != "" {
+				op.operationType = e.OperationType
+			}
+			if e.OwnerType != "" {
+				op.ownerType = e.OwnerType
+			}
+			if e.OwnerName != "" {
+				op.ownerName = e.OwnerName
+			}
+			// Stop once we have all fields
+			if op.name != "" && op.operationType != "" && op.ownerType != "" && op.ownerName != "" {
 				break
 			}
 		}
@@ -483,10 +510,33 @@ func (c *SSECollector) PrintTimeline() {
 			statusIcon = "ERR"
 		}
 
+		// Build operation type header (e.g., "STREAM_INGESTION | My Test Source")
+		// Prefer ownerName (the source/proxy name) over operationName for the header
+		opTypeHeader := ""
+		if op.operationType != "" || op.ownerName != "" {
+			parts := make([]string, 0, 2)
+			if op.operationType != "" {
+				parts = append(parts, strings.ToUpper(op.operationType))
+			}
+			if op.ownerName != "" {
+				parts = append(parts, op.ownerName)
+			}
+			opTypeHeader = strings.Join(parts, " | ")
+		}
+
 		// Truncate long operation names
 		opNameDisplay := op.name
-		if len(opNameDisplay) > 46 {
-			opNameDisplay = opNameDisplay[:43] + "..."
+		maxNameLen := 46
+		if opTypeHeader != "" {
+			maxNameLen = 42 // Leave room for type header
+		}
+		if len(opNameDisplay) > maxNameLen {
+			opNameDisplay = opNameDisplay[:maxNameLen-3] + "..."
+		}
+
+		// Print operation type header if available
+		if opTypeHeader != "" {
+			fmt.Printf("         %-50s\n", opTypeHeader)
 		}
 
 		fmt.Printf("%-8.2f [%-46s] %-10s %s\n",

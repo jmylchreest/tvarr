@@ -220,7 +220,7 @@ func (s *ProxyService) Generate(ctx context.Context, proxyID models.ULID) (*pipe
 	var progressMgr *progress.OperationManager
 	if s.progressService != nil {
 		stages := orchestrator.Stages()
-		progressMgr, err = progress.StartPipelineOperation(s.progressService, "stream_proxy", proxyID, stages)
+		progressMgr, err = progress.StartPipelineOperation(s.progressService, "stream_proxy", proxyID, proxy.Name, stages)
 		if err != nil {
 			// Log but don't fail - progress tracking is non-essential
 			s.logger.WarnContext(ctx, "failed to start progress tracking",

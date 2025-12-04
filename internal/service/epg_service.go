@@ -178,7 +178,7 @@ func (s *EpgService) Ingest(ctx context.Context, id models.ULID) error {
 	var progressMgr *progress.OperationManager
 	if s.progressService != nil {
 		stages := getEpgIngestionStages()
-		progressMgr, err = s.progressService.StartOperation(progress.OpEpgIngestion, id, "epg_source", stages)
+		progressMgr, err = s.progressService.StartOperation(progress.OpEpgIngestion, id, "epg_source", source.Name, stages)
 		if err != nil {
 			// Log but don't fail - progress tracking is non-essential
 			s.logger.Warn("failed to start progress tracking",
@@ -359,7 +359,7 @@ func (s *EpgService) performIngestion(ctx context.Context, source *models.EpgSou
 	var progressMgr *progress.OperationManager
 	if s.progressService != nil {
 		stages := getEpgIngestionStages()
-		progressMgr, err = s.progressService.StartOperation(progress.OpEpgIngestion, id, "epg_source", stages)
+		progressMgr, err = s.progressService.StartOperation(progress.OpEpgIngestion, id, "epg_source", source.Name, stages)
 		if err != nil {
 			s.logger.Warn("failed to start progress tracking",
 				"source_id", id.String(),

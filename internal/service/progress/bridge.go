@@ -30,6 +30,7 @@ func StartPipelineOperation(
 	svc *Service,
 	ownerType string,
 	ownerID models.ULID,
+	ownerName string,
 	stages []core.Stage,
 ) (*OperationManager, error) {
 	stageInfos := CreateStagesFromPipeline(stages)
@@ -47,5 +48,5 @@ func StartPipelineOperation(
 		opType = OpPipeline
 	}
 
-	return svc.StartOperation(opType, ownerID, ownerType, stageInfos)
+	return svc.StartOperation(opType, ownerID, ownerType, ownerName, stageInfos)
 }

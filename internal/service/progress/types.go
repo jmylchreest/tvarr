@@ -115,6 +115,8 @@ type UniversalProgress struct {
 	OwnerID models.ULID `json:"owner_id"`
 	// OwnerType identifies the type of owner (e.g., "stream_proxy").
 	OwnerType string `json:"owner_type"`
+	// OwnerName is the human-readable name of the owner (e.g., "My EPG Source").
+	OwnerName string `json:"owner_name"`
 	// ResourceID is an optional additional resource identifier.
 	ResourceID *models.ULID `json:"resource_id,omitempty"`
 	// State is the overall operation state.

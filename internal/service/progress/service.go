@@ -124,6 +124,7 @@ func (s *Service) StartOperation(
 	opType OperationType,
 	ownerID models.ULID,
 	ownerType string,
+	ownerName string,
 	stages []StageInfo,
 ) (*OperationManager, error) {
 	s.mu.Lock()
@@ -154,6 +155,7 @@ func (s *Service) StartOperation(
 		OperationType:     opType,
 		OwnerID:           ownerID,
 		OwnerType:         ownerType,
+		OwnerName:         ownerName,
 		State:             StatePreparing,
 		Progress:          0,
 		Message:           "Starting operation",

@@ -312,7 +312,7 @@ func (s *SourceService) Ingest(ctx context.Context, id models.ULID) error {
 	var progressMgr *progress.OperationManager
 	if s.progressService != nil {
 		stages := getIngestionStages()
-		progressMgr, err = s.progressService.StartOperation(progress.OpStreamIngestion, id, "stream_source", stages)
+		progressMgr, err = s.progressService.StartOperation(progress.OpStreamIngestion, id, "stream_source", source.Name, stages)
 		if err != nil {
 			// Log but don't fail - progress tracking is non-essential
 			s.logger.Warn("failed to start progress tracking",
@@ -508,7 +508,7 @@ func (s *SourceService) performIngestion(ctx context.Context, source *models.Str
 	var progressMgr *progress.OperationManager
 	if s.progressService != nil {
 		stages := getIngestionStages()
-		progressMgr, err = s.progressService.StartOperation(progress.OpStreamIngestion, id, "stream_source", stages)
+		progressMgr, err = s.progressService.StartOperation(progress.OpStreamIngestion, id, "stream_source", source.Name, stages)
 		if err != nil {
 			s.logger.Warn("failed to start progress tracking",
 				"source_id", id.String(),
