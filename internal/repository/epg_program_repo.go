@@ -67,26 +67,33 @@ func (r *epgProgramRepo) GetByID(ctx context.Context, id models.ULID) (*models.E
 }
 
 // GetBySourceID retrieves all programs for a source using a callback for streaming.
+// Uses GORM's Rows() iterator for reliable row-by-row processing without batch issues.
 func (r *epgProgramRepo) GetBySourceID(ctx context.Context, sourceID models.ULID, callback func(*models.EpgProgram) error) error {
-	const batchSize = 1000
-
-	return r.db.WithContext(ctx).
+	rows, err := r.db.WithContext(ctx).
+		Model(&models.EpgProgram{}).
 		Where("source_id = ?", sourceID).
-		Order("channel_id ASC, start ASC").
-		FindInBatches(&[]models.EpgProgram{}, batchSize, func(tx *gorm.DB, batch int) error {
-			programs := tx.Statement.Dest.(*[]models.EpgProgram)
-			for i := range *programs {
-				// Copy the program to avoid pointer reuse issues with FindInBatches.
-				// GORM reuses the same slice for each batch, so we must copy before
-				// passing to the callback to prevent data corruption when the next
-				// batch overwrites the memory.
-				progCopy := (*programs)[i]
-				if err := callback(&progCopy); err != nil {
-					return err
-				}
-			}
-			return nil
-		}).Error
+		Order("id ASC").
+		Rows()
+	if err != nil {
+		return fmt.Errorf("querying programs: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var program models.EpgProgram
+		if err := r.db.ScanRows(rows, &program); err != nil {
+			return fmt.Errorf("scanning program row: %w", err)
+		}
+		if err := callback(&program); err != nil {
+			return err
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterating programs: %w", err)
+	}
+
+	return nil
 }
 
 // GetByChannelID retrieves programs for a channel within a time range.

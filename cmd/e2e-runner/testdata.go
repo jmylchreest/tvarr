@@ -12,6 +12,11 @@ import (
 	"github.com/jmylchreest/tvarr/internal/testutil"
 )
 
+// countXMLTVPrograms counts the number of <programme elements in XMLTV content.
+func countXMLTVPrograms(xmltv string) int {
+	return strings.Count(xmltv, "<programme ")
+}
+
 // TestDataConfig configures test data generation.
 type TestDataConfig struct {
 	ChannelCount        int
@@ -33,12 +38,12 @@ func DefaultTestDataConfig() TestDataConfig {
 		ChannelCount:        50,
 		ProgramCount:        5000, // 100 per channel
 		RandomSeed:          time.Now().UnixNano(),
-		ProgramDurations:    []int{10, 15, 30, 60, 90},
+		ProgramDurations:    []int{30, 60, 90},
 		IncludePlusOneChans: true,
 		IncludeHDVariants:   true,
 		BaseURL:             "http://teststream.local",
 		LogoBaseURL:         "http://testlogos.local",
-		AnchorTime:          time.Now().Add(-1 * time.Hour).Truncate(time.Hour),
+		AnchorTime:          time.Now().Add(30 * time.Minute),
 		RequiredChannels:    0,
 		RequiredPrograms:    0,
 	}
@@ -75,8 +80,20 @@ func (g *TestDataGenerator) Generate() (*GeneratedTestData, error) {
 	channels := g.generateChannels()
 	programs := g.generatePrograms(channels)
 
+	// Validate that program slice has expected count
+	expectedPrograms := g.config.ProgramCount
+	if len(programs) != expectedPrograms {
+		return nil, fmt.Errorf("program generation error: generated %d programs but expected %d", len(programs), expectedPrograms)
+	}
+
 	m3u := g.generateM3U(channels)
 	xmltv := g.generateXMLTV(channels, programs)
+
+	// Validate that the XMLTV content has the expected number of programs
+	xmltvProgramCount := countXMLTVPrograms(xmltv)
+	if xmltvProgramCount != len(programs) {
+		return nil, fmt.Errorf("XMLTV generation error: generated %d programmes but expected %d from slice", xmltvProgramCount, len(programs))
+	}
 
 	return &GeneratedTestData{
 		M3UContent:   m3u,

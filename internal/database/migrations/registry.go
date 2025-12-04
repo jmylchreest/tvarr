@@ -46,6 +46,9 @@ func AllMigrations() []Migration {
 		// Rename order column to priority for consistency
 		migration019RenameProxyFilterOrderToPriority(),
 
+		// Add API method field for Xtream EPG sources
+		migration020EpgSourceApiMethod(),
+
 		// Note: Logo caching (Phase 10) uses file-based storage with
 		// in-memory indexing, no database tables required.
 	}
@@ -627,6 +630,29 @@ func migration019RenameProxyFilterOrderToPriority() Migration {
 				}
 			}
 
+			return nil
+		},
+	}
+}
+
+// migration020EpgSourceApiMethod adds api_method column to epg_sources table
+// for selecting between Xtream API methods (stream_id JSON vs bulk XMLTV).
+func migration020EpgSourceApiMethod() Migration {
+	return Migration{
+		Version:     "020",
+		Description: "Add api_method column to epg_sources for Xtream API method selection",
+		Up: func(tx *gorm.DB) error {
+			// AutoMigrate will add the new column to the existing table
+			return tx.AutoMigrate(&models.EpgSource{})
+		},
+		Down: func(tx *gorm.DB) error {
+			// Drop the column
+			migrator := tx.Migrator()
+			if migrator.HasColumn(&models.EpgSource{}, "api_method") {
+				if err := migrator.DropColumn(&models.EpgSource{}, "api_method"); err != nil {
+					return err
+				}
+			}
 			return nil
 		},
 	}

@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/pipeline/core"
 	"github.com/jmylchreest/tvarr/internal/pipeline/shared"
 	"github.com/jmylchreest/tvarr/pkg/xmltv"
@@ -108,21 +107,19 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	}
 
 	// Sort programs by channel and start time for consistent output
-	sortedPrograms := make([]*models.EpgProgram, len(state.Programs))
-	copy(sortedPrograms, state.Programs)
-	sort.Slice(sortedPrograms, func(i, j int) bool {
-		if sortedPrograms[i].ChannelID != sortedPrograms[j].ChannelID {
-			return sortedPrograms[i].ChannelID < sortedPrograms[j].ChannelID
+	sort.Slice(state.Programs, func(i, j int) bool {
+		if state.Programs[i].ChannelID != state.Programs[j].ChannelID {
+			return state.Programs[i].ChannelID < state.Programs[j].ChannelID
 		}
-		return sortedPrograms[i].Start.Before(sortedPrograms[j].Start)
+		return state.Programs[i].Start.Before(state.Programs[j].Start)
 	})
 
 	// Write programmes
 	// T038: DEBUG logging for batch progress
 	const batchSize = 1000
-	totalPrograms := len(sortedPrograms)
+	totalPrograms := len(state.Programs)
 	programCount := 0
-	for i, prog := range sortedPrograms {
+	for i, prog := range state.Programs {
 		select {
 		case <-ctx.Done():
 			return result, ctx.Err()

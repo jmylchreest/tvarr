@@ -11,13 +11,13 @@ type EpgProgram struct {
 	BaseModel
 
 	// SourceID is the foreign key to the parent EpgSource.
-	SourceID ULID `gorm:"type:varchar(26);not null;index" json:"source_id"`
+	SourceID ULID `gorm:"type:varchar(26);not null;uniqueIndex:idx_program_unique" json:"source_id"`
 
 	// ChannelID is the EPG channel identifier (matches Channel.TvgID).
-	ChannelID string `gorm:"not null;size:255;index:idx_channel_time" json:"channel_id"`
+	ChannelID string `gorm:"not null;size:255;uniqueIndex:idx_program_unique;index:idx_channel_time" json:"channel_id"`
 
 	// Start is the program start time.
-	Start time.Time `gorm:"not null;index:idx_channel_time" json:"start"`
+	Start time.Time `gorm:"not null;uniqueIndex:idx_program_unique;index:idx_channel_time" json:"start"`
 
 	// Stop is the program end time.
 	Stop time.Time `gorm:"not null;index" json:"stop"`

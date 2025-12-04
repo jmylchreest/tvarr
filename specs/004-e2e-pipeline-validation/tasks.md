@@ -236,3 +236,79 @@ Task: "Request XMLTV endpoint for generated proxy"
 - Take screenshots/logs of any failures for debugging
 - Mark tasks complete only when validation passes
 - If validation fails, create bug fix task before marking complete
+
+---
+
+## Phase 10: Pipeline Architecture Improvements
+
+**Purpose**: Address architectural issues discovered during pipeline comparison analysis
+
+### Ingestion Guard Enhancement
+
+- [ ] T062 Add configurable grace period timer to ingestion guard stage
+  - **Rationale**: When job scheduler is reintroduced, ingestion jobs may start in quick succession
+  - **Requirement**: Wait for a configurable grace period (e.g., 5-30 seconds) after last ingestion completes before proceeding
+  - **Configuration**: `ingestion_guard_grace_period` setting with sensible default
+
+### Stage Order Correction
+
+- [ ] T063 Reorder stages: Data Mapping MUST run BEFORE Filtering
+  - **Current order**: Load Channels → Load Programs → **Filtering → Data Mapping** → ...
+  - **Correct order**: Load Channels → Load Programs → **Data Mapping → Filtering** → ...
+  - **Rationale**: Data mapping rules may alter fields that filter expressions operate on
+  - **Example**: A mapping rule might set `channel.group = "Sports"`, which a filter then matches against
+  - **Impact**: Filtering on unmapped data produces incorrect results
+
+### Program Loading Correction
+
+- [ ] T064 Load ALL programs regardless of channel membership
+  - **Current behavior**: LoadPrograms filters programs to only those matching loaded channels by TvgID
+  - **Required behavior**: Load ALL programs from EPG sources associated with the proxy
+  - **Rationale**: Data mapping rules may alter TvgID or other fields used for channel-program matching
+  - **Matching**: Program→Channel matching should happen AFTER data mapping, not during load
+
+### Channel Numbering Simplification
+
+- [ ] T065 Remove sequential and group numbering modes, keep only preserve mode
+  - **Current**: Three modes (sequential, preserve, group)
+  - **Required**: Only preserve mode (two-pass algorithm)
+  - **Behavior**:
+    - Pass 1: Channels with explicit `ChannelNumber > 0` claim their number (increment on conflict)
+    - Pass 2: Channels without number (`ChannelNumber == 0`) fill gaps from `StartingChannelNumber`
+  - **Remove**: UI options for sequential/group modes, simplify configuration
+
+### Memory Efficiency Research
+
+- [x] T066 [RESEARCH] Analyze viability of transparent disk-backed slice overflow
+  - **COMPLETED AND REVERTED**: Implemented a DiskBackedSlice[T] package but complexity outweighed benefits:
+    - No rebalancing from disk to memory after deletions
+    - cgroups/container memory limits would cause OOM kill regardless
+    - Significant code complexity for marginal benefit
+    - Gob encoding overhead for serialization
+  - **Decision**: Removed disk-backed slice implementation. Use simple Go slices.
+    For very large datasets, rely on container orchestration (cgroups) and streaming/batching.
+
+---
+
+## Corrected Pipeline Stage Order
+
+After T063 and T064, the correct stage order will be:
+
+| # | Stage | Purpose |
+|---|-------|---------|
+| 1 | **Ingestion Guard** | Wait for active ingestions + grace period |
+| 2 | **Load Channels** | Load ALL channels from associated stream sources |
+| 3 | **Load Programs** | Load ALL programs from associated EPG sources (unfiltered) |
+| 4 | **Data Mapping** | Apply transformation rules to channels AND programs |
+| 5 | **Filtering** | Apply filters to mapped data (channels and programs) |
+| 6 | **Logo Caching** | Download and cache logos |
+| 7 | **Numbering** | Assign channel numbers (preserve mode only) |
+| 8 | **Generate M3U** | Write M3U playlist |
+| 9 | **Generate XMLTV** | Write XMLTV guide |
+| 10 | **Publish** | Atomically publish files |
+
+**Key changes from current**:
+- Data Mapping moved BEFORE Filtering
+- Load Programs loads ALL programs (matching happens in filtering)
+- Ingestion Guard has grace period
+- Numbering simplified to preserve-only

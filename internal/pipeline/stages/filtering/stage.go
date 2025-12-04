@@ -173,7 +173,7 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	originalChannelCount := len(state.Channels)
 	originalProgramCount := len(state.Programs)
 
-	// Apply channel filters using the new sequential logic
+	// Apply channel filters using the sequential logic
 	filteredChannels, err := s.applyChannelFilters(ctx, state.Channels)
 	if err != nil {
 		return result, err
@@ -187,6 +187,7 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 		}
 	}
 
+	// Replace channels in state with filtered result
 	state.Channels = filteredChannels
 
 	// Update channel map
@@ -204,10 +205,13 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 		return result, err
 	}
 
+	// Replace programs in state with filtered result
 	state.Programs = filteredPrograms
 
-	channelsRemoved := originalChannelCount - len(state.Channels)
-	programsRemoved := originalProgramCount - len(state.Programs)
+	channelsKept := len(filteredChannels)
+	programsKept := len(filteredPrograms)
+	channelsRemoved := originalChannelCount - channelsKept
+	programsRemoved := originalProgramCount - programsKept
 
 	result.RecordsProcessed = originalChannelCount + originalProgramCount
 	result.RecordsModified = channelsRemoved + programsRemoved
@@ -217,14 +221,14 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 
 	// T031: Log filter completion stats
 	s.log(ctx, slog.LevelInfo, "filtering complete",
-		slog.Int("channels_kept", len(state.Channels)),
+		slog.Int("channels_kept", channelsKept),
 		slog.Int("channels_removed", channelsRemoved),
-		slog.Int("programs_kept", len(state.Programs)),
+		slog.Int("programs_kept", programsKept),
 		slog.Int("programs_removed", programsRemoved))
 
 	// Create artifact
 	artifact := core.NewArtifact(core.ArtifactTypeChannels, core.ProcessingStageFiltered, StageID).
-		WithRecordCount(len(state.Channels)).
+		WithRecordCount(channelsKept).
 		WithMetadata("channels_removed", channelsRemoved).
 		WithMetadata("programs_removed", programsRemoved)
 	result.Artifacts = append(result.Artifacts, artifact)

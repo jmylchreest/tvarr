@@ -535,32 +535,9 @@ func (g *SampleDataGenerator) GenerateProgramsForChannels(channels []SampleChann
 			count++
 		}
 
-		// Adjust anchor time for timeshift channels
-		channelOpts := opts
-		// Check if channel name contains timeshift indicators
-		if containsTimeshift(ch.ChannelName) {
-			channelOpts.AnchorTime = opts.AnchorTime.Add(-1 * time.Hour)
-		}
-
-		channelPrograms := g.GenerateProgramsForChannel(ch.TvgID, count, channelOpts)
+		channelPrograms := g.GenerateProgramsForChannel(ch.TvgID, count, opts)
 		programs = append(programs, channelPrograms...)
 	}
 
 	return programs
-}
-
-// containsTimeshift checks if a channel name indicates a timeshift channel.
-func containsTimeshift(name string) bool {
-	timeshiftIndicators := []string{"+1", "+2", "+24", "+1h", "+2h"}
-	for _, indicator := range timeshiftIndicators {
-		if len(name) >= len(indicator) {
-			// Check if the name ends with or contains the indicator
-			for i := 0; i <= len(name)-len(indicator); i++ {
-				if name[i:i+len(indicator)] == indicator {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }

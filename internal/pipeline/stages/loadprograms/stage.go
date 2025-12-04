@@ -18,15 +18,12 @@ const (
 	StageID = "load_programs"
 	// StageName is the human-readable name for this stage.
 	StageName = "Load Programs"
-	// DefaultEPGDays is the default number of days to load EPG data for.
-	DefaultEPGDays = 7
 )
 
 // Stage loads EPG programs for the channels in the pipeline.
 type Stage struct {
 	shared.BaseStage
 	programRepo repository.EpgProgramRepository
-	epgDays     int
 	logger      *slog.Logger
 }
 
@@ -35,7 +32,6 @@ func New(programRepo repository.EpgProgramRepository) *Stage {
 	return &Stage{
 		BaseStage:   shared.NewBaseStage(StageID, StageName),
 		programRepo: programRepo,
-		epgDays:     DefaultEPGDays,
 	}
 }
 
@@ -48,12 +44,6 @@ func NewConstructor() core.StageConstructor {
 		}
 		return s
 	}
-}
-
-// WithEPGDays sets the number of days to load EPG data for.
-func (s *Stage) WithEPGDays(days int) *Stage {
-	s.epgDays = days
-	return s
 }
 
 // Execute loads EPG programs for all channels with matching TvgIDs.
@@ -71,8 +61,7 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	// T030: Log stage start
 	s.log(ctx, slog.LevelInfo, "starting program load",
 		slog.Int("epg_source_count", len(state.EpgSources)),
-		slog.Int("channel_count", len(state.ChannelMap)),
-		slog.Int("epg_days", s.epgDays))
+		slog.Int("channel_count", len(state.ChannelMap)))
 
 	// Get the set of TvgIDs we need programs for
 	tvgIDs := make(map[string]bool)
@@ -80,11 +69,8 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 		tvgIDs[tvgID] = true
 	}
 
-	programs := make([]*models.EpgProgram, 0)
-
-	// Define time range for EPG
+	totalPrograms := 0
 	now := time.Now()
-	endTime := now.Add(time.Duration(s.epgDays) * 24 * time.Hour)
 
 	// Load programs from each EPG source
 	for _, source := range state.EpgSources {
@@ -109,13 +95,14 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 				return nil
 			}
 
-			// Only include programs within our time window
-			if prog.Stop.Before(now) || prog.Start.After(endTime) {
+			// Skip programs that have already ended
+			if prog.Stop.Before(now) {
 				return nil
 			}
 
-			programs = append(programs, prog)
+			state.Programs = append(state.Programs, prog)
 			sourceProgramCount++
+			totalPrograms++
 			return nil
 		})
 
@@ -135,18 +122,16 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 			slog.Int("program_count", sourceProgramCount))
 	}
 
-	state.Programs = programs
-
-	result.RecordsProcessed = len(programs)
-	result.Message = fmt.Sprintf("Loaded %d programs from %d EPG sources", len(programs), len(state.EpgSources))
+	result.RecordsProcessed = totalPrograms
+	result.Message = fmt.Sprintf("Loaded %d programs from %d EPG sources", totalPrograms, len(state.EpgSources))
 
 	// T030: Log stage completion
 	s.log(ctx, slog.LevelInfo, "program load complete",
-		slog.Int("total_programs", len(programs)))
+		slog.Int("total_programs", totalPrograms))
 
 	// Create artifact for loaded programs
 	artifact := core.NewArtifact(core.ArtifactTypePrograms, core.ProcessingStageRaw, StageID).
-		WithRecordCount(len(programs))
+		WithRecordCount(totalPrograms)
 	result.Artifacts = append(result.Artifacts, artifact)
 
 	return result, nil

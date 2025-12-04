@@ -88,27 +88,33 @@ func (r *channelRepo) GetByID(ctx context.Context, id models.ULID) (*models.Chan
 }
 
 // GetBySourceID retrieves all channels for a source using a callback for streaming.
-// This is memory-efficient for large datasets as it processes channels in batches.
+// Uses GORM's Rows() iterator for reliable row-by-row processing without batch issues.
 func (r *channelRepo) GetBySourceID(ctx context.Context, sourceID models.ULID, callback func(*models.Channel) error) error {
-	const batchSize = 1000
-
-	return r.db.WithContext(ctx).
+	rows, err := r.db.WithContext(ctx).
+		Model(&models.Channel{}).
 		Where("source_id = ?", sourceID).
 		Order("id ASC").
-		FindInBatches(&[]models.Channel{}, batchSize, func(tx *gorm.DB, batch int) error {
-			channels := tx.Statement.Dest.(*[]models.Channel)
-			for i := range *channels {
-				// Copy the channel to avoid pointer reuse issues with FindInBatches.
-				// GORM reuses the same slice for each batch, so we must copy before
-				// passing to the callback to prevent data corruption when the next
-				// batch overwrites the memory.
-				chCopy := (*channels)[i]
-				if err := callback(&chCopy); err != nil {
-					return err
-				}
-			}
-			return nil
-		}).Error
+		Rows()
+	if err != nil {
+		return fmt.Errorf("querying channels: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var channel models.Channel
+		if err := r.db.ScanRows(rows, &channel); err != nil {
+			return fmt.Errorf("scanning channel row: %w", err)
+		}
+		if err := callback(&channel); err != nil {
+			return err
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterating channels: %w", err)
+	}
+
+	return nil
 }
 
 // GetBySourceIDPaginated retrieves channels for a source with pagination.

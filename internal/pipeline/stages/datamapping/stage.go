@@ -40,9 +40,9 @@ type DataMappingRule struct {
 
 // compiledRule holds a pre-parsed rule.
 type compiledRule struct {
-	rule           *DataMappingRule
-	parsed         *expression.ParsedExpression
-	ruleProcessor  *expression.RuleProcessor
+	rule          *DataMappingRule
+	parsed        *expression.ParsedExpression
+	ruleProcessor *expression.RuleProcessor
 }
 
 // Stage applies data mapping rules to channels and programs.
@@ -181,6 +181,14 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 		if modifications > 0 {
 			channelsModified++
 			totalModifications += modifications
+		}
+	}
+
+	// Update channel map with modified channels
+	// Need to re-iterate since TvgLogo etc. may have changed
+	for _, ch := range state.Channels {
+		if ch.TvgID != "" {
+			state.ChannelMap[ch.TvgID] = ch
 		}
 	}
 
@@ -387,7 +395,7 @@ func (s *Stage) applyChannelModifications(ch *models.Channel, modifications []ex
 			ch.TvgLogo = mod.NewValue
 		case "group_title", "group":
 			ch.GroupTitle = mod.NewValue
-		// stream_url is typically read-only
+			// stream_url is typically read-only
 		}
 	}
 }
@@ -410,6 +418,8 @@ func (c *programContext) GetFieldValue(name string) (string, bool) {
 		return c.fields["programme_description"], true
 	case "genre":
 		return c.fields["programme_category"], true
+	case "icon":
+		return c.fields["programme_icon"], true
 	}
 	return "", false
 }
@@ -424,6 +434,7 @@ func (s *Stage) createProgramContext(prog *models.EpgProgram) expression.Modifia
 		"programme_title":       prog.Title,
 		"programme_description": prog.Description,
 		"programme_category":    prog.Category,
+		"programme_icon":        prog.Icon,
 	}
 
 	// Add time fields as strings
@@ -450,7 +461,9 @@ func (s *Stage) applyProgramModifications(prog *models.EpgProgram, modifications
 			prog.Description = mod.NewValue
 		case "programme_category", "genre":
 			prog.Category = mod.NewValue
-		// Time fields are typically read-only
+		case "programme_icon", "icon":
+			prog.Icon = mod.NewValue
+			// Time fields are typically read-only
 		}
 	}
 }

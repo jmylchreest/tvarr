@@ -58,8 +58,8 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	s.log(ctx, slog.LevelInfo, "starting channel load",
 		slog.Int("source_count", len(state.Sources)))
 
-	channels := make([]*models.Channel, 0)
 	channelMap := make(map[string]*models.Channel)
+	totalChannels := 0
 
 	// Load channels from each source in priority order
 	for _, source := range state.Sources {
@@ -79,8 +79,9 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 			default:
 			}
 
-			channels = append(channels, ch)
+			state.Channels = append(state.Channels, ch)
 			sourceChannelCount++
+			totalChannels++
 
 			// Build channel map for EPG matching
 			if ch.TvgID != "" {
@@ -109,20 +110,19 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 			slog.Int("channel_count", sourceChannelCount))
 	}
 
-	state.Channels = channels
 	state.ChannelMap = channelMap
 
-	result.RecordsProcessed = len(channels)
-	result.Message = fmt.Sprintf("Loaded %d channels from %d sources", len(channels), len(state.Sources))
+	result.RecordsProcessed = totalChannels
+	result.Message = fmt.Sprintf("Loaded %d channels from %d sources", totalChannels, len(state.Sources))
 
 	// T029: Log stage completion
 	s.log(ctx, slog.LevelInfo, "channel load complete",
-		slog.Int("total_channels", len(channels)),
+		slog.Int("total_channels", totalChannels),
 		slog.Int("unique_tvg_ids", len(channelMap)))
 
 	// Create artifact for loaded channels
 	artifact := core.NewArtifact(core.ArtifactTypeChannels, core.ProcessingStageRaw, StageID).
-		WithRecordCount(len(channels))
+		WithRecordCount(totalChannels)
 	result.Artifacts = append(result.Artifacts, artifact)
 
 	return result, nil

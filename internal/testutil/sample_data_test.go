@@ -350,28 +350,6 @@ func TestProgramDurations(t *testing.T) {
 	assert.GreaterOrEqual(t, len(ProgramDurations), 4, "Should have at least 4 duration options")
 }
 
-func TestContainsTimeshift(t *testing.T) {
-	tests := []struct {
-		name     string
-		expected bool
-	}{
-		{"StreamCast News +1", true},
-		{"ViewMedia Sports +2", true},
-		{"AeroVision Movies +24", true},
-		{"GlobalStream Entertainment +1h", true},
-		{"NationalNet Music HD", false},
-		{"SportsCentral Kids", false},
-		{"CinemaMax News", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := containsTimeshift(tt.name)
-			assert.Equal(t, tt.expected, result, "containsTimeshift(%q)", tt.name)
-		})
-	}
-}
-
 func TestNoRealBrandNames(t *testing.T) {
 	// This test ensures we never accidentally include real brand names
 	// Only check brands that are likely to appear as whole words in channel names

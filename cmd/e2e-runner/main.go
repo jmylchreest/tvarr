@@ -63,11 +63,36 @@ func findFreePort() (int, error) {
 
 // ManagedServer represents a tvarr server managed by the E2E runner
 type ManagedServer struct {
-	cmd      *exec.Cmd
-	port     int
-	dataDir  string
-	baseURL  string
-	startErr error
+	cmd       *exec.Cmd
+	port      int
+	dataDir   string
+	baseURL   string
+	startErr  error
+	logBuffer *logCapture
+}
+
+// logCapture captures log output while also writing to the original writer
+type logCapture struct {
+	buffer bytes.Buffer
+	mu     sync.Mutex
+	writer io.Writer
+}
+
+func newLogCapture(w io.Writer) *logCapture {
+	return &logCapture{writer: w}
+}
+
+func (lc *logCapture) Write(p []byte) (n int, err error) {
+	lc.mu.Lock()
+	lc.buffer.Write(p)
+	lc.mu.Unlock()
+	return lc.writer.Write(p)
+}
+
+func (lc *logCapture) Contains(s string) bool {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return strings.Contains(lc.buffer.String(), s)
 }
 
 // NewManagedServer creates and starts a new tvarr server on a random port
@@ -100,15 +125,18 @@ func NewManagedServer(binaryPath string) (*ManagedServer, error) {
 		fmt.Sprintf("TVARR_STORAGE_BASE_DIR=%s", dataDir),
 	)
 
-	// Redirect output for debugging (optional)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	// Capture tvarr server output to stderr (both stdout and stderr from server)
+	// This keeps e2e-runner output on stdout separate from server logs on stderr
+	logBuffer := newLogCapture(os.Stderr)
+	cmd.Stdout = logBuffer
+	cmd.Stderr = logBuffer
 
 	ms := &ManagedServer{
-		cmd:     cmd,
-		port:    port,
-		dataDir: dataDir,
-		baseURL: fmt.Sprintf("http://localhost:%d", port),
+		cmd:       cmd,
+		port:      port,
+		dataDir:   dataDir,
+		baseURL:   fmt.Sprintf("http://localhost:%d", port),
+		logBuffer: logBuffer,
 	}
 
 	return ms, nil
@@ -190,6 +218,14 @@ func (ms *ManagedServer) BaseURL() string {
 // DataDir returns the data directory path
 func (ms *ManagedServer) DataDir() string {
 	return ms.dataDir
+}
+
+// LogContains checks if the server logs contain a specific string
+func (ms *ManagedServer) LogContains(s string) bool {
+	if ms.logBuffer == nil {
+		return false
+	}
+	return ms.logBuffer.Contains(s)
 }
 
 // TestResult represents the outcome of a test step
@@ -315,11 +351,14 @@ func (c *SSECollector) Stop() {
 	if c.cancel != nil {
 		c.cancel()
 	}
-	// Give it a moment to clean up
+	// Wait for the goroutine to finish (with timeout)
 	select {
 	case <-c.done:
-	case <-time.After(time.Second):
+	case <-time.After(2 * time.Second):
+		// Force close - the goroutine will exit when it tries to read
 	}
+	// Close idle connections to ensure no lingering goroutines
+	c.httpClient.CloseIdleConnections()
 }
 
 // GetEvents returns a copy of all collected events
@@ -1154,16 +1193,19 @@ type E2ERunner struct {
 	epgURL            string
 	verbose           bool
 	results           []TestResult
-	runID             string        // Unique ID for this test run to avoid name collisions
-	cacheChannelLogos bool          // Enable channel logo caching
-	cacheProgramLogos bool          // Enable program logo caching
-	sseCollector      *SSECollector // Collects SSE events for timeline
-	channelLogoID     string        // ULID of uploaded channel logo placeholder
-	channelLogoURL    string        // URL of uploaded channel logo placeholder
-	programLogoID     string        // ULID of uploaded program logo placeholder
-	programLogoURL    string        // URL of uploaded program logo placeholder
-	outputDir         string        // Directory to write artifact files (m3u/xmltv)
-	showSamples       bool          // Display sample channels and programs to stdout
+	runID             string         // Unique ID for this test run to avoid name collisions
+	cacheChannelLogos bool           // Enable channel logo caching
+	cacheProgramLogos bool           // Enable program logo caching
+	sseCollector      *SSECollector  // Collects SSE events for timeline
+	channelLogoID     string         // ULID of uploaded channel logo placeholder
+	channelLogoURL    string         // URL of uploaded channel logo placeholder
+	programLogoID     string         // ULID of uploaded program logo placeholder
+	programLogoURL    string         // URL of uploaded program logo placeholder
+	outputDir         string         // Directory to write artifact files (m3u/xmltv)
+	showSamples       bool           // Display sample channels and programs to stdout
+	expectedChannels  int            // Expected channel count in output (0 to skip validation)
+	expectedPrograms  int            // Expected program count in output (0 to skip validation)
+	server            *ManagedServer // Reference to managed server for log validation
 }
 
 // E2ERunnerOptions holds configuration options for the E2E runner
@@ -1176,6 +1218,9 @@ type E2ERunnerOptions struct {
 	CacheProgramLogos bool
 	OutputDir         string
 	ShowSamples       bool
+	ExpectedChannels  int            // Expected channel count in output (0 to skip validation)
+	ExpectedPrograms  int            // Expected program count in output (0 to skip validation)
+	Server            *ManagedServer // Reference to managed server for log validation
 }
 
 // NewE2ERunner creates a new E2E runner
@@ -1193,6 +1238,9 @@ func NewE2ERunner(opts E2ERunnerOptions) *E2ERunner {
 		sseCollector:      NewSSECollector(opts.BaseURL),
 		outputDir:         opts.OutputDir,
 		showSamples:       opts.ShowSamples,
+		expectedChannels:  opts.ExpectedChannels,
+		expectedPrograms:  opts.ExpectedPrograms,
+		server:            opts.Server,
 	}
 }
 
@@ -1444,6 +1492,11 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 		}
 		r.log("  M3U channels: %d", channelCount)
 
+		// Validate expected channel count if specified
+		if r.expectedChannels > 0 && channelCount != r.expectedChannels {
+			return fmt.Errorf("channel count mismatch: got %d, expected %d", channelCount, r.expectedChannels)
+		}
+
 		// Write M3U to output dir if specified
 		if r.outputDir != "" {
 			if err := r.writeArtifact(proxyID+".m3u", m3uContent); err != nil {
@@ -1477,6 +1530,14 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 			return err
 		}
 		r.log("  XMLTV channels: %d, programs: %d", channelCount, programCount)
+
+		// Validate expected counts if specified
+		if r.expectedChannels > 0 && channelCount != r.expectedChannels {
+			return fmt.Errorf("XMLTV channel count mismatch: got %d, expected %d", channelCount, r.expectedChannels)
+		}
+		if r.expectedPrograms > 0 && programCount != r.expectedPrograms {
+			return fmt.Errorf("XMLTV program count mismatch: got %d, expected %d", programCount, r.expectedPrograms)
+		}
 
 		// Write XMLTV to output dir if specified
 		if r.outputDir != "" {
@@ -1889,6 +1950,10 @@ func main() {
 		fmt.Printf("Test Data Dir:       %s\n", testDataDir)
 		fmt.Println()
 
+		// Set expected counts from generated data for output validation
+		*requiredChannels = testData.ChannelCount
+		*requiredPrograms = testData.ProgramCount
+
 		defer func() {
 			if testDataDir != "" {
 				os.RemoveAll(testDataDir)
@@ -1989,11 +2054,19 @@ func main() {
 		CacheProgramLogos: *cacheProgramLogos,
 		OutputDir:         *outputDir,
 		ShowSamples:       *showSamples,
+		ExpectedChannels:  *requiredChannels,
+		ExpectedPrograms:  *requiredPrograms,
+		Server:            server,
 	})
 	fmt.Printf("Run ID:              %s\n", runner.runID)
 	fmt.Println()
 	_ = runner.Run(ctx)
 
 	exitCode := runner.PrintSummary()
+
+	// Ensure stdout is flushed before exit (helps when piped)
+	os.Stdout.Sync()
+	os.Stderr.Sync()
+
 	os.Exit(exitCode)
 }
