@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-//go:embed testdata/channel.webp testdata/program.webp
+//go:embed testdata/channel.webp testdata/program.webp testdata/test.m3u testdata/test.xml
 var testdataFS embed.FS
 
 // E2E Test Data Sources - publicly accessible, compatible M3U and EPG data
@@ -1728,14 +1728,22 @@ func main() {
 	var (
 		binaryPath        = flag.String("binary", "", "Path to tvarr binary (if set, starts managed server on random port)")
 		baseURL           = flag.String("base-url", "", "Tvarr API base URL (ignored if -binary is set)")
-		m3uURL            = flag.String("m3u-url", DefaultM3UURL, "M3U stream source URL for testing")
-		epgURL            = flag.String("epg-url", DefaultEPGURL, "EPG source URL for testing")
+		m3uURL            = flag.String("m3u-url", "", "M3U stream source URL for testing (ignored if -random-testdata is set)")
+		epgURL            = flag.String("epg-url", "", "EPG source URL for testing (ignored if -random-testdata is set)")
 		verbose           = flag.Bool("verbose", true, "Enable verbose output")
 		timeout           = flag.Duration("timeout", DefaultTimeout, "Overall test timeout")
 		cacheChannelLogos = flag.Bool("cache-channel-logos", true, "Enable channel logo caching during proxy generation")
 		cacheProgramLogos = flag.Bool("cache-program-logos", true, "Enable program logo caching during proxy generation")
 		outputDir         = flag.String("output-dir", "", "Directory to write artifact files (M3U/XMLTV)")
 		showSamples       = flag.Bool("show-samples", true, "Display sample channels and programs to stdout")
+
+		// Test data generation flags
+		randomTestdata   = flag.Bool("random-testdata", true, "Generate random test data (default: true)")
+		channelCount     = flag.Int("channel-count", 50, "Number of channels to generate")
+		programCount     = flag.Int("program-count", 5000, "Total number of programs to generate")
+		requiredChannels = flag.Int("required-channels", 0, "Required channel count (fails if mismatch, 0 to skip)")
+		requiredPrograms = flag.Int("required-programs", 0, "Required program count (fails if mismatch, 0 to skip)")
+		randomSeed       = flag.Int64("random-seed", 0, "Random seed for test data generation (0 for time-based)")
 	)
 	flag.Parse()
 
@@ -1744,6 +1752,75 @@ func main() {
 
 	var server *ManagedServer
 	var effectiveBaseURL string
+	var effectiveM3UURL, effectiveEPGURL string
+	var testDataDir string
+
+	// Handle test data generation
+	if *randomTestdata {
+		// Create temp directory for test data files
+		var err error
+		testDataDir, err = os.MkdirTemp("", "tvarr-e2e-testdata-*")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to create temp directory: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Generate test data
+		config := DefaultTestDataConfig()
+		config.ChannelCount = *channelCount
+		config.ProgramCount = *programCount
+		if *randomSeed != 0 {
+			config.RandomSeed = *randomSeed
+		}
+
+		generator := NewTestDataGenerator(config)
+		testData, err := generator.Generate()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to generate test data: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Validate if required counts are specified
+		if err := testData.Validate(*requiredChannels, *requiredPrograms); err != nil {
+			fmt.Fprintf(os.Stderr, "Test data validation failed: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Write test data to files
+		if err := testData.WriteToFiles(testDataDir); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to write test data files: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Use file:// URLs
+		effectiveM3UURL = testData.M3UURL()
+		effectiveEPGURL = testData.XMLTVURL()
+
+		fmt.Println("Test Data Generation")
+		fmt.Println(strings.Repeat("-", 40))
+		fmt.Printf("Channels Generated:  %d\n", testData.ChannelCount)
+		fmt.Printf("Programs Generated:  %d\n", testData.ProgramCount)
+		fmt.Printf("Test Data Dir:       %s\n", testDataDir)
+		fmt.Println()
+
+		defer func() {
+			if testDataDir != "" {
+				os.RemoveAll(testDataDir)
+			}
+		}()
+	} else {
+		// Use provided URLs or defaults
+		if *m3uURL != "" {
+			effectiveM3UURL = *m3uURL
+		} else {
+			effectiveM3UURL = DefaultM3UURL
+		}
+		if *epgURL != "" {
+			effectiveEPGURL = *epgURL
+		} else {
+			effectiveEPGURL = DefaultEPGURL
+		}
+	}
 
 	// If binary path is provided, start a managed server
 	if *binaryPath != "" {
@@ -1759,11 +1836,16 @@ func main() {
 		fmt.Printf("Binary:              %s\n", *binaryPath)
 		fmt.Printf("Port:                %d (random, never 8080)\n", server.Port())
 		fmt.Printf("Data Directory:      %s\n", server.DataDir())
-		fmt.Printf("M3U URL:             %s\n", *m3uURL)
-		fmt.Printf("EPG URL:             %s\n", *epgURL)
+		fmt.Printf("M3U URL:             %s\n", effectiveM3UURL)
+		fmt.Printf("EPG URL:             %s\n", effectiveEPGURL)
 		fmt.Printf("Timeout:             %v\n", *timeout)
 		fmt.Printf("Cache Channel Logos: %v\n", *cacheChannelLogos)
 		fmt.Printf("Cache Program Logos: %v\n", *cacheProgramLogos)
+		fmt.Printf("Random Test Data:    %v\n", *randomTestdata)
+		if *randomTestdata {
+			fmt.Printf("Channel Count:       %d\n", *channelCount)
+			fmt.Printf("Program Count:       %d\n", *programCount)
+		}
 		if *outputDir != "" {
 			fmt.Printf("Output Directory:    %s\n", *outputDir)
 		}
@@ -1796,11 +1878,16 @@ func main() {
 		fmt.Println("Tvarr E2E Test Runner")
 		fmt.Println(strings.Repeat("=", 60))
 		fmt.Printf("Base URL:            %s\n", effectiveBaseURL)
-		fmt.Printf("M3U URL:             %s\n", *m3uURL)
-		fmt.Printf("EPG URL:             %s\n", *epgURL)
+		fmt.Printf("M3U URL:             %s\n", effectiveM3UURL)
+		fmt.Printf("EPG URL:             %s\n", effectiveEPGURL)
 		fmt.Printf("Timeout:             %v\n", *timeout)
 		fmt.Printf("Cache Channel Logos: %v\n", *cacheChannelLogos)
 		fmt.Printf("Cache Program Logos: %v\n", *cacheProgramLogos)
+		fmt.Printf("Random Test Data:    %v\n", *randomTestdata)
+		if *randomTestdata {
+			fmt.Printf("Channel Count:       %d\n", *channelCount)
+			fmt.Printf("Program Count:       %d\n", *programCount)
+		}
 		if *outputDir != "" {
 			fmt.Printf("Output Directory:    %s\n", *outputDir)
 		}
@@ -1809,8 +1896,8 @@ func main() {
 
 	runner := NewE2ERunner(E2ERunnerOptions{
 		BaseURL:           effectiveBaseURL,
-		M3UURL:            *m3uURL,
-		EPGURL:            *epgURL,
+		M3UURL:            effectiveM3UURL,
+		EPGURL:            effectiveEPGURL,
 		Verbose:           *verbose,
 		CacheChannelLogos: *cacheChannelLogos,
 		CacheProgramLogos: *cacheProgramLogos,

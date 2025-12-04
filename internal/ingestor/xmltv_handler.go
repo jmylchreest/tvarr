@@ -5,12 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"strings"
 	"time"
 
 	"github.com/jmylchreest/tvarr/internal/models"
+	"github.com/jmylchreest/tvarr/internal/urlutil"
 	"github.com/jmylchreest/tvarr/pkg/httpclient"
 	"github.com/jmylchreest/tvarr/pkg/xmltv"
 )
@@ -22,8 +20,8 @@ const (
 
 // XMLTVHandler handles XMLTV EPG source ingestion.
 type XMLTVHandler struct {
-	// httpClient is the resilient HTTP client used for fetching remote XMLTV files.
-	httpClient *httpclient.Client
+	// fetcher handles both HTTP/HTTPS and file:// URLs.
+	fetcher *urlutil.ResourceFetcher
 
 	// channelMap stores channel ID to external ID mapping during ingestion.
 	// This maps XMLTV channel IDs to be used when processing programmes.
@@ -36,14 +34,14 @@ func NewXMLTVHandler() *XMLTVHandler {
 	cfg.Timeout = defaultXMLTVTimeout
 
 	return &XMLTVHandler{
-		httpClient: httpclient.New(cfg),
+		fetcher:    urlutil.NewResourceFetcher(cfg),
 		channelMap: make(map[string]string),
 	}
 }
 
 // WithHTTPClientConfig sets a custom HTTP client configuration.
 func (h *XMLTVHandler) WithHTTPClientConfig(cfg httpclient.Config) *XMLTVHandler {
-	h.httpClient = httpclient.New(cfg)
+	h.fetcher = urlutil.NewResourceFetcher(cfg)
 	return h
 }
 
@@ -63,8 +61,8 @@ func (h *XMLTVHandler) Validate(source *models.EpgSource) error {
 	if source.URL == "" {
 		return fmt.Errorf("URL is required for XMLTV sources")
 	}
-	if !strings.HasPrefix(source.URL, httpPrefix) && !strings.HasPrefix(source.URL, httpsPrefix) {
-		return fmt.Errorf("URL must be an HTTP(S) URL")
+	if !urlutil.IsSupportedURL(source.URL) {
+		return fmt.Errorf("URL must be HTTP, HTTPS, or file:// URL")
 	}
 	return nil
 }
@@ -75,8 +73,8 @@ func (h *XMLTVHandler) Ingest(ctx context.Context, source *models.EpgSource, cal
 		return fmt.Errorf("validation failed: %w", err)
 	}
 
-	// Fetch the XMLTV file
-	reader, err := h.fetch(ctx, source.URL)
+	// Fetch the XMLTV file (supports http://, https://, and file://)
+	reader, err := h.fetcher.Fetch(ctx, source.URL)
 	if err != nil {
 		return fmt.Errorf("failed to fetch XMLTV: %w", err)
 	}
@@ -122,21 +120,6 @@ func (h *XMLTVHandler) Ingest(ctx context.Context, source *models.EpgSource, cal
 	}
 
 	return nil
-}
-
-// fetch retrieves the XMLTV file from a URL using the resilient HTTP client.
-func (h *XMLTVHandler) fetch(ctx context.Context, url string) (io.ReadCloser, error) {
-	resp, err := h.httpClient.Get(ctx, url)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch URL: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-
-	return resp.Body, nil
 }
 
 // convertProgramme converts an XMLTV Programme to an EpgProgram model.

@@ -4,6 +4,7 @@ package testutil
 import (
 	"fmt"
 	"math/rand"
+	"time"
 
 	"github.com/jmylchreest/tvarr/internal/models"
 )
@@ -119,7 +120,87 @@ var (
 			"Family",
 		},
 	}
+
+	// ProgramTemplates provides fictional program titles and descriptions.
+	// NEVER use real show names, movie titles, or trademarked content.
+	ProgramTemplates = []ProgramTemplate{
+		// News programs
+		{Title: "Morning Report", Description: "Start your day with comprehensive news coverage and weather updates.", Category: "News"},
+		{Title: "Midday Bulletin", Description: "Midday news roundup with the latest headlines.", Category: "News"},
+		{Title: "Evening Edition", Description: "In-depth coverage of the day's major stories.", Category: "News"},
+		{Title: "World Tonight", Description: "International news and global affairs.", Category: "News"},
+		{Title: "Business Update", Description: "Financial markets and business news analysis.", Category: "News"},
+		{Title: "Weather Watch", Description: "Detailed weather forecasts and climate updates.", Category: "News"},
+
+		// Entertainment programs
+		{Title: "Morning Show Live", Description: "Wake up with interviews, music, and lifestyle features.", Category: "Entertainment"},
+		{Title: "Talk of the Town", Description: "Celebrity interviews and entertainment news.", Category: "Entertainment"},
+		{Title: "Quiz Masters", Description: "Test your knowledge in this exciting game show.", Category: "Entertainment"},
+		{Title: "Talent Search", Description: "Discover the next big star in this competition series.", Category: "Entertainment"},
+		{Title: "Cooking Challenge", Description: "Chefs compete to create the ultimate dish.", Category: "Entertainment"},
+		{Title: "Home Renovation", Description: "Transform living spaces with expert designers.", Category: "Lifestyle"},
+		{Title: "Garden Time", Description: "Tips and ideas for your outdoor spaces.", Category: "Lifestyle"},
+		{Title: "Travel Journeys", Description: "Explore destinations around the world.", Category: "Lifestyle"},
+
+		// Drama programs
+		{Title: "City Hospital", Description: "Drama unfolds in a busy metropolitan medical center.", Category: "Drama"},
+		{Title: "Legal Eagles", Description: "Lawyers fight for justice in complex cases.", Category: "Drama"},
+		{Title: "Family Matters", Description: "A family navigates the challenges of modern life.", Category: "Drama"},
+		{Title: "Crime Division", Description: "Detectives solve mysterious cases in the city.", Category: "Drama"},
+		{Title: "Historical Tales", Description: "Period drama set in a bygone era.", Category: "Drama"},
+
+		// Comedy programs
+		{Title: "Laugh Track", Description: "Stand-up comedy from emerging talents.", Category: "Comedy"},
+		{Title: "Sitcom Central", Description: "Hilarious adventures of quirky characters.", Category: "Comedy"},
+		{Title: "Comedy Hour", Description: "The best in sketch comedy and improvisation.", Category: "Comedy"},
+
+		// Sports programs
+		{Title: "Sports Central", Description: "All the latest sports news and highlights.", Category: "Sports"},
+		{Title: "Match Day", Description: "Live coverage of today's big game.", Category: "Sports"},
+		{Title: "Sports Analysis", Description: "Expert commentary and game breakdowns.", Category: "Sports"},
+		{Title: "Fitness Focus", Description: "Workout tips and health advice.", Category: "Sports"},
+		{Title: "Extreme Sports", Description: "Adrenaline-pumping action sports coverage.", Category: "Sports"},
+
+		// Movies (generic descriptions, no real titles)
+		{Title: "Action Feature", Description: "High-octane thrills and explosive excitement.", Category: "Movies"},
+		{Title: "Drama Feature", Description: "A compelling story of human triumph.", Category: "Movies"},
+		{Title: "Comedy Feature", Description: "Laugh-out-loud entertainment for the whole family.", Category: "Movies"},
+		{Title: "Thriller Feature", Description: "Edge-of-your-seat suspense and mystery.", Category: "Movies"},
+		{Title: "Romance Feature", Description: "A heartwarming tale of love and connection.", Category: "Movies"},
+		{Title: "Sci-Fi Feature", Description: "Journey to new worlds and distant futures.", Category: "Movies"},
+		{Title: "Classic Cinema", Description: "Timeless storytelling from the golden age.", Category: "Movies"},
+
+		// Documentary programs
+		{Title: "Nature World", Description: "Stunning wildlife and natural wonders.", Category: "Documentary"},
+		{Title: "History Uncovered", Description: "Revealing secrets from the past.", Category: "Documentary"},
+		{Title: "Science Today", Description: "The latest discoveries and innovations.", Category: "Documentary"},
+		{Title: "True Stories", Description: "Real-life accounts of extraordinary events.", Category: "Documentary"},
+		{Title: "Ocean Explorer", Description: "Dive into the mysteries of the deep sea.", Category: "Documentary"},
+
+		// Kids programs
+		{Title: "Cartoon Time", Description: "Fun animated adventures for young viewers.", Category: "Kids"},
+		{Title: "Learning Fun", Description: "Educational entertainment for children.", Category: "Kids"},
+		{Title: "Story Corner", Description: "Classic tales brought to life.", Category: "Kids"},
+		{Title: "Art Studio", Description: "Creative activities and crafts for kids.", Category: "Kids"},
+		{Title: "Animal Friends", Description: "Meet amazing animals from around the world.", Category: "Kids"},
+
+		// Music programs
+		{Title: "Music Mix", Description: "The hottest tracks and artist interviews.", Category: "Music"},
+		{Title: "Classic Sounds", Description: "Timeless music from legendary artists.", Category: "Music"},
+		{Title: "Live Sessions", Description: "Exclusive live performances.", Category: "Music"},
+		{Title: "Chart Show", Description: "This week's top music countdown.", Category: "Music"},
+	}
+
+	// ProgramDurations contains common program lengths in minutes.
+	ProgramDurations = []int{10, 15, 30, 60, 90, 120}
 )
+
+// ProgramTemplate represents a template for generating program data.
+type ProgramTemplate struct {
+	Title       string
+	Description string
+	Category    string
+}
 
 // SampleChannel represents a generated sample channel for testing.
 type SampleChannel struct {
@@ -333,4 +414,153 @@ func (g *SampleDataGenerator) GenerateMixedChannels(count int) []SampleChannel {
 	}
 
 	return channels
+}
+
+// SampleProgram represents a generated sample program for testing.
+type SampleProgram struct {
+	ChannelID   string
+	Title       string
+	Description string
+	Category    string
+	Start       time.Time
+	Stop        time.Time
+	EpisodeNum  string
+	Icon        string
+	Rating      string
+}
+
+// ToEpgProgram converts a SampleProgram to a models.EpgProgram.
+func (s *SampleProgram) ToEpgProgram(sourceID models.ULID) *models.EpgProgram {
+	return &models.EpgProgram{
+		SourceID:    sourceID,
+		ChannelID:   s.ChannelID,
+		Title:       s.Title,
+		Description: s.Description,
+		Category:    s.Category,
+		Start:       s.Start,
+		Stop:        s.Stop,
+		EpisodeNum:  s.EpisodeNum,
+		Icon:        s.Icon,
+		Rating:      s.Rating,
+	}
+}
+
+// ProgramGenerateOptions configures program generation.
+type ProgramGenerateOptions struct {
+	Durations     []int     // Available durations in minutes
+	AnchorTime    time.Time // Starting time for programs (will be truncated to hour)
+	IconURLBase   string    // Base URL for program icons
+	IncludeRating bool      // Whether to include ratings
+}
+
+// DefaultProgramGenerateOptions returns default program generation options.
+func DefaultProgramGenerateOptions() ProgramGenerateOptions {
+	return ProgramGenerateOptions{
+		Durations:     ProgramDurations,
+		AnchorTime:    time.Now().Add(-1 * time.Hour).Truncate(time.Hour),
+		IconURLBase:   "https://icons.example.com/program",
+		IncludeRating: true,
+	}
+}
+
+// Ratings for program content.
+var programRatings = []string{"TV-G", "TV-PG", "TV-14", "TV-MA", "G", "PG", "PG-13", "R", ""}
+
+// GenerateProgramsForChannel generates programs for a single channel.
+func (g *SampleDataGenerator) GenerateProgramsForChannel(channelID string, count int, opts ProgramGenerateOptions) []SampleProgram {
+	programs := make([]SampleProgram, count)
+	currentTime := opts.AnchorTime.Truncate(time.Hour)
+
+	for i := 0; i < count; i++ {
+		// Pick a random duration
+		duration := opts.Durations[g.rng.Intn(len(opts.Durations))]
+
+		// Pick a random program template
+		template := ProgramTemplates[g.rng.Intn(len(ProgramTemplates))]
+
+		start := currentTime
+		stop := currentTime.Add(time.Duration(duration) * time.Minute)
+
+		// Generate episode number sometimes (50% chance)
+		var episodeNum string
+		if g.rng.Float32() > 0.5 {
+			season := g.rng.Intn(10) + 1
+			episode := g.rng.Intn(20) + 1
+			episodeNum = fmt.Sprintf("%d.%d.", season-1, episode-1)
+		}
+
+		// Generate rating if enabled
+		var rating string
+		if opts.IncludeRating {
+			rating = programRatings[g.rng.Intn(len(programRatings))]
+		}
+
+		// Generate icon sometimes (70% chance)
+		var icon string
+		if g.rng.Float32() > 0.3 {
+			icon = fmt.Sprintf("%s/%s_%d.jpg", opts.IconURLBase, channelID, i)
+		}
+
+		programs[i] = SampleProgram{
+			ChannelID:   channelID,
+			Title:       template.Title,
+			Description: template.Description,
+			Category:    template.Category,
+			Start:       start,
+			Stop:        stop,
+			EpisodeNum:  episodeNum,
+			Icon:        icon,
+			Rating:      rating,
+		}
+
+		currentTime = stop
+	}
+
+	return programs
+}
+
+// GenerateProgramsForChannels generates programs for multiple channels.
+func (g *SampleDataGenerator) GenerateProgramsForChannels(channels []SampleChannel, totalPrograms int, opts ProgramGenerateOptions) []SampleProgram {
+	if len(channels) == 0 {
+		return nil
+	}
+
+	programs := make([]SampleProgram, 0, totalPrograms)
+	programsPerChannel := totalPrograms / len(channels)
+	extraPrograms := totalPrograms % len(channels)
+
+	for i, ch := range channels {
+		count := programsPerChannel
+		if i < extraPrograms {
+			count++
+		}
+
+		// Adjust anchor time for timeshift channels
+		channelOpts := opts
+		// Check if channel name contains timeshift indicators
+		if containsTimeshift(ch.ChannelName) {
+			channelOpts.AnchorTime = opts.AnchorTime.Add(-1 * time.Hour)
+		}
+
+		channelPrograms := g.GenerateProgramsForChannel(ch.TvgID, count, channelOpts)
+		programs = append(programs, channelPrograms...)
+	}
+
+	return programs
+}
+
+// containsTimeshift checks if a channel name indicates a timeshift channel.
+func containsTimeshift(name string) bool {
+	timeshiftIndicators := []string{"+1", "+2", "+24", "+1h", "+2h"}
+	for _, indicator := range timeshiftIndicators {
+		if len(name) >= len(indicator) {
+			// Check if the name ends with or contains the indicator
+			for i := 0; i <= len(name)-len(indicator); i++ {
+				if name[i:i+len(indicator)] == indicator {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }

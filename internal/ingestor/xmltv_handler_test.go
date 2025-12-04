@@ -16,7 +16,7 @@ import (
 func TestNewXMLTVHandler(t *testing.T) {
 	handler := NewXMLTVHandler()
 	assert.NotNil(t, handler)
-	assert.NotNil(t, handler.httpClient)
+	assert.NotNil(t, handler.fetcher)
 }
 
 func TestXMLTVHandler_Type(t *testing.T) {
@@ -59,7 +59,7 @@ func TestXMLTVHandler_Validate(t *testing.T) {
 				Type: models.EpgSourceTypeXMLTV,
 				URL:  "ftp://example.com/epg.xml",
 			},
-			wantErr: "URL must be an HTTP(S) URL",
+			wantErr: "URL must be HTTP, HTTPS, or file://",
 		},
 		{
 			name: "valid HTTP URL",
@@ -74,6 +74,14 @@ func TestXMLTVHandler_Validate(t *testing.T) {
 			source: &models.EpgSource{
 				Type: models.EpgSourceTypeXMLTV,
 				URL:  "https://example.com/epg.xml",
+			},
+			wantErr: "",
+		},
+		{
+			name: "valid file URL",
+			source: &models.EpgSource{
+				Type: models.EpgSourceTypeXMLTV,
+				URL:  "file:///path/to/epg.xml",
 			},
 			wantErr: "",
 		},

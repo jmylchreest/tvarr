@@ -61,7 +61,7 @@ func TestM3UHandler_Validate(t *testing.T) {
 				URL:  "ftp://example.com/playlist.m3u",
 			},
 			wantErr: true,
-			errMsg:  "HTTP or HTTPS",
+			errMsg:  "HTTP, HTTPS, or file://",
 		},
 		{
 			name: "valid HTTP source",
@@ -78,6 +78,15 @@ func TestM3UHandler_Validate(t *testing.T) {
 				Name: "Test",
 				Type: models.SourceTypeM3U,
 				URL:  "https://example.com/playlist.m3u",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid file URL",
+			source: &models.StreamSource{
+				Name: "Test",
+				Type: models.SourceTypeM3U,
+				URL:  "file:///path/to/playlist.m3u",
 			},
 			wantErr: false,
 		},

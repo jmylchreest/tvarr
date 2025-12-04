@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
 	"time"
 
-	"github.com/jmylchreest/tvarr/pkg/httpclient"
 	"github.com/jmylchreest/tvarr/internal/models"
+	"github.com/jmylchreest/tvarr/internal/urlutil"
+	"github.com/jmylchreest/tvarr/pkg/httpclient"
 	"github.com/jmylchreest/tvarr/pkg/m3u"
 )
 
@@ -27,8 +27,8 @@ const (
 
 // M3UHandler handles ingestion of M3U playlist sources.
 type M3UHandler struct {
-	// httpClient is the resilient HTTP client used for fetching remote M3U files.
-	httpClient *httpclient.Client
+	// fetcher handles both HTTP/HTTPS and file:// URLs.
+	fetcher *urlutil.ResourceFetcher
 }
 
 // NewM3UHandler creates a new M3U handler with default settings.
@@ -37,13 +37,13 @@ func NewM3UHandler() *M3UHandler {
 	cfg.Timeout = defaultM3UTimeout
 
 	return &M3UHandler{
-		httpClient: httpclient.New(cfg),
+		fetcher: urlutil.NewResourceFetcher(cfg),
 	}
 }
 
 // WithHTTPClientConfig sets a custom HTTP client configuration.
 func (h *M3UHandler) WithHTTPClientConfig(cfg httpclient.Config) *M3UHandler {
-	h.httpClient = httpclient.New(cfg)
+	h.fetcher = urlutil.NewResourceFetcher(cfg)
 	return h
 }
 
@@ -63,9 +63,9 @@ func (h *M3UHandler) Validate(source *models.StreamSource) error {
 	if source.URL == "" {
 		return fmt.Errorf("source URL is required")
 	}
-	// Basic URL validation
-	if !strings.HasPrefix(source.URL, httpPrefix) && !strings.HasPrefix(source.URL, httpsPrefix) {
-		return fmt.Errorf("source URL must be HTTP or HTTPS")
+	// Validate URL scheme (http, https, or file)
+	if !urlutil.IsSupportedURL(source.URL) {
+		return fmt.Errorf("source URL must be HTTP, HTTPS, or file:// URL")
 	}
 	return nil
 }
@@ -76,8 +76,8 @@ func (h *M3UHandler) Ingest(ctx context.Context, source *models.StreamSource, ca
 		return fmt.Errorf("validation failed: %w", err)
 	}
 
-	// Fetch the M3U content
-	body, err := h.fetch(ctx, source.URL)
+	// Fetch the M3U content (supports http://, https://, and file://)
+	body, err := h.fetcher.Fetch(ctx, source.URL)
 	if err != nil {
 		return fmt.Errorf("fetching M3U: %w", err)
 	}
@@ -111,21 +111,6 @@ func (h *M3UHandler) Ingest(ctx context.Context, source *models.StreamSource, ca
 	}
 
 	return nil
-}
-
-// fetch retrieves content from a URL using the resilient HTTP client.
-func (h *M3UHandler) fetch(ctx context.Context, url string) (io.ReadCloser, error) {
-	resp, err := h.httpClient.Get(ctx, url)
-	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-
-	return resp.Body, nil
 }
 
 // entryToChannel converts an M3U entry to a Channel model.
