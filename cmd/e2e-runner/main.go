@@ -999,8 +999,14 @@ func (c *APIClient) GetProxyXMLTV(ctx context.Context, proxyID string) (string, 
 	return string(data), nil
 }
 
-// UploadLogo uploads a logo file and returns the URL to access it
-func (c *APIClient) UploadLogo(ctx context.Context, name string, fileData []byte) (string, error) {
+// UploadLogoResult contains the result of uploading a logo.
+type UploadLogoResult struct {
+	ID  string // ULID of the uploaded logo
+	URL string // Full URL to access the logo
+}
+
+// UploadLogo uploads a logo file and returns the ID and URL to access it
+func (c *APIClient) UploadLogo(ctx context.Context, name string, fileData []byte) (*UploadLogoResult, error) {
 	// Create multipart form
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
@@ -1008,48 +1014,52 @@ func (c *APIClient) UploadLogo(ctx context.Context, name string, fileData []byte
 	// Add the file field
 	part, err := writer.CreateFormFile("file", name)
 	if err != nil {
-		return "", fmt.Errorf("create form file failed: %w", err)
+		return nil, fmt.Errorf("create form file failed: %w", err)
 	}
 	if _, err := part.Write(fileData); err != nil {
-		return "", fmt.Errorf("write file data failed: %w", err)
+		return nil, fmt.Errorf("write file data failed: %w", err)
 	}
 
 	// Add the name field
 	if err := writer.WriteField("name", name); err != nil {
-		return "", fmt.Errorf("write name field failed: %w", err)
+		return nil, fmt.Errorf("write name field failed: %w", err)
 	}
 
 	if err := writer.Close(); err != nil {
-		return "", fmt.Errorf("close writer failed: %w", err)
+		return nil, fmt.Errorf("close writer failed: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/v1/logos/upload", &buf)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("upload logo failed: %w", err)
+		return nil, fmt.Errorf("upload logo failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("upload logo failed with status %d: %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("upload logo failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var result map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("decode response failed: %w", err)
+		return nil, fmt.Errorf("decode response failed: %w", err)
 	}
 
+	id, ok := result["id"].(string)
+	if !ok {
+		return nil, fmt.Errorf("response missing id field")
+	}
 	url, ok := result["url"].(string)
 	if !ok {
-		return "", fmt.Errorf("response missing url field")
+		return nil, fmt.Errorf("response missing url field")
 	}
-	return url, nil
+	return &UploadLogoResult{ID: id, URL: url}, nil
 }
 
 // CreateDataMappingRule creates a new data mapping rule
@@ -1148,7 +1158,9 @@ type E2ERunner struct {
 	cacheChannelLogos bool          // Enable channel logo caching
 	cacheProgramLogos bool          // Enable program logo caching
 	sseCollector      *SSECollector // Collects SSE events for timeline
+	channelLogoID     string        // ULID of uploaded channel logo placeholder
 	channelLogoURL    string        // URL of uploaded channel logo placeholder
+	programLogoID     string        // ULID of uploaded program logo placeholder
 	programLogoURL    string        // URL of uploaded program logo placeholder
 	outputDir         string        // Directory to write artifact files (m3u/xmltv)
 	showSamples       bool          // Display sample channels and programs to stdout
@@ -1241,11 +1253,13 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("read channel.webp from embedded testdata: %w", err)
 		}
-		r.channelLogoURL, err = r.client.UploadLogo(ctx, "channel-placeholder.webp", channelLogoData)
+		result, err := r.client.UploadLogo(ctx, "channel-placeholder.webp", channelLogoData)
 		if err != nil {
 			return err
 		}
-		r.log("  Uploaded channel logo: %s", r.channelLogoURL)
+		r.channelLogoID = result.ID
+		r.channelLogoURL = result.URL
+		r.log("  Uploaded channel logo: ID=%s URL=%s", r.channelLogoID, r.channelLogoURL)
 		return nil
 	})
 
@@ -1254,21 +1268,24 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("read program.webp from embedded testdata: %w", err)
 		}
-		r.programLogoURL, err = r.client.UploadLogo(ctx, "program-placeholder.webp", programLogoData)
+		result, err := r.client.UploadLogo(ctx, "program-placeholder.webp", programLogoData)
 		if err != nil {
 			return err
 		}
-		r.log("  Uploaded program logo: %s", r.programLogoURL)
+		r.programLogoID = result.ID
+		r.programLogoURL = result.URL
+		r.log("  Uploaded program logo: ID=%s URL=%s", r.programLogoID, r.programLogoURL)
 		return nil
 	})
 
 	r.runTest("Create Channel Logo Mapping Rule", func() error {
-		if r.channelLogoURL == "" {
-			return fmt.Errorf("no channel logo URL available")
+		if r.channelLogoID == "" {
+			return fmt.Errorf("no channel logo ID available")
 		}
-		// Rule: Replace all channel logos with our placeholder
-		// Expression syntax: <field> <operator> "<value>" SET <target_field> = "<new_value>"
-		expression := fmt.Sprintf(`tvg_logo starts_with "http" SET tvg_logo = "%s"`, r.channelLogoURL)
+		// Rule: Replace all channel logos with @logo:ULID helper reference
+		// The @logo:ULID syntax is resolved by the logo caching stage to the full URL
+		// This ensures logos are recognized as local and not fetched remotely
+		expression := fmt.Sprintf(`tvg_logo starts_with "http" SET tvg_logo = "@logo:%s"`, r.channelLogoID)
 		ruleID, err := r.client.CreateDataMappingRule(ctx,
 			fmt.Sprintf("E2E Channel Logo Placeholder %s", r.runID),
 			"stream",
@@ -1278,16 +1295,17 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		r.log("  Created channel logo mapping rule: %s", ruleID)
+		r.log("  Created channel logo mapping rule: %s (sets @logo:%s)", ruleID, r.channelLogoID)
 		return nil
 	})
 
 	r.runTest("Create Program Icon Mapping Rule", func() error {
-		if r.programLogoURL == "" {
-			return fmt.Errorf("no program logo URL available")
+		if r.programLogoID == "" {
+			return fmt.Errorf("no program logo ID available")
 		}
-		// Rule: Replace all program icons with our placeholder
-		expression := fmt.Sprintf(`programme_icon starts_with "http" SET programme_icon = "%s"`, r.programLogoURL)
+		// Rule: Replace all program icons with @logo:ULID helper reference
+		// The @logo:ULID syntax is resolved by the logo caching stage to the full URL
+		expression := fmt.Sprintf(`programme_icon starts_with "http" SET programme_icon = "@logo:%s"`, r.programLogoID)
 		ruleID, err := r.client.CreateDataMappingRule(ctx,
 			fmt.Sprintf("E2E Program Icon Placeholder %s", r.runID),
 			"epg",
@@ -1297,7 +1315,7 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		r.log("  Created program icon mapping rule: %s", ruleID)
+		r.log("  Created program icon mapping rule: %s (sets @logo:%s)", ruleID, r.programLogoID)
 		return nil
 	})
 
@@ -1407,11 +1425,14 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 	})
 
 	// Phase 6: M3U/XMLTV Output Validation
+	var m3uContent, xmltvContent string
+
 	r.runTest("Fetch and Validate M3U Output", func() error {
 		if proxyID == "" {
 			return fmt.Errorf("no proxy to fetch M3U from")
 		}
-		m3uContent, err := r.client.GetProxyM3U(ctx, proxyID)
+		var err error
+		m3uContent, err = r.client.GetProxyM3U(ctx, proxyID)
 		if err != nil {
 			return err
 		}
@@ -1444,7 +1465,8 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 		if proxyID == "" {
 			return fmt.Errorf("no proxy to fetch XMLTV from")
 		}
-		xmltvContent, err := r.client.GetProxyXMLTV(ctx, proxyID)
+		var err error
+		xmltvContent, err = r.client.GetProxyXMLTV(ctx, proxyID)
 		if err != nil {
 			return err
 		}
@@ -1470,6 +1492,70 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 			r.printSamplePrograms(xmltvContent)
 		}
 
+		return nil
+	})
+
+	// Phase 7: Logo Helper Validation
+	// Verify that the @logo:ULID helper was resolved correctly in the output
+	r.runTest("Validate Channel Logo URLs in M3U", func() error {
+		if r.channelLogoID == "" {
+			r.log("  Skipping: no channel logo ID available")
+			return nil
+		}
+		if m3uContent == "" {
+			return fmt.Errorf("no M3U content available for validation")
+		}
+
+		// The M3U should contain the resolved logo URL with our uploaded logo's ULID
+		// Expected pattern: /api/v1/logos/ULID or http://baseurl/api/v1/logos/ULID
+		expectedLogoPath := fmt.Sprintf("/api/v1/logos/%s", r.channelLogoID)
+
+		if !strings.Contains(m3uContent, expectedLogoPath) {
+			// Check if there are any tvg-logo entries at all
+			if strings.Contains(m3uContent, "tvg-logo=") {
+				// There are logos but they don't match our expected pattern
+				// Extract a sample logo URL for debugging
+				sampleLogo := extractAttribute(m3uContent, "tvg-logo")
+				return fmt.Errorf("M3U contains tvg-logo but not with expected logo ID.\n  Expected path containing: %s\n  Sample logo found: %s\n  This indicates the @logo: helper was not resolved correctly", expectedLogoPath, sampleLogo)
+			}
+			r.log("  Warning: No tvg-logo attributes found in M3U (may be expected if source had no logos)")
+			return nil
+		}
+
+		// Count how many channels have the correct logo
+		logoCount := strings.Count(m3uContent, expectedLogoPath)
+		r.log("  Validated: %d channel logos use uploaded placeholder (ID: %s)", logoCount, r.channelLogoID)
+		return nil
+	})
+
+	r.runTest("Validate Program Icon URLs in XMLTV", func() error {
+		if r.programLogoID == "" {
+			r.log("  Skipping: no program logo ID available")
+			return nil
+		}
+		if xmltvContent == "" {
+			return fmt.Errorf("no XMLTV content available for validation")
+		}
+
+		// The XMLTV should contain the resolved icon URL with our uploaded logo's ULID
+		// Expected pattern: /api/v1/logos/ULID or http://baseurl/api/v1/logos/ULID
+		expectedIconPath := fmt.Sprintf("/api/v1/logos/%s", r.programLogoID)
+
+		if !strings.Contains(xmltvContent, expectedIconPath) {
+			// Check if there are any icon entries at all
+			if strings.Contains(xmltvContent, "<icon src=") {
+				// There are icons but they don't match our expected pattern
+				// Extract a sample icon URL for debugging
+				sampleIcon := extractXMLElement(xmltvContent, "icon")
+				return fmt.Errorf("XMLTV contains icons but not with expected logo ID.\n  Expected path containing: %s\n  Sample icon found: %s\n  This indicates the @logo: helper was not resolved correctly", expectedIconPath, sampleIcon)
+			}
+			r.log("  Warning: No <icon> elements found in XMLTV (may be expected if source had no icons)")
+			return nil
+		}
+
+		// Count how many programs have the correct icon
+		iconCount := strings.Count(xmltvContent, expectedIconPath)
+		r.log("  Validated: %d program icons use uploaded placeholder (ID: %s)", iconCount, r.programLogoID)
 		return nil
 	})
 
