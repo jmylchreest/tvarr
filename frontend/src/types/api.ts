@@ -64,6 +64,7 @@ export interface StreamSourceResponse extends StreamSource {
 
 // EPG Source Types
 export type EpgSourceType = 'xmltv' | 'xtream';
+export type XtreamApiMethod = 'stream_id' | 'bulk_xmltv';
 
 export interface EpgSource {
   id: string;
@@ -79,6 +80,7 @@ export interface EpgSource {
   original_timezone?: string;
   username?: string;
   password?: string;
+  api_method?: XtreamApiMethod; // Only for Xtream sources
 }
 
 export interface EpgSourceResponse extends EpgSource {
@@ -570,6 +572,7 @@ export interface CreateEpgSourceRequest {
   time_offset?: string;
   username?: string;
   password?: string;
+  api_method?: XtreamApiMethod; // Only for Xtream sources
 }
 
 export interface CreateStreamProxyRequest {

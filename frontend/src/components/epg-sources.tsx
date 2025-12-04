@@ -54,6 +54,7 @@ import {
   EpgSourceResponse,
   CreateEpgSourceRequest,
   EpgSourceType,
+  XtreamApiMethod,
   PaginatedResponse,
 } from '@/types/api';
 import { apiClient, ApiError } from '@/lib/api-client';
@@ -117,6 +118,7 @@ function CreateEpgSourceSheet({
     time_offset: '+00:00',
     username: '',
     password: '',
+    api_method: 'stream_id',
   });
   const [cronValidation, setCronValidation] = useState(validateCronExpression('0 0 */6 * * * *'));
 
@@ -134,6 +136,7 @@ function CreateEpgSourceSheet({
         time_offset: '+00:00',
         username: '',
         password: '',
+        api_method: 'stream_id',
       });
     }
   };
@@ -217,6 +220,30 @@ function CreateEpgSourceSheet({
               autoComplete="off"
             />
           </div>
+
+          {formData.source_type === 'xtream' && (
+            <div className="space-y-2">
+              <Label htmlFor="api_method">API Method</Label>
+              <Select
+                value={formData.api_method || 'stream_id'}
+                onValueChange={(value) =>
+                  setFormData({ ...formData, api_method: value as XtreamApiMethod })
+                }
+                disabled={loading}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select API method" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="stream_id">Xtream StreamID (richer)</SelectItem>
+                  <SelectItem value="bulk_xmltv">Bulk XMLTV (faster)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                StreamID provides richer data. Bulk XMLTV is faster but has fewer fields.
+              </p>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
@@ -382,6 +409,7 @@ function EditEpgSourceSheet({
     time_offset: '+00:00',
     username: '',
     password: '',
+    api_method: 'stream_id',
   });
   const [cronValidation, setCronValidation] = useState(validateCronExpression('0 0 */6 * * * *'));
 
@@ -398,6 +426,7 @@ function EditEpgSourceSheet({
         time_offset: source.time_offset || '+00:00',
         username: source.username || '',
         password: source.password || '',
+        api_method: source.api_method || 'stream_id',
       };
       setFormData(newFormData);
       setCronValidation(validateCronExpression(newFormData.update_cron));
@@ -486,6 +515,30 @@ function EditEpgSourceSheet({
               autoComplete="off"
             />
           </div>
+
+          {formData.source_type === 'xtream' && (
+            <div className="space-y-2">
+              <Label htmlFor="edit-api_method">API Method</Label>
+              <Select
+                value={formData.api_method || 'stream_id'}
+                onValueChange={(value) =>
+                  setFormData({ ...formData, api_method: value as XtreamApiMethod })
+                }
+                disabled={loading}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select API method" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="stream_id">Xtream StreamID (richer)</SelectItem>
+                  <SelectItem value="bulk_xmltv">Bulk XMLTV (faster)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                StreamID provides richer data. Bulk XMLTV is faster but has fewer fields.
+              </p>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
