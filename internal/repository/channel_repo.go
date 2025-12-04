@@ -98,7 +98,12 @@ func (r *channelRepo) GetBySourceID(ctx context.Context, sourceID models.ULID, c
 		FindInBatches(&[]models.Channel{}, batchSize, func(tx *gorm.DB, batch int) error {
 			channels := tx.Statement.Dest.(*[]models.Channel)
 			for i := range *channels {
-				if err := callback(&(*channels)[i]); err != nil {
+				// Copy the channel to avoid pointer reuse issues with FindInBatches.
+				// GORM reuses the same slice for each batch, so we must copy before
+				// passing to the callback to prevent data corruption when the next
+				// batch overwrites the memory.
+				chCopy := (*channels)[i]
+				if err := callback(&chCopy); err != nil {
 					return err
 				}
 			}

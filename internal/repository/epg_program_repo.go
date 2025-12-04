@@ -76,7 +76,12 @@ func (r *epgProgramRepo) GetBySourceID(ctx context.Context, sourceID models.ULID
 		FindInBatches(&[]models.EpgProgram{}, batchSize, func(tx *gorm.DB, batch int) error {
 			programs := tx.Statement.Dest.(*[]models.EpgProgram)
 			for i := range *programs {
-				if err := callback(&(*programs)[i]); err != nil {
+				// Copy the program to avoid pointer reuse issues with FindInBatches.
+				// GORM reuses the same slice for each batch, so we must copy before
+				// passing to the callback to prevent data corruption when the next
+				// batch overwrites the memory.
+				progCopy := (*programs)[i]
+				if err := callback(&progCopy); err != nil {
 					return err
 				}
 			}
