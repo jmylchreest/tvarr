@@ -141,10 +141,16 @@ func (s *Stage) AddExpressionFilter(filter ExpressionFilter) *Stage {
 }
 
 // Execute applies filters to channels and programs.
+// Filtering logic:
+//   - Output starts empty
+//   - Include filters add matching channels from SOURCE to output (appending)
+//   - Exclude filters remove matching channels from OUTPUT
+//   - Filters apply in priority order
+//   - If no filters exist, all channels pass through
 func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResult, error) {
 	result := shared.NewResult()
 
-	// Use configured filters, or skip if none
+	// Use configured filters, or skip if none (pass through all channels)
 	if len(s.expressionFilters) == 0 {
 		s.log(ctx, slog.LevelInfo, "no filters configured, skipping")
 		result.Message = "No filters configured"
@@ -167,22 +173,17 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	originalChannelCount := len(state.Channels)
 	originalProgramCount := len(state.Programs)
 
-	// Filter channels
-	filteredChannels := make([]*models.Channel, 0, len(state.Channels))
+	// Apply channel filters using the new sequential logic
+	filteredChannels, err := s.applyChannelFilters(ctx, state.Channels)
+	if err != nil {
+		return result, err
+	}
+
+	// Build set of included channel IDs for program filtering
 	filteredChannelIDs := make(map[string]bool)
-
-	for _, ch := range state.Channels {
-		select {
-		case <-ctx.Done():
-			return result, ctx.Err()
-		default:
-		}
-
-		if s.shouldIncludeChannel(ch) {
-			filteredChannels = append(filteredChannels, ch)
-			if ch.TvgID != "" {
-				filteredChannelIDs[ch.TvgID] = true
-			}
+	for _, ch := range filteredChannels {
+		if ch.TvgID != "" {
+			filteredChannelIDs[ch.TvgID] = true
 		}
 	}
 
@@ -197,18 +198,10 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	}
 	state.ChannelMap = newChannelMap
 
-	// Filter programs (only keep programs for included channels)
-	filteredPrograms := make([]*models.EpgProgram, 0, len(state.Programs))
-	for _, prog := range state.Programs {
-		select {
-		case <-ctx.Done():
-			return result, ctx.Err()
-		default:
-		}
-
-		if filteredChannelIDs[prog.ChannelID] && s.shouldIncludeProgram(prog) {
-			filteredPrograms = append(filteredPrograms, prog)
-		}
+	// Apply program filters (only to programs for included channels)
+	filteredPrograms, err := s.applyProgramFilters(ctx, state.Programs, filteredChannelIDs)
+	if err != nil {
+		return result, err
 	}
 
 	state.Programs = filteredPrograms
@@ -237,6 +230,153 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	result.Artifacts = append(result.Artifacts, artifact)
 
 	return result, nil
+}
+
+// applyChannelFilters applies filters sequentially to channels.
+// - Include: adds matching channels from source to output
+// - Exclude: removes matching channels from output
+func (s *Stage) applyChannelFilters(ctx context.Context, sourceChannels []*models.Channel) ([]*models.Channel, error) {
+	// Build source lookup map for efficient include operations
+	// Key by a unique identifier (we'll use pointer address since channels are unique)
+	sourceSet := make(map[*models.Channel]bool)
+	for _, ch := range sourceChannels {
+		sourceSet[ch] = true
+	}
+
+	// Output starts empty
+	outputSet := make(map[*models.Channel]bool)
+
+	// Get channel filters sorted by priority (already sorted by DB query, but let's be safe)
+	channelFilters := make([]*compiledExpressionFilter, 0)
+	for _, cef := range s.compiledExpressionFilters {
+		if cef.filter.Target == FilterTargetChannel {
+			channelFilters = append(channelFilters, cef)
+		}
+	}
+
+	// Apply filters in order
+	for _, cef := range channelFilters {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		switch cef.filter.Action {
+		case FilterActionInclude:
+			// Include: add matching channels from SOURCE to output
+			for ch := range sourceSet {
+				if s.channelMatchesFilter(ch, cef) {
+					outputSet[ch] = true
+				}
+			}
+		case FilterActionExclude:
+			// Exclude: remove matching channels from OUTPUT
+			for ch := range outputSet {
+				if s.channelMatchesFilter(ch, cef) {
+					delete(outputSet, ch)
+				}
+			}
+		}
+	}
+
+	// Convert output set to slice, preserving original order
+	result := make([]*models.Channel, 0, len(outputSet))
+	for _, ch := range sourceChannels {
+		if outputSet[ch] {
+			result = append(result, ch)
+		}
+	}
+
+	return result, nil
+}
+
+// applyProgramFilters applies filters sequentially to programs.
+// Only processes programs that belong to included channels.
+func (s *Stage) applyProgramFilters(ctx context.Context, sourcePrograms []*models.EpgProgram, includedChannelIDs map[string]bool) ([]*models.EpgProgram, error) {
+	// Build source set (only programs for included channels)
+	sourceSet := make(map[*models.EpgProgram]bool)
+	for _, prog := range sourcePrograms {
+		if includedChannelIDs[prog.ChannelID] {
+			sourceSet[prog] = true
+		}
+	}
+
+	// Output starts empty
+	outputSet := make(map[*models.EpgProgram]bool)
+
+	// Get program filters
+	programFilters := make([]*compiledExpressionFilter, 0)
+	for _, cef := range s.compiledExpressionFilters {
+		if cef.filter.Target == FilterTargetProgram {
+			programFilters = append(programFilters, cef)
+		}
+	}
+
+	// If no program filters, include all programs from included channels
+	if len(programFilters) == 0 {
+		for prog := range sourceSet {
+			outputSet[prog] = true
+		}
+	} else {
+		// Apply filters in order
+		for _, cef := range programFilters {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+			}
+
+			switch cef.filter.Action {
+			case FilterActionInclude:
+				// Include: add matching programs from SOURCE to output
+				for prog := range sourceSet {
+					if s.programMatchesFilter(prog, cef) {
+						outputSet[prog] = true
+					}
+				}
+			case FilterActionExclude:
+				// Exclude: remove matching programs from OUTPUT
+				for prog := range outputSet {
+					if s.programMatchesFilter(prog, cef) {
+						delete(outputSet, prog)
+					}
+				}
+			}
+		}
+	}
+
+	// Convert output set to slice, preserving original order
+	result := make([]*models.EpgProgram, 0, len(outputSet))
+	for _, prog := range sourcePrograms {
+		if outputSet[prog] {
+			result = append(result, prog)
+		}
+	}
+
+	return result, nil
+}
+
+// channelMatchesFilter checks if a channel matches a filter expression.
+func (s *Stage) channelMatchesFilter(ch *models.Channel, cef *compiledExpressionFilter) bool {
+	evalCtx := s.createChannelEvalContext(ch)
+	evalResult, err := cef.evaluator.Evaluate(cef.parsed, evalCtx)
+	if err != nil {
+		// Log error but treat as non-match
+		return false
+	}
+	return evalResult.Matches
+}
+
+// programMatchesFilter checks if a program matches a filter expression.
+func (s *Stage) programMatchesFilter(prog *models.EpgProgram, cef *compiledExpressionFilter) bool {
+	evalCtx := s.createProgramEvalContext(prog)
+	evalResult, err := cef.evaluator.Evaluate(cef.parsed, evalCtx)
+	if err != nil {
+		// Log error but treat as non-match
+		return false
+	}
+	return evalResult.Matches
 }
 
 // log logs a message if the logger is set.

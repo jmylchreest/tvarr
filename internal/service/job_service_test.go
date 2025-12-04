@@ -412,6 +412,14 @@ func (m *jobMockProxyRepo) GetEpgSources(ctx context.Context, proxyID models.ULI
 	return nil, nil
 }
 
+func (m *jobMockProxyRepo) GetFilters(ctx context.Context, proxyID models.ULID) ([]*models.Filter, error) {
+	return nil, nil
+}
+
+func (m *jobMockProxyRepo) SetFilters(ctx context.Context, proxyID models.ULID, filterIDs []models.ULID, orders map[models.ULID]int) error {
+	return nil
+}
+
 // mockScheduler wraps the real scheduler for testing.
 type mockScheduler struct {
 	scheduleImmediateJob *models.Job

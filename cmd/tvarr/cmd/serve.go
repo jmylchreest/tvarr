@@ -26,6 +26,7 @@ import (
 	"github.com/jmylchreest/tvarr/internal/service/progress"
 	"github.com/jmylchreest/tvarr/internal/startup"
 	"github.com/jmylchreest/tvarr/internal/storage"
+	"github.com/jmylchreest/tvarr/internal/urlutil"
 	"github.com/jmylchreest/tvarr/internal/version"
 	"github.com/jmylchreest/tvarr/pkg/duration"
 	"github.com/jmylchreest/tvarr/pkg/httpclient"
@@ -49,8 +50,9 @@ func init() {
 	// Server flags
 	serveCmd.Flags().String("host", "0.0.0.0", "Host to bind to")
 	serveCmd.Flags().Int("port", 8080, "Port to listen on")
-	serveCmd.Flags().String("database", "tvarr.db", "Database file path")
-	serveCmd.Flags().String("data-dir", "data", "Data directory for output files")
+	serveCmd.Flags().String("base-url", "", "Base URL for external access (e.g., https://www.mysite.com). Defaults to http://host:port")
+	serveCmd.Flags().String("database", "tvarr.db", "Database DSN (file path for SQLite, connection string for others)")
+	serveCmd.Flags().String("data-dir", "./data", "Data directory for output files")
 
 	// Pipeline flags
 	serveCmd.Flags().Bool("ingestion-guard", true, "Enable ingestion guard (waits for active ingestions)")
@@ -58,8 +60,9 @@ func init() {
 	// Bind flags to viper
 	viper.BindPFlag("server.host", serveCmd.Flags().Lookup("host"))
 	viper.BindPFlag("server.port", serveCmd.Flags().Lookup("port"))
-	viper.BindPFlag("database.path", serveCmd.Flags().Lookup("database"))
-	viper.BindPFlag("storage.data_dir", serveCmd.Flags().Lookup("data-dir"))
+	viper.BindPFlag("server.base_url", serveCmd.Flags().Lookup("base-url"))
+	viper.BindPFlag("database.dsn", serveCmd.Flags().Lookup("database"))
+	viper.BindPFlag("storage.base_dir", serveCmd.Flags().Lookup("data-dir"))
 	viper.BindPFlag("pipeline.ingestion_guard", serveCmd.Flags().Lookup("ingestion-guard"))
 }
 
@@ -84,7 +87,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize database
-	db, err := initDatabase(viper.GetString("database.path"))
+	db, err := initDatabase(viper.GetString("database.dsn"))
 	if err != nil {
 		return fmt.Errorf("initializing database: %w", err)
 	}
@@ -107,13 +110,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 	lastKnownCodecRepo := repository.NewLastKnownCodecRepository(db)
 
 	// Initialize storage sandbox
-	sandbox, err := storage.NewSandbox(viper.GetString("storage.data_dir"))
+	sandbox, err := storage.NewSandbox(viper.GetString("storage.base_dir"))
 	if err != nil {
 		return fmt.Errorf("initializing storage: %w", err)
 	}
 
 	// Initialize logo cache and service
-	logoCache, err := storage.NewLogoCache(viper.GetString("storage.data_dir"))
+	logoCache, err := storage.NewLogoCache(viper.GetString("storage.base_dir"))
 	if err != nil {
 		return fmt.Errorf("initializing logo cache: %w", err)
 	}
@@ -167,6 +170,21 @@ func runServe(cmd *cobra.Command, args []string) error {
 		logger.Info("ingestion guard enabled for proxy generation")
 	}
 
+	// Construct base URL for logo resolution in pipeline output
+	// This allows generated M3U/XMLTV to contain fully qualified logo URLs
+	// If base_url is configured, use it (normalized). Otherwise fall back to host:port.
+	serverHost := viper.GetString("server.host")
+	serverPort := viper.GetInt("server.port")
+	baseURL := urlutil.NormalizeBaseURL(viper.GetString("server.base_url"))
+	if baseURL == "" {
+		// Fall back to constructing from host:port
+		if serverHost == "0.0.0.0" || serverHost == "" {
+			baseURL = fmt.Sprintf("http://localhost:%d", serverPort)
+		} else {
+			baseURL = fmt.Sprintf("http://%s:%d", serverHost, serverPort)
+		}
+	}
+
 	pipelineFactory := pipeline.NewDefaultFactory(
 		channelRepo,
 		epgProgramRepo,
@@ -176,6 +194,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		logger,
 		logoService, // Logo caching enabled
 		ingestionGuardStateManager,
+		baseURL,
 	)
 
 	// Initialize progress service
@@ -227,6 +246,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Register logo file server for serving logo images at /logos/{filename}
 	logoHandler := handlers.NewLogoHandler(logoService)
 	logoHandler.RegisterFileServer(server.Router())
+
+	// Register output file server for serving M3U and XMLTV files at /proxy/{id}.m3u and /proxy/{id}.xmltv
+	outputHandler := handlers.NewOutputHandler(sandbox).WithLogger(logger)
+	outputHandler.RegisterFileServer(server.Router())
 
 	// Register static handler as NotFound fallback for SPA routing
 	// This ensures specific routes (like /logos/*) are matched first

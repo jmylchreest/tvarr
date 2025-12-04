@@ -295,11 +295,11 @@ func TestProxyFilter_Validate(t *testing.T) {
 			wantErr: nil,
 		},
 		{
-			name: "valid with order",
+			name: "valid with priority",
 			pf: ProxyFilter{
 				ProxyID:  NewULID(),
 				FilterID: NewULID(),
-				Order:    10,
+				Priority: 10,
 			},
 			wantErr: nil,
 		},
@@ -347,11 +347,11 @@ func TestProxyMappingRule_Validate(t *testing.T) {
 			wantErr: nil,
 		},
 		{
-			name: "valid with order",
+			name: "valid with priority",
 			pmr: ProxyMappingRule{
 				ProxyID:       NewULID(),
 				MappingRuleID: NewULID(),
-				Order:         5,
+				Priority:      5,
 			},
 			wantErr: nil,
 		},
@@ -388,10 +388,10 @@ func TestStreamProxy_Relationships(t *testing.T) {
 		{ProxyID: proxy.ID, EpgSourceID: epgSourceID, Priority: 1},
 	}
 	proxyFilters := []ProxyFilter{
-		{ProxyID: proxy.ID, FilterID: filterID, Order: 1},
+		{ProxyID: proxy.ID, FilterID: filterID, Priority: 1},
 	}
 	proxyMappingRules := []ProxyMappingRule{
-		{ProxyID: proxy.ID, MappingRuleID: mappingRuleID, Order: 1},
+		{ProxyID: proxy.ID, MappingRuleID: mappingRuleID, Priority: 1},
 	}
 
 	// Assign relationships

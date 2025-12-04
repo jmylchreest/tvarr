@@ -248,11 +248,13 @@ func TestXtreamEpgHandler_Ingest_ContextCancellation(t *testing.T) {
 	defer server.Close()
 
 	handler := NewXtreamEpgHandler()
+	sourceID := models.NewULID()
 	source := &models.EpgSource{
-		Type:     models.EpgSourceTypeXtream,
-		URL:      server.URL,
-		Username: "user",
-		Password: "pass",
+		BaseModel: models.BaseModel{ID: sourceID},
+		Type:      models.EpgSourceTypeXtream,
+		URL:       server.URL,
+		Username:  "user",
+		Password:  "pass",
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -287,11 +289,13 @@ func TestXtreamEpgHandler_Ingest_CallbackError(t *testing.T) {
 	defer server.Close()
 
 	handler := NewXtreamEpgHandler()
+	sourceID := models.NewULID()
 	source := &models.EpgSource{
-		Type:     models.EpgSourceTypeXtream,
-		URL:      server.URL,
-		Username: "user",
-		Password: "pass",
+		BaseModel: models.BaseModel{ID: sourceID},
+		Type:      models.EpgSourceTypeXtream,
+		URL:       server.URL,
+		Username:  "user",
+		Password:  "pass",
 	}
 
 	err := handler.Ingest(context.Background(), source, func(program *models.EpgProgram) error {
@@ -322,6 +326,57 @@ func TestXtreamEpgHandler_Ingest_FetchError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to fetch live streams")
+}
+
+func TestXtreamEpgHandler_Ingest_SkipsInvalidTimeRanges(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		action := r.URL.Query().Get("action")
+		if action == "get_live_streams" {
+			streams := []xtream.Stream{{StreamID: xtream.FlexInt(1), EPGChannelID: "ch1"}}
+			json.NewEncoder(w).Encode(streams)
+		} else {
+			response := struct {
+				EPGListings []xtream.EPGListing `json:"epg_listings"`
+			}{
+				EPGListings: []xtream.EPGListing{
+					// Valid program
+					{ID: xtream.FlexString("1"), Title: "Valid Show", StartTimestamp: xtream.FlexInt(1705330800), StopTimestamp: xtream.FlexInt(1705338000)},
+					// Invalid: end time before start time
+					{ID: xtream.FlexString("2"), Title: "Invalid Show", StartTimestamp: xtream.FlexInt(1705338000), StopTimestamp: xtream.FlexInt(1705330800)},
+					// Invalid: end time equals start time
+					{ID: xtream.FlexString("3"), Title: "Equal Times", StartTimestamp: xtream.FlexInt(1705340000), StopTimestamp: xtream.FlexInt(1705340000)},
+					// Invalid: zero timestamps
+					{ID: xtream.FlexString("4"), Title: "Zero Times", StartTimestamp: xtream.FlexInt(0), StopTimestamp: xtream.FlexInt(0)},
+					// Another valid program
+					{ID: xtream.FlexString("5"), Title: "Another Valid", StartTimestamp: xtream.FlexInt(1705341000), StopTimestamp: xtream.FlexInt(1705344000)},
+				},
+			}
+			json.NewEncoder(w).Encode(response)
+		}
+	}))
+	defer server.Close()
+
+	handler := NewXtreamEpgHandler()
+	sourceID := models.NewULID()
+	source := &models.EpgSource{
+		BaseModel: models.BaseModel{ID: sourceID},
+		Type:      models.EpgSourceTypeXtream,
+		URL:       server.URL,
+		Username:  "user",
+		Password:  "pass",
+	}
+
+	var programs []*models.EpgProgram
+	err := handler.Ingest(context.Background(), source, func(program *models.EpgProgram) error {
+		programs = append(programs, program)
+		return nil
+	})
+
+	require.NoError(t, err)
+	// Should only have 2 valid programs, invalid ones should be skipped
+	require.Len(t, programs, 2)
+	assert.Equal(t, "Valid Show", programs[0].Title)
+	assert.Equal(t, "Another Valid", programs[1].Title)
 }
 
 func TestXtreamEpgHandler_Ingest_SkipsChannelsWithoutEpgID(t *testing.T) {

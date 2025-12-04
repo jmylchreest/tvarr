@@ -8,6 +8,25 @@ import (
 	"github.com/jmylchreest/tvarr/internal/models"
 )
 
+// E2E Test Data URLs - publicly accessible, compatible M3U and EPG data
+// These URLs are used for E2E validation testing. The sources are:
+// - Free and publicly accessible (no authentication required)
+// - Compatible: EPG channel IDs match M3U channel IDs
+// - Reasonably sized for testing (not too large, not too small)
+const (
+	// E2ETestM3UURL is the default M3U stream source for E2E testing.
+	// m3upt.com provides free European channels with matching EPG.
+	E2ETestM3UURL = "https://m3upt.com/iptv"
+
+	// E2ETestEPGURL is the default EPG source for E2E testing.
+	// m3upt.com EPG contains channel IDs matching the IPTV source.
+	E2ETestEPGURL = "https://m3upt.com/epg"
+
+	// AlternativeM3UURL is an alternative M3U source (US channels, larger dataset).
+	// Note: This source has no matching EPG, use only for M3U-only testing.
+	AlternativeM3UURL = "https://iptv-org.github.io/iptv/countries/us.m3u"
+)
+
 // Standard fictional broadcasters for test data.
 // NEVER use real brand names like BBC, ESPN, HBO, Sky, etc.
 var (

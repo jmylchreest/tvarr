@@ -355,6 +355,14 @@ func (m *mockProxyRepo) GetEpgSources(ctx context.Context, proxyID models.ULID) 
 	return nil, nil
 }
 
+func (m *mockProxyRepo) GetFilters(ctx context.Context, proxyID models.ULID) ([]*models.Filter, error) {
+	return nil, nil
+}
+
+func (m *mockProxyRepo) SetFilters(ctx context.Context, proxyID models.ULID, filterIDs []models.ULID, orders map[models.ULID]int) error {
+	return nil
+}
+
 func TestScheduler_ValidateCron(t *testing.T) {
 	jobRepo := newMockJobRepo()
 	scheduler := NewScheduler(jobRepo, &mockStreamSourceRepo{}, &mockEpgSourceRepo{}, &mockProxyRepo{})

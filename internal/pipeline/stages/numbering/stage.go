@@ -1,4 +1,12 @@
 // Package numbering implements the channel numbering pipeline stage.
+//
+// The numbering algorithm follows a two-pass approach:
+//  1. First pass: Collect all channels with explicit ChannelNumber values (set via data mapping rules).
+//     If multiple channels have the same number, resolve conflicts by incrementing to the next available.
+//  2. Second pass: Assign sequential numbers from StartingChannelNumber to remaining unnumbered channels.
+//
+// This ensures channels with explicit numbers keep them (or get the nearest available),
+// while unnumbered channels fill in gaps starting from the configured starting number.
 package numbering
 
 import (
@@ -45,11 +53,11 @@ type Stage struct {
 	conflicts []ConflictResolution
 }
 
-// New creates a new numbering stage with sequential mode.
+// New creates a new numbering stage with preserve mode (default).
 func New() *Stage {
 	return &Stage{
 		BaseStage: shared.NewBaseStage(StageID, StageName),
-		mode:      NumberingModeSequential,
+		mode:      NumberingModePreserve, // Default to preserve mode
 		groupSize: 100,
 		conflicts: make([]ConflictResolution, 0),
 	}
@@ -176,86 +184,128 @@ func (s *Stage) assignSequential(channels []*models.Channel, startNum int) int {
 }
 
 // assignPreserving keeps existing channel numbers where valid, resolving conflicts.
-// When multiple channels have the same number, later channels get incremented.
+// This follows the m3u-proxy algorithm:
+//  1. First pass: Claim all explicit ChannelNumber > 0 values. If conflict, increment to next available.
+//  2. Build available number pool from StartingChannelNumber.
+//  3. Second pass: Assign sequential numbers from pool to channels with ChannelNumber == 0.
+//
+// The key difference from simple sequential: channels with explicit numbers get priority and keep
+// their numbers (or nearest available), while unnumbered channels fill in from StartingChannelNumber.
 func (s *Stage) assignPreserving(channels []*models.Channel, startNum int) int {
-	// Track which numbers are already claimed and by which channel
+	// Track which numbers are already claimed
 	usedNumbers := make(map[int]bool)
-	channelsNeedingNumbers := make([]int, 0)       // indices of channels that need assignment
-	channelsWithConflicts := make(map[int]int, 0) // index -> original number (for conflict resolution)
 
-	// First pass: identify conflicts and collect existing numbers
+	// Track channels that need assignment and their resolved numbers
+	// If resolvedNum is nil, channel needs sequential assignment from pool
+	// If resolvedNum is set, channel had a conflict and was already resolved
+	type channelAssignment struct {
+		index       int
+		resolvedNum *int // nil means needs sequential assignment, non-nil means conflict was resolved
+	}
+	channelsNeedingNumbers := make([]channelAssignment, 0)
+
+	channelsWithExplicit := 0
+	conflictsResolved := 0
+
+	// First pass: collect existing ChannelNumber values and handle conflicts
+	// This mirrors m3u-proxy's first pass (lines 292-339)
 	for i, ch := range channels {
 		if ch.ChannelNumber > 0 {
-			originalNum := ch.ChannelNumber
-			if usedNumbers[originalNum] {
-				// Conflict detected - this number is already used
-				channelsWithConflicts[i] = originalNum
-			} else {
-				// Claim this number
-				usedNumbers[originalNum] = true
+			channelsWithExplicit++
+			desiredNum := ch.ChannelNumber
+			originalNum := desiredNum
+
+			// Try to use the desired number, or increment until we find an available one
+			for usedNumbers[desiredNum] {
+				desiredNum++
+				conflictsResolved++
 			}
+
+			// Claim the resolved number
+			usedNumbers[desiredNum] = true
+
+			// If number was changed due to conflict, track it for later assignment
+			if desiredNum != originalNum {
+				if s.logger != nil {
+					s.logger.Warn("channel number conflict resolved",
+						"channel", ch.ChannelName,
+						"original_number", originalNum,
+						"assigned_number", desiredNum)
+				}
+
+				// Track the conflict resolution
+				s.conflicts = append(s.conflicts, ConflictResolution{
+					ChannelName:    ch.ChannelName,
+					OriginalNumber: originalNum,
+					AssignedNumber: desiredNum,
+				})
+
+				// Mark for later assignment (conflict resolved)
+				resolvedNum := desiredNum
+				channelsNeedingNumbers = append(channelsNeedingNumbers, channelAssignment{
+					index:       i,
+					resolvedNum: &resolvedNum,
+				})
+			}
+			// If number didn't change, channel already has correct number, no action needed
 		} else {
-			// Channel needs a number assigned
-			channelsNeedingNumbers = append(channelsNeedingNumbers, i)
+			// Channel needs a number assigned - mark for sequential assignment
+			channelsNeedingNumbers = append(channelsNeedingNumbers, channelAssignment{
+				index:       i,
+				resolvedNum: nil, // needs sequential assignment
+			})
 		}
 	}
 
+	// Build available number pool from StartingChannelNumber
+	// Only count channels that need sequential assignment (not conflict-resolved ones)
+	sequentialNeeded := 0
+	for _, ca := range channelsNeedingNumbers {
+		if ca.resolvedNum == nil {
+			sequentialNeeded++
+		}
+	}
+
+	// Create pool of available numbers starting from startNum
+	// We need at least sequentialNeeded numbers, but some might be taken by explicit numbers
+	availableNumbers := make([]int, 0, sequentialNeeded)
+	num := startNum
+	for len(availableNumbers) < sequentialNeeded {
+		if !usedNumbers[num] {
+			availableNumbers = append(availableNumbers, num)
+		}
+		num++
+	}
+
+	// Second pass: assign numbers to channels that need them
 	modified := 0
+	availableIdx := 0
 
-	// Sort conflict indices to ensure deterministic ordering
-	conflictIndices := make([]int, 0, len(channelsWithConflicts))
-	for idx := range channelsWithConflicts {
-		conflictIndices = append(conflictIndices, idx)
-	}
-	sort.Ints(conflictIndices)
+	for _, ca := range channelsNeedingNumbers {
+		ch := channels[ca.index]
 
-	// Second pass: resolve conflicts by finding next available number
-	for _, idx := range conflictIndices {
-		originalNum := channelsWithConflicts[idx]
-		ch := channels[idx]
-		newNum := originalNum
-
-		// Find next available number starting from the original
-		for usedNumbers[newNum] {
-			newNum++
-		}
-
-		// Assign the resolved number
-		ch.ChannelNumber = newNum
-		usedNumbers[newNum] = true
-		modified++
-
-		// Track the conflict resolution
-		conflict := ConflictResolution{
-			ChannelName:    ch.ChannelName,
-			OriginalNumber: originalNum,
-			AssignedNumber: newNum,
-		}
-		s.conflicts = append(s.conflicts, conflict)
-
-		// Log the conflict resolution
-		if s.logger != nil {
-			s.logger.Warn("channel number conflict resolved",
-				"channel", ch.ChannelName,
-				"original_number", originalNum,
-				"assigned_number", newNum)
+		if ca.resolvedNum != nil {
+			// Conflict was resolved - assign the pre-resolved number
+			ch.ChannelNumber = *ca.resolvedNum
+			modified++
+		} else {
+			// Needs sequential assignment from pool
+			if availableIdx < len(availableNumbers) {
+				ch.ChannelNumber = availableNumbers[availableIdx]
+				usedNumbers[ch.ChannelNumber] = true
+				availableIdx++
+				modified++
+			}
 		}
 	}
 
-	// Third pass: assign numbers to channels without one
-	nextNum := startNum
-	for _, idx := range channelsNeedingNumbers {
-		ch := channels[idx]
-
-		// Find next available number
-		for usedNumbers[nextNum] {
-			nextNum++
-		}
-
-		ch.ChannelNumber = nextNum
-		usedNumbers[nextNum] = true
-		nextNum++
-		modified++
+	// Log summary
+	if s.logger != nil {
+		s.logger.Debug("numbering analysis",
+			"channels_with_explicit", channelsWithExplicit,
+			"conflicts_resolved", conflictsResolved,
+			"sequential_assigned", availableIdx,
+			"total_modified", modified)
 	}
 
 	return modified

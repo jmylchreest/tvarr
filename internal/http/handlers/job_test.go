@@ -367,6 +367,14 @@ func (m *mockProxyRepoForJob) GetEpgSources(ctx context.Context, proxyID models.
 	return nil, nil
 }
 
+func (m *mockProxyRepoForJob) GetFilters(ctx context.Context, proxyID models.ULID) ([]*models.Filter, error) {
+	return nil, nil
+}
+
+func (m *mockProxyRepoForJob) SetFilters(ctx context.Context, proxyID models.ULID, filterIDs []models.ULID, orders map[models.ULID]int) error {
+	return nil
+}
+
 func createTestJobService(jobRepo repository.JobRepository, streamRepo repository.StreamSourceRepository, epgRepo repository.EpgSourceRepository, proxyRepo repository.StreamProxyRepository) *service.JobService {
 	svc := service.NewJobService(jobRepo, streamRepo, epgRepo, proxyRepo)
 	sched := scheduler.NewScheduler(jobRepo, streamRepo, epgRepo, proxyRepo)

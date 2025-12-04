@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jmylchreest/tvarr/pkg/httpclient"
 	"github.com/jmylchreest/tvarr/internal/models"
+	"github.com/jmylchreest/tvarr/pkg/httpclient"
 	"github.com/jmylchreest/tvarr/pkg/xtream"
 )
 
@@ -130,6 +130,12 @@ func (h *XtreamEpgHandler) Ingest(ctx context.Context, source *models.EpgSource,
 			}
 
 			program := h.convertListing(listing, source.ID, stream.EPGChannelID)
+
+			// Skip programs that fail validation (e.g., invalid time ranges)
+			if err := program.Validate(); err != nil {
+				continue
+			}
+
 			if err := callback(program); err != nil {
 				return fmt.Errorf("callback error: %w", err)
 			}

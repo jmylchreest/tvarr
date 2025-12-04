@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jmylchreest/tvarr/pkg/httpclient"
 	"github.com/jmylchreest/tvarr/internal/models"
+	"github.com/jmylchreest/tvarr/pkg/httpclient"
 	"github.com/jmylchreest/tvarr/pkg/xmltv"
 )
 
@@ -102,6 +102,12 @@ func (h *XMLTVHandler) Ingest(ctx context.Context, source *models.EpgSource, cal
 
 			// Convert XMLTV programme to EpgProgram model
 			program := h.convertProgramme(programme, source.ID)
+
+			// Skip programs that fail validation (e.g., invalid time ranges)
+			if err := program.Validate(); err != nil {
+				return nil
+			}
+
 			return callback(program)
 		},
 		OnError: func(err error) {

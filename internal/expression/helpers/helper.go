@@ -242,9 +242,12 @@ func (h *LogoHelper) Name() string {
 	return "logo"
 }
 
-// Process resolves a logo ULID to its URL.
+// Process resolves a logo ULID to its URL or deferred syntax.
 // value contains the ULID (e.g., "01ARZ3NDEKTSV4RRFFQ69G5FAV").
-// Returns the full URL if valid and exists, empty string otherwise.
+// Returns:
+//   - Full URL (e.g., "http://example.com/api/v1/logos/ULID") when BaseURL is configured
+//   - Deferred syntax "@logo:ULID" when no BaseURL (to be resolved later by logo caching stage)
+//   - Empty string if ULID is invalid or doesn't exist
 func (h *LogoHelper) Process(value, args string) (string, error) {
 	// Validate ULID format
 	if !isValidULID(value) {
@@ -253,14 +256,13 @@ func (h *LogoHelper) Process(value, args string) (string, error) {
 	}
 
 	// If no resolver, we can't validate existence
-	// Return the constructed URL but log a warning
 	if h.config.Resolver == nil {
-		// Construct URL even without resolver (for validation-only use)
 		if h.config.BaseURL != "" {
+			// Can construct full URL without validation
 			return h.constructLogoURL(value), nil
 		}
-		// No resolver and no base URL - return empty
-		return "", nil
+		// No resolver and no base URL - return deferred syntax for later resolution
+		return fmt.Sprintf("@logo:%s", value), nil
 	}
 
 	// Check if logo exists in database
@@ -275,8 +277,12 @@ func (h *LogoHelper) Process(value, args string) (string, error) {
 		return "", nil
 	}
 
-	// Logo exists, construct and return URL
-	return h.constructLogoURL(value), nil
+	// Logo exists - construct URL if we have BaseURL, otherwise return deferred syntax
+	if h.config.BaseURL != "" {
+		return h.constructLogoURL(value), nil
+	}
+	// Return deferred syntax for later resolution by logo caching stage
+	return fmt.Sprintf("@logo:%s", value), nil
 }
 
 // constructLogoURL builds the full logo URL from the ULID.
@@ -342,4 +348,95 @@ func DefaultRegistry() *HelperRegistry {
 		// Logo helper requires a resolver, so it's not registered by default
 	})
 	return defaultRegistry
+}
+
+// --- Logo Helper Convenience Functions ---
+// These functions provide direct access to logo helper detection and processing
+// without requiring a full registry setup.
+
+// HasLogoHelper checks if a value contains a @logo: helper reference.
+// Returns true if the value is a logo helper reference, false otherwise.
+func HasLogoHelper(value string) bool {
+	isHelper, name, _ := ParseHelperSyntax(value)
+	return isHelper && name == "logo"
+}
+
+// ParseLogoHelper extracts the ULID from a @logo:ULID reference.
+// Returns the ULID if present, empty string otherwise.
+func ParseLogoHelper(value string) string {
+	isHelper, name, args := ParseHelperSyntax(value)
+	if isHelper && name == "logo" {
+		return args
+	}
+	return ""
+}
+
+// ProcessLogoHelper resolves a @logo:ULID reference to a fully qualified URL.
+// If baseURL is provided, returns http://baseURL/api/v1/logos/ULID.
+// If baseURL is empty, returns /api/v1/logos/ULID (relative path).
+// Returns empty string if value is not a logo helper.
+func ProcessLogoHelper(value, baseURL string) string {
+	ulid := ParseLogoHelper(value)
+	if ulid == "" {
+		return ""
+	}
+
+	if baseURL != "" {
+		baseURL = strings.TrimSuffix(baseURL, "/")
+		return fmt.Sprintf("%s/api/v1/logos/%s", baseURL, ulid)
+	}
+	return fmt.Sprintf("/api/v1/logos/%s", ulid)
+}
+
+// HasAnyHelper checks if a value contains any helper reference (@name:args syntax).
+func HasAnyHelper(value string) bool {
+	isHelper, _, _ := ParseHelperSyntax(value)
+	return isHelper
+}
+
+// --- Time Helper Convenience Functions ---
+// These functions provide direct access to time helper detection and processing.
+
+// HasTimeHelper checks if a value contains a @time: helper reference.
+func HasTimeHelper(value string) bool {
+	isHelper, name, _ := ParseHelperSyntax(value)
+	return isHelper && name == "time"
+}
+
+// ProcessTimeHelper resolves a @time:operation reference to its result.
+// Returns the processed value if it's a time helper, empty string otherwise.
+// Example: @time:now -> "2024-01-15T10:30:00Z"
+func ProcessTimeHelper(value string) (string, error) {
+	isHelper, name, args := ParseHelperSyntax(value)
+	if !isHelper || name != "time" {
+		return "", nil
+	}
+
+	helper := NewTimeHelper()
+	return helper.Process(args, "")
+}
+
+// --- General Helper Processing ---
+// ProcessImmediateHelpers processes helpers that can be resolved immediately
+// (without external context), while leaving deferred helpers untouched.
+// Currently processes: @time:*
+// Leaves unchanged: @logo:* (requires baseURL from later stages)
+func ProcessImmediateHelpers(value string) (string, error) {
+	isHelper, name, args := ParseHelperSyntax(value)
+	if !isHelper {
+		return value, nil
+	}
+
+	switch name {
+	case "time":
+		// Time helpers can be processed immediately
+		helper := NewTimeHelper()
+		return helper.Process(args, "")
+	case "logo":
+		// Logo helpers are deferred - return as-is for later processing
+		return value, nil
+	default:
+		// Unknown helper - return as-is
+		return value, nil
+	}
 }

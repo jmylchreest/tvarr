@@ -62,6 +62,7 @@ tmp/
 # Build artifacts
 *.log
 tvarr
+e2e-runner
 
 # Taskfile cache
 .task/

@@ -463,8 +463,8 @@ func (r *CreateStreamProxyRequest) ToModel() *models.StreamProxy {
 		UpstreamTimeout:       30,
 		BufferSize:            8192,
 		MaxConcurrentStreams:  0,
-		CacheChannelLogos:     false,
-		CacheProgramLogos:     false,
+		CacheChannelLogos:     true,
+		CacheProgramLogos:     true,
 		OutputPath:            r.OutputPath,
 	}
 	if r.ProxyMode != "" {
