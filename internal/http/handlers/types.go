@@ -2,6 +2,7 @@
 package handlers
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/jmylchreest/tvarr/internal/models"
@@ -154,24 +155,25 @@ func (r *UpdateStreamSourceRequest) ApplyToModel(s *models.StreamSource) {
 
 // EpgSourceResponse represents an EPG source in API responses.
 type EpgSourceResponse struct {
-	ID               models.ULID            `json:"id"`
-	CreatedAt        time.Time              `json:"created_at"`
-	UpdatedAt        time.Time              `json:"updated_at"`
-	Name             string                 `json:"name"`
-	Type             models.EpgSourceType   `json:"type"`
-	URL              string                 `json:"url"`
-	Username         string                 `json:"username,omitempty"`
-	UserAgent        string                 `json:"user_agent,omitempty"`
-	OriginalTimezone string                 `json:"original_timezone,omitempty"`
-	TimeOffset       string                 `json:"time_offset,omitempty"`
-	Enabled          bool                   `json:"enabled"`
-	Priority         int                    `json:"priority"`
-	Status           models.EpgSourceStatus `json:"status"`
-	LastIngestionAt  *time.Time             `json:"last_ingestion_at,omitempty"`
-	LastError        string                 `json:"last_error,omitempty"`
-	ProgramCount     int                    `json:"program_count"`
-	CronSchedule     string                 `json:"cron_schedule,omitempty"`
-	RetentionDays    int                    `json:"retention_days"`
+	ID               models.ULID             `json:"id"`
+	CreatedAt        time.Time               `json:"created_at"`
+	UpdatedAt        time.Time               `json:"updated_at"`
+	Name             string                  `json:"name"`
+	Type             models.EpgSourceType    `json:"type"`
+	URL              string                  `json:"url"`
+	Username         string                  `json:"username,omitempty"`
+	ApiMethod        models.XtreamApiMethod  `json:"api_method,omitempty"`
+	UserAgent        string                  `json:"user_agent,omitempty"`
+	OriginalTimezone string                  `json:"original_timezone,omitempty"`
+	TimeOffset       string                  `json:"time_offset,omitempty"`
+	Enabled          bool                    `json:"enabled"`
+	Priority         int                     `json:"priority"`
+	Status           models.EpgSourceStatus  `json:"status"`
+	LastIngestionAt  *time.Time              `json:"last_ingestion_at,omitempty"`
+	LastError        string                  `json:"last_error,omitempty"`
+	ProgramCount     int                     `json:"program_count"`
+	CronSchedule     string                  `json:"cron_schedule,omitempty"`
+	RetentionDays    int                     `json:"retention_days"`
 }
 
 // EpgSourceFromModel converts a model to a response.
@@ -184,6 +186,7 @@ func EpgSourceFromModel(s *models.EpgSource) EpgSourceResponse {
 		Type:             s.Type,
 		URL:              s.URL,
 		Username:         s.Username,
+		ApiMethod:        s.ApiMethod,
 		UserAgent:        s.UserAgent,
 		OriginalTimezone: s.OriginalTimezone,
 		TimeOffset:       s.TimeOffset,
@@ -200,18 +203,19 @@ func EpgSourceFromModel(s *models.EpgSource) EpgSourceResponse {
 
 // CreateEpgSourceRequest is the request body for creating an EPG source.
 type CreateEpgSourceRequest struct {
-	Name             string               `json:"name" doc:"User-friendly name for the source" minLength:"1" maxLength:"255"`
-	Type             models.EpgSourceType `json:"type" doc:"Source type: xmltv or xtream" enum:"xmltv,xtream"`
-	URL              string               `json:"url" doc:"XMLTV URL or Xtream server URL" minLength:"1" maxLength:"2048"`
-	Username         string               `json:"username,omitempty" doc:"Username for Xtream authentication" maxLength:"255"`
-	Password         string               `json:"password,omitempty" doc:"Password for Xtream authentication" maxLength:"255"`
-	UserAgent        string               `json:"user_agent,omitempty" doc:"Custom User-Agent header" maxLength:"512"`
-	OriginalTimezone string               `json:"original_timezone,omitempty" doc:"Timezone of the EPG data (e.g., UTC, Europe/London)" maxLength:"50"`
-	TimeOffset       string               `json:"time_offset,omitempty" doc:"Manual time offset adjustment (e.g., +00:00, -05:00)" maxLength:"10"`
-	Enabled          *bool                `json:"enabled,omitempty" doc:"Whether the source is enabled (default: true)"`
-	Priority         *int                 `json:"priority,omitempty" doc:"Priority for program merging (higher = preferred)"`
-	CronSchedule     string               `json:"cron_schedule,omitempty" doc:"Cron schedule for automatic ingestion" maxLength:"100"`
-	RetentionDays    *int                 `json:"retention_days,omitempty" doc:"Days to retain EPG data after expiry (default: 1)"`
+	Name             string                 `json:"name" doc:"User-friendly name for the source" minLength:"1" maxLength:"255"`
+	Type             models.EpgSourceType   `json:"type" doc:"Source type: xmltv or xtream" enum:"xmltv,xtream"`
+	URL              string                 `json:"url" doc:"XMLTV URL or Xtream server URL" minLength:"1" maxLength:"2048"`
+	Username         string                 `json:"username,omitempty" doc:"Username for Xtream authentication" maxLength:"255"`
+	Password         string                 `json:"password,omitempty" doc:"Password for Xtream authentication" maxLength:"255"`
+	ApiMethod        models.XtreamApiMethod `json:"api_method,omitempty" doc:"API method for Xtream sources: stream_id (richer data, ~6 days) or bulk_xmltv (faster, ~2 days)" enum:"stream_id,bulk_xmltv"`
+	UserAgent        string                 `json:"user_agent,omitempty" doc:"Custom User-Agent header" maxLength:"512"`
+	OriginalTimezone string                 `json:"original_timezone,omitempty" doc:"Timezone of the EPG data (e.g., UTC, Europe/London)" maxLength:"50"`
+	TimeOffset       string                 `json:"time_offset,omitempty" doc:"Manual time offset adjustment (e.g., +00:00, -05:00)" maxLength:"10"`
+	Enabled          *bool                  `json:"enabled,omitempty" doc:"Whether the source is enabled (default: true)"`
+	Priority         *int                   `json:"priority,omitempty" doc:"Priority for program merging (higher = preferred)"`
+	CronSchedule     string                 `json:"cron_schedule,omitempty" doc:"Cron schedule for automatic ingestion" maxLength:"100"`
+	RetentionDays    *int                   `json:"retention_days,omitempty" doc:"Days to retain EPG data after expiry (default: 1)"`
 }
 
 // ToModel converts the request to a model.
@@ -222,6 +226,7 @@ func (r *CreateEpgSourceRequest) ToModel() *models.EpgSource {
 		URL:              r.URL,
 		Username:         r.Username,
 		Password:         r.Password,
+		ApiMethod:        r.ApiMethod,
 		UserAgent:        r.UserAgent,
 		OriginalTimezone: r.OriginalTimezone,
 		TimeOffset:       r.TimeOffset,
@@ -244,18 +249,19 @@ func (r *CreateEpgSourceRequest) ToModel() *models.EpgSource {
 
 // UpdateEpgSourceRequest is the request body for updating an EPG source.
 type UpdateEpgSourceRequest struct {
-	Name             *string               `json:"name,omitempty" doc:"User-friendly name for the source" maxLength:"255"`
-	Type             *models.EpgSourceType `json:"type,omitempty" doc:"Source type: xmltv or xtream" enum:"xmltv,xtream"`
-	URL              *string               `json:"url,omitempty" doc:"XMLTV URL or Xtream server URL" maxLength:"2048"`
-	Username         *string               `json:"username,omitempty" doc:"Username for Xtream authentication" maxLength:"255"`
-	Password         *string               `json:"password,omitempty" doc:"Password for Xtream authentication" maxLength:"255"`
-	UserAgent        *string               `json:"user_agent,omitempty" doc:"Custom User-Agent header" maxLength:"512"`
-	OriginalTimezone *string               `json:"original_timezone,omitempty" doc:"Timezone of the EPG data" maxLength:"50"`
-	TimeOffset       *string               `json:"time_offset,omitempty" doc:"Manual time offset adjustment" maxLength:"10"`
-	Enabled          *bool                 `json:"enabled,omitempty" doc:"Whether the source is enabled"`
-	Priority         *int                  `json:"priority,omitempty" doc:"Priority for program merging"`
-	CronSchedule     *string               `json:"cron_schedule,omitempty" doc:"Cron schedule for automatic ingestion" maxLength:"100"`
-	RetentionDays    *int                  `json:"retention_days,omitempty" doc:"Days to retain EPG data after expiry"`
+	Name             *string                 `json:"name,omitempty" doc:"User-friendly name for the source" maxLength:"255"`
+	Type             *models.EpgSourceType   `json:"type,omitempty" doc:"Source type: xmltv or xtream" enum:"xmltv,xtream"`
+	URL              *string                 `json:"url,omitempty" doc:"XMLTV URL or Xtream server URL" maxLength:"2048"`
+	Username         *string                 `json:"username,omitempty" doc:"Username for Xtream authentication" maxLength:"255"`
+	Password         *string                 `json:"password,omitempty" doc:"Password for Xtream authentication" maxLength:"255"`
+	ApiMethod        *models.XtreamApiMethod `json:"api_method,omitempty" doc:"API method for Xtream sources: stream_id or bulk_xmltv" enum:"stream_id,bulk_xmltv"`
+	UserAgent        *string                 `json:"user_agent,omitempty" doc:"Custom User-Agent header" maxLength:"512"`
+	OriginalTimezone *string                 `json:"original_timezone,omitempty" doc:"Timezone of the EPG data" maxLength:"50"`
+	TimeOffset       *string                 `json:"time_offset,omitempty" doc:"Manual time offset adjustment" maxLength:"10"`
+	Enabled          *bool                   `json:"enabled,omitempty" doc:"Whether the source is enabled"`
+	Priority         *int                    `json:"priority,omitempty" doc:"Priority for program merging"`
+	CronSchedule     *string                 `json:"cron_schedule,omitempty" doc:"Cron schedule for automatic ingestion" maxLength:"100"`
+	RetentionDays    *int                    `json:"retention_days,omitempty" doc:"Days to retain EPG data after expiry"`
 }
 
 // ApplyToModel applies the update request to an existing model.
@@ -274,6 +280,9 @@ func (r *UpdateEpgSourceRequest) ApplyToModel(s *models.EpgSource) {
 	}
 	if r.Password != nil {
 		s.Password = *r.Password
+	}
+	if r.ApiMethod != nil {
+		s.ApiMethod = *r.ApiMethod
 	}
 	if r.UserAgent != nil {
 		s.UserAgent = *r.UserAgent
@@ -323,11 +332,14 @@ type StreamProxyResponse struct {
 	ChannelCount          int                      `json:"channel_count"`
 	ProgramCount          int                      `json:"program_count"`
 	OutputPath            string                   `json:"output_path,omitempty"`
+	M3U8URL               string                   `json:"m3u8_url,omitempty"`
+	XMLTVURL              string                   `json:"xmltv_url,omitempty"`
 }
 
 // StreamProxyFromModel converts a model to a response.
-func StreamProxyFromModel(p *models.StreamProxy) StreamProxyResponse {
-	return StreamProxyResponse{
+// The baseURL parameter is optional; if empty, relative URLs are used.
+func StreamProxyFromModel(p *models.StreamProxy, baseURL string) StreamProxyResponse {
+	resp := StreamProxyResponse{
 		ID:                    p.ID,
 		CreatedAt:             p.CreatedAt,
 		UpdatedAt:             p.UpdatedAt,
@@ -350,29 +362,98 @@ func StreamProxyFromModel(p *models.StreamProxy) StreamProxyResponse {
 		ProgramCount:          p.ProgramCount,
 		OutputPath:            p.OutputPath,
 	}
+
+	// Only populate URLs if the proxy has been generated (has a last_generated_at timestamp)
+	if p.LastGeneratedAt != nil {
+		idStr := p.ID.String()
+		if baseURL != "" {
+			resp.M3U8URL = fmt.Sprintf("%s/proxy/%s.m3u", baseURL, idStr)
+			resp.XMLTVURL = fmt.Sprintf("%s/proxy/%s.xmltv", baseURL, idStr)
+		} else {
+			resp.M3U8URL = fmt.Sprintf("/proxy/%s.m3u", idStr)
+			resp.XMLTVURL = fmt.Sprintf("/proxy/%s.xmltv", idStr)
+		}
+	}
+
+	return resp
 }
 
-// StreamProxyDetailResponse includes related sources in the response.
+// ProxySourceAssignmentResponse represents a stream source assignment in a proxy.
+// This matches the frontend's expected format with source_id and priority_order.
+type ProxySourceAssignmentResponse struct {
+	SourceID      string `json:"source_id" doc:"ID of the stream source"`
+	SourceName    string `json:"source_name" doc:"Name of the stream source"`
+	PriorityOrder int    `json:"priority_order" doc:"Priority for merging channels"`
+}
+
+// ProxyEpgSourceAssignmentResponse represents an EPG source assignment in a proxy.
+// This matches the frontend's expected format with epg_source_id and priority_order.
+type ProxyEpgSourceAssignmentResponse struct {
+	EpgSourceID   string `json:"epg_source_id" doc:"ID of the EPG source"`
+	EpgSourceName string `json:"epg_source_name" doc:"Name of the EPG source"`
+	PriorityOrder int    `json:"priority_order" doc:"Priority for merging EPG data"`
+}
+
+// ProxyFilterAssignmentResponse represents a filter assignment in a proxy.
+// This matches the frontend's expected format with filter_id and priority_order.
+type ProxyFilterAssignmentResponse struct {
+	FilterID      string `json:"filter_id" doc:"ID of the filter"`
+	FilterName    string `json:"filter_name" doc:"Name of the filter"`
+	PriorityOrder int    `json:"priority_order" doc:"Order in which filters are applied"`
+	IsActive      bool   `json:"is_active" doc:"Whether the filter is active"`
+}
+
+// StreamProxyDetailResponse includes related sources and filters in the response.
+// Field names match the original Rust API contract for frontend compatibility.
 type StreamProxyDetailResponse struct {
 	StreamProxyResponse
-	Sources    []StreamSourceResponse `json:"sources,omitempty"`
-	EpgSources []EpgSourceResponse    `json:"epg_sources,omitempty"`
+	StreamSources []ProxySourceAssignmentResponse    `json:"stream_sources,omitempty"`
+	EpgSources    []ProxyEpgSourceAssignmentResponse `json:"epg_sources,omitempty"`
+	Filters       []ProxyFilterAssignmentResponse    `json:"filters,omitempty"`
 }
 
 // StreamProxyDetailFromModel converts a model with relations to a detail response.
-func StreamProxyDetailFromModel(p *models.StreamProxy) StreamProxyDetailResponse {
+// The baseURL parameter is optional; if empty, relative URLs are used.
+func StreamProxyDetailFromModel(p *models.StreamProxy, baseURL string) StreamProxyDetailResponse {
 	resp := StreamProxyDetailResponse{
-		StreamProxyResponse: StreamProxyFromModel(p),
+		StreamProxyResponse: StreamProxyFromModel(p, baseURL),
+		StreamSources:       make([]ProxySourceAssignmentResponse, 0, len(p.Sources)),
+		EpgSources:          make([]ProxyEpgSourceAssignmentResponse, 0, len(p.EpgSources)),
+		Filters:             make([]ProxyFilterAssignmentResponse, 0, len(p.Filters)),
 	}
 	for _, ps := range p.Sources {
+		sourceName := ""
 		if ps.Source != nil {
-			resp.Sources = append(resp.Sources, StreamSourceFromModel(ps.Source))
+			sourceName = ps.Source.Name
 		}
+		resp.StreamSources = append(resp.StreamSources, ProxySourceAssignmentResponse{
+			SourceID:      ps.SourceID.String(),
+			SourceName:    sourceName,
+			PriorityOrder: ps.Priority,
+		})
 	}
 	for _, pes := range p.EpgSources {
+		epgSourceName := ""
 		if pes.EpgSource != nil {
-			resp.EpgSources = append(resp.EpgSources, EpgSourceFromModel(pes.EpgSource))
+			epgSourceName = pes.EpgSource.Name
 		}
+		resp.EpgSources = append(resp.EpgSources, ProxyEpgSourceAssignmentResponse{
+			EpgSourceID:   pes.EpgSourceID.String(),
+			EpgSourceName: epgSourceName,
+			PriorityOrder: pes.Priority,
+		})
+	}
+	for _, pf := range p.Filters {
+		filterName := ""
+		if pf.Filter != nil {
+			filterName = pf.Filter.Name
+		}
+		resp.Filters = append(resp.Filters, ProxyFilterAssignmentResponse{
+			FilterID:      pf.FilterID.String(),
+			FilterName:    filterName,
+			PriorityOrder: pf.Priority,
+			IsActive:      true, // Default to active since model doesn't have this field
+		})
 	}
 	return resp
 }
@@ -394,6 +475,7 @@ type CreateStreamProxyRequest struct {
 	OutputPath            string                 `json:"output_path,omitempty" doc:"Path for generated files" maxLength:"512"`
 	SourceIDs             []models.ULID          `json:"source_ids,omitempty" doc:"Stream source IDs to include"`
 	EpgSourceIDs          []models.ULID          `json:"epg_source_ids,omitempty" doc:"EPG source IDs to include"`
+	FilterIDs             []models.ULID          `json:"filter_ids,omitempty" doc:"Filter IDs to include"`
 }
 
 // ToModel converts the request to a model.
@@ -408,8 +490,8 @@ func (r *CreateStreamProxyRequest) ToModel() *models.StreamProxy {
 		UpstreamTimeout:       30,
 		BufferSize:            8192,
 		MaxConcurrentStreams:  0,
-		CacheChannelLogos:     false,
-		CacheProgramLogos:     false,
+		CacheChannelLogos:     true,
+		CacheProgramLogos:     true,
 		OutputPath:            r.OutputPath,
 	}
 	if r.ProxyMode != "" {
@@ -460,6 +542,9 @@ type UpdateStreamProxyRequest struct {
 	CacheProgramLogos     *bool                   `json:"cache_program_logos,omitempty" doc:"Cache EPG program logos locally"`
 	RelayProfileID        *models.ULID            `json:"relay_profile_id,omitempty" doc:"Relay profile for transcoding settings"`
 	OutputPath            *string                 `json:"output_path,omitempty" doc:"Path for generated files" maxLength:"512"`
+	SourceIDs             []models.ULID           `json:"source_ids,omitempty" doc:"Stream source IDs to include"`
+	EpgSourceIDs          []models.ULID           `json:"epg_source_ids,omitempty" doc:"EPG source IDs to include"`
+	FilterIDs             []models.ULID           `json:"filter_ids,omitempty" doc:"Filter IDs to include"`
 }
 
 // ApplyToModel applies the update request to an existing model.

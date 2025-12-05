@@ -1,0 +1,307 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tv generator-info-name="tvarr-testdata" generator-info-url="https://github.com/jmylchreest/tvarr">
+  <channel id="ch001">
+    <display-name>StreamCast News</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch001.png"/>
+  </channel>
+  <channel id="ch002">
+    <display-name>StreamCast News HD</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch002.png"/>
+  </channel>
+  <channel id="ch003">
+    <display-name>StreamCast News +1</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch003.png"/>
+  </channel>
+  <channel id="ch004">
+    <display-name>ViewMedia Sports</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch004.png"/>
+  </channel>
+  <channel id="ch005">
+    <display-name>ViewMedia Sports HD</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch005.png"/>
+  </channel>
+  <channel id="ch006">
+    <display-name>AeroVision Movies</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch006.png"/>
+  </channel>
+  <channel id="ch007">
+    <display-name>AeroVision Movies HD</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch007.png"/>
+  </channel>
+  <channel id="ch008">
+    <display-name>AeroVision Movies +1</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch008.png"/>
+  </channel>
+  <channel id="ch009">
+    <display-name>GlobalStream Entertainment</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch009.png"/>
+  </channel>
+  <channel id="ch010">
+    <display-name>GlobalStream Entertainment HD</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch010.png"/>
+  </channel>
+  <channel id="ch011">
+    <display-name>NationalNet Music</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch011.png"/>
+  </channel>
+  <channel id="ch012">
+    <display-name>NationalNet Music HD</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch012.png"/>
+  </channel>
+  <channel id="ch013">
+    <display-name>NationalNet Music +1</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch013.png"/>
+  </channel>
+  <channel id="ch014">
+    <display-name>SportsCentral Kids</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch014.png"/>
+  </channel>
+  <channel id="ch015">
+    <display-name>SportsCentral Kids HD</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch015.png"/>
+  </channel>
+  <channel id="ch016">
+    <display-name>CinemaMax News</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch016.png"/>
+  </channel>
+  <channel id="ch017">
+    <display-name>CinemaMax News +1</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch017.png"/>
+  </channel>
+  <channel id="ch018">
+    <display-name>MusicMax Sports</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch018.png"/>
+  </channel>
+  <channel id="ch019">
+    <display-name>MusicMax Sports HD</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch019.png"/>
+  </channel>
+  <channel id="ch020">
+    <display-name>NewsFirst Movies</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch020.png"/>
+  </channel>
+  <channel id="ch021">
+    <display-name>NewsFirst Movies HD</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch021.png"/>
+  </channel>
+  <channel id="ch022">
+    <display-name>NewsFirst Movies +1</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch022.png"/>
+  </channel>
+  <channel id="ch023">
+    <display-name>PrimeTV Entertainment</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch023.png"/>
+  </channel>
+  <channel id="ch024">
+    <display-name>PrimeTV Entertainment HD</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch024.png"/>
+  </channel>
+  <channel id="ch025">
+    <display-name>StreamCast Music</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch025.png"/>
+  </channel>
+  <channel id="ch026">
+    <display-name>StreamCast Music +1</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch026.png"/>
+  </channel>
+  <channel id="ch027">
+    <display-name>ViewMedia Kids</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch027.png"/>
+  </channel>
+  <channel id="ch028">
+    <display-name>ViewMedia Kids HD</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch028.png"/>
+  </channel>
+  <channel id="ch029">
+    <display-name>AeroVision News</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch029.png"/>
+  </channel>
+  <channel id="ch030">
+    <display-name>AeroVision News HD</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch030.png"/>
+  </channel>
+  <channel id="ch031">
+    <display-name>GlobalStream Sports</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch031.png"/>
+  </channel>
+  <channel id="ch032">
+    <display-name>GlobalStream Sports HD</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch032.png"/>
+  </channel>
+  <channel id="ch033">
+    <display-name>GlobalStream Sports +1</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch033.png"/>
+  </channel>
+  <channel id="ch034">
+    <display-name>NationalNet Movies</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch034.png"/>
+  </channel>
+  <channel id="ch035">
+    <display-name>NationalNet Movies HD</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch035.png"/>
+  </channel>
+  <channel id="ch036">
+    <display-name>SportsCentral Entertainment</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch036.png"/>
+  </channel>
+  <channel id="ch037">
+    <display-name>SportsCentral Entertainment +1</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch037.png"/>
+  </channel>
+  <channel id="ch038">
+    <display-name>CinemaMax Music</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch038.png"/>
+  </channel>
+  <channel id="ch039">
+    <display-name>CinemaMax Music HD</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch039.png"/>
+  </channel>
+  <channel id="ch040">
+    <display-name>MusicMax Kids</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch040.png"/>
+  </channel>
+  <channel id="ch041">
+    <display-name>MusicMax Kids HD</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch041.png"/>
+  </channel>
+  <channel id="ch042">
+    <display-name>MusicMax Kids +1</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch042.png"/>
+  </channel>
+  <channel id="ch043">
+    <display-name>NewsFirst News</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch043.png"/>
+  </channel>
+  <channel id="ch044">
+    <display-name>NewsFirst News HD</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch044.png"/>
+  </channel>
+  <channel id="ch045">
+    <display-name>PrimeTV Sports</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch045.png"/>
+  </channel>
+  <channel id="ch046">
+    <display-name>PrimeTV Sports HD</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch046.png"/>
+  </channel>
+  <channel id="ch047">
+    <display-name>PrimeTV Sports +1</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch047.png"/>
+  </channel>
+  <channel id="ch048">
+    <display-name>StreamCast Movies</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch048.png"/>
+  </channel>
+  <channel id="ch049">
+    <display-name>StreamCast Movies HD</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch049.png"/>
+  </channel>
+  <channel id="ch050">
+    <display-name>ViewMedia Entertainment</display-name>
+    <icon src="http://testlogos.tvarr.local/logos/ch050.png"/>
+  </channel>
+  <!-- Sample programmes - in real use, the dynamic generator creates time-appropriate programs -->
+  <!-- These static examples demonstrate the XMLTV format structure -->
+  <programme start="20250101060000 +0000" stop="20250101063000 +0000" channel="ch001">
+    <title lang="en">Morning Report</title>
+    <desc lang="en">Start your day with comprehensive news coverage and weather updates.</desc>
+    <category lang="en">News</category>
+    <episode-num system="xmltv_ns">0.0.</episode-num>
+  </programme>
+  <programme start="20250101063000 +0000" stop="20250101070000 +0000" channel="ch001">
+    <title lang="en">Business Update</title>
+    <desc lang="en">Financial markets and business news analysis.</desc>
+    <category lang="en">News</category>
+    <rating>
+      <value>TV-G</value>
+    </rating>
+  </programme>
+  <programme start="20250101070000 +0000" stop="20250101080000 +0000" channel="ch001">
+    <title lang="en">World Tonight</title>
+    <desc lang="en">International news and global affairs.</desc>
+    <category lang="en">News</category>
+    <episode-num system="xmltv_ns">2.5.</episode-num>
+    <icon src="http://testlogos.tvarr.local/programs/ch001_2.jpg"/>
+  </programme>
+  <programme start="20250101060000 +0000" stop="20250101070000 +0000" channel="ch004">
+    <title lang="en">Sports Central</title>
+    <desc lang="en">All the latest sports news and highlights.</desc>
+    <category lang="en">Sports</category>
+    <rating>
+      <value>TV-PG</value>
+    </rating>
+  </programme>
+  <programme start="20250101070000 +0000" stop="20250101083000 +0000" channel="ch004">
+    <title lang="en">Match Day</title>
+    <desc lang="en">Live coverage of today's big game.</desc>
+    <category lang="en">Sports</category>
+    <episode-num system="xmltv_ns">1.10.</episode-num>
+  </programme>
+  <programme start="20250101060000 +0000" stop="20250101080000 +0000" channel="ch006">
+    <title lang="en">Action Feature</title>
+    <desc lang="en">High-octane thrills and explosive excitement.</desc>
+    <category lang="en">Movies</category>
+    <rating>
+      <value>PG-13</value>
+    </rating>
+    <icon src="http://testlogos.tvarr.local/programs/ch006_0.jpg"/>
+  </programme>
+  <programme start="20250101080000 +0000" stop="20250101100000 +0000" channel="ch006">
+    <title lang="en">Drama Feature</title>
+    <desc lang="en">A compelling story of human triumph.</desc>
+    <category lang="en">Movies</category>
+    <rating>
+      <value>PG</value>
+    </rating>
+  </programme>
+  <programme start="20250101060000 +0000" stop="20250101063000 +0000" channel="ch009">
+    <title lang="en">Morning Show Live</title>
+    <desc lang="en">Wake up with interviews, music, and lifestyle features.</desc>
+    <category lang="en">Entertainment</category>
+  </programme>
+  <programme start="20250101063000 +0000" stop="20250101070000 +0000" channel="ch009">
+    <title lang="en">Talk of the Town</title>
+    <desc lang="en">Celebrity interviews and entertainment news.</desc>
+    <category lang="en">Entertainment</category>
+    <episode-num system="xmltv_ns">5.12.</episode-num>
+  </programme>
+  <programme start="20250101070000 +0000" stop="20250101073000 +0000" channel="ch009">
+    <title lang="en">Quiz Masters</title>
+    <desc lang="en">Test your knowledge in this exciting game show.</desc>
+    <category lang="en">Entertainment</category>
+    <rating>
+      <value>TV-G</value>
+    </rating>
+  </programme>
+  <programme start="20250101060000 +0000" stop="20250101070000 +0000" channel="ch011">
+    <title lang="en">Music Mix</title>
+    <desc lang="en">The hottest tracks and artist interviews.</desc>
+    <category lang="en">Music</category>
+    <icon src="http://testlogos.tvarr.local/programs/ch011_0.jpg"/>
+  </programme>
+  <programme start="20250101070000 +0000" stop="20250101080000 +0000" channel="ch011">
+    <title lang="en">Classic Sounds</title>
+    <desc lang="en">Timeless music from legendary artists.</desc>
+    <category lang="en">Music</category>
+  </programme>
+  <programme start="20250101060000 +0000" stop="20250101063000 +0000" channel="ch014">
+    <title lang="en">Cartoon Time</title>
+    <desc lang="en">Fun animated adventures for young viewers.</desc>
+    <category lang="en">Kids</category>
+    <rating>
+      <value>TV-G</value>
+    </rating>
+  </programme>
+  <programme start="20250101063000 +0000" stop="20250101070000 +0000" channel="ch014">
+    <title lang="en">Learning Fun</title>
+    <desc lang="en">Educational entertainment for children.</desc>
+    <category lang="en">Kids</category>
+  </programme>
+  <programme start="20250101070000 +0000" stop="20250101073000 +0000" channel="ch014">
+    <title lang="en">Story Corner</title>
+    <desc lang="en">Classic tales brought to life.</desc>
+    <category lang="en">Kids</category>
+    <episode-num system="xmltv_ns">0.15.</episode-num>
+    <icon src="http://testlogos.tvarr.local/programs/ch014_2.jpg"/>
+  </programme>
+</tv>

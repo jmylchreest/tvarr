@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -12,8 +13,11 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/go-chi/chi/v5"
+	"github.com/spf13/viper"
+
 	"github.com/jmylchreest/tvarr/internal/service"
 	"github.com/jmylchreest/tvarr/internal/storage"
+	"github.com/jmylchreest/tvarr/internal/urlutil"
 )
 
 // LogoHandler handles logo API endpoints.
@@ -24,6 +28,22 @@ type LogoHandler struct {
 // NewLogoHandler creates a new logo handler.
 func NewLogoHandler(logoService *service.LogoService) *LogoHandler {
 	return &LogoHandler{logoService: logoService}
+}
+
+// getBaseURL returns the configured base URL or constructs one from server config.
+func getBaseURL() string {
+	baseURL := urlutil.NormalizeBaseURL(viper.GetString("server.base_url"))
+	if baseURL == "" {
+		// Fall back to constructing from host:port
+		host := viper.GetString("server.host")
+		port := viper.GetInt("server.port")
+		if host == "0.0.0.0" || host == "" {
+			baseURL = fmt.Sprintf("http://localhost:%d", port)
+		} else {
+			baseURL = fmt.Sprintf("http://%s:%d", host, port)
+		}
+	}
+	return baseURL
 }
 
 // Register registers the logo routes with the API.
@@ -230,16 +250,20 @@ func logoMetadataToAsset(meta *storage.CachedLogoMetadata) LogoAsset {
 	// Use relative path for serving
 	relPath := meta.RelativeImagePath()
 
+	// Get base URL for constructing full URLs
+	baseURL := getBaseURL()
+
 	// Convert linked assets to response format
 	linkedAssets := make([]LinkedAssetResponse, 0, len(meta.LinkedAssets))
 	var totalLinkedSize int64
 	for _, asset := range meta.LinkedAssets {
+		relURL := "/logos/" + filepath.Base(asset.Path)
 		linkedAssets = append(linkedAssets, LinkedAssetResponse{
 			Type:        asset.Type,
 			Path:        asset.Path,
 			ContentType: asset.ContentType,
 			Size:        asset.Size,
-			URL:         "/logos/" + filepath.Base(asset.Path),
+			URL:         baseURL + relURL,
 		})
 		totalLinkedSize += asset.Size
 	}
@@ -269,7 +293,7 @@ func logoMetadataToAsset(meta *storage.CachedLogoMetadata) LogoAsset {
 		FormatType:        formatType,
 		CreatedAt:         meta.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:         meta.LastSeenAt.Format(time.RFC3339),
-		URL:               "/logos/" + filepath.Base(relPath),
+		URL:               baseURL + "/logos/" + filepath.Base(relPath),
 		LinkedAssets:      linkedAssets,
 		LinkedAssetsCount: len(linkedAssets),
 		TotalLinkedSize:   totalLinkedSize,

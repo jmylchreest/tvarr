@@ -291,9 +291,9 @@ func (h *JobHandler) ListRunning(ctx context.Context, input *ListRunningJobsInpu
 
 // GetJobHistoryInput is the input for getting job history.
 type GetJobHistoryInput struct {
-	Type   *string `query:"type" doc:"Filter by job type" enum:"stream_ingestion,epg_ingestion,proxy_generation,logo_cleanup"`
-	Offset int     `query:"offset" default:"0" minimum:"0" doc:"Offset for pagination"`
-	Limit  int     `query:"limit" default:"50" minimum:"1" maximum:"1000" doc:"Limit for pagination"`
+	Type   string `query:"type" doc:"Filter by job type (optional)" enum:"stream_ingestion,epg_ingestion,proxy_generation,logo_cleanup,"`
+	Offset int    `query:"offset" default:"0" minimum:"0" doc:"Offset for pagination"`
+	Limit  int    `query:"limit" default:"50" minimum:"1" maximum:"1000" doc:"Limit for pagination"`
 }
 
 // GetJobHistoryOutput is the output for getting job history.
@@ -307,8 +307,8 @@ type GetJobHistoryOutput struct {
 // GetHistory returns job execution history.
 func (h *JobHandler) GetHistory(ctx context.Context, input *GetJobHistoryInput) (*GetJobHistoryOutput, error) {
 	var jobType *models.JobType
-	if input.Type != nil && *input.Type != "" {
-		jt := models.JobType(*input.Type)
+	if input.Type != "" {
+		jt := models.JobType(input.Type)
 		jobType = &jt
 	}
 

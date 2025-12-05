@@ -188,10 +188,10 @@ func TestLogoHelper_NoResolver_NoBaseURL(t *testing.T) {
 	validULID := "01ARZ3NDEKTSV4RRFFQ69G5FAV"
 	helper := NewLogoHelper(nil)
 
-	// No resolver and no base URL returns empty
+	// No resolver and no base URL returns deferred syntax for later resolution by logo caching stage
 	result, err := helper.Process(validULID, "")
 	require.NoError(t, err)
-	assert.Equal(t, "", result)
+	assert.Equal(t, "@logo:01ARZ3NDEKTSV4RRFFQ69G5FAV", result)
 }
 
 func TestLogoHelper_BaseURL_TrailingSlash(t *testing.T) {

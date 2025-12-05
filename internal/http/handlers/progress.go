@@ -37,20 +37,21 @@ func (h *ProgressHandler) SetHeartbeatInterval(interval time.Duration) {
 // ProgressResponse represents a progress operation in API responses.
 // Field names match frontend ProgressEvent type.
 type ProgressResponse struct {
-	ID                string            `json:"id"`
-	OperationName     string            `json:"operation_name"`
-	OperationType     string            `json:"operation_type"`
-	OwnerID           string            `json:"owner_id"`
-	OwnerType         string            `json:"owner_type"`
-	State             string            `json:"state"`
-	OverallPercentage float64           `json:"overall_percentage"`
-	Error             string            `json:"error,omitempty"`
-	Stages            []StageResponse   `json:"stages,omitempty"`
-	CurrentStage      string            `json:"current_stage"`
-	StartedAt         time.Time         `json:"started_at"`
-	LastUpdate        time.Time         `json:"last_update"`
-	CompletedAt       *time.Time        `json:"completed_at,omitempty"`
-	Metadata          map[string]any    `json:"metadata,omitempty"`
+	ID                string         `json:"id"`
+	OperationName     string         `json:"operation_name"`
+	OperationType     string         `json:"operation_type"`
+	OwnerID           string         `json:"owner_id"`
+	OwnerType         string         `json:"owner_type"`
+	OwnerName         string         `json:"owner_name"`
+	State             string         `json:"state"`
+	OverallPercentage float64        `json:"overall_percentage"`
+	Error             string         `json:"error,omitempty"`
+	Stages            []StageResponse `json:"stages,omitempty"`
+	CurrentStage      string         `json:"current_stage"`
+	StartedAt         time.Time      `json:"started_at"`
+	LastUpdate        time.Time      `json:"last_update"`
+	CompletedAt       *time.Time     `json:"completed_at,omitempty"`
+	Metadata          map[string]any `json:"metadata,omitempty"`
 }
 
 // StageResponse represents a stage in API responses.
@@ -97,6 +98,7 @@ func ProgressFromService(p *progress.UniversalProgress) ProgressResponse {
 		OperationType:     string(p.OperationType),
 		OwnerID:           p.OwnerID.String(),
 		OwnerType:         p.OwnerType,
+		OwnerName:         p.OwnerName,
 		State:             string(p.State),
 		OverallPercentage: p.Progress * 100, // Convert 0-1 to 0-100
 		Error:             p.Error,

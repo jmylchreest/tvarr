@@ -124,6 +124,7 @@ func (s *Service) StartOperation(
 	opType OperationType,
 	ownerID models.ULID,
 	ownerType string,
+	ownerName string,
 	stages []StageInfo,
 ) (*OperationManager, error) {
 	s.mu.Lock()
@@ -154,6 +155,7 @@ func (s *Service) StartOperation(
 		OperationType:     opType,
 		OwnerID:           ownerID,
 		OwnerType:         ownerType,
+		OwnerName:         ownerName,
 		State:             StatePreparing,
 		Progress:          0,
 		Message:           "Starting operation",
@@ -685,9 +687,21 @@ func (u *StageUpdater) Reporter() ProgressReporter {
 }
 
 // ReportProgress implements core.ProgressReporter for bridge to existing pipeline.
+// When progress is 0, this also triggers StartStage to properly transition the stage state.
+// When progress is 1, this also triggers Complete to mark the stage as finished.
 func (m *OperationManager) ReportProgress(ctx context.Context, stageID string, progress float64, message string) {
+	if progress == 0 {
+		// Stage is starting - call StartStage to properly initialize it
+		m.StartStage(stageID)
+	}
+
 	updater := &StageUpdater{manager: m, stageID: stageID}
 	updater.SetProgress(progress, message)
+
+	if progress >= 1.0 {
+		// Stage is complete - mark it as finished
+		updater.Complete()
+	}
 }
 
 // ReportItemProgress implements core.ProgressReporter for bridge to existing pipeline.

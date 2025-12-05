@@ -90,6 +90,7 @@ func (o *Orchestrator) Execute(ctx context.Context) (*Result, error) {
 
 	o.state.TempDir = tempDir
 	o.state.OutputDir = o.outputDir
+	o.state.ProgressReporter = o.progressReporter
 
 	o.logger.InfoContext(ctx, "starting pipeline execution",
 		slog.String("proxy_id", o.state.ProxyID.String()),

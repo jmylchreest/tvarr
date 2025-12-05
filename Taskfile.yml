@@ -902,6 +902,101 @@ tasks:
         # Call release task
         task release VERSION="${NEW_VERSION}"
 
+  # ============================================
+  # E2E Testing Tasks
+  # ============================================
+
+  e2e:build:
+    desc: Build the E2E test runner binary
+    cmds:
+      - mkdir -p {{.DEBUG_DIR}}
+      - go build -o {{.DEBUG_DIR}}/e2e-runner ./cmd/e2e-runner
+
+  e2e:run:
+    desc: Run E2E tests against a running server (requires tvarr to be running)
+    deps: [e2e:build]
+    summary: |
+      Runs the E2E test suite against a running tvarr server.
+
+      Prerequisites:
+        - tvarr server must be running (task run:dev or task run)
+        - Clean database recommended for consistent results
+
+      By default, generates random test data (50 channels, 5000 programs) using
+      fictional broadcaster names. Test data is written to temp files and served
+      via file:// URLs.
+
+      Options via environment variables:
+        - BASE_URL: API base URL (default: http://localhost:8080)
+        - CHANNEL_COUNT: Number of channels to generate (default: 50)
+        - PROGRAM_COUNT: Total number of programs to generate (default: 5000)
+        - RANDOM_SEED: Seed for reproducible test data (default: time-based)
+        - REQUIRED_CHANNELS: Fail if generated channels don't match (default: 0, disabled)
+        - REQUIRED_PROGRAMS: Fail if generated programs don't match (default: 0, disabled)
+        - TIMEOUT: Overall timeout duration (default: 5m)
+        - CACHE_CHANNEL_LOGOS: Enable channel logo caching (default: false)
+        - CACHE_PROGRAM_LOGOS: Enable program logo caching (default: false)
+        - NO_RANDOM_TESTDATA: Set to disable random test data and use external URLs
+        - M3U_URL: Custom M3U source URL (only when NO_RANDOM_TESTDATA is set)
+        - EPG_URL: Custom EPG source URL (only when NO_RANDOM_TESTDATA is set)
+    cmds:
+      - |
+        ./{{.DEBUG_DIR}}/e2e-runner \
+          {{if .BASE_URL}}-base-url "{{.BASE_URL}}"{{end}} \
+          {{if .NO_RANDOM_TESTDATA}}-random-testdata=false{{end}} \
+          {{if .CHANNEL_COUNT}}-channel-count {{.CHANNEL_COUNT}}{{end}} \
+          {{if .PROGRAM_COUNT}}-program-count {{.PROGRAM_COUNT}}{{end}} \
+          {{if .RANDOM_SEED}}-random-seed {{.RANDOM_SEED}}{{end}} \
+          {{if .REQUIRED_CHANNELS}}-required-channels {{.REQUIRED_CHANNELS}}{{end}} \
+          {{if .REQUIRED_PROGRAMS}}-required-programs {{.REQUIRED_PROGRAMS}}{{end}} \
+          {{if .M3U_URL}}-m3u-url "{{.M3U_URL}}"{{end}} \
+          {{if .EPG_URL}}-epg-url "{{.EPG_URL}}"{{end}} \
+          {{if .TIMEOUT}}-timeout "{{.TIMEOUT}}"{{end}} \
+          {{if .CACHE_CHANNEL_LOGOS}}-cache-channel-logos{{end}} \
+          {{if .CACHE_PROGRAM_LOGOS}}-cache-program-logos{{end}}
+
+  e2e:full:
+    desc: Run full E2E test with in-memory database (no external dependencies)
+    summary: |
+      Runs E2E tests with the e2e-runner managing its own tvarr server.
+      Uses a random high port (never 8080) to avoid conflicts with local dev instances.
+      Uses :memory: SQLite DSN and unique temp directory for storage.
+      Cleanup happens automatically via the e2e-runner.
+      This is the recommended way to run E2E tests in CI.
+
+      By default, generates random test data (50 channels, 5000 programs) using
+      fictional broadcaster names. Test data is written to temp files and served
+      via file:// URLs.
+
+      Options via environment variables:
+        - CHANNEL_COUNT: Number of channels to generate (default: 50)
+        - PROGRAM_COUNT: Total number of programs to generate (default: 5000)
+        - RANDOM_SEED: Seed for reproducible test data (default: time-based)
+        - REQUIRED_CHANNELS: Fail if generated channels don't match (default: 0, disabled)
+        - REQUIRED_PROGRAMS: Fail if generated programs don't match (default: 0, disabled)
+        - CACHE_CHANNEL_LOGOS: Enable channel logo caching (default: true)
+        - CACHE_PROGRAM_LOGOS: Enable program logo caching (default: true)
+        - NO_RANDOM_TESTDATA: Set to disable random test data and use external URLs
+        - M3U_URL: Custom M3U source URL (only when NO_RANDOM_TESTDATA is set)
+        - EPG_URL: Custom EPG source URL (only when NO_RANDOM_TESTDATA is set)
+    deps: [e2e:build]
+    cmds:
+      - |
+        # Run E2E tests with managed server mode (random high port)
+        # Uses random test data by default (fictional channels/programs)
+        ./{{.DEBUG_DIR}}/e2e-runner \
+          -binary ./{{.DEBUG_DIR}}/{{.BINARY_NAME}} \
+          {{if .NO_RANDOM_TESTDATA}}-random-testdata=false{{end}} \
+          {{if .CHANNEL_COUNT}}-channel-count {{.CHANNEL_COUNT}}{{end}} \
+          {{if .PROGRAM_COUNT}}-program-count {{.PROGRAM_COUNT}}{{end}} \
+          {{if .RANDOM_SEED}}-random-seed {{.RANDOM_SEED}}{{end}} \
+          {{if .REQUIRED_CHANNELS}}-required-channels {{.REQUIRED_CHANNELS}}{{end}} \
+          {{if .REQUIRED_PROGRAMS}}-required-programs {{.REQUIRED_PROGRAMS}}{{end}} \
+          {{if .M3U_URL}}-m3u-url "{{.M3U_URL}}"{{end}} \
+          {{if .EPG_URL}}-epg-url "{{.EPG_URL}}"{{end}} \
+          {{if .CACHE_CHANNEL_LOGOS}}-cache-channel-logos{{end}} \
+          {{if .CACHE_PROGRAM_LOGOS}}-cache-program-logos{{end}}
+
   help:
     desc: Show all available tasks
     cmds:

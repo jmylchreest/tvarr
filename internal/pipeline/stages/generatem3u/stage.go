@@ -85,8 +85,8 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 
 	channelCount := 0
 	channelNum := state.Proxy.StartingChannelNumber
-
 	var skippedCount int
+
 	for _, ch := range state.Channels {
 		// Check for context cancellation
 		select {

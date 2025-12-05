@@ -118,14 +118,14 @@ function CreateSourceSheet({
     source_type: 'xtream',
     url: '',
     max_concurrent_streams: 0,
-    update_cron: '0 0 */6 * * * *',
+    update_cron: '0 0 */6 * * *',
     username: '',
     password: '',
   });
   // Manual channels state (only used when source_type === 'manual')
   const [manualChannels, setManualChannels] = useState<ManualChannelInput[]>([]);
   const [manualValid, setManualValid] = useState(false);
-  const [cronValidation, setCronValidation] = useState(validateCronExpression('0 0 */6 * * * *'));
+  const [cronValidation, setCronValidation] = useState(validateCronExpression('0 0 */6 * * *'));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -141,13 +141,13 @@ function CreateSourceSheet({
         source_type: 'xtream',
         url: '',
         max_concurrent_streams: 0,
-        update_cron: '0 0 */6 * * * *',
+        update_cron: '0 0 */6 * * *',
         username: '',
         password: '',
       });
       setManualChannels([]);
       setManualValid(false);
-      setCronValidation(validateCronExpression('0 0 */6 * * * *'));
+      setCronValidation(validateCronExpression('0 0 */6 * * *'));
     }
   };
 
@@ -276,7 +276,10 @@ function CreateSourceSheet({
                 min="0"
                 value={formData.max_concurrent_streams}
                 onChange={(e) =>
-                  setFormData({ ...formData, max_concurrent_streams: parseInt(e.target.value) || 0 })
+                  setFormData({
+                    ...formData,
+                    max_concurrent_streams: parseInt(e.target.value) || 0,
+                  })
                 }
                 autoComplete="off"
                 required
@@ -296,17 +299,17 @@ function CreateSourceSheet({
                     </TooltipTrigger>
                     <TooltipContent className="max-w-sm">
                       <div className="space-y-2">
-                        <p className="font-medium">7-field cron format:</p>
-                        <p className="text-xs">sec min hour day-of-month month day-of-week year</p>
+                        <p className="font-medium">6-field cron format:</p>
+                        <p className="text-xs">sec min hour day-of-month month day-of-week</p>
                         <div className="space-y-1 text-xs">
                           <p>
-                            <code>"0 0 */6 * * * *"</code> - Every 6 hours
+                            <code>"0 0 */6 * * *"</code> - Every 6 hours
                           </p>
                           <p>
-                            <code>"0 0 2 * * * *"</code> - Daily at 2:00 AM
+                            <code>"0 0 2 * * *"</code> - Daily at 2:00 AM
                           </p>
                           <p>
-                            <code>"0 */30 * * * * *"</code> - Every 30 minutes
+                            <code>"0 */30 * * * *"</code> - Every 30 minutes
                           </p>
                         </div>
                       </div>
@@ -322,7 +325,7 @@ function CreateSourceSheet({
                   setFormData({ ...formData, update_cron: newValue });
                   setCronValidation(validateCronExpression(newValue));
                 }}
-                placeholder="0 0 */6 * * * *"
+                placeholder="0 0 */6 * * *"
                 required
                 disabled={loading}
                 autoComplete="off"
@@ -416,18 +419,18 @@ function EditSourceSheet({
     source_type: 'xtream',
     url: '',
     max_concurrent_streams: 0,
-    update_cron: '0 0 */6 * * * *',
+    update_cron: '0 0 */6 * * *',
     username: '',
     password: '',
   });
   const [manualChannels, setManualChannels] = useState<ManualChannelInput[]>([]);
   const [manualValid, setManualValid] = useState(false);
-  const [cronValidation, setCronValidation] = useState(validateCronExpression('0 0 */6 * * * *'));
+  const [cronValidation, setCronValidation] = useState(validateCronExpression('0 0 */6 * * *'));
 
   // Update form data when source changes
   useEffect(() => {
     if (source) {
-      const defaultCron = '0 0 */6 * * * *'; // Every 6 hours
+      const defaultCron = '0 0 */6 * * *'; // Every 6 hours
       const newFormData = {
         name: source.name,
         source_type: source.source_type,
@@ -599,7 +602,10 @@ function EditSourceSheet({
                 min="0"
                 value={formData.max_concurrent_streams}
                 onChange={(e) =>
-                  setFormData({ ...formData, max_concurrent_streams: parseInt(e.target.value) || 0 })
+                  setFormData({
+                    ...formData,
+                    max_concurrent_streams: parseInt(e.target.value) || 0,
+                  })
                 }
                 required
                 disabled={loading}
@@ -619,17 +625,17 @@ function EditSourceSheet({
                     </TooltipTrigger>
                     <TooltipContent className="max-w-sm">
                       <div className="space-y-2">
-                        <p className="font-medium">7-field cron format:</p>
-                        <p className="text-xs">sec min hour day-of-month month day-of-week year</p>
+                        <p className="font-medium">6-field cron format:</p>
+                        <p className="text-xs">sec min hour day-of-month month day-of-week</p>
                         <div className="space-y-1 text-xs">
                           <p>
-                            <code>"0 0 */6 * * * *"</code> - Every 6 hours
+                            <code>"0 0 */6 * * *"</code> - Every 6 hours
                           </p>
                           <p>
-                            <code>"0 0 2 * * * *"</code> - Daily at 2:00 AM
+                            <code>"0 0 2 * * *"</code> - Daily at 2:00 AM
                           </p>
                           <p>
-                            <code>"0 */30 * * * * *"</code> - Every 30 minutes
+                            <code>"0 */30 * * * *"</code> - Every 30 minutes
                           </p>
                         </div>
                       </div>
@@ -645,7 +651,7 @@ function EditSourceSheet({
                   setFormData({ ...formData, update_cron: newValue });
                   setCronValidation(validateCronExpression(newValue));
                 }}
-                placeholder="0 0 */6 * * * *"
+                placeholder="0 0 */6 * * *"
                 required
                 disabled={loading}
                 autoComplete="off"

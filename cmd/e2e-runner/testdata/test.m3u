@@ -1,0 +1,101 @@
+#EXTM3U
+#EXTINF:-1 tvg-id="ch001" tvg-name="StreamCast News" tvg-logo="http://testlogos.tvarr.local/logos/ch001.png" group-title="News" tvg-chno="101",StreamCast News
+http://teststream.tvarr.local/live/ch001/stream.m3u8
+#EXTINF:-1 tvg-id="ch002" tvg-name="StreamCast News HD" tvg-logo="http://testlogos.tvarr.local/logos/ch002.png" group-title="News" tvg-chno="102",StreamCast News HD
+http://teststream.tvarr.local/live/ch002/stream.m3u8
+#EXTINF:-1 tvg-id="ch003" tvg-name="StreamCast News +1" tvg-logo="http://testlogos.tvarr.local/logos/ch003.png" group-title="News" tvg-chno="103" tvg-shift="1",StreamCast News +1
+http://teststream.tvarr.local/live/ch003/stream.m3u8
+#EXTINF:-1 tvg-id="ch004" tvg-name="ViewMedia Sports" tvg-logo="http://testlogos.tvarr.local/logos/ch004.png" group-title="Sports" tvg-chno="104",ViewMedia Sports
+http://teststream.tvarr.local/live/ch004/stream.m3u8
+#EXTINF:-1 tvg-id="ch005" tvg-name="ViewMedia Sports HD" tvg-logo="http://testlogos.tvarr.local/logos/ch005.png" group-title="Sports" tvg-chno="105",ViewMedia Sports HD
+http://teststream.tvarr.local/live/ch005/stream.m3u8
+#EXTINF:-1 tvg-id="ch006" tvg-name="AeroVision Movies" tvg-logo="http://testlogos.tvarr.local/logos/ch006.png" group-title="Movies" tvg-chno="106",AeroVision Movies
+http://teststream.tvarr.local/live/ch006/stream.m3u8
+#EXTINF:-1 tvg-id="ch007" tvg-name="AeroVision Movies HD" tvg-logo="http://testlogos.tvarr.local/logos/ch007.png" group-title="Movies" tvg-chno="107",AeroVision Movies HD
+http://teststream.tvarr.local/live/ch007/stream.m3u8
+#EXTINF:-1 tvg-id="ch008" tvg-name="AeroVision Movies +1" tvg-logo="http://testlogos.tvarr.local/logos/ch008.png" group-title="Movies" tvg-chno="108" tvg-shift="1",AeroVision Movies +1
+http://teststream.tvarr.local/live/ch008/stream.m3u8
+#EXTINF:-1 tvg-id="ch009" tvg-name="GlobalStream Entertainment" tvg-logo="http://testlogos.tvarr.local/logos/ch009.png" group-title="Entertainment" tvg-chno="109",GlobalStream Entertainment
+http://teststream.tvarr.local/live/ch009/stream.m3u8
+#EXTINF:-1 tvg-id="ch010" tvg-name="GlobalStream Entertainment HD" tvg-logo="http://testlogos.tvarr.local/logos/ch010.png" group-title="Entertainment" tvg-chno="110",GlobalStream Entertainment HD
+http://teststream.tvarr.local/live/ch010/stream.m3u8
+#EXTINF:-1 tvg-id="ch011" tvg-name="NationalNet Music" tvg-logo="http://testlogos.tvarr.local/logos/ch011.png" group-title="Music" tvg-chno="111",NationalNet Music
+http://teststream.tvarr.local/live/ch011/stream.m3u8
+#EXTINF:-1 tvg-id="ch012" tvg-name="NationalNet Music HD" tvg-logo="http://testlogos.tvarr.local/logos/ch012.png" group-title="Music" tvg-chno="112",NationalNet Music HD
+http://teststream.tvarr.local/live/ch012/stream.m3u8
+#EXTINF:-1 tvg-id="ch013" tvg-name="NationalNet Music +1" tvg-logo="http://testlogos.tvarr.local/logos/ch013.png" group-title="Music" tvg-chno="113" tvg-shift="1",NationalNet Music +1
+http://teststream.tvarr.local/live/ch013/stream.m3u8
+#EXTINF:-1 tvg-id="ch014" tvg-name="SportsCentral Kids" tvg-logo="http://testlogos.tvarr.local/logos/ch014.png" group-title="Kids" tvg-chno="114",SportsCentral Kids
+http://teststream.tvarr.local/live/ch014/stream.m3u8
+#EXTINF:-1 tvg-id="ch015" tvg-name="SportsCentral Kids HD" tvg-logo="http://testlogos.tvarr.local/logos/ch015.png" group-title="Kids" tvg-chno="115",SportsCentral Kids HD
+http://teststream.tvarr.local/live/ch015/stream.m3u8
+#EXTINF:-1 tvg-id="ch016" tvg-name="CinemaMax News" tvg-logo="http://testlogos.tvarr.local/logos/ch016.png" group-title="News" tvg-chno="116",CinemaMax News
+http://teststream.tvarr.local/live/ch016/stream.m3u8
+#EXTINF:-1 tvg-id="ch017" tvg-name="CinemaMax News +1" tvg-logo="http://testlogos.tvarr.local/logos/ch017.png" group-title="News" tvg-chno="117" tvg-shift="1",CinemaMax News +1
+http://teststream.tvarr.local/live/ch017/stream.m3u8
+#EXTINF:-1 tvg-id="ch018" tvg-name="MusicMax Sports" tvg-logo="http://testlogos.tvarr.local/logos/ch018.png" group-title="Sports" tvg-chno="118",MusicMax Sports
+http://teststream.tvarr.local/live/ch018/stream.m3u8
+#EXTINF:-1 tvg-id="ch019" tvg-name="MusicMax Sports HD" tvg-logo="http://testlogos.tvarr.local/logos/ch019.png" group-title="Sports" tvg-chno="119",MusicMax Sports HD
+http://teststream.tvarr.local/live/ch019/stream.m3u8
+#EXTINF:-1 tvg-id="ch020" tvg-name="NewsFirst Movies" tvg-logo="http://testlogos.tvarr.local/logos/ch020.png" group-title="Movies" tvg-chno="120",NewsFirst Movies
+http://teststream.tvarr.local/live/ch020/stream.m3u8
+#EXTINF:-1 tvg-id="ch021" tvg-name="NewsFirst Movies HD" tvg-logo="http://testlogos.tvarr.local/logos/ch021.png" group-title="Movies" tvg-chno="121",NewsFirst Movies HD
+http://teststream.tvarr.local/live/ch021/stream.m3u8
+#EXTINF:-1 tvg-id="ch022" tvg-name="NewsFirst Movies +1" tvg-logo="http://testlogos.tvarr.local/logos/ch022.png" group-title="Movies" tvg-chno="122" tvg-shift="1",NewsFirst Movies +1
+http://teststream.tvarr.local/live/ch022/stream.m3u8
+#EXTINF:-1 tvg-id="ch023" tvg-name="PrimeTV Entertainment" tvg-logo="http://testlogos.tvarr.local/logos/ch023.png" group-title="Entertainment" tvg-chno="123",PrimeTV Entertainment
+http://teststream.tvarr.local/live/ch023/stream.m3u8
+#EXTINF:-1 tvg-id="ch024" tvg-name="PrimeTV Entertainment HD" tvg-logo="http://testlogos.tvarr.local/logos/ch024.png" group-title="Entertainment" tvg-chno="124",PrimeTV Entertainment HD
+http://teststream.tvarr.local/live/ch024/stream.m3u8
+#EXTINF:-1 tvg-id="ch025" tvg-name="StreamCast Music" tvg-logo="http://testlogos.tvarr.local/logos/ch025.png" group-title="Music" tvg-chno="125",StreamCast Music
+http://teststream.tvarr.local/live/ch025/stream.m3u8
+#EXTINF:-1 tvg-id="ch026" tvg-name="StreamCast Music +1" tvg-logo="http://testlogos.tvarr.local/logos/ch026.png" group-title="Music" tvg-chno="126" tvg-shift="1",StreamCast Music +1
+http://teststream.tvarr.local/live/ch026/stream.m3u8
+#EXTINF:-1 tvg-id="ch027" tvg-name="ViewMedia Kids" tvg-logo="http://testlogos.tvarr.local/logos/ch027.png" group-title="Kids" tvg-chno="127",ViewMedia Kids
+http://teststream.tvarr.local/live/ch027/stream.m3u8
+#EXTINF:-1 tvg-id="ch028" tvg-name="ViewMedia Kids HD" tvg-logo="http://testlogos.tvarr.local/logos/ch028.png" group-title="Kids" tvg-chno="128",ViewMedia Kids HD
+http://teststream.tvarr.local/live/ch028/stream.m3u8
+#EXTINF:-1 tvg-id="ch029" tvg-name="AeroVision News" tvg-logo="http://testlogos.tvarr.local/logos/ch029.png" group-title="News" tvg-chno="129",AeroVision News
+http://teststream.tvarr.local/live/ch029/stream.m3u8
+#EXTINF:-1 tvg-id="ch030" tvg-name="AeroVision News HD" tvg-logo="http://testlogos.tvarr.local/logos/ch030.png" group-title="News" tvg-chno="130",AeroVision News HD
+http://teststream.tvarr.local/live/ch030/stream.m3u8
+#EXTINF:-1 tvg-id="ch031" tvg-name="GlobalStream Sports" tvg-logo="http://testlogos.tvarr.local/logos/ch031.png" group-title="Sports" tvg-chno="131",GlobalStream Sports
+http://teststream.tvarr.local/live/ch031/stream.m3u8
+#EXTINF:-1 tvg-id="ch032" tvg-name="GlobalStream Sports HD" tvg-logo="http://testlogos.tvarr.local/logos/ch032.png" group-title="Sports" tvg-chno="132",GlobalStream Sports HD
+http://teststream.tvarr.local/live/ch032/stream.m3u8
+#EXTINF:-1 tvg-id="ch033" tvg-name="GlobalStream Sports +1" tvg-logo="http://testlogos.tvarr.local/logos/ch033.png" group-title="Sports" tvg-chno="133" tvg-shift="1",GlobalStream Sports +1
+http://teststream.tvarr.local/live/ch033/stream.m3u8
+#EXTINF:-1 tvg-id="ch034" tvg-name="NationalNet Movies" tvg-logo="http://testlogos.tvarr.local/logos/ch034.png" group-title="Movies" tvg-chno="134",NationalNet Movies
+http://teststream.tvarr.local/live/ch034/stream.m3u8
+#EXTINF:-1 tvg-id="ch035" tvg-name="NationalNet Movies HD" tvg-logo="http://testlogos.tvarr.local/logos/ch035.png" group-title="Movies" tvg-chno="135",NationalNet Movies HD
+http://teststream.tvarr.local/live/ch035/stream.m3u8
+#EXTINF:-1 tvg-id="ch036" tvg-name="SportsCentral Entertainment" tvg-logo="http://testlogos.tvarr.local/logos/ch036.png" group-title="Entertainment" tvg-chno="136",SportsCentral Entertainment
+http://teststream.tvarr.local/live/ch036/stream.m3u8
+#EXTINF:-1 tvg-id="ch037" tvg-name="SportsCentral Entertainment +1" tvg-logo="http://testlogos.tvarr.local/logos/ch037.png" group-title="Entertainment" tvg-chno="137" tvg-shift="1",SportsCentral Entertainment +1
+http://teststream.tvarr.local/live/ch037/stream.m3u8
+#EXTINF:-1 tvg-id="ch038" tvg-name="CinemaMax Music" tvg-logo="http://testlogos.tvarr.local/logos/ch038.png" group-title="Music" tvg-chno="138",CinemaMax Music
+http://teststream.tvarr.local/live/ch038/stream.m3u8
+#EXTINF:-1 tvg-id="ch039" tvg-name="CinemaMax Music HD" tvg-logo="http://testlogos.tvarr.local/logos/ch039.png" group-title="Music" tvg-chno="139",CinemaMax Music HD
+http://teststream.tvarr.local/live/ch039/stream.m3u8
+#EXTINF:-1 tvg-id="ch040" tvg-name="MusicMax Kids" tvg-logo="http://testlogos.tvarr.local/logos/ch040.png" group-title="Kids" tvg-chno="140",MusicMax Kids
+http://teststream.tvarr.local/live/ch040/stream.m3u8
+#EXTINF:-1 tvg-id="ch041" tvg-name="MusicMax Kids HD" tvg-logo="http://testlogos.tvarr.local/logos/ch041.png" group-title="Kids" tvg-chno="141",MusicMax Kids HD
+http://teststream.tvarr.local/live/ch041/stream.m3u8
+#EXTINF:-1 tvg-id="ch042" tvg-name="MusicMax Kids +1" tvg-logo="http://testlogos.tvarr.local/logos/ch042.png" group-title="Kids" tvg-chno="142" tvg-shift="1",MusicMax Kids +1
+http://teststream.tvarr.local/live/ch042/stream.m3u8
+#EXTINF:-1 tvg-id="ch043" tvg-name="NewsFirst News" tvg-logo="http://testlogos.tvarr.local/logos/ch043.png" group-title="News" tvg-chno="143",NewsFirst News
+http://teststream.tvarr.local/live/ch043/stream.m3u8
+#EXTINF:-1 tvg-id="ch044" tvg-name="NewsFirst News HD" tvg-logo="http://testlogos.tvarr.local/logos/ch044.png" group-title="News" tvg-chno="144",NewsFirst News HD
+http://teststream.tvarr.local/live/ch044/stream.m3u8
+#EXTINF:-1 tvg-id="ch045" tvg-name="PrimeTV Sports" tvg-logo="http://testlogos.tvarr.local/logos/ch045.png" group-title="Sports" tvg-chno="145",PrimeTV Sports
+http://teststream.tvarr.local/live/ch045/stream.m3u8
+#EXTINF:-1 tvg-id="ch046" tvg-name="PrimeTV Sports HD" tvg-logo="http://testlogos.tvarr.local/logos/ch046.png" group-title="Sports" tvg-chno="146",PrimeTV Sports HD
+http://teststream.tvarr.local/live/ch046/stream.m3u8
+#EXTINF:-1 tvg-id="ch047" tvg-name="PrimeTV Sports +1" tvg-logo="http://testlogos.tvarr.local/logos/ch047.png" group-title="Sports" tvg-chno="147" tvg-shift="1",PrimeTV Sports +1
+http://teststream.tvarr.local/live/ch047/stream.m3u8
+#EXTINF:-1 tvg-id="ch048" tvg-name="StreamCast Movies" tvg-logo="http://testlogos.tvarr.local/logos/ch048.png" group-title="Movies" tvg-chno="148",StreamCast Movies
+http://teststream.tvarr.local/live/ch048/stream.m3u8
+#EXTINF:-1 tvg-id="ch049" tvg-name="StreamCast Movies HD" tvg-logo="http://testlogos.tvarr.local/logos/ch049.png" group-title="Movies" tvg-chno="149",StreamCast Movies HD
+http://teststream.tvarr.local/live/ch049/stream.m3u8
+#EXTINF:-1 tvg-id="ch050" tvg-name="ViewMedia Entertainment" tvg-logo="http://testlogos.tvarr.local/logos/ch050.png" group-title="Entertainment" tvg-chno="150",ViewMedia Entertainment
+http://teststream.tvarr.local/live/ch050/stream.m3u8

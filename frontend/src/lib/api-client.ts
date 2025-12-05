@@ -501,19 +501,43 @@ class ApiClient {
     const payload: any = { ...proxy };
 
     // Convert stream_sources array to source_ids array of ULIDs
+    // Frontend uses ProxySourceRequest with {source_id, priority_order}
+    // Backend expects source_ids as array of ULID strings, order derived from array index
     if ('stream_sources' in payload) {
-      payload.source_ids = (payload.stream_sources || []).map((s: any) => s.id || s);
+      const sorted = [...(payload.stream_sources || [])].sort(
+        (a: any, b: any) => (a.priority_order ?? 0) - (b.priority_order ?? 0)
+      );
+      payload.source_ids = sorted.map((s: any) =>
+        typeof s === 'string' ? s : (s.source_id || s.id || s)
+      );
       delete payload.stream_sources;
     }
 
     // Convert epg_sources array to epg_source_ids array of ULIDs
+    // Frontend uses ProxyEpgSourceRequest with {epg_source_id, priority_order}
+    // Backend expects epg_source_ids as array of ULID strings, order derived from array index
     if ('epg_sources' in payload) {
-      payload.epg_source_ids = (payload.epg_sources || []).map((s: any) => s.id || s);
+      const sorted = [...(payload.epg_sources || [])].sort(
+        (a: any, b: any) => (a.priority_order ?? 0) - (b.priority_order ?? 0)
+      );
+      payload.epg_source_ids = sorted.map((s: any) =>
+        typeof s === 'string' ? s : (s.epg_source_id || s.id || s)
+      );
       delete payload.epg_sources;
     }
 
-    // Remove filters - handled separately via setProxyFilters
-    delete payload.filters;
+    // Convert filters array to filter_ids array of ULIDs
+    // Frontend uses ProxyFilterRequest with {filter_id, priority_order}
+    // Backend expects filter_ids as array of ULID strings, order derived from array index
+    if ('filters' in payload) {
+      const sorted = [...(payload.filters || [])].sort(
+        (a: any, b: any) => (a.priority_order ?? 0) - (b.priority_order ?? 0)
+      );
+      payload.filter_ids = sorted.map((f: any) =>
+        typeof f === 'string' ? f : (f.filter_id || f.id || f)
+      );
+      delete payload.filters;
+    }
 
     return this.request<ApiResponse<StreamProxy>>(API_CONFIG.endpoints.proxies, {
       method: 'POST',
@@ -528,12 +552,44 @@ class ApiClient {
     // Transform frontend field names to backend field names
     const payload: any = { ...proxy };
 
-    // Remove source-related fields - update doesn't support them, use setProxySources instead
-    delete payload.stream_sources;
-    delete payload.source_ids;
-    delete payload.epg_sources;
-    delete payload.epg_source_ids;
-    delete payload.filters;
+    // Convert stream_sources array to source_ids array of ULIDs
+    // Frontend uses ProxySourceRequest with {source_id, priority_order}
+    // Backend expects source_ids as array of ULID strings, order derived from array index
+    if ('stream_sources' in payload) {
+      const sorted = [...(payload.stream_sources || [])].sort(
+        (a: any, b: any) => (a.priority_order ?? 0) - (b.priority_order ?? 0)
+      );
+      payload.source_ids = sorted.map((s: any) =>
+        typeof s === 'string' ? s : (s.source_id || s.id || s)
+      );
+      delete payload.stream_sources;
+    }
+
+    // Convert epg_sources array to epg_source_ids array of ULIDs
+    // Frontend uses ProxyEpgSourceRequest with {epg_source_id, priority_order}
+    // Backend expects epg_source_ids as array of ULID strings, order derived from array index
+    if ('epg_sources' in payload) {
+      const sorted = [...(payload.epg_sources || [])].sort(
+        (a: any, b: any) => (a.priority_order ?? 0) - (b.priority_order ?? 0)
+      );
+      payload.epg_source_ids = sorted.map((s: any) =>
+        typeof s === 'string' ? s : (s.epg_source_id || s.id || s)
+      );
+      delete payload.epg_sources;
+    }
+
+    // Convert filters array to filter_ids array of ULIDs
+    // Frontend uses ProxyFilterRequest with {filter_id, priority_order}
+    // Backend expects filter_ids as array of ULID strings, order derived from array index
+    if ('filters' in payload) {
+      const sorted = [...(payload.filters || [])].sort(
+        (a: any, b: any) => (a.priority_order ?? 0) - (b.priority_order ?? 0)
+      );
+      payload.filter_ids = sorted.map((f: any) =>
+        typeof f === 'string' ? f : (f.filter_id || f.id || f)
+      );
+      delete payload.filters;
+    }
 
     // Remove empty relay_profile_id - backend expects ULID or null, not empty string
     if (payload.relay_profile_id === '' || payload.relay_profile_id === null) {

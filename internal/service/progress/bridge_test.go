@@ -44,7 +44,7 @@ func TestOperationManager_ReportProgress(t *testing.T) {
 		}
 
 		stageInfos := progress.CreateStagesFromPipeline(stages)
-		mgr, err := svc.StartOperation(progress.OpPipeline, ownerID, "test", stageInfos)
+		mgr, err := svc.StartOperation(progress.OpPipeline, ownerID, "test", "Test Owner", stageInfos)
 		require.NoError(t, err)
 
 		// Use OperationManager directly as ProgressReporter
@@ -69,7 +69,7 @@ func TestOperationManager_ReportProgress(t *testing.T) {
 		}
 
 		stageInfos := progress.CreateStagesFromPipeline(stages)
-		mgr, err := svc.StartOperation(progress.OpPipeline, ownerID, "test", stageInfos)
+		mgr, err := svc.StartOperation(progress.OpPipeline, ownerID, "test", "Test Owner", stageInfos)
 		require.NoError(t, err)
 
 		// Report progress on an unknown stage - should not panic
@@ -92,7 +92,7 @@ func TestOperationManager_ReportItemProgress(t *testing.T) {
 		}
 
 		stageInfos := progress.CreateStagesFromPipeline(stages)
-		mgr, err := svc.StartOperation(progress.OpPipeline, ownerID, "test", stageInfos)
+		mgr, err := svc.StartOperation(progress.OpPipeline, ownerID, "test", "Test Owner", stageInfos)
 		require.NoError(t, err)
 
 		// Report item progress: 25 of 100
@@ -115,7 +115,7 @@ func TestOperationManager_ReportItemProgress(t *testing.T) {
 		}
 
 		stageInfos := progress.CreateStagesFromPipeline(stages)
-		mgr, err := svc.StartOperation(progress.OpPipeline, ownerID, "test", stageInfos)
+		mgr, err := svc.StartOperation(progress.OpPipeline, ownerID, "test", "Test Owner", stageInfos)
 		require.NoError(t, err)
 
 		// Should not panic with zero total
@@ -157,7 +157,7 @@ func TestStartPipelineOperation(t *testing.T) {
 			&mockStage{id: "load", name: "Load"},
 		}
 
-		mgr, err := progress.StartPipelineOperation(svc, "stream_proxy", ownerID, stages)
+		mgr, err := progress.StartPipelineOperation(svc, "stream_proxy", ownerID, "Test Proxy", stages)
 		require.NoError(t, err)
 		require.NotNil(t, mgr)
 
@@ -174,7 +174,7 @@ func TestStartPipelineOperation(t *testing.T) {
 			&mockStage{id: "ingest", name: "Ingest"},
 		}
 
-		mgr, err := progress.StartPipelineOperation(svc, "stream_source", ownerID, stages)
+		mgr, err := progress.StartPipelineOperation(svc, "stream_source", ownerID, "Test Stream Source", stages)
 		require.NoError(t, err)
 		require.NotNil(t, mgr)
 
@@ -191,7 +191,7 @@ func TestStartPipelineOperation(t *testing.T) {
 			&mockStage{id: "ingest", name: "Ingest"},
 		}
 
-		mgr, err := progress.StartPipelineOperation(svc, "epg_source", ownerID, stages)
+		mgr, err := progress.StartPipelineOperation(svc, "epg_source", ownerID, "Test EPG Source", stages)
 		require.NoError(t, err)
 		require.NotNil(t, mgr)
 
@@ -227,7 +227,7 @@ func TestStartPipelineOperation(t *testing.T) {
 			&mockStage{id: "load", name: "Load"},
 		}
 
-		mgr, err := progress.StartPipelineOperation(svc, "stream_proxy", ownerID, stages)
+		mgr, err := progress.StartPipelineOperation(svc, "stream_proxy", ownerID, "Test Proxy", stages)
 		require.NoError(t, err)
 
 		// The manager should be usable as a core.ProgressReporter
@@ -251,7 +251,7 @@ func TestOperationManager_FailWithDetail(t *testing.T) {
 		}
 
 		stageInfos := progress.CreateStagesFromPipeline(stages)
-		mgr, err := svc.StartOperation(progress.OpPipeline, ownerID, "test", stageInfos)
+		mgr, err := svc.StartOperation(progress.OpPipeline, ownerID, "test", "Test Owner", stageInfos)
 		require.NoError(t, err)
 
 		// Call FailWithDetail with structured error
@@ -284,7 +284,7 @@ func TestOperationManager_FailWithDetail(t *testing.T) {
 		}
 
 		stageInfos := progress.CreateStagesFromPipeline(stages)
-		mgr, err := svc.StartOperation(progress.OpPipeline, ownerID, "test", stageInfos)
+		mgr, err := svc.StartOperation(progress.OpPipeline, ownerID, "test", "Test Owner", stageInfos)
 		require.NoError(t, err)
 
 		detail := progress.ErrorDetail{
@@ -311,7 +311,7 @@ func TestOperationManager_AddWarning(t *testing.T) {
 		}
 
 		stageInfos := progress.CreateStagesFromPipeline(stages)
-		mgr, err := svc.StartOperation(progress.OpPipeline, ownerID, "test", stageInfos)
+		mgr, err := svc.StartOperation(progress.OpPipeline, ownerID, "test", "Test Owner", stageInfos)
 		require.NoError(t, err)
 
 		// Add multiple warnings
@@ -337,7 +337,7 @@ func TestOperationManager_AddWarning(t *testing.T) {
 		}
 
 		stageInfos := progress.CreateStagesFromPipeline(stages)
-		mgr, err := svc.StartOperation(progress.OpPipeline, ownerID, "test", stageInfos)
+		mgr, err := svc.StartOperation(progress.OpPipeline, ownerID, "test", "Test Owner", stageInfos)
 		require.NoError(t, err)
 
 		// Add warnings one by one and check count

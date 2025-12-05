@@ -408,7 +408,7 @@ function AssignedItemsList({
                 <div className="flex-1">
                   <div className="text-sm font-medium">{getSourceName(getSourceId(item))}</div>
                   <div className="text-xs text-muted-foreground">
-                    Priority: {item.priority_order}
+                    Order: {index + 1}
                   </div>
                 </div>
                 {onToggleActive && item.hasOwnProperty('is_active') && (
@@ -582,12 +582,13 @@ export function ProxySheet({
   }, [open, mode, proxy]);
 
   const addStreamSources = (sourceIds: string[]) => {
-    const orders = formData.stream_sources.map((s) => s.priority_order);
-    const maxOrder = orders.length > 0 ? Math.max(...orders) : 0;
+    // Append new sources with priority_order continuing from the current list length
+    // Using 0-based indexing to match backend expectations
+    const startIndex = formData.stream_sources.length;
 
     const newSources = sourceIds.map((sourceId, index) => ({
       source_id: sourceId,
-      priority_order: maxOrder + index + 1,
+      priority_order: startIndex + index,
     }));
 
     setFormData((prev) => ({
@@ -597,12 +598,13 @@ export function ProxySheet({
   };
 
   const addEpgSources = (sourceIds: string[]) => {
-    const orders = formData.epg_sources.map((s) => s.priority_order);
-    const maxOrder = orders.length > 0 ? Math.max(...orders) : 0;
+    // Append new sources with priority_order continuing from the current list length
+    // Using 0-based indexing to match backend expectations
+    const startIndex = formData.epg_sources.length;
 
     const newSources = sourceIds.map((sourceId, index) => ({
       epg_source_id: sourceId,
-      priority_order: maxOrder + index + 1,
+      priority_order: startIndex + index,
     }));
 
     setFormData((prev) => ({
@@ -612,12 +614,13 @@ export function ProxySheet({
   };
 
   const addFilters = (filterIds: string[]) => {
-    const orders = formData.filters.map((f) => f.priority_order);
-    const maxOrder = orders.length > 0 ? Math.max(...orders) : 0;
+    // Append new filters with priority_order continuing from the current list length
+    // Using 0-based indexing to match backend expectations
+    const startIndex = formData.filters.length;
 
     const newFilters = filterIds.map((filterId, index) => ({
       filter_id: filterId,
-      priority_order: maxOrder + index + 1,
+      priority_order: startIndex + index,
       is_active: true,
     }));
 
@@ -642,10 +645,10 @@ export function ProxySheet({
     newItems[index] = newItems[targetIndex];
     newItems[targetIndex] = temp;
 
-    // Update priority orders
+    // Update priority orders using 0-based indexing to match backend expectations
     return newItems.map((item, i) => ({
       ...item,
-      priority_order: i + 1,
+      priority_order: i,
     }));
   };
 

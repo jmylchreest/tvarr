@@ -61,7 +61,8 @@ tmp/
 
 # Build artifacts
 *.log
-tvarr
+/tvarr
+/e2e-runner
 
 # Taskfile cache
 .task/

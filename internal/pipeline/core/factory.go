@@ -26,6 +26,9 @@ type Dependencies struct {
 	// StateChecker is used by the ingestion guard stage.
 	// If nil, the ingestion guard is skipped.
 	StateChecker StateChecker
+	// BaseURL is the base URL for constructing fully qualified URLs (e.g., "http://localhost:8080").
+	// Used by the logo caching stage to generate absolute URLs for cached logos.
+	BaseURL string
 }
 
 // StageConstructor is a function that creates a stage given dependencies.

@@ -51,12 +51,15 @@ func (s *EpgService) WithProgressService(svc *progress.Service) *EpgService {
 }
 
 // getEpgIngestionStages returns the standard stages for EPG source ingestion.
+// EPG ingestion uses 3 stages:
+// - connect: Delete existing programs and prepare for ingestion
+// - download: Fetch, parse, and batch-insert programs (main work)
+// - finalize: Flush remaining batch and update metadata
 func getEpgIngestionStages() []progress.StageInfo {
 	return []progress.StageInfo{
-		{ID: "connect", Name: "Connecting", Weight: 0.1},
-		{ID: "download", Name: "Downloading", Weight: 0.3},
-		{ID: "process", Name: "Processing", Weight: 0.4},
-		{ID: "save", Name: "Saving", Weight: 0.2},
+		{ID: "connect", Name: "Connecting", Weight: 0.05},
+		{ID: "download", Name: "Downloading", Weight: 0.85},
+		{ID: "finalize", Name: "Finalizing", Weight: 0.10},
 	}
 }
 
@@ -178,7 +181,7 @@ func (s *EpgService) Ingest(ctx context.Context, id models.ULID) error {
 	var progressMgr *progress.OperationManager
 	if s.progressService != nil {
 		stages := getEpgIngestionStages()
-		progressMgr, err = s.progressService.StartOperation(progress.OpEpgIngestion, id, "epg_source", stages)
+		progressMgr, err = s.progressService.StartOperation(progress.OpEpgIngestion, id, "epg_source", source.Name, stages)
 		if err != nil {
 			// Log but don't fail - progress tracking is non-essential
 			s.logger.Warn("failed to start progress tracking",
@@ -221,14 +224,15 @@ func (s *EpgService) Ingest(ctx context.Context, id models.ULID) error {
 		return fmt.Errorf("deleting existing programs: %w", err)
 	}
 
-	// Stage 2: Download
+	// Stage 2: Download - complete connect, start download
+	var downloadStage *progress.StageUpdater
 	if progressMgr != nil {
 		connectStage := progressMgr.StartStage("connect")
 		connectStage.Complete()
-		progressMgr.StartStage("download")
+		downloadStage = progressMgr.StartStage("download")
 	}
 
-	// Perform ingestion
+	// Perform ingestion - download, parse, and batch-insert programs
 	var programCount int
 	var batchPrograms []*models.EpgProgram
 	const batchSize = 1000
@@ -256,18 +260,11 @@ func (s *EpgService) Ingest(ctx context.Context, id models.ULID) error {
 		return nil
 	})
 
-	// Stage 3: Process
-	if progressMgr != nil {
-		downloadStage := progressMgr.StartStage("download")
+	// Stage 3: Finalize - flush remaining programs and update metadata
+	if progressMgr != nil && downloadStage != nil {
 		downloadStage.Complete()
-		progressMgr.StartStage("process")
-	}
-
-	// Stage 4: Save - flush remaining programs
-	if progressMgr != nil {
-		processStage := progressMgr.StartStage("process")
-		processStage.Complete()
-		progressMgr.StartStage("save")
+		progressMgr.StartStage("finalize")
+		progressMgr.SetMessage("Finalizing...")
 	}
 
 	if len(batchPrograms) > 0 {
@@ -359,7 +356,7 @@ func (s *EpgService) performIngestion(ctx context.Context, source *models.EpgSou
 	var progressMgr *progress.OperationManager
 	if s.progressService != nil {
 		stages := getEpgIngestionStages()
-		progressMgr, err = s.progressService.StartOperation(progress.OpEpgIngestion, id, "epg_source", stages)
+		progressMgr, err = s.progressService.StartOperation(progress.OpEpgIngestion, id, "epg_source", source.Name, stages)
 		if err != nil {
 			s.logger.Warn("failed to start progress tracking",
 				"source_id", id.String(),
@@ -401,15 +398,16 @@ func (s *EpgService) performIngestion(ctx context.Context, source *models.EpgSou
 		return
 	}
 
-	// Stage 2: Download
+	// Stage 2: Download - complete connect, start download
+	var downloadStage *progress.StageUpdater
 	if progressMgr != nil {
 		connectStage := progressMgr.StartStage("connect")
 		connectStage.Complete()
-		progressMgr.StartStage("download")
+		downloadStage = progressMgr.StartStage("download")
 		progressMgr.SetMessage("Downloading EPG data...")
 	}
 
-	// Perform ingestion
+	// Perform ingestion - download, parse, and batch-insert programs
 	var programCount int
 	var batchPrograms []*models.EpgProgram
 	const batchSize = 1000
@@ -435,20 +433,11 @@ func (s *EpgService) performIngestion(ctx context.Context, source *models.EpgSou
 		return nil
 	})
 
-	// Stage 3: Process
-	if progressMgr != nil {
-		downloadStage := progressMgr.StartStage("download")
+	// Stage 3: Finalize - flush remaining programs and update metadata
+	if progressMgr != nil && downloadStage != nil {
 		downloadStage.Complete()
-		progressMgr.StartStage("process")
-		progressMgr.SetMessage("Processing EPG data...")
-	}
-
-	// Stage 4: Save - flush remaining
-	if progressMgr != nil {
-		processStage := progressMgr.StartStage("process")
-		processStage.Complete()
-		progressMgr.StartStage("save")
-		progressMgr.SetMessage("Saving programs to database...")
+		progressMgr.StartStage("finalize")
+		progressMgr.SetMessage("Finalizing...")
 	}
 
 	if len(batchPrograms) > 0 {

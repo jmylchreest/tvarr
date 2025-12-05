@@ -54,6 +54,7 @@ import {
   EpgSourceResponse,
   CreateEpgSourceRequest,
   EpgSourceType,
+  XtreamApiMethod,
   PaginatedResponse,
 } from '@/types/api';
 import { apiClient, ApiError } from '@/lib/api-client';
@@ -112,13 +113,14 @@ function CreateEpgSourceSheet({
     name: '',
     source_type: 'xtream',
     url: '',
-    update_cron: '0 0 */6 * * * *',
+    update_cron: '0 0 */6 * * *',
     original_timezone: 'UTC',
     time_offset: '+00:00',
     username: '',
     password: '',
+    api_method: 'stream_id',
   });
-  const [cronValidation, setCronValidation] = useState(validateCronExpression('0 0 */6 * * * *'));
+  const [cronValidation, setCronValidation] = useState(validateCronExpression('0 0 */6 * * *'));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -129,11 +131,12 @@ function CreateEpgSourceSheet({
         name: '',
         source_type: 'xtream',
         url: '',
-        update_cron: '0 0 */6 * * * *',
+        update_cron: '0 0 */6 * * *',
         original_timezone: 'UTC',
         time_offset: '+00:00',
         username: '',
         password: '',
+        api_method: 'stream_id',
       });
     }
   };
@@ -218,6 +221,30 @@ function CreateEpgSourceSheet({
             />
           </div>
 
+          {formData.source_type === 'xtream' && (
+            <div className="space-y-2">
+              <Label htmlFor="api_method">API Method</Label>
+              <Select
+                value={formData.api_method || 'stream_id'}
+                onValueChange={(value) =>
+                  setFormData({ ...formData, api_method: value as XtreamApiMethod })
+                }
+                disabled={loading}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select API method" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="stream_id">Xtream StreamID (richer)</SelectItem>
+                  <SelectItem value="bulk_xmltv">Bulk XMLTV (faster)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                StreamID provides richer data. Bulk XMLTV is faster but has fewer fields.
+              </p>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="username">Username</Label>
@@ -281,17 +308,17 @@ function CreateEpgSourceSheet({
                   </TooltipTrigger>
                   <TooltipContent className="max-w-sm">
                     <div className="space-y-2">
-                      <p className="font-medium">7-field cron format:</p>
-                      <p className="text-xs">sec min hour day-of-month month day-of-week year</p>
+                      <p className="font-medium">6-field cron format:</p>
+                      <p className="text-xs">sec min hour day-of-month month day-of-week</p>
                       <div className="space-y-1 text-xs">
                         <p>
-                          <code>"0 0 */6 * * * *"</code> - Every 6 hours
+                          <code>"0 0 */6 * * *"</code> - Every 6 hours
                         </p>
                         <p>
-                          <code>"0 0 2 * * * *"</code> - Daily at 2:00 AM
+                          <code>"0 0 2 * * *"</code> - Daily at 2:00 AM
                         </p>
                         <p>
-                          <code>"0 */30 * * * * *"</code> - Every 30 minutes
+                          <code>"0 */30 * * * *"</code> - Every 30 minutes
                         </p>
                       </div>
                     </div>
@@ -307,7 +334,7 @@ function CreateEpgSourceSheet({
                 setFormData({ ...formData, update_cron: newValue });
                 setCronValidation(validateCronExpression(newValue));
               }}
-              placeholder="0 0 */6 * * * *"
+              placeholder="0 0 */6 * * *"
               required
               disabled={loading}
               autoComplete="off"
@@ -377,18 +404,19 @@ function EditEpgSourceSheet({
     name: '',
     source_type: 'xtream',
     url: '',
-    update_cron: '0 0 */6 * * * *',
+    update_cron: '0 0 */6 * * *',
     original_timezone: 'UTC',
     time_offset: '+00:00',
     username: '',
     password: '',
+    api_method: 'stream_id',
   });
-  const [cronValidation, setCronValidation] = useState(validateCronExpression('0 0 */6 * * * *'));
+  const [cronValidation, setCronValidation] = useState(validateCronExpression('0 0 */6 * * *'));
 
   // Update form data when source changes
   useEffect(() => {
     if (source) {
-      const defaultCron = '0 0 */6 * * * *'; // Every 6 hours
+      const defaultCron = '0 0 */6 * * *'; // Every 6 hours
       const newFormData = {
         name: source.name,
         source_type: source.source_type,
@@ -398,6 +426,7 @@ function EditEpgSourceSheet({
         time_offset: source.time_offset || '+00:00',
         username: source.username || '',
         password: source.password || '',
+        api_method: source.api_method || 'stream_id',
       };
       setFormData(newFormData);
       setCronValidation(validateCronExpression(newFormData.update_cron));
@@ -487,6 +516,30 @@ function EditEpgSourceSheet({
             />
           </div>
 
+          {formData.source_type === 'xtream' && (
+            <div className="space-y-2">
+              <Label htmlFor="edit-api_method">API Method</Label>
+              <Select
+                value={formData.api_method || 'stream_id'}
+                onValueChange={(value) =>
+                  setFormData({ ...formData, api_method: value as XtreamApiMethod })
+                }
+                disabled={loading}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select API method" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="stream_id">Xtream StreamID (richer)</SelectItem>
+                  <SelectItem value="bulk_xmltv">Bulk XMLTV (faster)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                StreamID provides richer data. Bulk XMLTV is faster but has fewer fields.
+              </p>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="edit-username">Username</Label>
@@ -550,17 +603,17 @@ function EditEpgSourceSheet({
                   </TooltipTrigger>
                   <TooltipContent className="max-w-sm">
                     <div className="space-y-2">
-                      <p className="font-medium">7-field cron format:</p>
-                      <p className="text-xs">sec min hour day-of-month month day-of-week year</p>
+                      <p className="font-medium">6-field cron format:</p>
+                      <p className="text-xs">sec min hour day-of-month month day-of-week</p>
                       <div className="space-y-1 text-xs">
                         <p>
-                          <code>"0 0 */6 * * * *"</code> - Every 6 hours
+                          <code>"0 0 */6 * * *"</code> - Every 6 hours
                         </p>
                         <p>
-                          <code>"0 0 2 * * * *"</code> - Daily at 2:00 AM
+                          <code>"0 0 2 * * *"</code> - Daily at 2:00 AM
                         </p>
                         <p>
-                          <code>"0 */30 * * * * *"</code> - Every 30 minutes
+                          <code>"0 */30 * * * *"</code> - Every 30 minutes
                         </p>
                       </div>
                     </div>
@@ -576,7 +629,7 @@ function EditEpgSourceSheet({
                 setFormData({ ...formData, update_cron: newValue });
                 setCronValidation(validateCronExpression(newValue));
               }}
-              placeholder="0 0 */6 * * * *"
+              placeholder="0 0 */6 * * *"
               required
               disabled={loading}
               autoComplete="off"

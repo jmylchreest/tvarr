@@ -116,6 +116,7 @@ func NewFactory(deps *Dependencies) *Factory {
 // NewDefaultFactory creates a factory with the standard stage configuration.
 // If stateManager is nil, ingestion guard stage is skipped.
 // If logoCacher is nil, logo caching stage is skipped.
+// baseURL is used to construct fully qualified URLs for cached logos (e.g., "http://localhost:8080").
 func NewDefaultFactory(
 	channelRepo repository.ChannelRepository,
 	epgProgramRepo repository.EpgProgramRepository,
@@ -125,6 +126,7 @@ func NewDefaultFactory(
 	logger *slog.Logger,
 	logoCacher logocaching.LogoCacher,
 	stateManager *ingestor.StateManager,
+	baseURL string,
 ) *Factory {
 	deps := &Dependencies{
 		ChannelRepo:         channelRepo,
@@ -133,6 +135,7 @@ func NewDefaultFactory(
 		DataMappingRuleRepo: dataMappingRuleRepo,
 		Sandbox:             sandbox,
 		Logger:              logger,
+		BaseURL:             baseURL,
 	}
 
 	factory := NewFactory(deps)
@@ -145,8 +148,8 @@ func NewDefaultFactory(
 
 	factory.RegisterStage(loadchannels.NewConstructor())
 	factory.RegisterStage(loadprograms.NewConstructor())
-	factory.RegisterStage(filtering.NewConstructor())
 	factory.RegisterStage(datamapping.NewConstructor())
+	factory.RegisterStage(filtering.NewConstructor())
 	factory.RegisterStage(numbering.NewConstructor())
 
 	// Logo caching (optional - only if cacher provided)

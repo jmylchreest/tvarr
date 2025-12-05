@@ -31,7 +31,7 @@
                                    │
 ┌──────────────────────────────────┴──────────────────────────────────────┐
 │                         Pipeline Orchestrator                            │
-│  Ingestion Guard → Load → Filter → Map → Number → Logo → Generate       │
+│  Guard → Load → Programs → Map → Filter → Number → Logo → Generate      │
 └──────────────────────────────────┬──────────────────────────────────────┘
                                    │
 ┌──────────────────────────────────┴──────────────────────────────────────┐
@@ -291,19 +291,23 @@ The pipeline (`internal/pipeline/`) processes data through configurable stages.
 
 ```
 ┌─────────────────┐
-│ Ingestion Guard │  Prevents re-ingestion if source unchanged
+│ Ingestion Guard │  Waits for active ingestions to complete (optional)
 └────────┬────────┘
          ▼
 ┌─────────────────┐
-│  Load Channels  │  Fetch from M3U/Xtream/Manual sources
+│  Load Channels  │  Load channels from database for proxy sources
 └────────┬────────┘
          ▼
 ┌─────────────────┐
-│   Filtering     │  Apply include/exclude filters
+│  Load Programs  │  Load EPG programs for channels from EPG sources
 └────────┬────────┘
          ▼
 ┌─────────────────┐
-│  Data Mapping   │  Transform fields with rules
+│  Data Mapping   │  Apply transformation rules to channels/programs
+└────────┬────────┘
+         ▼
+┌─────────────────┐
+│   Filtering     │  Apply include/exclude filter rules
 └────────┬────────┘
          ▼
 ┌─────────────────┐
@@ -311,15 +315,11 @@ The pipeline (`internal/pipeline/`) processes data through configurable stages.
 └────────┬────────┘
          ▼
 ┌─────────────────┐
-│  Logo Caching   │  Download and cache logos
+│  Logo Caching   │  Download and cache logos (optional)
 └────────┬────────┘
          ▼
 ┌─────────────────┐
-│  Load Programs  │  Fetch EPG data (if sources configured)
-└────────┬────────┘
-         ▼
-┌─────────────────┐
-│  Generate M3U   │  Create M3U playlist
+│  Generate M3U   │  Create M3U playlist file
 └────────┬────────┘
          ▼
 ┌─────────────────┐
@@ -327,7 +327,7 @@ The pipeline (`internal/pipeline/`) processes data through configurable stages.
 └────────┬────────┘
          ▼
 ┌─────────────────┐
-│    Publish      │  Atomic file write to output path
+│    Publish      │  Move files to final output location
 └─────────────────┘
 ```
 

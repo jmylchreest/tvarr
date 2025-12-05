@@ -358,6 +358,37 @@ func (c *Client) GetXMLTV(ctx context.Context) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
+// GetXMLTVReader retrieves the full XMLTV EPG data as a streaming reader.
+// The caller is responsible for closing the returned ReadCloser.
+// Note: This can be a very large file and should be processed in streaming fashion.
+func (c *Client) GetXMLTVReader(ctx context.Context) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.GetXMLTVURL(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+
+	if c.UserAgent != "" {
+		req.Header.Set(headerUserAgent, c.UserAgent)
+	}
+
+	client := c.HTTPClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+
+	return resp.Body, nil
+}
+
 // GetLiveStreamURL returns the URL for a live stream.
 // Common extensions: ts, m3u8
 func (c *Client) GetLiveStreamURL(streamID int, extension string) string {

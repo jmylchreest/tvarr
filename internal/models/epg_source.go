@@ -31,6 +31,18 @@ const (
 	EpgSourceStatusFailed EpgSourceStatus = "failed"
 )
 
+// XtreamApiMethod represents the API method to use for Xtream EPG sources.
+type XtreamApiMethod string
+
+const (
+	// XtreamApiMethodStreamID uses the per-stream JSON API (action=get_simple_date_table).
+	// This provides richer EPG data with more forward days but requires N requests.
+	XtreamApiMethodStreamID XtreamApiMethod = "stream_id"
+	// XtreamApiMethodBulkXMLTV uses the bulk XMLTV endpoint (/xmltv.php).
+	// This is more performant (1 request) but may have fewer forward days.
+	XtreamApiMethodBulkXMLTV XtreamApiMethod = "bulk_xmltv"
+)
+
 // EpgSource represents an upstream EPG (Electronic Program Guide) source.
 type EpgSource struct {
 	BaseModel
@@ -50,6 +62,10 @@ type EpgSource struct {
 
 	// Password for Xtream authentication (optional for XMLTV).
 	Password string `gorm:"size:255" json:"password,omitempty"`
+
+	// ApiMethod specifies the API method for Xtream sources.
+	// Only applicable when Type is "xtream". Defaults to "stream_id".
+	ApiMethod XtreamApiMethod `gorm:"size:20;default:'stream_id'" json:"api_method,omitempty"`
 
 	// UserAgent to use when fetching the source (optional).
 	UserAgent string `gorm:"size:512" json:"user_agent,omitempty"`

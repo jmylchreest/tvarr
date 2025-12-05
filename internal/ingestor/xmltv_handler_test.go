@@ -16,7 +16,7 @@ import (
 func TestNewXMLTVHandler(t *testing.T) {
 	handler := NewXMLTVHandler()
 	assert.NotNil(t, handler)
-	assert.NotNil(t, handler.httpClient)
+	assert.NotNil(t, handler.fetcher)
 }
 
 func TestXMLTVHandler_Type(t *testing.T) {
@@ -59,7 +59,7 @@ func TestXMLTVHandler_Validate(t *testing.T) {
 				Type: models.EpgSourceTypeXMLTV,
 				URL:  "ftp://example.com/epg.xml",
 			},
-			wantErr: "URL must be an HTTP(S) URL",
+			wantErr: "URL must be HTTP, HTTPS, or file://",
 		},
 		{
 			name: "valid HTTP URL",
@@ -74,6 +74,14 @@ func TestXMLTVHandler_Validate(t *testing.T) {
 			source: &models.EpgSource{
 				Type: models.EpgSourceTypeXMLTV,
 				URL:  "https://example.com/epg.xml",
+			},
+			wantErr: "",
+		},
+		{
+			name: "valid file URL",
+			source: &models.EpgSource{
+				Type: models.EpgSourceTypeXMLTV,
+				URL:  "file:///path/to/epg.xml",
 			},
 			wantErr: "",
 		},
@@ -192,9 +200,11 @@ func TestXMLTVHandler_Ingest_CallbackError(t *testing.T) {
 	defer server.Close()
 
 	handler := NewXMLTVHandler()
+	sourceID := models.NewULID()
 	source := &models.EpgSource{
-		Type: models.EpgSourceTypeXMLTV,
-		URL:  server.URL,
+		BaseModel: models.BaseModel{ID: sourceID},
+		Type:      models.EpgSourceTypeXMLTV,
+		URL:       server.URL,
 	}
 
 	err := handler.Ingest(context.Background(), source, func(program *models.EpgProgram) error {
@@ -222,9 +232,11 @@ func TestXMLTVHandler_Ingest_ContextCancellation(t *testing.T) {
 	defer server.Close()
 
 	handler := NewXMLTVHandler()
+	sourceID := models.NewULID()
 	source := &models.EpgSource{
-		Type: models.EpgSourceTypeXMLTV,
-		URL:  server.URL,
+		BaseModel: models.BaseModel{ID: sourceID},
+		Type:      models.EpgSourceTypeXMLTV,
+		URL:       server.URL,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -287,6 +299,49 @@ func TestXMLTVHandler_Ingest_ValidationFailure(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "validation failed")
+}
+
+func TestXMLTVHandler_Ingest_SkipsInvalidTimeRanges(t *testing.T) {
+	xmltvData := `<?xml version="1.0" encoding="UTF-8"?>
+<tv>
+  <programme start="20240115180000 +0000" stop="20240115190000 +0000" channel="ch1">
+    <title>Valid Show 1</title>
+  </programme>
+  <programme start="20240115200000 +0000" stop="20240115190000 +0000" channel="ch1">
+    <title>Invalid: End Before Start</title>
+  </programme>
+  <programme start="20240115190000 +0000" stop="20240115190000 +0000" channel="ch1">
+    <title>Invalid: Equal Times</title>
+  </programme>
+  <programme start="20240115200000 +0000" stop="20240115210000 +0000" channel="ch1">
+    <title>Valid Show 2</title>
+  </programme>
+</tv>`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(xmltvData))
+	}))
+	defer server.Close()
+
+	handler := NewXMLTVHandler()
+	sourceID := models.NewULID()
+	source := &models.EpgSource{
+		BaseModel: models.BaseModel{ID: sourceID},
+		Type:      models.EpgSourceTypeXMLTV,
+		URL:       server.URL,
+	}
+
+	var programs []*models.EpgProgram
+	err := handler.Ingest(context.Background(), source, func(program *models.EpgProgram) error {
+		programs = append(programs, program)
+		return nil
+	})
+
+	require.NoError(t, err)
+	// Should only have 2 valid programs, invalid ones should be skipped
+	require.Len(t, programs, 2)
+	assert.Equal(t, "Valid Show 1", programs[0].Title)
+	assert.Equal(t, "Valid Show 2", programs[1].Title)
 }
 
 func TestXMLTVHandler_ImplementsInterface(t *testing.T) {

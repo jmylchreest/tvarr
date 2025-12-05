@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/jmylchreest/tvarr/internal/expression/helpers"
 )
 
 // FieldModification records a modification made to a field.
@@ -167,8 +169,15 @@ func (p *RuleProcessor) resolveValue(value ActionValue, ctx ModifiableContext, c
 
 	switch v := value.(type) {
 	case *LiteralValue:
-		// Check if the literal contains capture references
-		return p.substituteCaptureReferences(v.Value, captures)
+		// Check if the literal contains capture references and substitute them
+		result, err := p.substituteCaptureReferences(v.Value, captures)
+		if err != nil {
+			return "", err
+		}
+
+		// Process immediate helpers (e.g., @time:now) while leaving deferred helpers
+		// (e.g., @logo:ULID) for later pipeline stages
+		return helpers.ProcessImmediateHelpers(result)
 
 	case *NullValue:
 		return "", nil

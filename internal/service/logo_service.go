@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/jmylchreest/tvarr/internal/storage"
 )
@@ -31,22 +32,24 @@ type LogoStats struct {
 // It uses file-based storage with an in-memory index for fast lookups.
 // All raster images are converted to PNG format for consistent display.
 type LogoService struct {
-	cache      *storage.LogoCache
-	indexer    *LogoIndexer
-	httpClient HTTPClient
-	logger     *slog.Logger
-	converter  *ImageConverter
+	cache              *storage.LogoCache
+	indexer            *LogoIndexer
+	httpClient         HTTPClient
+	logger             *slog.Logger
+	converter          *ImageConverter
+	stalenessThreshold time.Duration // For pruning during maintenance
 }
 
 // NewLogoService creates a new LogoService.
 func NewLogoService(cache *storage.LogoCache) *LogoService {
 	indexer := NewLogoIndexer(cache)
 	return &LogoService{
-		cache:      cache,
-		indexer:    indexer,
-		httpClient: http.DefaultClient,
-		logger:     slog.Default(),
-		converter:  NewImageConverter(),
+		cache:              cache,
+		indexer:            indexer,
+		httpClient:         http.DefaultClient,
+		logger:             slog.Default(),
+		converter:          NewImageConverter(),
+		stalenessThreshold: 7 * 24 * time.Hour, // Default: 7 days
 	}
 }
 
@@ -60,6 +63,12 @@ func (s *LogoService) WithHTTPClient(client HTTPClient) *LogoService {
 func (s *LogoService) WithLogger(logger *slog.Logger) *LogoService {
 	s.logger = logger
 	s.indexer = s.indexer.WithLogger(logger)
+	return s
+}
+
+// WithStalenessThreshold sets the threshold for pruning stale logos during maintenance.
+func (s *LogoService) WithStalenessThreshold(d time.Duration) *LogoService {
+	s.stalenessThreshold = d
 	return s
 }
 
@@ -578,4 +587,31 @@ func (s *LogoService) ReplaceLogo(ctx context.Context, id string, name string, c
 	)
 
 	return existingMeta, nil
+}
+
+// RunMaintenance performs logo index reload and optional pruning.
+// This is called by the scheduled logo maintenance job.
+// Returns the number of logos scanned and pruned.
+func (s *LogoService) RunMaintenance(ctx context.Context) (scanned int, pruned int, err error) {
+	s.logger.Info("starting logo maintenance",
+		"staleness_threshold", s.stalenessThreshold.String())
+
+	opts := LogoIndexerOptions{
+		PruneStaleLogos:    s.stalenessThreshold > 0,
+		StalenessThreshold: s.stalenessThreshold,
+	}
+
+	result, err := s.indexer.LoadFromDiskWithOptions(ctx, opts)
+	if err != nil {
+		return 0, 0, fmt.Errorf("loading logo index: %w", err)
+	}
+
+	s.logger.Info("logo maintenance completed",
+		"total_scanned", result.TotalLoaded,
+		"cached_logos", result.CachedLoaded,
+		"uploaded_logos", result.UploadedLoaded,
+		"pruned_count", result.PrunedCount,
+		"pruned_bytes", result.PrunedSize)
+
+	return result.TotalLoaded, result.PrunedCount, nil
 }

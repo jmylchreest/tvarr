@@ -3,12 +3,14 @@ package ingestor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
-	"github.com/jmylchreest/tvarr/pkg/httpclient"
 	"github.com/jmylchreest/tvarr/internal/models"
+	"github.com/jmylchreest/tvarr/pkg/httpclient"
+	"github.com/jmylchreest/tvarr/pkg/xmltv"
 	"github.com/jmylchreest/tvarr/pkg/xtream"
 )
 
@@ -81,6 +83,9 @@ func (h *XtreamEpgHandler) Validate(source *models.EpgSource) error {
 }
 
 // Ingest fetches EPG data from the Xtream API and yields programs via the callback.
+// The API method used depends on the source's ApiMethod field:
+// - XtreamApiMethodStreamID (default): Uses per-stream JSON API for richer data (~6 days forward)
+// - XtreamApiMethodBulkXMLTV: Uses bulk /xmltv.php endpoint for better performance (~2 days forward)
 func (h *XtreamEpgHandler) Ingest(ctx context.Context, source *models.EpgSource, callback ProgramCallback) error {
 	if err := h.Validate(source); err != nil {
 		return fmt.Errorf("validation failed: %w", err)
@@ -94,7 +99,26 @@ func (h *XtreamEpgHandler) Ingest(ctx context.Context, source *models.EpgSource,
 		xtream.WithHTTPClient(h.httpClient.StandardClient()),
 	)
 
-	// First, fetch all live streams to get the channel list with EPG IDs
+	// Select API method based on source configuration
+	apiMethod := source.ApiMethod
+	if apiMethod == "" {
+		apiMethod = models.XtreamApiMethodStreamID // Default to richer data
+	}
+
+	switch apiMethod {
+	case models.XtreamApiMethodBulkXMLTV:
+		return h.ingestBulkXMLTV(ctx, client, source, callback)
+	case models.XtreamApiMethodStreamID:
+		fallthrough
+	default:
+		return h.ingestPerStream(ctx, client, source, callback)
+	}
+}
+
+// ingestPerStream fetches EPG data using the per-stream JSON API.
+// This provides richer data (more fields, ~6 days forward) but requires N requests.
+func (h *XtreamEpgHandler) ingestPerStream(ctx context.Context, client *xtream.Client, source *models.EpgSource, callback ProgramCallback) error {
+	// Fetch all live streams to get the channel list with EPG IDs
 	streams, err := client.GetLiveStreams(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to fetch live streams: %w", err)
@@ -130,10 +154,64 @@ func (h *XtreamEpgHandler) Ingest(ctx context.Context, source *models.EpgSource,
 			}
 
 			program := h.convertListing(listing, source.ID, stream.EPGChannelID)
+
+			// Skip programs that fail validation (e.g., invalid time ranges)
+			if err := program.Validate(); err != nil {
+				continue
+			}
+
 			if err := callback(program); err != nil {
 				return fmt.Errorf("callback error: %w", err)
 			}
 		}
+	}
+
+	return nil
+}
+
+// ingestBulkXMLTV fetches EPG data using the bulk /xmltv.php endpoint.
+// This is more performant (1 request) but may have fewer forward days (~2 days).
+func (h *XtreamEpgHandler) ingestBulkXMLTV(ctx context.Context, client *xtream.Client, source *models.EpgSource, callback ProgramCallback) error {
+	// Fetch the XMLTV data as a streaming reader
+	reader, err := client.GetXMLTVReader(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to fetch XMLTV: %w", err)
+	}
+	defer reader.Close()
+
+	// Create XMLTV parser with callbacks
+	parser := &xmltv.Parser{
+		OnChannel: func(channel *xmltv.Channel) error {
+			// Channel definitions are handled by the stream source, not EPG source
+			return nil
+		},
+		OnProgramme: func(programme *xmltv.Programme) error {
+			// Check for context cancellation
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+
+			// Convert XMLTV programme to EpgProgram model
+			program := h.convertXMLTVProgramme(programme, source.ID)
+
+			// Skip programs that fail validation (e.g., invalid time ranges)
+			if err := program.Validate(); err != nil {
+				return nil
+			}
+
+			return callback(program)
+		},
+		OnError: func(err error) {
+			// Log parsing errors but continue processing
+			// In production, this could be wired to a logger
+		},
+	}
+
+	// Parse with auto-decompression support
+	if err := parser.ParseCompressed(reader); err != nil {
+		return fmt.Errorf("failed to parse XMLTV: %w", err)
 	}
 
 	return nil
@@ -149,6 +227,54 @@ func (h *XtreamEpgHandler) convertListing(listing xtream.EPGListing, sourceID mo
 		Language:    listing.Lang,
 		Start:       listing.StartTime(),
 		Stop:        listing.EndTime(),
+	}
+
+	return program
+}
+
+// convertXMLTVProgramme converts an XMLTV Programme to an EpgProgram model.
+// This is used by the bulk XMLTV ingestion method.
+func (h *XtreamEpgHandler) convertXMLTVProgramme(p *xmltv.Programme, sourceID models.ULID) *models.EpgProgram {
+	program := &models.EpgProgram{
+		SourceID:    sourceID,
+		ChannelID:   p.Channel,
+		Start:       p.Start,
+		Stop:        p.Stop,
+		Title:       p.Title,
+		SubTitle:    p.SubTitle,
+		Description: p.Description,
+		Category:    p.Category,
+		Icon:        p.Icon,
+		EpisodeNum:  p.EpisodeNum,
+		Rating:      p.Rating,
+		Language:    p.Language,
+		IsNew:       p.IsNew,
+		IsPremiere:  p.IsPremiere,
+	}
+
+	// Convert credits to JSON string if present
+	if p.Credits != nil {
+		credits := make(map[string][]string)
+		if len(p.Credits.Directors) > 0 {
+			credits["directors"] = p.Credits.Directors
+		}
+		if len(p.Credits.Actors) > 0 {
+			credits["actors"] = p.Credits.Actors
+		}
+		if len(p.Credits.Writers) > 0 {
+			credits["writers"] = p.Credits.Writers
+		}
+		if len(p.Credits.Producers) > 0 {
+			credits["producers"] = p.Credits.Producers
+		}
+		if len(p.Credits.Presenters) > 0 {
+			credits["presenters"] = p.Credits.Presenters
+		}
+		if len(credits) > 0 {
+			if data, err := json.Marshal(credits); err == nil {
+				program.Credits = string(data)
+			}
+		}
 	}
 
 	return program

@@ -43,6 +43,15 @@ func AllMigrations() []Migration {
 		// Fix channel unique index to be per-source
 		migration018ChannelCompositeUniqueIndex(),
 
+		// Rename order column to priority for consistency
+		migration019RenameProxyFilterOrderToPriority(),
+
+		// Add API method field for Xtream EPG sources
+		migration020EpgSourceApiMethod(),
+
+		// Job and job history tables for scheduler
+		migration021JobsTable(),
+
 		// Note: Logo caching (Phase 10) uses file-based storage with
 		// in-memory indexing, no database tables required.
 	}
@@ -582,4 +591,96 @@ func migration018ChannelCompositeUniqueIndex() Migration {
 	}
 }
 
+// migration019RenameProxyFilterOrderToPriority renames the 'order' column to 'priority'
+// in proxy_filters and proxy_mapping_rules tables for consistency with other proxy tables.
+func migration019RenameProxyFilterOrderToPriority() Migration {
+	return Migration{
+		Version:     "019",
+		Description: "Rename order column to priority in proxy_filters and proxy_mapping_rules",
+		Up: func(tx *gorm.DB) error {
+			migrator := tx.Migrator()
+
+			// Rename 'order' to 'priority' in proxy_filters
+			if migrator.HasColumn(&models.ProxyFilter{}, "order") {
+				if err := migrator.RenameColumn(&models.ProxyFilter{}, "order", "priority"); err != nil {
+					return err
+				}
+			}
+
+			// Rename 'order' to 'priority' in proxy_mapping_rules
+			if migrator.HasColumn(&models.ProxyMappingRule{}, "order") {
+				if err := migrator.RenameColumn(&models.ProxyMappingRule{}, "order", "priority"); err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			migrator := tx.Migrator()
+
+			// Rename 'priority' back to 'order' in proxy_filters
+			if migrator.HasColumn(&models.ProxyFilter{}, "priority") {
+				if err := migrator.RenameColumn(&models.ProxyFilter{}, "priority", "order"); err != nil {
+					return err
+				}
+			}
+
+			// Rename 'priority' back to 'order' in proxy_mapping_rules
+			if migrator.HasColumn(&models.ProxyMappingRule{}, "priority") {
+				if err := migrator.RenameColumn(&models.ProxyMappingRule{}, "priority", "order"); err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+	}
+}
+
+// migration020EpgSourceApiMethod adds api_method column to epg_sources table
+// for selecting between Xtream API methods (stream_id JSON vs bulk XMLTV).
+func migration020EpgSourceApiMethod() Migration {
+	return Migration{
+		Version:     "020",
+		Description: "Add api_method column to epg_sources for Xtream API method selection",
+		Up: func(tx *gorm.DB) error {
+			// AutoMigrate will add the new column to the existing table
+			return tx.AutoMigrate(&models.EpgSource{})
+		},
+		Down: func(tx *gorm.DB) error {
+			// Drop the column
+			migrator := tx.Migrator()
+			if migrator.HasColumn(&models.EpgSource{}, "api_method") {
+				if err := migrator.DropColumn(&models.EpgSource{}, "api_method"); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+}
+
+// migration021JobsTable creates the jobs and job_history tables for the scheduler.
+func migration021JobsTable() Migration {
+	return Migration{
+		Version:     "021",
+		Description: "Create jobs and job_history tables for scheduler",
+		Up: func(tx *gorm.DB) error {
+			// Create jobs table
+			if err := tx.AutoMigrate(&models.Job{}); err != nil {
+				return err
+			}
+			// Create job_history table
+			return tx.AutoMigrate(&models.JobHistory{})
+		},
+		Down: func(tx *gorm.DB) error {
+			// Drop job_history first (depends on jobs)
+			if err := tx.Migrator().DropTable("job_history"); err != nil {
+				return err
+			}
+			return tx.Migrator().DropTable("jobs")
+		},
+	}
+}
 

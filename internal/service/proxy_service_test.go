@@ -184,6 +184,14 @@ func (m *mockProxyRepo) GetEpgSources(ctx context.Context, proxyID models.ULID) 
 	return m.epgSources[proxyID], nil
 }
 
+func (m *mockProxyRepo) GetFilters(ctx context.Context, proxyID models.ULID) ([]*models.Filter, error) {
+	return nil, nil
+}
+
+func (m *mockProxyRepo) SetFilters(ctx context.Context, proxyID models.ULID, filterIDs []models.ULID, orders map[models.ULID]int) error {
+	return nil
+}
+
 // mockPipelineFactory implements pipeline.OrchestratorFactory for testing.
 type mockPipelineFactory struct {
 	createErr error

@@ -27,6 +27,10 @@ func setupProxyTestDB(t *testing.T) *gorm.DB {
 		&models.StreamProxy{},
 		&models.ProxySource{},
 		&models.ProxyEpgSource{},
+		&models.Filter{},
+		&models.ProxyFilter{},
+		&models.DataMappingRule{},
+		&models.ProxyMappingRule{},
 	)
 	require.NoError(t, err)
 

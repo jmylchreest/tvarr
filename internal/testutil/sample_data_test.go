@@ -3,6 +3,7 @@ package testutil
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/stretchr/testify/assert"
@@ -244,6 +245,109 @@ func TestSampleChannelToChannel(t *testing.T) {
 	assert.Equal(t, "en", channel.Language)
 	assert.Equal(t, "US", channel.Country)
 	assert.False(t, channel.IsAdult)
+}
+
+func TestProgramTemplates(t *testing.T) {
+	// Ensure we have program templates
+	assert.GreaterOrEqual(t, len(ProgramTemplates), 10, "Should have at least 10 program templates")
+
+	// Verify all templates have required fields
+	for _, template := range ProgramTemplates {
+		assert.NotEmpty(t, template.Title, "Template should have a title")
+		assert.NotEmpty(t, template.Description, "Template should have a description")
+		assert.NotEmpty(t, template.Category, "Template should have a category")
+	}
+}
+
+func TestGenerateProgramsForChannel(t *testing.T) {
+	gen := NewSampleDataGeneratorWithSeed(42)
+	opts := DefaultProgramGenerateOptions()
+	opts.Durations = []int{30, 60} // Use fixed durations for predictable testing
+
+	programs := gen.GenerateProgramsForChannel("ch001", 10, opts)
+	assert.Len(t, programs, 10)
+
+	// Check first program starts at anchor time
+	expectedStart := opts.AnchorTime.Truncate(time.Hour)
+	assert.Equal(t, expectedStart, programs[0].Start)
+
+	// Check programs are contiguous (each starts when previous ends)
+	for i := 1; i < len(programs); i++ {
+		assert.Equal(t, programs[i-1].Stop, programs[i].Start,
+			"Program %d should start when program %d ends", i, i-1)
+	}
+
+	// Check all programs have required fields
+	for _, p := range programs {
+		assert.Equal(t, "ch001", p.ChannelID)
+		assert.NotEmpty(t, p.Title)
+		assert.NotEmpty(t, p.Description)
+		assert.NotEmpty(t, p.Category)
+		assert.False(t, p.Start.IsZero())
+		assert.False(t, p.Stop.IsZero())
+		assert.True(t, p.Stop.After(p.Start), "Stop should be after start")
+	}
+}
+
+func TestGenerateProgramsForChannels(t *testing.T) {
+	gen := NewSampleDataGeneratorWithSeed(42)
+
+	channels := gen.GenerateMixedChannels(5)
+	opts := DefaultProgramGenerateOptions()
+
+	programs := gen.GenerateProgramsForChannels(channels, 50, opts)
+	assert.Len(t, programs, 50)
+
+	// Count programs per channel
+	programsPerChannel := make(map[string]int)
+	for _, p := range programs {
+		programsPerChannel[p.ChannelID]++
+	}
+
+	// Should have programs for each channel
+	assert.Equal(t, 5, len(programsPerChannel), "Should have programs for all 5 channels")
+
+	// Each channel should have approximately equal programs (50/5 = 10)
+	for chID, count := range programsPerChannel {
+		assert.GreaterOrEqual(t, count, 9, "Channel %s should have at least 9 programs", chID)
+		assert.LessOrEqual(t, count, 11, "Channel %s should have at most 11 programs", chID)
+	}
+}
+
+func TestSampleProgramToEpgProgram(t *testing.T) {
+	now := time.Now()
+	sample := SampleProgram{
+		ChannelID:   "ch001",
+		Title:       "Morning Report",
+		Description: "Start your day with comprehensive news coverage.",
+		Category:    "News",
+		Start:       now,
+		Stop:        now.Add(30 * time.Minute),
+		EpisodeNum:  "1.5.",
+		Icon:        "https://icons.example.com/program/ch001_0.jpg",
+		Rating:      "TV-PG",
+	}
+
+	sourceID := models.NewULID()
+	program := sample.ToEpgProgram(sourceID)
+
+	assert.Equal(t, sourceID, program.SourceID)
+	assert.Equal(t, "ch001", program.ChannelID)
+	assert.Equal(t, "Morning Report", program.Title)
+	assert.Equal(t, "Start your day with comprehensive news coverage.", program.Description)
+	assert.Equal(t, "News", program.Category)
+	assert.Equal(t, now, program.Start)
+	assert.Equal(t, now.Add(30*time.Minute), program.Stop)
+	assert.Equal(t, "1.5.", program.EpisodeNum)
+	assert.Equal(t, "https://icons.example.com/program/ch001_0.jpg", program.Icon)
+	assert.Equal(t, "TV-PG", program.Rating)
+}
+
+func TestProgramDurations(t *testing.T) {
+	// Check standard durations are available
+	assert.Contains(t, ProgramDurations, 30)
+	assert.Contains(t, ProgramDurations, 60)
+	assert.GreaterOrEqual(t, len(ProgramDurations), 4, "Should have at least 4 duration options")
 }
 
 func TestNoRealBrandNames(t *testing.T) {

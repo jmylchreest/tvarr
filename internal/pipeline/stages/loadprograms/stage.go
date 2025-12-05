@@ -18,15 +18,15 @@ const (
 	StageID = "load_programs"
 	// StageName is the human-readable name for this stage.
 	StageName = "Load Programs"
-	// DefaultEPGDays is the default number of days to load EPG data for.
-	DefaultEPGDays = 7
+
+	// progressReportInterval controls how often we report progress (every N programs).
+	progressReportInterval = 5000
 )
 
 // Stage loads EPG programs for the channels in the pipeline.
 type Stage struct {
 	shared.BaseStage
 	programRepo repository.EpgProgramRepository
-	epgDays     int
 	logger      *slog.Logger
 }
 
@@ -35,7 +35,6 @@ func New(programRepo repository.EpgProgramRepository) *Stage {
 	return &Stage{
 		BaseStage:   shared.NewBaseStage(StageID, StageName),
 		programRepo: programRepo,
-		epgDays:     DefaultEPGDays,
 	}
 }
 
@@ -48,12 +47,6 @@ func NewConstructor() core.StageConstructor {
 		}
 		return s
 	}
-}
-
-// WithEPGDays sets the number of days to load EPG data for.
-func (s *Stage) WithEPGDays(days int) *Stage {
-	s.epgDays = days
-	return s
 }
 
 // Execute loads EPG programs for all channels with matching TvgIDs.
@@ -71,8 +64,7 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	// T030: Log stage start
 	s.log(ctx, slog.LevelInfo, "starting program load",
 		slog.Int("epg_source_count", len(state.EpgSources)),
-		slog.Int("channel_count", len(state.ChannelMap)),
-		slog.Int("epg_days", s.epgDays))
+		slog.Int("channel_count", len(state.ChannelMap)))
 
 	// Get the set of TvgIDs we need programs for
 	tvgIDs := make(map[string]bool)
@@ -80,13 +72,9 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 		tvgIDs[tvgID] = true
 	}
 
-	programs := make([]*models.EpgProgram, 0)
-
-	// Define time range for EPG
-	now := time.Now()
-	endTime := now.Add(time.Duration(s.epgDays) * 24 * time.Hour)
-
-	// Load programs from each EPG source
+	// Get total program count across all enabled EPG sources for progress reporting
+	var totalExpected int64
+	enabledSources := make([]*models.EpgSource, 0, len(state.EpgSources))
 	for _, source := range state.EpgSources {
 		if !source.Enabled {
 			s.log(ctx, slog.LevelDebug, "skipping disabled EPG source",
@@ -94,7 +82,29 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 				slog.String("source_name", source.Name))
 			continue
 		}
+		enabledSources = append(enabledSources, source)
 
+		count, err := s.programRepo.CountBySourceID(ctx, source.ID)
+		if err != nil {
+			s.log(ctx, slog.LevelWarn, "failed to get program count for source",
+				slog.String("source_id", source.ID.String()),
+				slog.String("error", err.Error()))
+			// Continue anyway - we just won't have accurate progress
+		} else {
+			totalExpected += count
+		}
+	}
+
+	s.log(ctx, slog.LevelInfo, "expecting programs from enabled EPG sources",
+		slog.Int("enabled_sources", len(enabledSources)),
+		slog.Int64("total_expected", totalExpected))
+
+	totalPrograms := 0
+	totalScanned := 0
+	now := time.Now()
+
+	// Load programs from each EPG source
+	for _, source := range enabledSources {
 		sourceProgramCount := 0
 		err := s.programRepo.GetBySourceID(ctx, source.ID, func(prog *models.EpgProgram) error {
 			// Check for context cancellation
@@ -104,18 +114,26 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 			default:
 			}
 
+			totalScanned++
+
+			// Report progress periodically (based on scanned, not matched)
+			if totalExpected > 0 && totalScanned%progressReportInterval == 0 {
+				s.reportProgress(ctx, state, totalScanned, int(totalExpected))
+			}
+
 			// Only include programs for channels we have
 			if !tvgIDs[prog.ChannelID] {
 				return nil
 			}
 
-			// Only include programs within our time window
-			if prog.Stop.Before(now) || prog.Start.After(endTime) {
+			// Skip programs that have already ended
+			if prog.Stop.Before(now) {
 				return nil
 			}
 
-			programs = append(programs, prog)
+			state.Programs = append(state.Programs, prog)
 			sourceProgramCount++
+			totalPrograms++
 			return nil
 		})
 
@@ -135,21 +153,41 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 			slog.Int("program_count", sourceProgramCount))
 	}
 
-	state.Programs = programs
+	// Final progress report
+	if totalExpected > 0 {
+		s.reportProgress(ctx, state, totalScanned, int(totalExpected))
+	}
 
-	result.RecordsProcessed = len(programs)
-	result.Message = fmt.Sprintf("Loaded %d programs from %d EPG sources", len(programs), len(state.EpgSources))
+	result.RecordsProcessed = totalPrograms
+	result.Message = fmt.Sprintf("Loaded %d programs from %d EPG sources (scanned %d)", totalPrograms, len(enabledSources), totalScanned)
 
 	// T030: Log stage completion
 	s.log(ctx, slog.LevelInfo, "program load complete",
-		slog.Int("total_programs", len(programs)))
+		slog.Int("total_programs", totalPrograms),
+		slog.Int("total_scanned", totalScanned))
 
 	// Create artifact for loaded programs
 	artifact := core.NewArtifact(core.ArtifactTypePrograms, core.ProcessingStageRaw, StageID).
-		WithRecordCount(len(programs))
+		WithRecordCount(totalPrograms)
 	result.Artifacts = append(result.Artifacts, artifact)
 
 	return result, nil
+}
+
+// reportProgress reports the current progress to the progress reporter if available.
+func (s *Stage) reportProgress(ctx context.Context, state *core.State, current, total int) {
+	if state.ProgressReporter == nil {
+		return
+	}
+
+	progress := float64(current) / float64(total)
+	if progress > 1.0 {
+		progress = 1.0
+	}
+
+	message := fmt.Sprintf("Loading programs (%d / %d)", current, total)
+	state.ProgressReporter.ReportProgress(ctx, StageID, progress, message)
+	state.ProgressReporter.ReportItemProgress(ctx, StageID, current, total, message)
 }
 
 // log logs a message if the logger is set.

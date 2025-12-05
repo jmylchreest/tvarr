@@ -8,18 +8,47 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/service"
+	"github.com/jmylchreest/tvarr/internal/urlutil"
+	"github.com/spf13/viper"
 	"gorm.io/gorm"
 )
 
 // StreamProxyHandler handles stream proxy API endpoints.
 type StreamProxyHandler struct {
 	proxyService *service.ProxyService
+	baseURL      string
+}
+
+// buildOrderMapFromIDs creates an order map from array indices.
+// The order is derived from the position in the array (index 0 = order 0, etc.).
+func buildOrderMapFromIDs(ids []models.ULID) map[models.ULID]int {
+	if len(ids) == 0 {
+		return nil
+	}
+	orders := make(map[models.ULID]int, len(ids))
+	for i, id := range ids {
+		orders[id] = i
+	}
+	return orders
 }
 
 // NewStreamProxyHandler creates a new stream proxy handler.
 func NewStreamProxyHandler(proxyService *service.ProxyService) *StreamProxyHandler {
+	// Compute base URL from viper config (same logic as serve.go)
+	baseURL := urlutil.NormalizeBaseURL(viper.GetString("server.base_url"))
+	if baseURL == "" {
+		serverHost := viper.GetString("server.host")
+		serverPort := viper.GetInt("server.port")
+		if serverHost == "0.0.0.0" || serverHost == "" {
+			baseURL = fmt.Sprintf("http://localhost:%d", serverPort)
+		} else {
+			baseURL = fmt.Sprintf("http://%s:%d", serverHost, serverPort)
+		}
+	}
+
 	return &StreamProxyHandler{
 		proxyService: proxyService,
+		baseURL:      baseURL,
 	}
 }
 
@@ -89,11 +118,11 @@ func (h *StreamProxyHandler) Register(api huma.API) {
 	}, h.SetEpgSources)
 
 	huma.Register(api, huma.Operation{
-		OperationID: "generateProxy",
+		OperationID: "regenerateProxy",
 		Method:      "POST",
-		Path:        "/api/v1/proxies/{id}/generate",
-		Summary:     "Generate proxy output",
-		Description: "Triggers generation for a stream proxy",
+		Path:        "/api/v1/proxies/{id}/regenerate",
+		Summary:     "Regenerate proxy output",
+		Description: "Triggers regeneration for a stream proxy",
 		Tags:        []string{"Stream Proxies"},
 	}, h.Generate)
 }
@@ -118,7 +147,7 @@ func (h *StreamProxyHandler) List(ctx context.Context, input *ListStreamProxiesI
 	resp := &ListStreamProxiesOutput{}
 	resp.Body.Proxies = make([]StreamProxyResponse, 0, len(proxies))
 	for _, p := range proxies {
-		resp.Body.Proxies = append(resp.Body.Proxies, StreamProxyFromModel(p))
+		resp.Body.Proxies = append(resp.Body.Proxies, StreamProxyFromModel(p, h.baseURL))
 	}
 
 	return resp, nil
@@ -150,7 +179,7 @@ func (h *StreamProxyHandler) GetByID(ctx context.Context, input *GetStreamProxyI
 	}
 
 	return &GetStreamProxyOutput{
-		Body: StreamProxyDetailFromModel(proxy),
+		Body: StreamProxyDetailFromModel(proxy, h.baseURL),
 	}, nil
 }
 
@@ -172,22 +201,32 @@ func (h *StreamProxyHandler) Create(ctx context.Context, input *CreateStreamProx
 		return nil, huma.Error500InternalServerError("failed to create proxy", err)
 	}
 
-	// Set sources if provided
+	// Set sources if provided (order derived from array index)
 	if len(input.Body.SourceIDs) > 0 {
-		if err := h.proxyService.SetSources(ctx, proxy.ID, input.Body.SourceIDs, nil); err != nil {
+		priorities := buildOrderMapFromIDs(input.Body.SourceIDs)
+		if err := h.proxyService.SetSources(ctx, proxy.ID, input.Body.SourceIDs, priorities); err != nil {
 			return nil, huma.Error500InternalServerError("failed to set sources", err)
 		}
 	}
 
-	// Set EPG sources if provided
+	// Set EPG sources if provided (order derived from array index)
 	if len(input.Body.EpgSourceIDs) > 0 {
-		if err := h.proxyService.SetEpgSources(ctx, proxy.ID, input.Body.EpgSourceIDs, nil); err != nil {
+		priorities := buildOrderMapFromIDs(input.Body.EpgSourceIDs)
+		if err := h.proxyService.SetEpgSources(ctx, proxy.ID, input.Body.EpgSourceIDs, priorities); err != nil {
 			return nil, huma.Error500InternalServerError("failed to set EPG sources", err)
 		}
 	}
 
+	// Set filters if provided (order derived from array index)
+	if len(input.Body.FilterIDs) > 0 {
+		orders := buildOrderMapFromIDs(input.Body.FilterIDs)
+		if err := h.proxyService.SetFilters(ctx, proxy.ID, input.Body.FilterIDs, orders); err != nil {
+			return nil, huma.Error500InternalServerError("failed to set filters", err)
+		}
+	}
+
 	return &CreateStreamProxyOutput{
-		Body: StreamProxyFromModel(proxy),
+		Body: StreamProxyFromModel(proxy, h.baseURL),
 	}, nil
 }
 
@@ -223,8 +262,32 @@ func (h *StreamProxyHandler) Update(ctx context.Context, input *UpdateStreamProx
 		return nil, huma.Error500InternalServerError("failed to update proxy", err)
 	}
 
+	// Set sources if provided (order derived from array index)
+	if input.Body.SourceIDs != nil {
+		priorities := buildOrderMapFromIDs(input.Body.SourceIDs)
+		if err := h.proxyService.SetSources(ctx, id, input.Body.SourceIDs, priorities); err != nil {
+			return nil, huma.Error500InternalServerError("failed to set sources", err)
+		}
+	}
+
+	// Set EPG sources if provided (order derived from array index)
+	if input.Body.EpgSourceIDs != nil {
+		priorities := buildOrderMapFromIDs(input.Body.EpgSourceIDs)
+		if err := h.proxyService.SetEpgSources(ctx, id, input.Body.EpgSourceIDs, priorities); err != nil {
+			return nil, huma.Error500InternalServerError("failed to set EPG sources", err)
+		}
+	}
+
+	// Set filters if provided (order derived from array index)
+	if input.Body.FilterIDs != nil {
+		orders := buildOrderMapFromIDs(input.Body.FilterIDs)
+		if err := h.proxyService.SetFilters(ctx, id, input.Body.FilterIDs, orders); err != nil {
+			return nil, huma.Error500InternalServerError("failed to set filters", err)
+		}
+	}
+
 	return &UpdateStreamProxyOutput{
-		Body: StreamProxyFromModel(proxy),
+		Body: StreamProxyFromModel(proxy, h.baseURL),
 	}, nil
 }
 
@@ -341,7 +404,10 @@ func (h *StreamProxyHandler) Generate(ctx context.Context, input *GenerateProxyI
 		return nil, huma.Error400BadRequest("invalid ID format", err)
 	}
 
-	result, err := h.proxyService.Generate(ctx, id)
+	// Use background context for generation to avoid HTTP request timeout cancellation.
+	// Generation can take several minutes for large datasets (millions of EPG programs).
+	// Progress is tracked via the progress service SSE endpoint, not this request.
+	result, err := h.proxyService.Generate(context.Background(), id)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to generate proxy output", err)
 	}

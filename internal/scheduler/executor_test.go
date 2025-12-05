@@ -44,15 +44,17 @@ func (m *mockEpgService) Ingest(ctx context.Context, sourceID models.ULID) error
 	return m.ingestErr
 }
 
-// mockProxyService implements ProxyGenerateService for testing.
-type mockProxyService struct {
-	generateErr    error
-	generateCalled bool
-}
-
-func (m *mockProxyService) Generate(ctx context.Context, proxyID models.ULID) error {
-	m.generateCalled = true
-	return m.generateErr
+// mockProxyGenerateFunc creates a mock proxy generate function for testing.
+func mockProxyGenerateFunc(channelCount, programCount int, err error) ProxyGenerateFunc {
+	return func(ctx context.Context, proxyID models.ULID) (*ProxyGenerateResult, error) {
+		if err != nil {
+			return nil, err
+		}
+		return &ProxyGenerateResult{
+			ChannelCount: channelCount,
+			ProgramCount: programCount,
+		}, nil
+	}
 }
 
 func TestExecutor_RegisterHandler(t *testing.T) {
@@ -236,9 +238,6 @@ func TestEpgIngestionHandler(t *testing.T) {
 }
 
 func TestProxyGenerationHandler(t *testing.T) {
-	service := &mockProxyService{}
-	handler := NewProxyGenerationHandler(service)
-
 	job := &models.Job{
 		Type:       models.JobTypeProxyGeneration,
 		TargetID:   models.NewULID(),
@@ -249,15 +248,16 @@ func TestProxyGenerationHandler(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("success", func(t *testing.T) {
-		service.generateErr = nil
+		handler := NewProxyGenerationHandler(mockProxyGenerateFunc(100, 500, nil))
 		result, err := handler.Execute(ctx, job)
 		require.NoError(t, err)
 		assert.Contains(t, result, "generated proxy")
-		assert.True(t, service.generateCalled)
+		assert.Contains(t, result, "100 channels")
+		assert.Contains(t, result, "500 programs")
 	})
 
 	t.Run("failure", func(t *testing.T) {
-		service.generateErr = errors.New("pipeline error")
+		handler := NewProxyGenerationHandler(mockProxyGenerateFunc(0, 0, errors.New("pipeline error")))
 		_, err := handler.Execute(ctx, job)
 		assert.Error(t, err)
 	})
