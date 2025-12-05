@@ -363,6 +363,14 @@ func (m *mockProxyRepo) SetFilters(ctx context.Context, proxyID models.ULID, fil
 	return nil
 }
 
+func (m *mockProxyRepo) GetBySourceID(ctx context.Context, sourceID models.ULID) ([]*models.StreamProxy, error) {
+	return nil, nil
+}
+
+func (m *mockProxyRepo) GetByEpgSourceID(ctx context.Context, epgSourceID models.ULID) ([]*models.StreamProxy, error) {
+	return nil, nil
+}
+
 func TestScheduler_ValidateCron(t *testing.T) {
 	jobRepo := newMockJobRepo()
 	scheduler := NewScheduler(jobRepo, &mockStreamSourceRepo{}, &mockEpgSourceRepo{}, &mockProxyRepo{})
@@ -372,12 +380,23 @@ func TestScheduler_ValidateCron(t *testing.T) {
 		cron    string
 		wantErr bool
 	}{
-		{"valid every 6 hours", "0 */6 * * *", false},
-		{"valid every minute", "* * * * *", false},
-		{"valid daily at midnight", "0 0 * * *", false},
-		{"valid weekly", "0 0 * * 0", false},
+		// 6-field format (default)
+		{"valid 6-field every 6 hours", "0 0 */6 * * *", false},
+		{"valid 6-field every minute", "0 * * * * *", false},
+		{"valid 6-field daily at midnight", "0 0 0 * * *", false},
+		{"valid 6-field weekly", "0 0 0 * * 0", false},
+		// 7-field format (legacy with year)
+		{"valid 7-field with year wildcard", "0 0 */6 * * * *", false},
+		{"valid 7-field daily with year", "0 0 0 * * * *", false},
+		{"valid 7-field with specific year", "0 0 0 * * * 2024", false},
+		{"valid 7-field with year range", "0 0 0 * * * 2024-2030", false},
+		// Special descriptors
+		{"valid @every descriptor", "@every 1h", false},
+		{"valid @daily descriptor", "@daily", false},
+		// Invalid formats
 		{"invalid format", "invalid", true},
 		{"too few fields", "* * *", true},
+		{"too many fields", "0 0 0 * * * * *", true},
 	}
 
 	for _, tt := range tests {
@@ -396,9 +415,52 @@ func TestScheduler_ParseCron(t *testing.T) {
 	jobRepo := newMockJobRepo()
 	scheduler := NewScheduler(jobRepo, &mockStreamSourceRepo{}, &mockEpgSourceRepo{}, &mockProxyRepo{})
 
-	nextRun, err := scheduler.ParseCron("0 */6 * * *")
+	// Test 6-field cron (default)
+	nextRun, err := scheduler.ParseCron("0 0 */6 * * *")
 	require.NoError(t, err)
 	assert.True(t, nextRun.After(time.Now()))
+
+	// Test 7-field cron (legacy) - should also work
+	nextRun7, err := scheduler.ParseCron("0 0 */6 * * * *")
+	require.NoError(t, err)
+	assert.True(t, nextRun7.After(time.Now()))
+}
+
+func TestNormalizeCronExpression(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr bool
+	}{
+		// 6-field (pass through)
+		{"6-field pass through", "0 0 */6 * * *", "0 0 */6 * * *", false},
+		{"6-field every minute", "0 * * * * *", "0 * * * * *", false},
+		// 7-field (strip year)
+		{"7-field strip year wildcard", "0 0 */6 * * * *", "0 0 */6 * * *", false},
+		{"7-field strip specific year", "0 0 0 * * * 2024", "0 0 0 * * *", false},
+		{"7-field strip year range", "0 0 0 * * * 2024-2030", "0 0 0 * * *", false},
+		// Special descriptors
+		{"@every descriptor", "@every 1h", "@every 1h", false},
+		{"@daily descriptor", "@daily", "@daily", false},
+		// Invalid
+		{"empty", "", "", true},
+		{"5 fields", "0 0 * * *", "", true},
+		{"8 fields", "0 0 0 * * * * *", "", true},
+		{"invalid year field", "0 0 0 * * * invalid", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := NormalizeCronExpression(tt.input)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.want, got)
+			}
+		})
+	}
 }
 
 func TestScheduler_ScheduleImmediate(t *testing.T) {
@@ -453,14 +515,14 @@ func TestScheduler_StartStop(t *testing.T) {
 	scheduler.Stop()
 }
 
-func TestScheduler_SyncSchedules(t *testing.T) {
+func TestScheduler_LoadSchedules(t *testing.T) {
 	jobRepo := newMockJobRepo()
 
 	sourceID := models.NewULID()
 	source := &models.StreamSource{
 		Name:         "Test Source",
 		Enabled:      true,
-		CronSchedule: "* * * * *", // Every minute
+		CronSchedule: "0 * * * * *", // Every minute (6-field with seconds)
 	}
 	source.ID = sourceID
 
@@ -470,13 +532,10 @@ func TestScheduler_SyncSchedules(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Manually trigger sync
-	scheduler.syncSchedules(ctx)
-
-	// Should have created a job
-	jobs, err := jobRepo.GetAll(ctx)
+	// Load schedules (this registers cron entries but doesn't create jobs immediately)
+	err := scheduler.ForceSync(ctx)
 	require.NoError(t, err)
-	assert.Len(t, jobs, 1)
-	assert.Equal(t, models.JobTypeStreamIngestion, jobs[0].Type)
-	assert.Equal(t, sourceID, jobs[0].TargetID)
+
+	// Should have registered the schedule
+	assert.Equal(t, 1, scheduler.GetEntryCount())
 }

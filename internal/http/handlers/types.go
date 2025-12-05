@@ -2,6 +2,7 @@
 package handlers
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/jmylchreest/tvarr/internal/models"
@@ -331,11 +332,14 @@ type StreamProxyResponse struct {
 	ChannelCount          int                      `json:"channel_count"`
 	ProgramCount          int                      `json:"program_count"`
 	OutputPath            string                   `json:"output_path,omitempty"`
+	M3U8URL               string                   `json:"m3u8_url,omitempty"`
+	XMLTVURL              string                   `json:"xmltv_url,omitempty"`
 }
 
 // StreamProxyFromModel converts a model to a response.
-func StreamProxyFromModel(p *models.StreamProxy) StreamProxyResponse {
-	return StreamProxyResponse{
+// The baseURL parameter is optional; if empty, relative URLs are used.
+func StreamProxyFromModel(p *models.StreamProxy, baseURL string) StreamProxyResponse {
+	resp := StreamProxyResponse{
 		ID:                    p.ID,
 		CreatedAt:             p.CreatedAt,
 		UpdatedAt:             p.UpdatedAt,
@@ -358,6 +362,20 @@ func StreamProxyFromModel(p *models.StreamProxy) StreamProxyResponse {
 		ProgramCount:          p.ProgramCount,
 		OutputPath:            p.OutputPath,
 	}
+
+	// Only populate URLs if the proxy has been generated (has a last_generated_at timestamp)
+	if p.LastGeneratedAt != nil {
+		idStr := p.ID.String()
+		if baseURL != "" {
+			resp.M3U8URL = fmt.Sprintf("%s/proxy/%s.m3u", baseURL, idStr)
+			resp.XMLTVURL = fmt.Sprintf("%s/proxy/%s.xmltv", baseURL, idStr)
+		} else {
+			resp.M3U8URL = fmt.Sprintf("/proxy/%s.m3u", idStr)
+			resp.XMLTVURL = fmt.Sprintf("/proxy/%s.xmltv", idStr)
+		}
+	}
+
+	return resp
 }
 
 // ProxySourceAssignmentResponse represents a stream source assignment in a proxy.
@@ -395,9 +413,10 @@ type StreamProxyDetailResponse struct {
 }
 
 // StreamProxyDetailFromModel converts a model with relations to a detail response.
-func StreamProxyDetailFromModel(p *models.StreamProxy) StreamProxyDetailResponse {
+// The baseURL parameter is optional; if empty, relative URLs are used.
+func StreamProxyDetailFromModel(p *models.StreamProxy, baseURL string) StreamProxyDetailResponse {
 	resp := StreamProxyDetailResponse{
-		StreamProxyResponse: StreamProxyFromModel(p),
+		StreamProxyResponse: StreamProxyFromModel(p, baseURL),
 		StreamSources:       make([]ProxySourceAssignmentResponse, 0, len(p.Sources)),
 		EpgSources:          make([]ProxyEpgSourceAssignmentResponse, 0, len(p.EpgSources)),
 		Filters:             make([]ProxyFilterAssignmentResponse, 0, len(p.Filters)),

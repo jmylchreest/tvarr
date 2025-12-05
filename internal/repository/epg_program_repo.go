@@ -145,25 +145,28 @@ func (r *epgProgramRepo) GetByChannelIDWithLimit(ctx context.Context, channelID 
 	return programs, nil
 }
 
-// Delete deletes an EPG program by ID.
+// Delete hard-deletes an EPG program by ID.
+// Uses Unscoped() for permanent deletion for consistency with DeleteBySourceID.
 func (r *epgProgramRepo) Delete(ctx context.Context, id models.ULID) error {
-	if err := r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.EpgProgram{}).Error; err != nil {
+	if err := r.db.WithContext(ctx).Unscoped().Where("id = ?", id).Delete(&models.EpgProgram{}).Error; err != nil {
 		return fmt.Errorf("deleting EPG program: %w", err)
 	}
 	return nil
 }
 
-// DeleteBySourceID deletes all programs for a source.
+// DeleteBySourceID hard-deletes all programs for a source.
+// Uses Unscoped() for permanent deletion since EPG programs are fully replaced on each ingestion.
 func (r *epgProgramRepo) DeleteBySourceID(ctx context.Context, sourceID models.ULID) error {
-	if err := r.db.WithContext(ctx).Where("source_id = ?", sourceID).Delete(&models.EpgProgram{}).Error; err != nil {
+	if err := r.db.WithContext(ctx).Unscoped().Where("source_id = ?", sourceID).Delete(&models.EpgProgram{}).Error; err != nil {
 		return fmt.Errorf("deleting EPG programs by source ID: %w", err)
 	}
 	return nil
 }
 
-// DeleteExpired deletes programs that ended before the given time.
+// DeleteExpired hard-deletes programs that ended before the given time.
+// Uses Unscoped() for permanent deletion since expired programs have no value.
 func (r *epgProgramRepo) DeleteExpired(ctx context.Context, before time.Time) (int64, error) {
-	result := r.db.WithContext(ctx).Where("stop < ?", before).Delete(&models.EpgProgram{})
+	result := r.db.WithContext(ctx).Unscoped().Where("stop < ?", before).Delete(&models.EpgProgram{})
 	if result.Error != nil {
 		return 0, fmt.Errorf("deleting expired EPG programs: %w", result.Error)
 	}

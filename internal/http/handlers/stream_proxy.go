@@ -8,12 +8,15 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/service"
+	"github.com/jmylchreest/tvarr/internal/urlutil"
+	"github.com/spf13/viper"
 	"gorm.io/gorm"
 )
 
 // StreamProxyHandler handles stream proxy API endpoints.
 type StreamProxyHandler struct {
 	proxyService *service.ProxyService
+	baseURL      string
 }
 
 // buildOrderMapFromIDs creates an order map from array indices.
@@ -31,8 +34,21 @@ func buildOrderMapFromIDs(ids []models.ULID) map[models.ULID]int {
 
 // NewStreamProxyHandler creates a new stream proxy handler.
 func NewStreamProxyHandler(proxyService *service.ProxyService) *StreamProxyHandler {
+	// Compute base URL from viper config (same logic as serve.go)
+	baseURL := urlutil.NormalizeBaseURL(viper.GetString("server.base_url"))
+	if baseURL == "" {
+		serverHost := viper.GetString("server.host")
+		serverPort := viper.GetInt("server.port")
+		if serverHost == "0.0.0.0" || serverHost == "" {
+			baseURL = fmt.Sprintf("http://localhost:%d", serverPort)
+		} else {
+			baseURL = fmt.Sprintf("http://%s:%d", serverHost, serverPort)
+		}
+	}
+
 	return &StreamProxyHandler{
 		proxyService: proxyService,
+		baseURL:      baseURL,
 	}
 }
 
@@ -102,11 +118,11 @@ func (h *StreamProxyHandler) Register(api huma.API) {
 	}, h.SetEpgSources)
 
 	huma.Register(api, huma.Operation{
-		OperationID: "generateProxy",
+		OperationID: "regenerateProxy",
 		Method:      "POST",
-		Path:        "/api/v1/proxies/{id}/generate",
-		Summary:     "Generate proxy output",
-		Description: "Triggers generation for a stream proxy",
+		Path:        "/api/v1/proxies/{id}/regenerate",
+		Summary:     "Regenerate proxy output",
+		Description: "Triggers regeneration for a stream proxy",
 		Tags:        []string{"Stream Proxies"},
 	}, h.Generate)
 }
@@ -131,7 +147,7 @@ func (h *StreamProxyHandler) List(ctx context.Context, input *ListStreamProxiesI
 	resp := &ListStreamProxiesOutput{}
 	resp.Body.Proxies = make([]StreamProxyResponse, 0, len(proxies))
 	for _, p := range proxies {
-		resp.Body.Proxies = append(resp.Body.Proxies, StreamProxyFromModel(p))
+		resp.Body.Proxies = append(resp.Body.Proxies, StreamProxyFromModel(p, h.baseURL))
 	}
 
 	return resp, nil
@@ -163,7 +179,7 @@ func (h *StreamProxyHandler) GetByID(ctx context.Context, input *GetStreamProxyI
 	}
 
 	return &GetStreamProxyOutput{
-		Body: StreamProxyDetailFromModel(proxy),
+		Body: StreamProxyDetailFromModel(proxy, h.baseURL),
 	}, nil
 }
 
@@ -210,7 +226,7 @@ func (h *StreamProxyHandler) Create(ctx context.Context, input *CreateStreamProx
 	}
 
 	return &CreateStreamProxyOutput{
-		Body: StreamProxyFromModel(proxy),
+		Body: StreamProxyFromModel(proxy, h.baseURL),
 	}, nil
 }
 
@@ -271,7 +287,7 @@ func (h *StreamProxyHandler) Update(ctx context.Context, input *UpdateStreamProx
 	}
 
 	return &UpdateStreamProxyOutput{
-		Body: StreamProxyFromModel(proxy),
+		Body: StreamProxyFromModel(proxy, h.baseURL),
 	}, nil
 }
 
@@ -388,7 +404,10 @@ func (h *StreamProxyHandler) Generate(ctx context.Context, input *GenerateProxyI
 		return nil, huma.Error400BadRequest("invalid ID format", err)
 	}
 
-	result, err := h.proxyService.Generate(ctx, id)
+	// Use background context for generation to avoid HTTP request timeout cancellation.
+	// Generation can take several minutes for large datasets (millions of EPG programs).
+	// Progress is tracked via the progress service SSE endpoint, not this request.
+	result, err := h.proxyService.Generate(context.Background(), id)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to generate proxy output", err)
 	}

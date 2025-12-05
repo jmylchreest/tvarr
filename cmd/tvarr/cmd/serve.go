@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -19,8 +20,10 @@ import (
 	internalhttp "github.com/jmylchreest/tvarr/internal/http"
 	"github.com/jmylchreest/tvarr/internal/http/handlers"
 	"github.com/jmylchreest/tvarr/internal/ingestor"
+	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/pipeline"
 	"github.com/jmylchreest/tvarr/internal/repository"
+	"github.com/jmylchreest/tvarr/internal/scheduler"
 	"github.com/jmylchreest/tvarr/internal/service"
 	"github.com/jmylchreest/tvarr/internal/service/logs"
 	"github.com/jmylchreest/tvarr/internal/service/progress"
@@ -57,6 +60,12 @@ func init() {
 	// Pipeline flags
 	serveCmd.Flags().Bool("ingestion-guard", true, "Enable ingestion guard (waits for active ingestions)")
 
+	// Scheduler flags
+	serveCmd.Flags().Duration("scheduler-sync-interval", time.Minute, "Interval for syncing schedules from database")
+	serveCmd.Flags().Int("scheduler-workers", 2, "Number of concurrent job workers")
+	serveCmd.Flags().String("logo-scan-schedule", scheduler.DefaultLogoScanSchedule, "Cron schedule for logo scan job (6-field: sec min hour dom month dow). 7-field with year also accepted for legacy. Empty to disable.")
+	serveCmd.Flags().Duration("job-history-retention", 14*24*time.Hour, "Retention period for job history records (older records are deleted on startup)")
+
 	// Bind flags to viper
 	viper.BindPFlag("server.host", serveCmd.Flags().Lookup("host"))
 	viper.BindPFlag("server.port", serveCmd.Flags().Lookup("port"))
@@ -64,6 +73,10 @@ func init() {
 	viper.BindPFlag("database.dsn", serveCmd.Flags().Lookup("database"))
 	viper.BindPFlag("storage.base_dir", serveCmd.Flags().Lookup("data-dir"))
 	viper.BindPFlag("pipeline.ingestion_guard", serveCmd.Flags().Lookup("ingestion-guard"))
+	viper.BindPFlag("scheduler.sync_interval", serveCmd.Flags().Lookup("scheduler-sync-interval"))
+	viper.BindPFlag("scheduler.workers", serveCmd.Flags().Lookup("scheduler-workers"))
+	viper.BindPFlag("scheduler.logo_scan_schedule", serveCmd.Flags().Lookup("logo-scan-schedule"))
+	viper.BindPFlag("scheduler.job_history_retention", serveCmd.Flags().Lookup("job-history-retention"))
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
@@ -108,6 +121,21 @@ func runServe(cmd *cobra.Command, args []string) error {
 	dataMappingRuleRepo := repository.NewDataMappingRuleRepository(db)
 	relayProfileRepo := repository.NewRelayProfileRepository(db)
 	lastKnownCodecRepo := repository.NewLastKnownCodecRepository(db)
+	jobRepo := repository.NewJobRepository(db)
+
+	// Clean up old job history on startup if retention is configured
+	jobHistoryRetention := viper.GetDuration("scheduler.job_history_retention")
+	if jobHistoryRetention > 0 {
+		cutoff := time.Now().Add(-jobHistoryRetention)
+		deleted, err := jobRepo.DeleteHistory(context.Background(), cutoff)
+		if err != nil {
+			logger.Warn("failed to clean job history", slog.Any("error", err))
+		} else if deleted > 0 {
+			logger.Info("cleaned old job history records on startup",
+				slog.Int64("deleted_count", deleted),
+				slog.String("retention", duration.Format(jobHistoryRetention)))
+		}
+	}
 
 	// Initialize storage sandbox
 	sandbox, err := storage.NewSandbox(viper.GetString("storage.base_dir"))
@@ -138,6 +166,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Load logo index with pruning of stale cached logos
 	logoRetention := viper.GetDuration("storage.logo_retention")
 	if logoRetention > 0 {
+		logoService = logoService.WithStalenessThreshold(logoRetention)
 		result, err := logoService.LoadIndexWithOptions(context.Background(), service.LogoIndexerOptions{
 			PruneStaleLogos:    true,
 			StalenessThreshold: logoRetention,
@@ -170,6 +199,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 		logger.Info("ingestion guard enabled for proxy generation")
 	}
 
+	logger.Debug("creating pipeline factory")
+
 	// Construct base URL for logo resolution in pipeline output
 	// This allows generated M3U/XMLTV to contain fully qualified logo URLs
 	// If base_url is configured, use it (normalized). Otherwise fall back to host:port.
@@ -196,13 +227,17 @@ func runServe(cmd *cobra.Command, args []string) error {
 		ingestionGuardStateManager,
 		baseURL,
 	)
+	logger.Debug("pipeline factory created")
 
 	// Initialize progress service
+	logger.Debug("initializing progress service")
 	progressService := progress.NewService(logger)
 	progressService.Start()
 	defer progressService.Stop()
+	logger.Debug("progress service started")
 
 	// Initialize services
+	logger.Debug("initializing services")
 	sourceService := service.NewSourceService(
 		streamSourceRepo,
 		channelRepo,
@@ -231,6 +266,80 @@ func runServe(cmd *cobra.Command, args []string) error {
 		lastKnownCodecRepo,
 		channelRepo,
 	).WithLogger(logger)
+	logger.Debug("services initialized")
+
+	// Configure internal recurring jobs
+	logger.Debug("configuring scheduler")
+	var internalJobs []scheduler.InternalJobConfig
+	logoScanSchedule := viper.GetString("scheduler.logo_scan_schedule")
+	if logoScanSchedule != "" {
+		internalJobs = append(internalJobs, scheduler.InternalJobConfig{
+			JobType:      models.JobTypeLogoCleanup,
+			TargetName:   "Logo Maintenance",
+			CronSchedule: logoScanSchedule,
+		})
+	}
+
+	// Initialize scheduler and runner
+	sched := scheduler.NewScheduler(
+		jobRepo,
+		streamSourceRepo,
+		epgSourceRepo,
+		proxyRepo,
+	).WithLogger(logger).WithConfig(scheduler.SchedulerConfig{
+		SyncInterval: viper.GetDuration("scheduler.sync_interval"),
+		InternalJobs: internalJobs,
+	})
+
+	// Create auto-regeneration service
+	autoRegenService := scheduler.NewAutoRegenService(proxyRepo, sched).WithLogger(logger)
+
+	// Create job executor with handlers
+	executor := scheduler.NewExecutor(jobRepo).WithLogger(logger)
+
+	// Register stream ingestion handler with auto-regeneration
+	streamIngestionHandler := scheduler.NewStreamIngestionHandler(sourceService).
+		WithAutoRegeneration(autoRegenService).
+		WithLogger(logger)
+	executor.RegisterHandler(models.JobTypeStreamIngestion, streamIngestionHandler)
+
+	// Register EPG ingestion handler with auto-regeneration
+	epgIngestionHandler := scheduler.NewEpgIngestionHandler(epgService).
+		WithAutoRegeneration(autoRegenService).
+		WithLogger(logger)
+	executor.RegisterHandler(models.JobTypeEpgIngestion, epgIngestionHandler)
+
+	// Register proxy generation handler with a wrapper function
+	proxyGenerateFunc := func(ctx context.Context, proxyID models.ULID) (*scheduler.ProxyGenerateResult, error) {
+		result, err := proxyService.Generate(ctx, proxyID)
+		if err != nil {
+			return nil, err
+		}
+		return &scheduler.ProxyGenerateResult{
+			ChannelCount: result.ChannelCount,
+			ProgramCount: result.ProgramCount,
+		}, nil
+	}
+	proxyGenHandler := scheduler.NewProxyGenerationHandler(proxyGenerateFunc)
+	executor.RegisterHandler(models.JobTypeProxyGeneration, proxyGenHandler)
+
+	// Register logo maintenance handler
+	logoMaintenanceHandler := scheduler.NewLogoMaintenanceHandler(logoService).WithLogger(logger)
+	executor.RegisterHandler(models.JobTypeLogoCleanup, logoMaintenanceHandler)
+
+	// Create job runner
+	runner := scheduler.NewRunner(jobRepo, executor).
+		WithLogger(logger).
+		WithConfig(scheduler.RunnerConfig{
+			WorkerCount: viper.GetInt("scheduler.workers"),
+		})
+	logger.Debug("scheduler and runner created")
+
+	// Initialize job service with scheduler and runner
+	jobService := service.NewJobService(jobRepo, streamSourceRepo, epgSourceRepo, proxyRepo).
+		WithLogger(logger).
+		WithScheduler(sched).
+		WithRunner(runner)
 
 	// Initialize HTTP server
 	serverConfig := internalhttp.ServerConfig{
@@ -305,6 +414,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	logsHandler := handlers.NewLogsHandler(logsService)
 	logsHandler.Register(server.API())
 	logsHandler.RegisterSSE(server.Router())
+	logger.Debug("http handlers registered")
+
+	// Register job handler
+	jobHandler := handlers.NewJobHandler(jobService)
+	jobHandler.Register(server.API())
 
 	// Setup graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -318,12 +432,37 @@ func runServe(cmd *cobra.Command, args []string) error {
 		logger.Info("received shutdown signal", slog.String("signal", sig.String()))
 		cancel()
 	}()
+	logger.Debug("signal handler registered")
+
+	// Start scheduler
+	logger.Debug("starting scheduler")
+	if err := sched.Start(ctx); err != nil {
+		return fmt.Errorf("starting scheduler: %w", err)
+	}
+	defer sched.Stop()
+
+	// Start job runner
+	if err := runner.Start(ctx); err != nil {
+		return fmt.Errorf("starting runner: %w", err)
+	}
+	defer runner.Stop()
+
+	// Schedule initial logo maintenance job on startup if configured
+	if logoScanSchedule != "" {
+		if _, err := sched.ScheduleImmediate(ctx, models.JobTypeLogoCleanup, models.ULID{}, "Logo Maintenance"); err != nil {
+			logger.Warn("failed to schedule initial logo maintenance job", slog.Any("error", err))
+		}
+		logger.Info("logo maintenance configured",
+			slog.String("schedule", logoScanSchedule))
+	}
 
 	// Start server
 	logger.Info("starting tvarr server",
 		slog.String("host", serverConfig.Host),
 		slog.Int("port", serverConfig.Port),
 		slog.String("version", version.Version),
+		slog.Int("scheduler_entries", sched.GetEntryCount()),
+		slog.Int("worker_count", viper.GetInt("scheduler.workers")),
 	)
 
 	return server.ListenAndServe(ctx)

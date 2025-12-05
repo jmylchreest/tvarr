@@ -124,9 +124,11 @@ func (r *streamProxyRepo) GetByName(ctx context.Context, name string) (*models.S
 // UpdateStatus updates the generation status.
 func (r *streamProxyRepo) UpdateStatus(ctx context.Context, id models.ULID, status models.StreamProxyStatus, lastError string) error {
 	// Use UpdateColumns to skip hooks (BeforeUpdate validation requires full model)
+	// Note: Must explicitly set updated_at since UpdateColumns bypasses GORM auto-update
 	if err := r.db.WithContext(ctx).Model(&models.StreamProxy{}).Where("id = ?", id).UpdateColumns(map[string]interface{}{
 		"status":     status,
 		"last_error": lastError,
+		"updated_at": models.Now(),
 	}).Error; err != nil {
 		return fmt.Errorf("updating proxy status: %w", err)
 	}
@@ -137,12 +139,14 @@ func (r *streamProxyRepo) UpdateStatus(ctx context.Context, id models.ULID, stat
 func (r *streamProxyRepo) UpdateLastGeneration(ctx context.Context, id models.ULID, channelCount, programCount int) error {
 	now := models.Now()
 	// Use UpdateColumns to skip hooks (BeforeUpdate validation requires full model)
+	// Note: Must explicitly set updated_at since UpdateColumns bypasses GORM auto-update
 	if err := r.db.WithContext(ctx).Model(&models.StreamProxy{}).Where("id = ?", id).UpdateColumns(map[string]interface{}{
 		"status":            models.StreamProxyStatusSuccess,
 		"last_generated_at": now,
 		"channel_count":     channelCount,
 		"program_count":     programCount,
 		"last_error":        "",
+		"updated_at":        now,
 	}).Error; err != nil {
 		return fmt.Errorf("updating last generation: %w", err)
 	}
@@ -273,6 +277,36 @@ func (r *streamProxyRepo) GetFilters(ctx context.Context, proxyID models.ULID) (
 		return nil, fmt.Errorf("getting proxy filters: %w", err)
 	}
 	return filters, nil
+}
+
+// GetBySourceID retrieves all proxies that use a specific stream source.
+// Used for auto-regeneration when a source is updated.
+func (r *streamProxyRepo) GetBySourceID(ctx context.Context, sourceID models.ULID) ([]*models.StreamProxy, error) {
+	var proxies []*models.StreamProxy
+	if err := r.db.WithContext(ctx).
+		Joins("JOIN proxy_sources ON proxy_sources.proxy_id = stream_proxies.id AND proxy_sources.deleted_at IS NULL").
+		Where("proxy_sources.source_id = ?", sourceID).
+		Where("stream_proxies.is_active = ?", true).
+		Order("stream_proxies.name ASC").
+		Find(&proxies).Error; err != nil {
+		return nil, fmt.Errorf("getting proxies by source ID: %w", err)
+	}
+	return proxies, nil
+}
+
+// GetByEpgSourceID retrieves all proxies that use a specific EPG source.
+// Used for auto-regeneration when an EPG source is updated.
+func (r *streamProxyRepo) GetByEpgSourceID(ctx context.Context, epgSourceID models.ULID) ([]*models.StreamProxy, error) {
+	var proxies []*models.StreamProxy
+	if err := r.db.WithContext(ctx).
+		Joins("JOIN proxy_epg_sources ON proxy_epg_sources.proxy_id = stream_proxies.id AND proxy_epg_sources.deleted_at IS NULL").
+		Where("proxy_epg_sources.epg_source_id = ?", epgSourceID).
+		Where("stream_proxies.is_active = ?", true).
+		Order("stream_proxies.name ASC").
+		Find(&proxies).Error; err != nil {
+		return nil, fmt.Errorf("getting proxies by EPG source ID: %w", err)
+	}
+	return proxies, nil
 }
 
 // Ensure streamProxyRepo implements StreamProxyRepository at compile time.

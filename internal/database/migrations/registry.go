@@ -49,6 +49,9 @@ func AllMigrations() []Migration {
 		// Add API method field for Xtream EPG sources
 		migration020EpgSourceApiMethod(),
 
+		// Job and job history tables for scheduler
+		migration021JobsTable(),
+
 		// Note: Logo caching (Phase 10) uses file-based storage with
 		// in-memory indexing, no database tables required.
 	}
@@ -654,6 +657,29 @@ func migration020EpgSourceApiMethod() Migration {
 				}
 			}
 			return nil
+		},
+	}
+}
+
+// migration021JobsTable creates the jobs and job_history tables for the scheduler.
+func migration021JobsTable() Migration {
+	return Migration{
+		Version:     "021",
+		Description: "Create jobs and job_history tables for scheduler",
+		Up: func(tx *gorm.DB) error {
+			// Create jobs table
+			if err := tx.AutoMigrate(&models.Job{}); err != nil {
+				return err
+			}
+			// Create job_history table
+			return tx.AutoMigrate(&models.JobHistory{})
+		},
+		Down: func(tx *gorm.DB) error {
+			// Drop job_history first (depends on jobs)
+			if err := tx.Migrator().DropTable("job_history"); err != nil {
+				return err
+			}
+			return tx.Migrator().DropTable("jobs")
 		},
 	}
 }

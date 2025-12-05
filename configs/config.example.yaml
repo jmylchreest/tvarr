@@ -107,6 +107,23 @@ relay:
   # Timeout for individual stream connections
   stream_timeout: 5m
 
+# Scheduler Configuration
+scheduler:
+  # Interval for syncing schedules from database
+  sync_interval: 1m
+  # Number of concurrent job workers
+  workers: 2
+  # Cron schedule for logo scan/maintenance job
+  # Default format: sec min hour dom month dow (6-field)
+  # Legacy format: sec min hour dom month dow year (7-field, year stripped)
+  # Examples:
+  #   "0 0 */2 * * *"  - Every 2 hours (default)
+  #   "0 0 0 * * *"    - Daily at midnight
+  #   "0 30 3 * * *"   - Daily at 3:30 AM
+  #   "0 0 */6 * * *"  - Every 6 hours
+  # Set to empty string to disable logo maintenance
+  logo_scan_schedule: "0 0 */2 * * *"
+
 # FFmpeg Configuration
 ffmpeg:
   # Path to ffmpeg binary (empty = auto-detect from PATH)
@@ -117,7 +134,7 @@ ffmpeg:
   use_embedded: false
   # Hardware acceleration priority (tried in order)
   hwaccel_priority:
-    - "vaapi"   # Intel/AMD on Linux
-    - "nvenc"   # NVIDIA
-    - "qsv"     # Intel Quick Sync
-    - "amf"     # AMD AMF
+    - "vaapi" # Intel/AMD on Linux
+    - "nvenc" # NVIDIA
+    - "qsv" # Intel Quick Sync
+    - "amf" # AMD AMF

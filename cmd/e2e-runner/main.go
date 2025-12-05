@@ -939,8 +939,8 @@ func (c *APIClient) TriggerProxyGeneration(ctx context.Context, proxyID string, 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Trigger generation - this is synchronous and returns when complete
-	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/v1/proxies/"+proxyID+"/generate", nil)
+	// Trigger regeneration - this is synchronous and returns when complete
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/v1/proxies/"+proxyID+"/regenerate", nil)
 	if err != nil {
 		return err
 	}

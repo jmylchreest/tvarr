@@ -49,6 +49,9 @@ type State struct {
 	// EpgSources are the EPG sources to include, ordered by priority.
 	EpgSources []*models.EpgSource
 
+	// ProgressReporter allows stages to report their progress.
+	ProgressReporter ProgressReporter
+
 	// TempDir is the temporary directory for intermediate files.
 	TempDir string
 
@@ -203,4 +206,14 @@ type Result struct {
 
 	// XMLTVPath is the path to the generated XMLTV file.
 	XMLTVPath string
+}
+
+// GetChannelCount returns the number of channels in the result.
+func (r *Result) GetChannelCount() int {
+	return r.ChannelCount
+}
+
+// GetProgramCount returns the number of programs in the result.
+func (r *Result) GetProgramCount() int {
+	return r.ProgramCount
 }

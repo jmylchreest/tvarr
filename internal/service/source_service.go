@@ -110,12 +110,15 @@ func (s *SourceService) WithEPGChecker(checker EPGChecker) *SourceService {
 }
 
 // getIngestionStages returns the standard stages for stream source ingestion.
+// Stream ingestion uses 3 stages:
+// - connect: Delete existing channels and prepare for ingestion
+// - download: Fetch, parse, and batch-insert channels (main work)
+// - finalize: Flush remaining batch and update metadata
 func getIngestionStages() []progress.StageInfo {
 	return []progress.StageInfo{
-		{ID: "connect", Name: "Connecting", Weight: 0.1},
-		{ID: "download", Name: "Downloading", Weight: 0.3},
-		{ID: "process", Name: "Processing", Weight: 0.4},
-		{ID: "save", Name: "Saving", Weight: 0.2},
+		{ID: "connect", Name: "Connecting", Weight: 0.05},
+		{ID: "download", Name: "Downloading", Weight: 0.85},
+		{ID: "finalize", Name: "Finalizing", Weight: 0.10},
 	}
 }
 
@@ -345,7 +348,7 @@ func (s *SourceService) Ingest(ctx context.Context, id models.ULID) error {
 	const batchSize = 1000
 
 	// Stage updaters - declared outside transaction to maintain references
-	var connectStage, downloadStage, processStage, saveStage *progress.StageUpdater
+	var connectStage, downloadStage, finalizeStage *progress.StageUpdater
 
 	// Stage 1: Connect
 	if progressMgr != nil {
@@ -369,7 +372,7 @@ func (s *SourceService) Ingest(ctx context.Context, id models.ULID) error {
 		// Collect channels in batches
 		var batchChannels []*models.Channel
 
-		// Perform ingestion with callback
+		// Perform ingestion with callback - download, parse, and batch-insert channels
 		if err := handler.Ingest(ctx, source, func(channel *models.Channel) error {
 			batchChannels = append(batchChannels, channel)
 			channelCount++
@@ -387,16 +390,11 @@ func (s *SourceService) Ingest(ctx context.Context, id models.ULID) error {
 			return fmt.Errorf("ingesting channels: %w", err)
 		}
 
-		// Stage 3: Process (transition after download)
+		// Stage 3: Finalize - flush remaining channels and complete
 		if progressMgr != nil && downloadStage != nil {
 			downloadStage.Complete()
-			processStage = progressMgr.StartStage("process")
-		}
-
-		// Stage 4: Save - flush remaining channels
-		if progressMgr != nil && processStage != nil {
-			processStage.Complete()
-			saveStage = progressMgr.StartStage("save")
+			finalizeStage = progressMgr.StartStage("finalize")
+			progressMgr.SetMessage("Finalizing...")
 		}
 
 		if len(batchChannels) > 0 {
@@ -435,9 +433,9 @@ func (s *SourceService) Ingest(ctx context.Context, id models.ULID) error {
 
 	// Complete progress tracking
 	if progressMgr != nil {
-		// Complete the save stage before finalizing
-		if saveStage != nil {
-			saveStage.Complete()
+		// Complete the finalize stage before finalizing the operation
+		if finalizeStage != nil {
+			finalizeStage.Complete()
 		}
 		progressMgr.Complete(fmt.Sprintf("Ingested %d channels", channelCount))
 	}
@@ -539,7 +537,7 @@ func (s *SourceService) performIngestion(ctx context.Context, source *models.Str
 	const batchSize = 1000
 
 	// Stage updaters - declared outside transaction to maintain references
-	var connectStage, downloadStage, processStage, saveStage *progress.StageUpdater
+	var connectStage, downloadStage, finalizeStage *progress.StageUpdater
 
 	// Stage 1: Connect
 	if progressMgr != nil {
@@ -563,7 +561,7 @@ func (s *SourceService) performIngestion(ctx context.Context, source *models.Str
 		// Collect channels in batches
 		var batchChannels []*models.Channel
 
-		// Perform ingestion with callback
+		// Perform ingestion with callback - download, parse, and batch-insert channels
 		if err := handler.Ingest(ctx, source, func(channel *models.Channel) error {
 			batchChannels = append(batchChannels, channel)
 			channelCount++
@@ -587,18 +585,11 @@ func (s *SourceService) performIngestion(ctx context.Context, source *models.Str
 			return fmt.Errorf("ingesting channels: %w", err)
 		}
 
-		// Stage 3: Process - complete download, start process
+		// Stage 3: Finalize - flush remaining channels and complete
 		if progressMgr != nil && downloadStage != nil {
 			downloadStage.Complete()
-			processStage = progressMgr.StartStage("process")
-			progressMgr.SetMessage("Processing channels...")
-		}
-
-		// Stage 4: Save - complete process, start save
-		if progressMgr != nil && processStage != nil {
-			processStage.Complete()
-			saveStage = progressMgr.StartStage("save")
-			progressMgr.SetMessage("Saving channels to database...")
+			finalizeStage = progressMgr.StartStage("finalize")
+			progressMgr.SetMessage("Finalizing...")
 		}
 
 		if len(batchChannels) > 0 {
@@ -630,9 +621,9 @@ func (s *SourceService) performIngestion(ctx context.Context, source *models.Str
 
 	// Complete progress tracking
 	if progressMgr != nil {
-		// Complete the save stage before finalizing the operation
-		if saveStage != nil {
-			saveStage.Complete()
+		// Complete the finalize stage before finalizing the operation
+		if finalizeStage != nil {
+			finalizeStage.Complete()
 		}
 		progressMgr.Complete(fmt.Sprintf("Ingested %d channels from %s", channelCount, source.Name))
 	}

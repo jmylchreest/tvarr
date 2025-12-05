@@ -148,17 +148,19 @@ func (r *channelRepo) Update(ctx context.Context, channel *models.Channel) error
 	return nil
 }
 
-// Delete deletes a channel by ID.
+// Delete hard-deletes a channel by ID.
+// Uses Unscoped() for permanent deletion for consistency with DeleteBySourceID.
 func (r *channelRepo) Delete(ctx context.Context, id models.ULID) error {
-	if err := r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.Channel{}).Error; err != nil {
+	if err := r.db.WithContext(ctx).Unscoped().Where("id = ?", id).Delete(&models.Channel{}).Error; err != nil {
 		return fmt.Errorf("deleting channel: %w", err)
 	}
 	return nil
 }
 
-// DeleteBySourceID deletes all channels for a source.
+// DeleteBySourceID hard-deletes all channels for a source.
+// Uses Unscoped() for permanent deletion since channels are fully replaced on each ingestion.
 func (r *channelRepo) DeleteBySourceID(ctx context.Context, sourceID models.ULID) error {
-	if err := r.db.WithContext(ctx).Where("source_id = ?", sourceID).Delete(&models.Channel{}).Error; err != nil {
+	if err := r.db.WithContext(ctx).Unscoped().Where("source_id = ?", sourceID).Delete(&models.Channel{}).Error; err != nil {
 		return fmt.Errorf("deleting channels by source ID: %w", err)
 	}
 	return nil

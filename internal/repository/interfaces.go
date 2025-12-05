@@ -167,6 +167,12 @@ type StreamProxyRepository interface {
 	SetFilters(ctx context.Context, proxyID models.ULID, filterIDs []models.ULID, orders map[models.ULID]int) error
 	// GetFilters retrieves the filters for a proxy with order.
 	GetFilters(ctx context.Context, proxyID models.ULID) ([]*models.Filter, error)
+	// GetBySourceID retrieves all proxies that use a specific stream source.
+	// Used for auto-regeneration when a source is updated.
+	GetBySourceID(ctx context.Context, sourceID models.ULID) ([]*models.StreamProxy, error)
+	// GetByEpgSourceID retrieves all proxies that use a specific EPG source.
+	// Used for auto-regeneration when an EPG source is updated.
+	GetByEpgSourceID(ctx context.Context, epgSourceID models.ULID) ([]*models.StreamProxy, error)
 }
 
 // FilterRepository defines operations for filter persistence.

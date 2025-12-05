@@ -17,6 +17,9 @@ const (
 	StageID = "load_channels"
 	// StageName is the human-readable name for this stage.
 	StageName = "Load Channels"
+
+	// progressReportInterval controls how often we report progress (every N channels).
+	progressReportInterval = 1000
 )
 
 // Stage loads channels from all configured stream sources.
@@ -58,10 +61,9 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	s.log(ctx, slog.LevelInfo, "starting channel load",
 		slog.Int("source_count", len(state.Sources)))
 
-	channelMap := make(map[string]*models.Channel)
-	totalChannels := 0
-
-	// Load channels from each source in priority order
+	// Get total channel count across all enabled sources for progress reporting
+	var totalExpected int64
+	enabledSources := make([]*models.StreamSource, 0, len(state.Sources))
 	for _, source := range state.Sources {
 		if !source.Enabled {
 			s.log(ctx, slog.LevelDebug, "skipping disabled source",
@@ -69,7 +71,28 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 				slog.String("source_name", source.Name))
 			continue
 		}
+		enabledSources = append(enabledSources, source)
 
+		count, err := s.channelRepo.CountBySourceID(ctx, source.ID)
+		if err != nil {
+			s.log(ctx, slog.LevelWarn, "failed to get channel count for source",
+				slog.String("source_id", source.ID.String()),
+				slog.String("error", err.Error()))
+			// Continue anyway - we just won't have accurate progress
+		} else {
+			totalExpected += count
+		}
+	}
+
+	s.log(ctx, slog.LevelInfo, "expecting channels from enabled sources",
+		slog.Int("enabled_sources", len(enabledSources)),
+		slog.Int64("total_expected", totalExpected))
+
+	channelMap := make(map[string]*models.Channel)
+	totalChannels := 0
+
+	// Load channels from each source in priority order
+	for _, source := range enabledSources {
 		sourceChannelCount := 0
 		err := s.channelRepo.GetBySourceID(ctx, source.ID, func(ch *models.Channel) error {
 			// Check for context cancellation
@@ -91,6 +114,11 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 				}
 			}
 
+			// Report progress periodically
+			if totalExpected > 0 && totalChannels%progressReportInterval == 0 {
+				s.reportProgress(ctx, state, totalChannels, int(totalExpected))
+			}
+
 			return nil
 		})
 
@@ -110,10 +138,15 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 			slog.Int("channel_count", sourceChannelCount))
 	}
 
+	// Final progress report
+	if totalExpected > 0 {
+		s.reportProgress(ctx, state, totalChannels, int(totalExpected))
+	}
+
 	state.ChannelMap = channelMap
 
 	result.RecordsProcessed = totalChannels
-	result.Message = fmt.Sprintf("Loaded %d channels from %d sources", totalChannels, len(state.Sources))
+	result.Message = fmt.Sprintf("Loaded %d channels from %d sources", totalChannels, len(enabledSources))
 
 	// T029: Log stage completion
 	s.log(ctx, slog.LevelInfo, "channel load complete",
@@ -126,6 +159,22 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	result.Artifacts = append(result.Artifacts, artifact)
 
 	return result, nil
+}
+
+// reportProgress reports the current progress to the progress reporter if available.
+func (s *Stage) reportProgress(ctx context.Context, state *core.State, current, total int) {
+	if state.ProgressReporter == nil {
+		return
+	}
+
+	progress := float64(current) / float64(total)
+	if progress > 1.0 {
+		progress = 1.0
+	}
+
+	message := fmt.Sprintf("Loading channels (%d / %d)", current, total)
+	state.ProgressReporter.ReportProgress(ctx, StageID, progress, message)
+	state.ProgressReporter.ReportItemProgress(ctx, StageID, current, total, message)
 }
 
 // log logs a message if the logger is set.
