@@ -28,14 +28,16 @@ func setupRelayServiceTest(t *testing.T) *service.RelayService {
 		&models.LastKnownCodec{},
 		&models.StreamSource{},
 		&models.Channel{},
+		&models.StreamProxy{},
 	)
 	require.NoError(t, err)
 
 	relayProfileRepo := repository.NewRelayProfileRepository(db)
 	lastKnownCodecRepo := repository.NewLastKnownCodecRepository(db)
 	channelRepo := repository.NewChannelRepository(db)
+	streamProxyRepo := repository.NewStreamProxyRepository(db)
 
-	svc := service.NewRelayService(relayProfileRepo, lastKnownCodecRepo, channelRepo)
+	svc := service.NewRelayService(relayProfileRepo, lastKnownCodecRepo, channelRepo, streamProxyRepo)
 	return svc
 }
 

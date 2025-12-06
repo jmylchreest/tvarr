@@ -583,28 +583,6 @@ func TestStage_SkipsLocalTvarrProgramLogos(t *testing.T) {
 	assert.Equal(t, 1, stats.ProgramLogosNewly, "should only cache 1 remote logo")
 }
 
-func TestIsDeferredLogoRef(t *testing.T) {
-	tests := []struct {
-		name     string
-		url      string
-		expected string // expected ULID or empty string
-	}{
-		{"valid deferred ref", "@logo:01KBJBGX3DHBGSQQVW4TY58HN6", "01KBJBGX3DHBGSQQVW4TY58HN6"},
-		{"not deferred", "http://example.com/logo.png", ""},
-		{"api path not deferred", "/api/v1/logos/01KBJBGX3DHBGSQQVW4TY58HN6", ""},
-		{"empty string", "", ""},
-		{"just @logo:", "@logo:", ""},
-		{"@ only", "@", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := isDeferredLogoRef(tt.url)
-			assert.Equal(t, tt.expected, result, "isDeferredLogoRef(%q)", tt.url)
-		})
-	}
-}
-
 func TestStage_ResolvesDeferredLogos(t *testing.T) {
 	cacher := newMockLogoCacher()
 	stage := New(cacher)

@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"mime/multipart"
 	"net"
 	"net/http"
@@ -24,7 +25,7 @@ import (
 	"time"
 )
 
-//go:embed testdata/channel.webp testdata/program.webp testdata/test.m3u testdata/test.xml
+//go:embed testdata/channel.webp testdata/program.webp testdata/test.m3u testdata/test.xml testdata/test-stream.ts
 var testdataFS embed.FS
 
 // E2E Test Data Sources - publicly accessible, compatible M3U and EPG data
@@ -226,6 +227,126 @@ func (ms *ManagedServer) LogContains(s string) bool {
 		return false
 	}
 	return ms.logBuffer.Contains(s)
+}
+
+// TestdataServer serves embedded testdata files over HTTP
+type TestdataServer struct {
+	server   *http.Server
+	listener net.Listener
+	baseURL  string
+}
+
+// NewTestdataServer creates a testdata HTTP server on a random port
+func NewTestdataServer() (*TestdataServer, error) {
+	// Find a free port
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, fmt.Errorf("failed to find free port: %w", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	// Create a sub-filesystem from the embedded FS
+	subFS, err := fs.Sub(testdataFS, "testdata")
+	if err != nil {
+		listener.Close()
+		return nil, fmt.Errorf("failed to create sub filesystem: %w", err)
+	}
+
+	// Read the test stream content for serving on /live/ paths
+	testStreamData, err := fs.ReadFile(subFS, "test-stream.ts")
+	if err != nil {
+		listener.Close()
+		return nil, fmt.Errorf("failed to read test-stream.ts: %w", err)
+	}
+
+	// Create HTTP file server
+	mux := http.NewServeMux()
+
+	// Handle /live/ paths by serving the test-stream.ts content
+	// This allows proxy/relay tests to fetch upstream stream content
+	mux.HandleFunc("/live/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "video/MP2T")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(testStreamData)))
+		w.WriteHeader(http.StatusOK)
+		w.Write(testStreamData)
+	})
+
+	// Handle /logos/ paths by serving the channel.webp content
+	mux.HandleFunc("/logos/", func(w http.ResponseWriter, r *http.Request) {
+		channelLogoData, err := fs.ReadFile(subFS, "channel.webp")
+		if err != nil {
+			http.Error(w, "logo not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "image/webp")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(channelLogoData)))
+		w.WriteHeader(http.StatusOK)
+		w.Write(channelLogoData)
+	})
+
+	// Handle /programs/ paths by serving the program.webp content
+	mux.HandleFunc("/programs/", func(w http.ResponseWriter, r *http.Request) {
+		programLogoData, err := fs.ReadFile(subFS, "program.webp")
+		if err != nil {
+			http.Error(w, "logo not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "image/webp")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(programLogoData)))
+		w.WriteHeader(http.StatusOK)
+		w.Write(programLogoData)
+	})
+
+	// Serve static files for other paths
+	mux.Handle("/", http.FileServer(http.FS(subFS)))
+
+	ts := &TestdataServer{
+		listener: listener,
+		baseURL:  fmt.Sprintf("http://127.0.0.1:%d", port),
+		server: &http.Server{
+			Handler: mux,
+		},
+	}
+
+	return ts, nil
+}
+
+// Start starts the testdata server
+func (ts *TestdataServer) Start() {
+	go ts.server.Serve(ts.listener)
+}
+
+// Stop stops the testdata server
+func (ts *TestdataServer) Stop() {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	ts.server.Shutdown(ctx)
+}
+
+// BaseURL returns the base URL for the testdata server
+func (ts *TestdataServer) BaseURL() string {
+	return ts.baseURL
+}
+
+// StreamURL returns the URL to the test-stream.ts file
+func (ts *TestdataServer) StreamURL() string {
+	return ts.baseURL + "/test-stream.ts"
+}
+
+// ChannelLogoURL returns the URL to the channel.webp file
+func (ts *TestdataServer) ChannelLogoURL() string {
+	return ts.baseURL + "/channel.webp"
+}
+
+// ProgramLogoURL returns the URL to the program.webp file
+func (ts *TestdataServer) ProgramLogoURL() string {
+	return ts.baseURL + "/program.webp"
+}
+
+// isFFmpegAvailable checks if ffmpeg is available on the system
+func isFFmpegAvailable() bool {
+	_, err := exec.LookPath("ffmpeg")
+	return err == nil
 }
 
 // TestResult represents the outcome of a test step
@@ -890,6 +1011,8 @@ type CreateStreamProxyOptions struct {
 	EpgSourceIDs      []string
 	CacheChannelLogos bool
 	CacheProgramLogos bool
+	ProxyMode         string // "redirect", "proxy", or "relay"
+	RelayProfileID    string // optional relay profile ID for relay mode
 }
 
 // CreateStreamProxy creates a new stream proxy
@@ -900,6 +1023,14 @@ func (c *APIClient) CreateStreamProxy(ctx context.Context, opts CreateStreamProx
 		"epg_source_ids":      opts.EpgSourceIDs,
 		"cache_channel_logos": opts.CacheChannelLogos,
 		"cache_program_logos": opts.CacheProgramLogos,
+	}
+	// Add proxy_mode if specified
+	if opts.ProxyMode != "" {
+		body["proxy_mode"] = opts.ProxyMode
+	}
+	// Add relay_profile_id if specified
+	if opts.RelayProfileID != "" {
+		body["relay_profile_id"] = opts.RelayProfileID
 	}
 	jsonBody, _ := json.Marshal(body)
 
@@ -1038,6 +1169,113 @@ func (c *APIClient) GetProxyXMLTV(ctx context.Context, proxyID string) (string, 
 	return string(data), nil
 }
 
+// StreamTestResult contains the result of testing a stream URL.
+type StreamTestResult struct {
+	StatusCode      int
+	Headers         http.Header
+	Location        string // For redirects
+	ContentType     string
+	BytesReceived   int
+	HasCORSHeaders  bool
+	TSSyncByteValid bool // First byte is 0x47
+}
+
+// GetFirstChannelID gets the first channel ID for a given source ID.
+// The stream proxy endpoint expects /proxy/{proxyId}/{channelId}, so we need
+// to get the actual channel ULID from the channels API.
+func (c *APIClient) GetFirstChannelID(ctx context.Context, sourceID string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		c.baseURL+"/api/v1/channels?source_id="+sourceID+"&limit=1", nil)
+	if err != nil {
+		return "", err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("get channels failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("get channels failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode channels response: %w", err)
+	}
+
+	if len(result.Items) == 0 {
+		return "", fmt.Errorf("no channels found for source %s", sourceID)
+	}
+
+	return result.Items[0].ID, nil
+}
+
+// GetProxyStreamURL constructs the URL to stream a channel through a proxy.
+// The format is /proxy/{proxyId}/{channelId}.
+func (c *APIClient) GetProxyStreamURL(proxyID, channelID string) string {
+	return fmt.Sprintf("%s/proxy/%s/%s", c.baseURL, proxyID, channelID)
+}
+
+// TestStreamRequest tests a stream URL and returns information about the response.
+// It does not follow redirects automatically.
+func (c *APIClient) TestStreamRequest(ctx context.Context, streamURL string) (*StreamTestResult, error) {
+	// Create client that doesn't follow redirects
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Timeout: 10 * time.Second,
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", streamURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("stream request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	result := &StreamTestResult{
+		StatusCode:  resp.StatusCode,
+		Headers:     resp.Header,
+		ContentType: resp.Header.Get("Content-Type"),
+	}
+
+	// Check for redirect location
+	if resp.StatusCode == http.StatusFound || resp.StatusCode == http.StatusMovedPermanently {
+		result.Location = resp.Header.Get("Location")
+	}
+
+	// Check for CORS headers
+	if resp.Header.Get("Access-Control-Allow-Origin") != "" {
+		result.HasCORSHeaders = true
+	}
+
+	// For 200 responses, read a bit of content to verify it's valid
+	if resp.StatusCode == http.StatusOK {
+		buf := make([]byte, 188*2) // Read enough for 2 TS packets
+		n, _ := io.ReadAtLeast(resp.Body, buf, 1)
+		result.BytesReceived = n
+
+		// Check TS sync byte
+		if n > 0 && buf[0] == 0x47 {
+			result.TSSyncByteValid = true
+		}
+	}
+
+	return result, nil
+}
+
 // UploadLogoResult contains the result of uploading a logo.
 type UploadLogoResult struct {
 	ID  string // ULID of the uploaded logo
@@ -1142,6 +1380,63 @@ func (c *APIClient) CreateDataMappingRule(ctx context.Context, name, sourceType,
 	return id, nil
 }
 
+// GetRelayProfiles fetches all relay profiles
+func (c *APIClient) GetRelayProfiles(ctx context.Context) ([]map[string]interface{}, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/relay/profiles", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch relay profiles failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("fetch relay profiles failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode response failed: %w", err)
+	}
+
+	profiles, ok := result["profiles"].([]interface{})
+	if !ok {
+		// Also try "items" key
+		profiles, ok = result["items"].([]interface{})
+		if !ok {
+			return nil, nil // No profiles
+		}
+	}
+
+	var profileMaps []map[string]interface{}
+	for _, p := range profiles {
+		if pm, ok := p.(map[string]interface{}); ok {
+			profileMaps = append(profileMaps, pm)
+		}
+	}
+	return profileMaps, nil
+}
+
+// GetFirstRelayProfileID returns the ID of the first relay profile, or empty string if none
+func (c *APIClient) GetFirstRelayProfileID(ctx context.Context) (string, error) {
+	profiles, err := c.GetRelayProfiles(ctx)
+	if err != nil {
+		return "", err
+	}
+	if len(profiles) == 0 {
+		return "", nil
+	}
+	id, ok := profiles[0]["id"].(string)
+	if !ok {
+		return "", nil
+	}
+	return id, nil
+}
+
 // ValidateM3U checks if the M3U content is valid
 func ValidateM3U(content string) (channelCount int, err error) {
 	if !strings.HasPrefix(content, "#EXTM3U") {
@@ -1206,6 +1501,9 @@ type E2ERunner struct {
 	expectedChannels  int            // Expected channel count in output (0 to skip validation)
 	expectedPrograms  int            // Expected program count in output (0 to skip validation)
 	server            *ManagedServer // Reference to managed server for log validation
+	ffmpegAvailable   bool           // Whether ffmpeg is available for relay tests
+	testdataServer    *TestdataServer // Server for serving testdata files
+	testProxyModes    bool           // Whether to test different proxy modes
 }
 
 // E2ERunnerOptions holds configuration options for the E2E runner
@@ -1218,9 +1516,11 @@ type E2ERunnerOptions struct {
 	CacheProgramLogos bool
 	OutputDir         string
 	ShowSamples       bool
-	ExpectedChannels  int            // Expected channel count in output (0 to skip validation)
-	ExpectedPrograms  int            // Expected program count in output (0 to skip validation)
-	Server            *ManagedServer // Reference to managed server for log validation
+	ExpectedChannels  int             // Expected channel count in output (0 to skip validation)
+	ExpectedPrograms  int             // Expected program count in output (0 to skip validation)
+	Server            *ManagedServer  // Reference to managed server for log validation
+	TestProxyModes    bool            // Whether to test different proxy modes (redirect, proxy, relay)
+	TestdataServer    *TestdataServer // Pre-created testdata server (optional, one will be created if nil and TestProxyModes is true)
 }
 
 // NewE2ERunner creates a new E2E runner
@@ -1241,6 +1541,9 @@ func NewE2ERunner(opts E2ERunnerOptions) *E2ERunner {
 		expectedChannels:  opts.ExpectedChannels,
 		expectedPrograms:  opts.ExpectedPrograms,
 		server:            opts.Server,
+		ffmpegAvailable:   isFFmpegAvailable(),
+		testProxyModes:    opts.TestProxyModes,
+		testdataServer:    opts.TestdataServer, // Use pre-created testdata server if provided
 	}
 }
 
@@ -1288,6 +1591,31 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 
 	// Give SSE connection time to establish
 	time.Sleep(500 * time.Millisecond)
+
+	// Start testdata server if testing proxy modes and one wasn't already provided
+	if r.testProxyModes {
+		if r.testdataServer == nil {
+			// No testdata server was provided, create and start one
+			ts, err := NewTestdataServer()
+			if err != nil {
+				r.log("Warning: Failed to create testdata server: %v", err)
+			} else {
+				r.testdataServer = ts
+				r.testdataServer.Start()
+				defer r.testdataServer.Stop()
+				r.log("Testdata server started at: %s", r.testdataServer.BaseURL())
+			}
+		} else {
+			// Testdata server was pre-created (for test data generation), just log its URL
+			r.log("Using pre-created testdata server at: %s", r.testdataServer.BaseURL())
+		}
+
+		// Check for FFmpeg availability - warn if not present (print to both stdout and stderr for CI visibility)
+		if !r.ffmpegAvailable {
+			fmt.Println("WARNING: ffmpeg not found in PATH, relay mode tests will be skipped")
+			fmt.Fprintln(os.Stderr, "WARNING: ffmpeg not found in PATH, relay mode tests will be skipped")
+		}
+	}
 
 	// Phase 1: Setup - Health Check
 	r.runTest("Health Check", func() error {
@@ -1418,6 +1746,8 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 	})
 
 	// Phase 4: Proxy Configuration and Generation
+	// When testProxyModes is enabled, create a redirect mode proxy explicitly.
+	// When not testing proxy modes, create a default proxy (which uses redirect mode).
 	r.runTest("Create Stream Proxy", func() error {
 		var err error
 		sourceIDs := []string{}
@@ -1428,18 +1758,29 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 		if epgSourceID != "" {
 			epgIDs = []string{epgSourceID}
 		}
-		// Use unique name with runID to avoid conflicts
-		proxyID, err = r.client.CreateStreamProxy(ctx, CreateStreamProxyOptions{
-			Name:              fmt.Sprintf("E2E Test Proxy %s", r.runID),
+
+		opts := CreateStreamProxyOptions{
 			StreamSourceIDs:   sourceIDs,
 			EpgSourceIDs:      epgIDs,
 			CacheChannelLogos: r.cacheChannelLogos,
 			CacheProgramLogos: r.cacheProgramLogos,
-		})
+		}
+
+		if r.testProxyModes {
+			// Create redirect proxy with explicit mode for proxy mode testing
+			opts.Name = fmt.Sprintf("E2E Redirect Proxy %s", r.runID)
+			opts.ProxyMode = "redirect"
+		} else {
+			// Create default proxy (defaults to redirect mode)
+			opts.Name = fmt.Sprintf("E2E Test Proxy %s", r.runID)
+		}
+
+		proxyID, err = r.client.CreateStreamProxy(ctx, opts)
 		if err != nil {
 			return err
 		}
-		r.log("  Created proxy: %s (logo caching: channel=%v, program=%v)", proxyID, r.cacheChannelLogos, r.cacheProgramLogos)
+		r.log("  Created proxy: %s (mode=%s, logo caching: channel=%v, program=%v)",
+			proxyID, opts.ProxyMode, r.cacheChannelLogos, r.cacheProgramLogos)
 		return nil
 	})
 
@@ -1619,6 +1960,185 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 		r.log("  Validated: %d program icons use uploaded placeholder (ID: %s)", iconCount, r.programLogoID)
 		return nil
 	})
+
+	// Phase 8: Proxy Mode Tests (optional, enabled via -test-proxy-modes)
+	// Note: Channels already have correct testdata server URLs from test data generation,
+	// no data mapping rule or re-ingestion needed.
+	// The redirect mode proxy was already created in Phase 4 (proxyID), so we only create
+	// proxy mode and relay mode proxies here.
+	if r.testProxyModes && streamSourceID != "" && r.testdataServer != nil {
+		// Proxy IDs stored at outer scope for stream testing
+		var proxyModeProxyID string
+		var relayProxyID string
+
+		// Create proxy with proxy mode
+		r.runTest("Create Proxy (Proxy Mode)", func() error {
+			var err error
+			proxyModeProxyID, err = r.client.CreateStreamProxy(ctx, CreateStreamProxyOptions{
+				Name:            fmt.Sprintf("E2E Proxy Mode Proxy %s", r.runID),
+				StreamSourceIDs: []string{streamSourceID},
+				ProxyMode:       "proxy",
+			})
+			if err != nil {
+				return err
+			}
+			r.log("  Created proxy mode proxy: %s", proxyModeProxyID)
+			return nil
+		})
+
+		// Create proxy with relay mode (only if ffmpeg is available)
+		if r.ffmpegAvailable {
+			r.runTest("Create Proxy (Relay Mode)", func() error {
+				// Get the first relay profile ID (should exist from seeded profiles)
+				relayProfileID, err := r.client.GetFirstRelayProfileID(ctx)
+				if err != nil {
+					return fmt.Errorf("failed to get relay profile: %w", err)
+				}
+				if relayProfileID == "" {
+					return fmt.Errorf("no relay profiles available")
+				}
+				r.log("  Using relay profile: %s", relayProfileID)
+
+				relayProxyID, err = r.client.CreateStreamProxy(ctx, CreateStreamProxyOptions{
+					Name:            fmt.Sprintf("E2E Relay Proxy %s", r.runID),
+					StreamSourceIDs: []string{streamSourceID},
+					ProxyMode:       "relay",
+					RelayProfileID:  relayProfileID,
+				})
+				if err != nil {
+					return err
+				}
+				r.log("  Created relay mode proxy: %s", relayProxyID)
+				return nil
+			})
+		} else {
+			// Log that we're skipping relay mode tests
+			r.runTest("Skip Relay Mode (No FFmpeg)", func() error {
+				r.log("  SKIPPED: Relay mode tests require ffmpeg")
+				fmt.Println("WARNING: Skipping relay mode proxy test - ffmpeg not available")
+				fmt.Fprintln(os.Stderr, "WARNING: Skipping relay mode proxy test - ffmpeg not available")
+				return nil
+			})
+		}
+
+		// Test Redirect Mode Stream Fetching
+		// Uses proxyID which was created with redirect mode in Phase 4
+		r.runTest("Test Stream (Redirect Mode)", func() error {
+			if proxyID == "" {
+				return fmt.Errorf("redirect proxy was not created")
+			}
+
+			// Proxy was already generated in Phase 4, no need to regenerate
+
+			// Get a channel ID to test streaming
+			// The proxy stream endpoint expects /proxy/{proxyId}/{channelId}
+			channelID, err := r.client.GetFirstChannelID(ctx, streamSourceID)
+			if err != nil {
+				return fmt.Errorf("get channel ID: %w", err)
+			}
+
+			// Construct the proxy stream URL
+			streamURL := r.client.GetProxyStreamURL(proxyID, channelID)
+			r.log("  Testing stream URL: %s", streamURL)
+
+			// Test the stream request
+			result, err := r.client.TestStreamRequest(ctx, streamURL)
+			if err != nil {
+				return fmt.Errorf("stream request: %w", err)
+			}
+
+			// Redirect mode should return HTTP 302
+			if result.StatusCode != http.StatusFound {
+				return fmt.Errorf("expected HTTP 302, got %d", result.StatusCode)
+			}
+			if result.Location == "" {
+				return fmt.Errorf("expected Location header in redirect response")
+			}
+			r.log("  Redirect mode: HTTP %d -> %s", result.StatusCode, result.Location)
+			return nil
+		})
+
+		// Test Proxy Mode Stream Fetching
+		r.runTest("Test Stream (Proxy Mode)", func() error {
+			if proxyModeProxyID == "" {
+				return fmt.Errorf("proxy mode proxy was not created")
+			}
+
+			// Trigger proxy generation
+			if err := r.client.TriggerProxyGeneration(ctx, proxyModeProxyID, time.Minute); err != nil {
+				return fmt.Errorf("trigger proxy generation: %w", err)
+			}
+
+			// Get a channel ID to test streaming
+			// The proxy stream endpoint expects /proxy/{proxyId}/{channelId}
+			channelID, err := r.client.GetFirstChannelID(ctx, streamSourceID)
+			if err != nil {
+				return fmt.Errorf("get channel ID: %w", err)
+			}
+
+			// Construct the proxy stream URL
+			streamURL := r.client.GetProxyStreamURL(proxyModeProxyID, channelID)
+			r.log("  Testing stream URL: %s", streamURL)
+
+			// Test the stream request
+			result, err := r.client.TestStreamRequest(ctx, streamURL)
+			if err != nil {
+				return fmt.Errorf("stream request: %w", err)
+			}
+
+			// Proxy mode should return HTTP 200 with CORS headers and TS content
+			if result.StatusCode != http.StatusOK {
+				return fmt.Errorf("expected HTTP 200, got %d", result.StatusCode)
+			}
+			if !result.HasCORSHeaders {
+				return fmt.Errorf("expected CORS headers (Access-Control-Allow-Origin)")
+			}
+			if result.BytesReceived == 0 {
+				return fmt.Errorf("expected to receive stream bytes")
+			}
+			if !result.TSSyncByteValid {
+				r.log("  WARNING: First byte is not TS sync byte (0x47), may not be TS format")
+			}
+			r.log("  Proxy mode: HTTP %d, CORS: %v, Bytes: %d, TS: %v",
+				result.StatusCode, result.HasCORSHeaders, result.BytesReceived, result.TSSyncByteValid)
+			return nil
+		})
+
+		// Test Relay Mode Stream Fetching (only if ffmpeg is available and relay proxy was created)
+		if r.ffmpegAvailable && relayProxyID != "" {
+			r.runTest("Test Stream (Relay Mode)", func() error {
+				// Trigger proxy generation
+				if err := r.client.TriggerProxyGeneration(ctx, relayProxyID, time.Minute); err != nil {
+					return fmt.Errorf("trigger proxy generation: %w", err)
+				}
+
+				// Get a channel ID to test streaming
+				// The proxy stream endpoint expects /proxy/{proxyId}/{channelId}
+				channelID, err := r.client.GetFirstChannelID(ctx, streamSourceID)
+				if err != nil {
+					return fmt.Errorf("get channel ID: %w", err)
+				}
+
+				// Construct the proxy stream URL
+				streamURL := r.client.GetProxyStreamURL(relayProxyID, channelID)
+				r.log("  Testing stream URL: %s", streamURL)
+
+				// Test the stream request - relay mode should also return HTTP 200
+				result, err := r.client.TestStreamRequest(ctx, streamURL)
+				if err != nil {
+					return fmt.Errorf("stream request: %w", err)
+				}
+
+				// Relay mode should return HTTP 200 (transcoded content)
+				if result.StatusCode != http.StatusOK {
+					return fmt.Errorf("expected HTTP 200, got %d", result.StatusCode)
+				}
+				r.log("  Relay mode: HTTP %d, Bytes: %d, TS: %v",
+					result.StatusCode, result.BytesReceived, result.TSSyncByteValid)
+				return nil
+			})
+		}
+	}
 
 	return nil
 }
@@ -1891,6 +2411,9 @@ func main() {
 		requiredChannels = flag.Int("required-channels", 0, "Required channel count (fails if mismatch, 0 to skip)")
 		requiredPrograms = flag.Int("required-programs", 0, "Required program count (fails if mismatch, 0 to skip)")
 		randomSeed       = flag.Int64("random-seed", 0, "Random seed for test data generation (0 for time-based)")
+
+		// Proxy mode testing flags
+		testProxyModes = flag.Bool("test-proxy-modes", false, "Test different proxy modes (redirect, proxy, relay)")
 	)
 	flag.Parse()
 
@@ -1901,6 +2424,23 @@ func main() {
 	var effectiveBaseURL string
 	var effectiveM3UURL, effectiveEPGURL string
 	var testDataDir string
+	var testdataServer *TestdataServer
+
+	// Start testdata server early if testing proxy modes
+	// This must happen BEFORE test data generation so we can use its URL
+	if *testProxyModes {
+		var err error
+		testdataServer, err = NewTestdataServer()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to create testdata server: %v\n", err)
+			os.Exit(1)
+		}
+		testdataServer.Start()
+		defer testdataServer.Stop()
+		fmt.Printf("Testdata server started at: %s\n", testdataServer.BaseURL())
+		fmt.Printf("Stream URL: %s\n", testdataServer.StreamURL())
+		fmt.Println()
+	}
 
 	// Handle test data generation
 	if *randomTestdata {
@@ -1918,6 +2458,13 @@ func main() {
 		config.ProgramCount = *programCount
 		if *randomSeed != 0 {
 			config.RandomSeed = *randomSeed
+		}
+
+		// If testing proxy modes, use the testdata server's stream URL
+		// This ensures all channels point to a real, resolvable stream
+		if testdataServer != nil {
+			config.BaseURL = testdataServer.BaseURL()
+			config.LogoBaseURL = testdataServer.BaseURL()
 		}
 
 		generator := NewTestDataGenerator(config)
@@ -2057,6 +2604,8 @@ func main() {
 		ExpectedChannels:  *requiredChannels,
 		ExpectedPrograms:  *requiredPrograms,
 		Server:            server,
+		TestProxyModes:    *testProxyModes,
+		TestdataServer:    testdataServer, // Pass pre-created testdata server (created before test data generation)
 	})
 	fmt.Printf("Run ID:              %s\n", runner.runID)
 	fmt.Println()

@@ -12,12 +12,17 @@ import (
 
 // jobRepo implements JobRepository using GORM.
 type jobRepo struct {
-	db *gorm.DB
+	db     *gorm.DB
+	driver string // "sqlite", "postgres", or "mysql"
 }
 
 // NewJobRepository creates a new JobRepository.
 func NewJobRepository(db *gorm.DB) *jobRepo {
-	return &jobRepo{db: db}
+	driver := ""
+	if db.Dialector != nil {
+		driver = db.Dialector.Name()
+	}
+	return &jobRepo{db: db, driver: driver}
 }
 
 // Create creates a new job.
@@ -132,8 +137,17 @@ func (r *jobRepo) DeleteCompleted(ctx context.Context, before time.Time) (int64,
 }
 
 // AcquireJob atomically acquires a pending job for execution.
-// Uses SELECT FOR UPDATE with SKIP LOCKED for safe concurrent access.
+// Uses SELECT FOR UPDATE with SKIP LOCKED for PostgreSQL/MySQL.
+// Uses optimistic locking with atomic UPDATE for SQLite (which doesn't support row locking).
 func (r *jobRepo) AcquireJob(ctx context.Context, workerID string) (*models.Job, error) {
+	if r.driver == "sqlite" {
+		return r.acquireJobSQLite(ctx, workerID)
+	}
+	return r.acquireJobWithRowLocking(ctx, workerID)
+}
+
+// acquireJobWithRowLocking uses SELECT FOR UPDATE SKIP LOCKED (PostgreSQL/MySQL).
+func (r *jobRepo) acquireJobWithRowLocking(ctx context.Context, workerID string) (*models.Job, error) {
 	var job models.Job
 	now := time.Now()
 
@@ -172,6 +186,72 @@ func (r *jobRepo) AcquireJob(ctx context.Context, workerID string) (*models.Job,
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, nil // No jobs available
+		}
+		return nil, err
+	}
+
+	return &job, nil
+}
+
+// acquireJobSQLite uses optimistic locking with an atomic UPDATE for SQLite.
+// SQLite doesn't support SELECT FOR UPDATE, but its transaction model provides
+// serializable isolation within transactions with WAL mode.
+func (r *jobRepo) acquireJobSQLite(ctx context.Context, workerID string) (*models.Job, error) {
+	var job models.Job
+	now := time.Now()
+	nowTime := models.Now()
+
+	// Use a transaction for atomic acquire
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// First, find a candidate job (SQLite's IMMEDIATE transaction prevents concurrent writes)
+		query := tx.
+			Where("(status = ? OR (status = ? AND next_run_at <= ?))", models.JobStatusPending, models.JobStatusScheduled, now).
+			Where("locked_by IS NULL OR locked_by = ''").
+			Order("priority DESC, next_run_at ASC, created_at ASC").
+			Limit(1)
+
+		if err := query.First(&job).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				return err // Will cause nil return
+			}
+			return fmt.Errorf("finding pending job: %w", err)
+		}
+
+		// Atomically update the job with optimistic locking on the original status
+		// This prevents race conditions where two workers select the same job
+		// Use UpdateColumns to bypass BeforeUpdate validation hooks
+		result := tx.Model(&models.Job{}).
+			Where("id = ? AND status = ? AND (locked_by IS NULL OR locked_by = '')", job.ID, job.Status).
+			UpdateColumns(map[string]interface{}{
+				"status":        models.JobStatusRunning,
+				"started_at":    nowTime,
+				"locked_by":     workerID,
+				"locked_at":     nowTime,
+				"attempt_count": job.AttemptCount + 1,
+			})
+
+		if result.Error != nil {
+			return fmt.Errorf("acquiring job: %w", result.Error)
+		}
+
+		// If no rows were affected, another worker got the job first
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+
+		// Update the local job struct with new values
+		job.Status = models.JobStatusRunning
+		job.StartedAt = &nowTime
+		job.LockedBy = workerID
+		job.LockedAt = &nowTime
+		job.AttemptCount++
+
+		return nil
+	})
+
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil // No jobs available or lost race
 		}
 		return nil, err
 	}

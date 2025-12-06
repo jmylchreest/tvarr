@@ -119,51 +119,57 @@ func (h *RelayProfileHandler) Register(api huma.API) {
 
 // RelayProfileResponse represents a relay profile in API responses.
 type RelayProfileResponse struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Description     string `json:"description,omitempty"`
-	VideoCodec      string `json:"video_codec"`
-	AudioCodec      string `json:"audio_codec"`
-	VideoBitrate    int    `json:"video_bitrate,omitempty"`
-	AudioBitrate    int    `json:"audio_bitrate,omitempty"`
-	VideoMaxrate    int    `json:"video_maxrate,omitempty"`
-	VideoPreset     string `json:"video_preset,omitempty"`
-	VideoWidth      int    `json:"video_width,omitempty"`
-	VideoHeight     int    `json:"video_height,omitempty"`
-	AudioSampleRate int    `json:"audio_sample_rate,omitempty"`
-	AudioChannels   int    `json:"audio_channels,omitempty"`
-	HWAccel         string `json:"hw_accel"`
-	OutputFormat    string `json:"output_format"`
-	IsDefault       bool   `json:"is_default"`
-	IsSystem        bool   `json:"is_system" doc:"Whether this is a system-provided profile (cannot be edited/deleted)"`
-	Enabled         bool   `json:"enabled"`
-	CreatedAt       string `json:"created_at"`
-	UpdatedAt       string `json:"updated_at"`
+	ID                       string `json:"id"`
+	Name                     string `json:"name"`
+	Description              string `json:"description,omitempty"`
+	VideoCodec               string `json:"video_codec"`
+	AudioCodec               string `json:"audio_codec"`
+	VideoBitrate             int    `json:"video_bitrate,omitempty"`
+	AudioBitrate             int    `json:"audio_bitrate,omitempty"`
+	VideoMaxrate             int    `json:"video_maxrate,omitempty"`
+	VideoPreset              string `json:"video_preset,omitempty"`
+	VideoWidth               int    `json:"video_width,omitempty"`
+	VideoHeight              int    `json:"video_height,omitempty"`
+	AudioSampleRate          int    `json:"audio_sample_rate,omitempty"`
+	AudioChannels            int    `json:"audio_channels,omitempty"`
+	HWAccel                  string `json:"hw_accel"`
+	OutputFormat             string `json:"output_format"`
+	IsDefault                bool   `json:"is_default"`
+	IsSystem                 bool   `json:"is_system" doc:"Whether this is a system-provided profile (cannot be edited/deleted)"`
+	Enabled                  bool   `json:"enabled"`
+	FallbackEnabled          bool   `json:"fallback_enabled"`
+	FallbackErrorThreshold   int    `json:"fallback_error_threshold"`
+	FallbackRecoveryInterval int    `json:"fallback_recovery_interval"`
+	CreatedAt                string `json:"created_at"`
+	UpdatedAt                string `json:"updated_at"`
 }
 
 // RelayProfileFromModel converts a model to a response.
 func RelayProfileFromModel(p *models.RelayProfile) RelayProfileResponse {
 	return RelayProfileResponse{
-		ID:              p.ID.String(),
-		Name:            p.Name,
-		Description:     p.Description,
-		VideoCodec:      string(p.VideoCodec),
-		AudioCodec:      string(p.AudioCodec),
-		VideoBitrate:    p.VideoBitrate,
-		AudioBitrate:    p.AudioBitrate,
-		VideoMaxrate:    p.VideoMaxrate,
-		VideoPreset:     p.VideoPreset,
-		VideoWidth:      p.VideoWidth,
-		VideoHeight:     p.VideoHeight,
-		AudioSampleRate: p.AudioSampleRate,
-		AudioChannels:   p.AudioChannels,
-		HWAccel:         string(p.HWAccel),
-		OutputFormat:    string(p.OutputFormat),
-		IsDefault:       p.IsDefault,
-		IsSystem:        p.IsSystem,
-		Enabled:         p.Enabled,
-		CreatedAt:       p.CreatedAt.String(),
-		UpdatedAt:       p.UpdatedAt.String(),
+		ID:                       p.ID.String(),
+		Name:                     p.Name,
+		Description:              p.Description,
+		VideoCodec:               string(p.VideoCodec),
+		AudioCodec:               string(p.AudioCodec),
+		VideoBitrate:             p.VideoBitrate,
+		AudioBitrate:             p.AudioBitrate,
+		VideoMaxrate:             p.VideoMaxrate,
+		VideoPreset:              p.VideoPreset,
+		VideoWidth:               p.VideoWidth,
+		VideoHeight:              p.VideoHeight,
+		AudioSampleRate:          p.AudioSampleRate,
+		AudioChannels:            p.AudioChannels,
+		HWAccel:                  string(p.HWAccel),
+		OutputFormat:             string(p.OutputFormat),
+		IsDefault:                p.IsDefault,
+		IsSystem:                 p.IsSystem,
+		Enabled:                  p.Enabled,
+		FallbackEnabled:          p.FallbackEnabled,
+		FallbackErrorThreshold:   p.FallbackErrorThreshold,
+		FallbackRecoveryInterval: p.FallbackRecoveryInterval,
+		CreatedAt:                p.CreatedAt.String(),
+		UpdatedAt:                p.UpdatedAt.String(),
 	}
 }
 

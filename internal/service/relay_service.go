@@ -20,11 +20,15 @@ var ErrRelayProfileNotFound = errors.New("relay profile not found")
 // ErrChannelNotFound is returned when a channel is not found.
 var ErrChannelNotFound = errors.New("channel not found")
 
+// ErrProxyNotFound is returned when a stream proxy is not found.
+var ErrProxyNotFound = errors.New("stream proxy not found")
+
 // RelayService provides business logic for stream relay functionality.
 type RelayService struct {
 	relayProfileRepo   repository.RelayProfileRepository
 	lastKnownCodecRepo repository.LastKnownCodecRepository
 	channelRepo        repository.ChannelRepository
+	streamProxyRepo    repository.StreamProxyRepository
 	relayManager       *relay.Manager
 	ffmpegDetector     *ffmpeg.BinaryDetector
 	prober             *ffmpeg.Prober
@@ -36,6 +40,7 @@ func NewRelayService(
 	relayProfileRepo repository.RelayProfileRepository,
 	lastKnownCodecRepo repository.LastKnownCodecRepository,
 	channelRepo repository.ChannelRepository,
+	streamProxyRepo repository.StreamProxyRepository,
 ) *RelayService {
 	config := relay.DefaultManagerConfig()
 
@@ -43,6 +48,7 @@ func NewRelayService(
 		relayProfileRepo:   relayProfileRepo,
 		lastKnownCodecRepo: lastKnownCodecRepo,
 		channelRepo:        channelRepo,
+		streamProxyRepo:    streamProxyRepo,
 		relayManager:       relay.NewManager(config),
 		ffmpegDetector:     ffmpeg.NewBinaryDetector(),
 		logger:             slog.Default(),
@@ -320,8 +326,99 @@ func (s *RelayService) GetFFmpegInfo(ctx context.Context) (*ffmpeg.BinaryInfo, e
 	return s.ffmpegDetector.Detect(ctx)
 }
 
+// ClassificationResult is an alias for relay.ClassificationResult for external use.
+type ClassificationResult = relay.ClassificationResult
+
 // ClassifyStream classifies a stream URL.
-func (s *RelayService) ClassifyStream(ctx context.Context, streamURL string) relay.ClassificationResult {
-	classifier := relay.NewStreamClassifier(http.DefaultClient)
+func (s *RelayService) ClassifyStream(ctx context.Context, streamURL string) ClassificationResult {
+	classifier := relay.NewStreamClassifier(s.GetHTTPClient())
 	return classifier.Classify(ctx, streamURL)
+}
+
+// CreateHLSCollapser creates an HLS collapser for the given playlist URL.
+func (s *RelayService) CreateHLSCollapser(playlistURL string) *relay.HLSCollapser {
+	return relay.NewHLSCollapser(s.GetHTTPClient(), playlistURL)
+}
+
+// GetHTTPClient returns the HTTP client used by the relay manager.
+func (s *RelayService) GetHTTPClient() *http.Client {
+	if s.relayManager != nil {
+		return s.relayManager.HTTPClient()
+	}
+	return http.DefaultClient
+}
+
+// StreamInfo contains the information needed to stream a channel through a proxy.
+type StreamInfo struct {
+	Proxy   *models.StreamProxy
+	Channel *models.Channel
+	Profile *models.RelayProfile
+}
+
+// GetStreamInfo retrieves the proxy, channel, and optional relay profile for streaming.
+// This is used by the stream handler to determine the delivery mode (redirect/proxy/relay).
+func (s *RelayService) GetStreamInfo(ctx context.Context, proxyID, channelID models.ULID) (*StreamInfo, error) {
+	// Get the stream proxy
+	proxy, err := s.streamProxyRepo.GetByID(ctx, proxyID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrProxyNotFound, err)
+	}
+	if proxy == nil {
+		return nil, ErrProxyNotFound
+	}
+
+	// Get the channel
+	channel, err := s.channelRepo.GetByID(ctx, channelID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrChannelNotFound, err)
+	}
+	if channel == nil {
+		return nil, ErrChannelNotFound
+	}
+
+	info := &StreamInfo{
+		Proxy:   proxy,
+		Channel: channel,
+	}
+
+	// If relay mode and a profile is specified, load it
+	if proxy.ProxyMode == models.StreamProxyModeRelay && proxy.RelayProfileID != nil {
+		profile, err := s.relayProfileRepo.GetByID(ctx, *proxy.RelayProfileID)
+		if err != nil {
+			// Log but don't fail - will use default profile
+			s.logger.Warn("Failed to load relay profile for proxy",
+				"proxy_id", proxyID,
+				"profile_id", proxy.RelayProfileID,
+				"error", err,
+			)
+		} else {
+			info.Profile = profile
+		}
+	}
+
+	return info, nil
+}
+
+// GetProxy returns a stream proxy by ID.
+func (s *RelayService) GetProxy(ctx context.Context, id models.ULID) (*models.StreamProxy, error) {
+	proxy, err := s.streamProxyRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrProxyNotFound, err)
+	}
+	if proxy == nil {
+		return nil, ErrProxyNotFound
+	}
+	return proxy, nil
+}
+
+// GetChannel returns a channel by ID.
+func (s *RelayService) GetChannel(ctx context.Context, id models.ULID) (*models.Channel, error) {
+	channel, err := s.channelRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrChannelNotFound, err)
+	}
+	if channel == nil {
+		return nil, ErrChannelNotFound
+	}
+	return channel, nil
 }

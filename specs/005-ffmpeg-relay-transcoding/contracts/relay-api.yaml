@@ -1,0 +1,548 @@
+openapi: 3.1.0
+info:
+  title: Tvarr Relay API
+  description: Stream relay and transcoding API extensions for FFmpeg relay feature
+  version: 1.0.0
+
+paths:
+  /relay/stream/{channelId}:
+    get:
+      operationId: streamChannel
+      summary: Stream a channel
+      description: |
+        Streams a channel through the relay system. Behavior depends on the
+        StreamProxy mode:
+        - **redirect**: Returns HTTP 302 redirect to source URL
+        - **proxy**: Fetches from upstream, classifies, repackages with CORS headers
+        - **relay**: FFmpeg processing with codec conversion (requires RelayProfile)
+
+        Output format is determined by client request (not proxy configuration):
+        - URL extension: .ts (MPEG-TS) or .m3u8 (HLS)
+        - Query param: ?format=ts or ?format=hls
+        - Default: MPEG-TS
+
+        Response includes X-Stream-* headers indicating what processing was applied.
+      tags:
+        - Stream Relay
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: ulid
+          description: Channel ID (ULID)
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [ts, hls]
+            default: ts
+          description: |
+            Output format (can also be specified via URL extension):
+            - ts: MPEG Transport Stream (default)
+            - hls: HTTP Live Streaming playlist
+      responses:
+        '200':
+          description: Stream content (for proxy/relay modes)
+          headers:
+            Content-Type:
+              schema:
+                type: string
+              description: |
+                video/mp2t for MPEG-TS, application/vnd.apple.mpegurl for HLS
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+                example: '*'
+            Cache-Control:
+              schema:
+                type: string
+                example: no-cache, no-store
+            X-Stream-Origin-Kind:
+              schema:
+                type: string
+              description: Detected source type (RAW_TS, HLS_MASTER, HLS_MEDIA, UNKNOWN)
+            X-Stream-Decision:
+              schema:
+                type: string
+              description: Processing decision (passthrough, collapsed, transcoded)
+            X-Stream-Mode:
+              schema:
+                type: string
+              description: Operational mode (passthrough-raw-ts, hls-to-ts, relay-transcode)
+            X-Stream-Variant-Count:
+              schema:
+                type: integer
+              description: Number of HLS variants detected (for master playlists)
+            X-Stream-Fallback:
+              schema:
+                type: string
+              description: Reason if requested mode could not be honored
+          content:
+            video/mp2t:
+              schema:
+                type: string
+                format: binary
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+                description: HLS playlist content
+        '302':
+          description: Redirect to source (for redirect mode)
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+              description: Original stream URL
+        '400':
+          description: Invalid channel ID format
+        '404':
+          description: Channel not found
+        '500':
+          description: Failed to start relay session
+    options:
+      operationId: streamChannelPreflight
+      summary: CORS preflight for stream endpoint
+      description: Handles OPTIONS preflight requests for browser CORS
+      tags:
+        - Stream Relay
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Preflight response with CORS headers
+          headers:
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+                example: '*'
+            Access-Control-Allow-Methods:
+              schema:
+                type: string
+                example: GET, OPTIONS
+            Access-Control-Allow-Headers:
+              schema:
+                type: string
+                example: Content-Type, Accept, Range
+
+  /api/v1/relay/profiles:
+    get:
+      operationId: listRelayProfiles
+      summary: List relay profiles
+      description: Returns all relay profiles including system defaults
+      tags:
+        - Relay Profiles
+      responses:
+        '200':
+          description: List of relay profiles
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  profiles:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RelayProfile'
+    post:
+      operationId: createRelayProfile
+      summary: Create relay profile
+      description: Creates a new custom relay profile
+      tags:
+        - Relay Profiles
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRelayProfileRequest'
+      responses:
+        '200':
+          description: Created profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelayProfile'
+
+  /api/v1/relay/sessions:
+    get:
+      operationId: listRelaySessions
+      summary: List active relay sessions
+      description: Returns all active relay sessions with client details
+      tags:
+        - Relay Sessions
+      responses:
+        '200':
+          description: List of active sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RelaySession'
+                  total:
+                    type: integer
+                  max_sessions:
+                    type: integer
+
+  /api/v1/relay/sessions/{sessionId}/clients:
+    get:
+      operationId: listSessionClients
+      summary: List clients for a session
+      description: Returns connected clients for a specific relay session
+      tags:
+        - Relay Sessions
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of connected clients
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  clients:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RelayClient'
+        '404':
+          description: Session not found
+
+  /api/v1/relay/stats:
+    get:
+      operationId: getRelayStats
+      summary: Get relay statistics
+      description: Returns aggregated statistics about the relay system
+      tags:
+        - Relay Profiles
+      responses:
+        '200':
+          description: Relay statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelayStats'
+
+  /api/v1/relay/health:
+    get:
+      operationId: getRelayHealth
+      summary: Get relay health status
+      description: Returns health status of relay processes including error states
+      tags:
+        - Relay Profiles
+      responses:
+        '200':
+          description: Health status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelayHealth'
+
+components:
+  schemas:
+    StreamProxyMode:
+      type: string
+      enum:
+        - redirect
+        - proxy
+        - relay
+      description: |
+        Stream delivery mode (set on StreamProxy, not RelayProfile):
+        - redirect: HTTP 302 to source URL
+        - proxy: Fetch, HLS collapse, repackage with CORS
+        - relay: FFmpeg transcoding via RelayProfile
+
+    OutputFormat:
+      type: string
+      enum:
+        - mpegts
+        - hls
+      description: |
+        Output container format for proxy/relay modes.
+        NOT stored on StreamProxy - determined by client request:
+        - URL extension: .ts (mpegts) or .m3u8 (hls)
+        - Query param: ?format=ts or ?format=hls
+        Default: mpegts
+
+    StreamInfoHeaders:
+      type: object
+      description: |
+        Response headers providing visibility into stream processing.
+        These headers are returned on stream responses to indicate
+        what classification and processing was applied.
+      properties:
+        X-Stream-Origin-Kind:
+          type: string
+          description: |
+            Detected source stream type before processing.
+            Values: RAW_TS, HLS_MASTER, HLS_MEDIA, UNKNOWN
+          example: "HLS_MASTER"
+        X-Stream-Decision:
+          type: string
+          description: |
+            What processing decision was made based on classification.
+            Values: passthrough, collapsed, transcoded
+          example: "collapsed"
+        X-Stream-Mode:
+          type: string
+          description: |
+            The operational streaming mode applied.
+            Values: passthrough-raw-ts, hls-to-ts, relay-transcode
+          example: "hls-to-ts"
+        X-Stream-Variant-Count:
+          type: integer
+          description: Number of HLS variants detected (for master playlists)
+          example: 3
+        X-Stream-Target-Duration:
+          type: number
+          description: HLS target duration in seconds (for media playlists)
+          example: 6.0
+        X-Stream-Fallback:
+          type: string
+          description: |
+            Reason if requested mode could not be honored.
+            Only present when a fallback occurred.
+          example: "source not raw TS, using collapsed mode"
+
+    RelayProfile:
+      type: object
+      description: |
+        FFmpeg transcoding settings. Only used when StreamProxy.proxy_mode = "relay".
+        Mode selection happens at the StreamProxy level, not here.
+      properties:
+        id:
+          type: string
+          format: ulid
+        name:
+          type: string
+        description:
+          type: string
+        video_codec:
+          type: string
+          enum: [copy, libx264, libx265, h264_nvenc, hevc_nvenc, h264_qsv, hevc_qsv, h264_vaapi, hevc_vaapi]
+        audio_codec:
+          type: string
+          enum: [copy, aac, libmp3lame, libopus, ac3, eac3]
+        video_bitrate:
+          type: integer
+          description: Video bitrate in kbps (0 = auto)
+        audio_bitrate:
+          type: integer
+          description: Audio bitrate in kbps (0 = auto)
+        video_width:
+          type: integer
+          description: Output width (0 = keep original)
+        video_height:
+          type: integer
+          description: Output height (0 = keep original)
+        hw_accel:
+          type: string
+          enum: [none, cuda, qsv, vaapi, videotoolbox]
+        output_format:
+          type: string
+          enum: [mpegts, hls, flv, matroska, mp4]
+        is_default:
+          type: boolean
+        is_system:
+          type: boolean
+          description: System profiles cannot be edited or deleted
+        enabled:
+          type: boolean
+        fallback_enabled:
+          type: boolean
+        fallback_error_threshold:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateRelayProfileRequest:
+      type: object
+      description: |
+        Request to create a relay profile for FFmpeg transcoding settings.
+        Note: Mode is NOT set here - it's set on StreamProxy.
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        video_codec:
+          type: string
+          default: copy
+        audio_codec:
+          type: string
+          default: copy
+        video_bitrate:
+          type: integer
+        audio_bitrate:
+          type: integer
+        video_width:
+          type: integer
+        video_height:
+          type: integer
+        hw_accel:
+          type: string
+        is_default:
+          type: boolean
+        fallback_enabled:
+          type: boolean
+          default: true
+        fallback_error_threshold:
+          type: integer
+          default: 3
+        fallback_recovery_interval:
+          type: integer
+          default: 30
+
+    RelaySession:
+      type: object
+      description: |
+        A running relay session. Mode is inherited from the StreamProxy that
+        initiated the session.
+      properties:
+        id:
+          type: string
+          format: uuid
+        channel_id:
+          type: string
+          format: ulid
+        proxy_id:
+          type: string
+          format: ulid
+          description: The StreamProxy that initiated this session
+        stream_url:
+          type: string
+          format: uri
+        classification:
+          type: string
+          description: Stream type (direct, hls, collapsed_hls)
+        profile_name:
+          type: string
+          description: RelayProfile name (only for relay mode)
+        mode:
+          $ref: '#/components/schemas/StreamProxyMode'
+        output_format:
+          $ref: '#/components/schemas/OutputFormat'
+        started_at:
+          type: string
+          format: date-time
+        last_activity:
+          type: string
+          format: date-time
+        client_count:
+          type: integer
+        bytes_written:
+          type: integer
+          format: int64
+        error:
+          type: string
+          nullable: true
+        in_fallback_mode:
+          type: boolean
+
+    RelayClient:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_agent:
+          type: string
+        remote_addr:
+          type: string
+        connected_at:
+          type: string
+          format: date-time
+        last_read:
+          type: string
+          format: date-time
+        bytes_read:
+          type: integer
+          format: int64
+        last_sequence:
+          type: integer
+          format: int64
+
+    RelayStats:
+      type: object
+      properties:
+        active_sessions:
+          type: integer
+        max_sessions:
+          type: integer
+        total_clients:
+          type: integer
+        total_bytes_served:
+          type: integer
+          format: int64
+        sessions_by_mode:
+          type: object
+          additionalProperties:
+            type: integer
+        connection_pool:
+          type: object
+          properties:
+            global_connections:
+              type: integer
+            max_global:
+              type: integer
+            host_connections:
+              type: object
+              additionalProperties:
+                type: integer
+            waiting_count:
+              type: integer
+
+    RelayHealth:
+      type: object
+      properties:
+        total_processes:
+          type: integer
+        healthy_processes:
+          type: integer
+        unhealthy_processes:
+          type: integer
+        in_fallback_mode:
+          type: integer
+        last_check:
+          type: string
+          format: date-time
+        processes:
+          type: array
+          items:
+            type: object
+            properties:
+              session_id:
+                type: string
+              channel_id:
+                type: string
+              status:
+                type: string
+                enum: [healthy, unhealthy, fallback]
+              error:
+                type: string
+                nullable: true
+              last_update:
+                type: string
+                format: date-time

@@ -347,6 +347,14 @@ func (m *mockProxyRepoForJob) UpdateStatus(ctx context.Context, id models.ULID, 
 	return nil
 }
 
+func (m *mockProxyRepoForJob) GetBySourceID(ctx context.Context, sourceID models.ULID) ([]*models.StreamProxy, error) {
+	return nil, nil
+}
+
+func (m *mockProxyRepoForJob) GetByEpgSourceID(ctx context.Context, epgSourceID models.ULID) ([]*models.StreamProxy, error) {
+	return nil, nil
+}
+
 func (m *mockProxyRepoForJob) UpdateLastGeneration(ctx context.Context, id models.ULID, channelCount, programCount int) error {
 	return nil
 }
@@ -723,7 +731,7 @@ func TestJobHandler_ValidateCron(t *testing.T) {
 
 	t.Run("valid cron", func(t *testing.T) {
 		resp, err := handler.ValidateCron(ctx, &ValidateCronInput{
-			Body: ValidateCronRequest{Expression: "0 */6 * * *"},
+			Body: ValidateCronRequest{Expression: "0 0 */6 * * *"}, // 6-field cron: second minute hour day-of-month month day-of-week
 		})
 		require.NoError(t, err)
 		assert.True(t, resp.Body.Valid)

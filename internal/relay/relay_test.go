@@ -608,40 +608,6 @@ func TestHostLimiter_Basic(t *testing.T) {
 	assert.Equal(t, 1, limiter.ActiveForHost("host1"))
 }
 
-func TestAbsolutizeURL(t *testing.T) {
-	tests := []struct {
-		playlistURL string
-		segmentURL  string
-		expected    string
-	}{
-		{
-			"http://example.com/live/master.m3u8",
-			"seg1.ts",
-			"http://example.com/live/seg1.ts",
-		},
-		{
-			"http://example.com/live/master.m3u8",
-			"http://cdn.example.com/seg1.ts",
-			"http://cdn.example.com/seg1.ts",
-		},
-		{
-			"http://example.com/live/master.m3u8",
-			"/absolute/seg1.ts",
-			"http://example.com/absolute/seg1.ts",
-		},
-		{
-			"http://example.com/live/subdir/master.m3u8",
-			"../seg1.ts",
-			"http://example.com/live/seg1.ts",
-		},
-	}
-
-	for _, tc := range tests {
-		result := absolutizeURL(tc.playlistURL, tc.segmentURL)
-		assert.Equal(t, tc.expected, result, "playlist=%s segment=%s", tc.playlistURL, tc.segmentURL)
-	}
-}
-
 func TestStreamMode_String(t *testing.T) {
 	tests := []struct {
 		mode     StreamMode

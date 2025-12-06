@@ -17,6 +17,7 @@ import (
 	gormlogger "gorm.io/gorm/logger"
 
 	"github.com/jmylchreest/tvarr/internal/database/migrations"
+	"github.com/jmylchreest/tvarr/internal/ffmpeg"
 	internalhttp "github.com/jmylchreest/tvarr/internal/http"
 	"github.com/jmylchreest/tvarr/internal/http/handlers"
 	"github.com/jmylchreest/tvarr/internal/ingestor"
@@ -108,6 +109,44 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Run migrations
 	if err := runMigrations(db, logger); err != nil {
 		return fmt.Errorf("running migrations: %w", err)
+	}
+
+	// Detect FFmpeg and log capabilities on startup
+	ffmpegDetector := ffmpeg.NewBinaryDetector()
+	ffmpegInfo, err := ffmpegDetector.Detect(context.Background())
+	if err != nil {
+		logger.Warn("ffmpeg not detected", slog.String("error", err.Error()))
+	} else {
+		// Collect available hardware accelerators as a slice
+		var hwAccelNames []string
+		for _, accel := range ffmpegInfo.HWAccels {
+			if accel.Available {
+				if accel.DeviceName != "" {
+					hwAccelNames = append(hwAccelNames, fmt.Sprintf("%s (%s)", accel.Name, accel.DeviceName))
+				} else {
+					hwAccelNames = append(hwAccelNames, accel.Name)
+				}
+			}
+		}
+
+		// Get recommended hardware accelerator
+		var recommendedHWAccel string
+		if recommended := ffmpeg.GetRecommendedHWAccel(ffmpegInfo.HWAccels); recommended != nil {
+			recommendedHWAccel = recommended.Name
+		}
+
+		logger.Info("ffmpeg detected",
+			slog.String("version", ffmpegInfo.Version),
+			slog.String("path", ffmpegInfo.FFmpegPath),
+			slog.Int("encoder_count", len(ffmpegInfo.Encoders)),
+			slog.Int("decoder_count", len(ffmpegInfo.Decoders)),
+			slog.Any("hw_accels", hwAccelNames),
+			slog.String("recommended_hw_accel", recommendedHWAccel),
+		)
+
+		logger.Info("ffprobe detected",
+			slog.String("path", ffmpegInfo.FFprobePath),
+		)
 	}
 
 	// Initialize repositories
@@ -265,6 +304,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		relayProfileRepo,
 		lastKnownCodecRepo,
 		channelRepo,
+		proxyRepo,
 	).WithLogger(logger)
 	logger.Debug("services initialized")
 
@@ -401,6 +441,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	relayProfileHandler := handlers.NewRelayProfileHandler(relayService)
 	relayProfileHandler.Register(server.API())
+
+	relayStreamHandler := handlers.NewRelayStreamHandler(relayService).WithLogger(logger)
+	relayStreamHandler.Register(server.API())
+	relayStreamHandler.RegisterChiRoutes(server.Router())
 
 	channelHandler := handlers.NewChannelHandler(db, relayService)
 	channelHandler.Register(server.API())

@@ -25,7 +25,8 @@ const (
 // Stage generates an M3U playlist from the pipeline channels.
 type Stage struct {
 	shared.BaseStage
-	logger *slog.Logger
+	logger  *slog.Logger
+	baseURL string
 }
 
 // New creates a new M3U generation stage.
@@ -39,8 +40,11 @@ func New() *Stage {
 func NewConstructor() core.StageConstructor {
 	return func(deps *core.Dependencies) core.Stage {
 		s := New()
-		if deps != nil && deps.Logger != nil {
-			s.logger = deps.Logger.With("stage", StageID)
+		if deps != nil {
+			if deps.Logger != nil {
+				s.logger = deps.Logger.With("stage", StageID)
+			}
+			s.baseURL = deps.BaseURL
 		}
 		return s
 	}
@@ -103,6 +107,12 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 		}
 
 		entry := shared.ChannelToM3UEntry(ch, channelNum)
+
+		// Override URL with proxy stream URL so clients always use the proxy endpoint.
+		// The streaming endpoint decides at request time whether to redirect, proxy, or relay.
+		if s.baseURL != "" {
+			entry.URL = shared.BuildProxyStreamURL(s.baseURL, state.ProxyID, ch.ID)
+		}
 
 		if err := writer.WriteEntry(entry); err != nil {
 			state.AddError(fmt.Errorf("writing channel %s: %w", ch.ChannelName, err))

@@ -995,7 +995,8 @@ tasks:
           {{if .M3U_URL}}-m3u-url "{{.M3U_URL}}"{{end}} \
           {{if .EPG_URL}}-epg-url "{{.EPG_URL}}"{{end}} \
           {{if .CACHE_CHANNEL_LOGOS}}-cache-channel-logos{{end}} \
-          {{if .CACHE_PROGRAM_LOGOS}}-cache-program-logos{{end}}
+          {{if .CACHE_PROGRAM_LOGOS}}-cache-program-logos{{end}} \
+          -test-proxy-modes
 
   help:
     desc: Show all available tasks

@@ -420,6 +420,14 @@ func (m *jobMockProxyRepo) SetFilters(ctx context.Context, proxyID models.ULID, 
 	return nil
 }
 
+func (m *jobMockProxyRepo) GetBySourceID(ctx context.Context, sourceID models.ULID) ([]*models.StreamProxy, error) {
+	return nil, nil
+}
+
+func (m *jobMockProxyRepo) GetByEpgSourceID(ctx context.Context, epgSourceID models.ULID) ([]*models.StreamProxy, error) {
+	return nil, nil
+}
+
 // mockScheduler wraps the real scheduler for testing.
 type mockScheduler struct {
 	scheduleImmediateJob *models.Job
@@ -965,8 +973,8 @@ func TestJobService_WithScheduler(t *testing.T) {
 	assert.NotNil(t, result)
 	assert.Same(t, svc, result) // Should return same instance
 
-	// Now ValidateCron should work
-	err := svc.ValidateCron("* * * * *")
+	// Now ValidateCron should work (scheduler uses 6-field cron: second minute hour day-of-month month day-of-week)
+	err := svc.ValidateCron("0 * * * * *")
 	assert.NoError(t, err)
 
 	// Invalid cron should fail
