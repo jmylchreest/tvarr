@@ -7,6 +7,39 @@
 
 ## User Scenarios & Testing *(mandatory)*
 
+### User Story 0 - Fix H.264 Stream Corruption in Relay Mode (Priority: P0 - CRITICAL)
+
+As an administrator, I want relay streams to play correctly without H.264 decoding errors so that clients receive uncorrupted video without "non-existing PPS" errors, corrupt packets, or timestamp issues.
+
+**Why this priority**: This is a blocking bug. Current relay implementation produces corrupted MPEG-TS output with missing SPS/PPS NAL units, causing widespread playback failures. The errors observed include:
+- `h264: non-existing PPS 0 referenced` - SPS/PPS not transmitted
+- `mpegts: Packet corrupt` - MPEG-TS muxing issues
+- `DTS out of order` - Timestamp discontinuities
+- `Invalid video timestamp` - PTS/DTS corruption
+
+**Root Cause Analysis**: The FFmpeg command is missing critical bitstream filters and flags:
+1. Missing `-bsf:v h264_mp4toannexb` - Required to convert H.264 from AVCC format (length-prefixed NALUs) to Annex B format (start codes) for MPEG-TS
+2. Missing `-bsf:v dump_extra` - Required to re-insert SPS/PPS at keyframes, not just at stream start
+3. `-fflags +genpts` applied to output instead of input
+4. Missing `-flush_packets 1` for immediate packet output
+5. Missing `-muxdelay 0` for reduced live streaming latency
+
+**Independent Test**: Can be fully tested by:
+1. Starting a relay with any H.264 HLS source
+2. Playing the output with mpv/ffplay
+3. Verifying no "non-existing PPS" or "Packet corrupt" errors in player output
+4. Confirming video plays smoothly without artifacts
+
+**Acceptance Scenarios**:
+
+1. **Given** an H.264 HLS stream relayed through tvarr, **When** played with mpv, **Then** no "non-existing PPS" errors occur
+2. **Given** an H.264 stream with AVCC NAL format, **When** relayed to MPEG-TS, **Then** the output uses Annex B format with proper start codes
+3. **Given** a live relay session, **When** a client joins mid-stream, **Then** they receive SPS/PPS at the next keyframe and can decode video immediately
+4. **Given** any relay profile (copy or transcode), **When** outputting MPEG-TS, **Then** packets are not marked as corrupt and DTS values are in order
+5. **Given** a relay with copy mode, **When** streaming to MPEG-TS, **Then** the h264_mp4toannexb bitstream filter is applied automatically
+
+---
+
 ### User Story 1 - Add Custom FFmpeg Flags to Profiles (Priority: P1)
 
 As an administrator, I want to add custom FFmpeg command-line flags to relay profiles so that I can fine-tune transcoding behavior for specific use cases that aren't covered by the standard profile fields.
@@ -93,6 +126,12 @@ As an administrator, I want to preview the exact FFmpeg command that will be gen
 
 ### Edge Cases
 
+- What happens when an H.264 stream in AVCC format is relayed to MPEG-TS?
+  - System automatically applies h264_mp4toannexb bitstream filter to convert to Annex B format with proper start codes
+- What happens when a client joins mid-stream?
+  - Client receives SPS/PPS at the next keyframe due to dump_extra filter; frequent PAT/PMT aids decoder initialization
+- What happens when source timestamps are corrupt or discontinuous?
+  - System applies genpts+discardcorrupt on input and avoid_negative_ts on output to regenerate valid timestamps
 - What happens when custom flags conflict with structured settings?
   - Custom flags are appended last and can override structured settings
 - How does the system handle hardware acceleration failure mid-stream?
@@ -105,6 +144,18 @@ As an administrator, I want to preview the exact FFmpeg command that will be gen
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
+
+**Stream Reliability (P0 - CRITICAL)**
+
+- **FR-100**: System MUST apply `-bsf:v h264_mp4toannexb` bitstream filter when copying H.264 video to MPEG-TS output
+- **FR-101**: System MUST apply `-bsf:v dump_extra` or equivalent to ensure SPS/PPS NAL units are re-inserted at keyframes
+- **FR-102**: System MUST apply `-fflags +genpts+discardcorrupt` to INPUT (not output) for proper PTS generation
+- **FR-103**: System MUST apply `-flush_packets 1` for immediate packet output in live streaming
+- **FR-104**: System MUST apply `-muxdelay 0` to minimize muxing latency
+- **FR-105**: System MUST NOT use `-mpegts_copyts 1` with corrupt source timestamps; use `-avoid_negative_ts make_zero` instead
+- **FR-106**: System MUST detect H.264 codec and automatically apply appropriate bitstream filters based on output format
+- **FR-107**: System MUST support HEVC (H.265) streams with equivalent bitstream filters (`hevc_mp4toannexb`)
+- **FR-108**: System SHOULD prefer `-pat_period 0.1` for frequent PAT/PMT insertion to aid mid-stream joins
 
 **Profile Configuration**
 
@@ -155,6 +206,7 @@ As an administrator, I want to preview the exact FFmpeg command that will be gen
 
 ### Measurable Outcomes
 
+- **SC-000**: Relay streams produce zero "non-existing PPS" or "Packet corrupt" errors when played with mpv/ffplay (P0 CRITICAL)
 - **SC-001**: Administrators can configure custom FFmpeg flags and have them appear in the generated command within 1 minute of profile creation
 - **SC-002**: Hardware acceleration configuration results in measurable GPU utilization (>10%) during transcoding on supported hardware
 - **SC-003**: Profile testing provides pass/fail feedback within 30 seconds for typical streams
@@ -162,6 +214,7 @@ As an administrator, I want to preview the exact FFmpeg command that will be gen
 - **SC-005**: 90% of profile configuration changes take effect without requiring service restart
 - **SC-006**: FFmpeg errors are captured and displayed to administrators within 5 seconds of occurrence
 - **SC-007**: System detects available hardware acceleration within 10 seconds of startup
+- **SC-008**: Clients joining mid-stream can begin decoding video within 2 GOP intervals (typically <10 seconds)
 
 ## Assumptions
 

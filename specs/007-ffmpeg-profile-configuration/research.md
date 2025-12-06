@@ -6,12 +6,85 @@
 
 ## Research Objectives
 
-1. Determine best practices for FFmpeg flag injection safety
-2. Research hardware acceleration configuration patterns
-3. Investigate profile testing approaches for live streams
-4. Analyze existing relay profile implementation gaps
+1. **P0 CRITICAL**: Fix H.264 stream corruption in relay mode (missing SPS/PPS, corrupt packets)
+2. Determine best practices for FFmpeg flag injection safety
+3. Research hardware acceleration configuration patterns
+4. Investigate profile testing approaches for live streams
+5. Analyze existing relay profile implementation gaps
 
 ## Findings
+
+### R0: H.264 Stream Corruption Root Cause (P0 CRITICAL)
+
+**Observed Symptoms** (from user testing with mpv):
+```
+[ffmpeg/video] h264: non-existing PPS 0 referenced
+[ffmpeg/video] h264: no frame!
+[ffmpeg/demuxer] mpegts: Packet corrupt (stream = 0, dts = 18000)
+[ffmpeg/demuxer] mpegts: DTS 2512800 < 2516400 out of order
+Invalid video timestamp: 3.614333 -> 3.614333
+```
+
+**Root Cause**: The FFmpeg command in `session.go:runFFmpegPipeline()` is missing critical flags:
+
+**Current (Broken) Code**:
+```go
+builder := ffmpeg.NewCommandBuilder(binInfo.FFmpegPath).
+    InputArgs("-analyzeduration", "10000000").
+    InputArgs("-probesize", "10000000").
+    Input(inputURL)
+// ... codec settings ...
+builder.OutputFormat(string(s.Profile.OutputFormat)).
+    OutputArgs("-mpegts_copyts", "1").
+    OutputArgs("-avoid_negative_ts", "disabled").
+    OutputArgs("-fflags", "+genpts").  // WRONG: on output, not input
+    Output("pipe:1")
+```
+
+**Issues**:
+1. **Missing `-bsf:v h264_mp4toannexb`**: HLS/MP4 sources use AVCC format (length-prefixed NALUs). MPEG-TS requires Annex B format (start codes). Without this filter, the NAL unit headers are wrong.
+2. **Missing `-bsf:v dump_extra`**: SPS/PPS NAL units are only sent once at stream start. Late-joining clients never receive them. This filter re-inserts them at keyframes.
+3. **`-fflags +genpts` on wrong side**: Should be on INPUT to fix source timestamp issues, not output.
+4. **`-mpegts_copyts` with corrupt source**: Copies broken timestamps. Should regenerate them.
+5. **Missing `-flush_packets 1`**: Packets may be buffered, causing delays.
+
+**Correct FFmpeg Command Pattern**:
+```bash
+ffmpeg \
+  -fflags +genpts+discardcorrupt \
+  -analyzeduration 10000000 \
+  -probesize 10000000 \
+  -i "input.m3u8" \
+  -map 0:v:0 -map 0:a:0? \
+  -c:v copy \
+  -c:a copy \
+  -bsf:v h264_mp4toannexb \
+  -f mpegts \
+  -flush_packets 1 \
+  -muxdelay 0 \
+  -avoid_negative_ts make_zero \
+  -pat_period 0.1 \
+  pipe:1
+```
+
+**Key Fixes**:
+| Fix | Flag | Purpose |
+|-----|------|---------|
+| NAL format conversion | `-bsf:v h264_mp4toannexb` | Convert AVCC to Annex B |
+| SPS/PPS re-insertion | (automatic with annexb) | Include at keyframes |
+| Timestamp generation | `-fflags +genpts` on INPUT | Generate valid PTS |
+| Corrupt frame handling | `-fflags +discardcorrupt` | Drop bad frames |
+| Immediate output | `-flush_packets 1` | No buffering delay |
+| Mux delay | `-muxdelay 0` | Zero muxing delay |
+| Negative TS fix | `-avoid_negative_ts make_zero` | Fix timestamp wrap |
+| PAT/PMT frequency | `-pat_period 0.1` | 100ms for fast channel joins |
+
+**HEVC (H.265) Equivalent**:
+For HEVC streams, use `-bsf:v hevc_mp4toannexb` instead.
+
+**Decision**: Fix the FFmpeg command builder in session.go to apply these flags automatically based on codec detection.
+
+---
 
 ### R1: Existing RelayProfile Fields Analysis
 
@@ -228,6 +301,7 @@ type CommandPreview struct {
 
 | ID | Decision | Rationale |
 |----|----------|-----------|
+| **D0** | **Fix FFmpeg command with h264_mp4toannexb + proper flags (P0 CRITICAL)** | **Required to fix stream corruption - SPS/PPS missing, corrupt packets** |
 | D1 | Wire existing `InputOptions`/`OutputOptions`/`FilterComplex` fields | Fields already exist in model, just not connected |
 | D2 | Warning-only validation for custom flags | Allow advanced users to use edge cases |
 | D3 | Add `HWAccelOutputFormat`, `GpuIndex` fields | Enable proper GPU pipeline configuration |
