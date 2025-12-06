@@ -79,10 +79,52 @@ ffmpeg \
 | Negative TS fix | `-avoid_negative_ts make_zero` | Fix timestamp wrap |
 | PAT/PMT frequency | `-pat_period 0.1` | 100ms for fast channel joins |
 
-**HEVC (H.265) Equivalent**:
-For HEVC streams, use `-bsf:v hevc_mp4toannexb` instead.
+**Complete Codec-to-Bitstream-Filter Matrix**:
 
-**Decision**: Fix the FFmpeg command builder in session.go to apply these flags automatically based on codec detection.
+| Source Codec | Output Format | Video BSF | Audio BSF | Notes |
+|--------------|---------------|-----------|-----------|-------|
+| H.264 (any) | MPEG-TS | `h264_mp4toannexb` | - | Converts AVCC to Annex B |
+| H.264 (any) | HLS | `h264_mp4toannexb` | - | HLS uses MPEG-TS segments |
+| H.264 (any) | FLV | - | `aac_adtstoasc` | FLV uses AVCC natively |
+| H.264 (any) | MP4 | - | `aac_adtstoasc` | MP4 uses AVCC natively |
+| H.264 (any) | MKV | - | - | MKV handles both formats |
+| HEVC/H.265 (any) | MPEG-TS | `hevc_mp4toannexb` | - | Converts HVCC to Annex B |
+| HEVC/H.265 (any) | HLS | `hevc_mp4toannexb` | - | HLS uses MPEG-TS segments |
+| HEVC/H.265 (any) | FLV | - | - | Limited HEVC support in FLV |
+| HEVC/H.265 (any) | MP4 | - | `aac_adtstoasc` | MP4 uses HVCC natively |
+| VP9 | MPEG-TS | `vp9_superframe` | - | May need superframe for some sources |
+| VP9 | WebM | - | - | Native format |
+| AV1 | MPEG-TS | - | - | AV1 uses OBUs, no conversion needed |
+| AV1 | MP4 | - | - | Native support |
+
+**Hardware Encoder Codec Families**:
+
+| Encoder | Codec Family | BSF for MPEG-TS |
+|---------|--------------|-----------------|
+| `h264_nvenc` | H.264 | `h264_mp4toannexb` |
+| `h264_qsv` | H.264 | `h264_mp4toannexb` |
+| `h264_vaapi` | H.264 | `h264_mp4toannexb` |
+| `h264_videotoolbox` | H.264 | `h264_mp4toannexb` |
+| `hevc_nvenc` | HEVC | `hevc_mp4toannexb` |
+| `hevc_qsv` | HEVC | `hevc_mp4toannexb` |
+| `hevc_vaapi` | HEVC | `hevc_mp4toannexb` |
+| `hevc_videotoolbox` | HEVC | `hevc_mp4toannexb` |
+| `libx264` | H.264 | `h264_mp4toannexb` |
+| `libx265` | HEVC | `hevc_mp4toannexb` |
+| `libvpx-vp9` | VP9 | `vp9_superframe` (conditional) |
+| `libaom-av1` | AV1 | - |
+
+**Audio Codec Handling**:
+
+| Audio Codec | To MPEG-TS | To MP4/FLV | Notes |
+|-------------|------------|------------|-------|
+| AAC | Default (ADTS) | `aac_adtstoasc` | ADTS for TS, ASC for MP4 |
+| AC3 | Native | Native | Direct passthrough |
+| EAC3 | Native | Native | Direct passthrough |
+| MP3 | Native | Native | Direct passthrough |
+| Opus | Transcode to AAC | Native | Opus not in MPEG-TS spec |
+
+**Decision**: Fix the FFmpeg command builder in session.go to apply these flags automatically based on codec detection and output format.
 
 ---
 

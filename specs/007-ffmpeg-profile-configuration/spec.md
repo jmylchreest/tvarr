@@ -147,15 +147,47 @@ As an administrator, I want to preview the exact FFmpeg command that will be gen
 
 **Stream Reliability (P0 - CRITICAL)**
 
-- **FR-100**: System MUST apply `-bsf:v h264_mp4toannexb` bitstream filter when copying H.264 video to MPEG-TS output
-- **FR-101**: System MUST apply `-bsf:v dump_extra` or equivalent to ensure SPS/PPS NAL units are re-inserted at keyframes
-- **FR-102**: System MUST apply `-fflags +genpts+discardcorrupt` to INPUT (not output) for proper PTS generation
-- **FR-103**: System MUST apply `-flush_packets 1` for immediate packet output in live streaming
-- **FR-104**: System MUST apply `-muxdelay 0` to minimize muxing latency
-- **FR-105**: System MUST NOT use `-mpegts_copyts 1` with corrupt source timestamps; use `-avoid_negative_ts make_zero` instead
-- **FR-106**: System MUST detect H.264 codec and automatically apply appropriate bitstream filters based on output format
-- **FR-107**: System MUST support HEVC (H.265) streams with equivalent bitstream filters (`hevc_mp4toannexb`)
-- **FR-108**: System SHOULD prefer `-pat_period 0.1` for frequent PAT/PMT insertion to aid mid-stream joins
+*Core FFmpeg Flags (apply to ALL profiles):*
+
+- **FR-100**: System MUST apply `-fflags +genpts+discardcorrupt` to INPUT (not output) for proper PTS generation
+- **FR-101**: System MUST apply `-flush_packets 1` for immediate packet output in live streaming
+- **FR-102**: System MUST apply `-muxdelay 0` to minimize muxing latency
+- **FR-103**: System MUST NOT use `-mpegts_copyts 1` with corrupt source timestamps; use `-avoid_negative_ts make_zero` instead
+- **FR-104**: System SHOULD prefer `-pat_period 0.1` for frequent PAT/PMT insertion to aid mid-stream joins
+
+*Codec-Specific Bitstream Filters (for MPEG-TS output):*
+
+- **FR-110**: System MUST apply `-bsf:v h264_mp4toannexb` when H.264 video (copy or encode) outputs to MPEG-TS
+- **FR-111**: System MUST apply `-bsf:v hevc_mp4toannexb` when H.265/HEVC video (copy or encode) outputs to MPEG-TS
+- **FR-112**: System MUST apply `-bsf:v vp9_superframe` when VP9 video is used with certain container transitions
+- **FR-113**: System MUST handle AV1 streams correctly (AV1 uses OBUs, no annexb conversion needed for MPEG-TS)
+- **FR-114**: System MUST detect source codec (not just profile codec) and apply appropriate bitstream filter when in copy mode
+
+*Hardware Encoder Codec Mapping:*
+
+- **FR-120**: System MUST apply h264_mp4toannexb for h264_nvenc, h264_qsv, h264_vaapi outputs to MPEG-TS
+- **FR-121**: System MUST apply hevc_mp4toannexb for hevc_nvenc, hevc_qsv, hevc_vaapi outputs to MPEG-TS
+
+*Audio Codec Handling:*
+
+- **FR-130**: System MUST ensure AAC audio uses ADTS headers when outputting to MPEG-TS (FFmpeg default)
+- **FR-131**: System SHOULD apply `-bsf:a aac_adtstoasc` when converting FROM MPEG-TS TO MP4/FLV containers
+- **FR-132**: System MUST handle AC3/EAC3 passthrough correctly for MPEG-TS output
+- **FR-133**: System MUST handle Opus audio appropriately (not natively supported in MPEG-TS, may require transcoding)
+
+*Output Format-Specific Requirements:*
+
+- **FR-140**: For MPEG-TS output: Apply annexb filters, ADTS audio, PAT/PMT settings
+- **FR-141**: For HLS output: Apply annexb filters, segment settings, playlist management
+- **FR-142**: For FLV output: Apply aac_adtstoasc for AAC audio, no annexb needed (FLV uses AVCC)
+- **FR-143**: For MP4 output: Apply aac_adtstoasc for AAC audio, no annexb needed (MP4 uses AVCC)
+- **FR-144**: For Matroska output: No bitstream filters typically needed (MKV handles both formats)
+
+*Automatic Codec Detection:*
+
+- **FR-150**: System MUST probe source stream to detect actual codec when profile uses "copy" mode
+- **FR-151**: System MUST select appropriate bitstream filter based on detected codec AND output format combination
+- **FR-152**: System MUST log applied bitstream filters for debugging purposes
 
 **Profile Configuration**
 
