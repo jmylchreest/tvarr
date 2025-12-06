@@ -87,8 +87,17 @@ type CircuitBreakerConfig struct {
 // DefaultCircuitBreakerConfig returns a config with sensible defaults.
 func DefaultCircuitBreakerConfig() CircuitBreakerConfig {
 	return CircuitBreakerConfig{
-		Global:   DefaultProfileConfig(),
-		Profiles: make(map[string]CircuitBreakerProfileConfig),
+		Global: DefaultProfileConfig(),
+		Profiles: map[string]CircuitBreakerProfileConfig{
+			// Logo service profile: 404s are acceptable (missing logos are not failures)
+			// and higher threshold since logo fetches can have many transient failures
+			"logos": {
+				FailureThreshold:      100,
+				ResetTimeout:          DefaultCircuitTimeout,
+				HalfOpenMax:           DefaultCircuitHalfOpenMax,
+				AcceptableStatusCodes: MustParseStatusCodes("200-299,404"),
+			},
+		},
 	}
 }
 

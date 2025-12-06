@@ -551,11 +551,16 @@ type CircuitBreaker struct {
 	successes       int // consecutive successes in half-open
 	halfOpenCount   int
 	lastFailureTime time.Time
+	lastSuccessTime time.Time
 
 	// Total counters (never reset, for stats/monitoring)
 	totalRequests  int64
 	totalSuccesses int64
 	totalFailures  int64
+
+	// Enhanced stats tracking
+	errorCounts  ErrorCategoryCount
+	stateTracker *StateTracker
 
 	// config holds the circuit breaker configuration.
 	// Use atomic operations via getConfig/setConfig for thread safety.
@@ -572,8 +577,9 @@ func NewCircuitBreaker(threshold int, timeout time.Duration, halfOpenMax int) *C
 		HalfOpenMax:      halfOpenMax,
 	}
 	return &CircuitBreaker{
-		state:  CircuitClosed,
-		config: cfg,
+		state:        CircuitClosed,
+		config:       cfg,
+		stateTracker: NewStateTracker(),
 	}
 }
 
@@ -585,8 +591,9 @@ func NewCircuitBreakerWithConfig(cfg *CircuitBreakerProfileConfig) *CircuitBreak
 		cfg = &defaultCfg
 	}
 	return &CircuitBreaker{
-		state:  CircuitClosed,
-		config: cfg,
+		state:        CircuitClosed,
+		config:       cfg,
+		stateTracker: NewStateTracker(),
 	}
 }
 
@@ -631,8 +638,13 @@ func (cb *CircuitBreaker) Allow() bool {
 	case CircuitOpen:
 		// Check if timeout has elapsed
 		if time.Since(cb.lastFailureTime) >= cfg.ResetTimeout {
+			oldState := cb.state
 			cb.state = CircuitHalfOpen
 			cb.halfOpenCount = 1 // Count this first request
+			// Record transition
+			if cb.stateTracker != nil {
+				cb.stateTracker.RecordTransition(oldState, cb.state, TransitionReasonTimeoutRecovery, cb.failures)
+			}
 			return true
 		}
 		return false
@@ -658,17 +670,29 @@ func (cb *CircuitBreaker) RecordSuccess() {
 	cb.successes++
 	cb.totalRequests++
 	cb.totalSuccesses++
+	cb.lastSuccessTime = time.Now()
+	cb.errorCounts.Increment(ErrorCategorySuccess2xx)
 
 	if cb.state == CircuitHalfOpen {
 		// Reset to closed after success in half-open
+		oldState := cb.state
 		cb.state = CircuitClosed
 		cb.failures = 0
 		cb.successes = 0
+		// Record transition
+		if cb.stateTracker != nil {
+			cb.stateTracker.RecordTransition(oldState, cb.state, TransitionReasonProbeSuccess, cb.successes)
+		}
 	}
 }
 
 // RecordFailure records a failed request.
 func (cb *CircuitBreaker) RecordFailure() {
+	cb.RecordFailureWithCategory(ErrorCategoryServerError5xx)
+}
+
+// RecordFailureWithCategory records a failed request with a specific error category.
+func (cb *CircuitBreaker) RecordFailureWithCategory(category ErrorCategory) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
@@ -676,6 +700,7 @@ func (cb *CircuitBreaker) RecordFailure() {
 	cb.lastFailureTime = time.Now()
 	cb.totalRequests++
 	cb.totalFailures++
+	cb.errorCounts.Increment(category)
 
 	cfg := cb.getConfig()
 	threshold := DefaultCircuitThreshold
@@ -686,12 +711,22 @@ func (cb *CircuitBreaker) RecordFailure() {
 	switch cb.state {
 	case CircuitClosed:
 		if cb.failures >= threshold {
+			oldState := cb.state
 			cb.state = CircuitOpen
+			// Record transition
+			if cb.stateTracker != nil {
+				cb.stateTracker.RecordTransition(oldState, cb.state, TransitionReasonThresholdExceeded, cb.failures)
+			}
 		}
 
 	case CircuitHalfOpen:
 		// Any failure in half-open returns to open
+		oldState := cb.state
 		cb.state = CircuitOpen
+		// Record transition
+		if cb.stateTracker != nil {
+			cb.stateTracker.RecordTransition(oldState, cb.state, TransitionReasonProbeFailure, cb.failures)
+		}
 	}
 }
 
@@ -707,10 +742,16 @@ func (cb *CircuitBreaker) Reset() {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
+	oldState := cb.state
 	cb.state = CircuitClosed
 	cb.failures = 0
 	cb.successes = 0
 	cb.halfOpenCount = 0
+
+	// Record transition if state changed
+	if oldState != CircuitClosed && cb.stateTracker != nil {
+		cb.stateTracker.RecordTransition(oldState, cb.state, TransitionReasonManualReset, 0)
+	}
 }
 
 // Failures returns the current failure count.
@@ -756,4 +797,46 @@ func (cb *CircuitBreaker) Stats() CircuitBreakerStats {
 		LastFailure:         cb.lastFailureTime,
 		Config:              cb.Config(),
 	}
+}
+
+// EnhancedStats returns enhanced statistics for this circuit breaker.
+func (cb *CircuitBreaker) EnhancedStats(name string) EnhancedCircuitBreakerStats {
+	cb.mu.RLock()
+	defer cb.mu.RUnlock()
+
+	cfg := cb.Config()
+
+	stats := EnhancedCircuitBreakerStats{
+		Name:                 name,
+		State:                cb.state,
+		ConsecutiveFailures:  cb.failures,
+		ConsecutiveSuccesses: cb.successes,
+		TotalRequests:        cb.totalRequests,
+		TotalSuccesses:       cb.totalSuccesses,
+		TotalFailures:        cb.totalFailures,
+		LastFailure:          cb.lastFailureTime,
+		LastSuccess:          cb.lastSuccessTime,
+		Config:               cfg,
+		ErrorCounts:          cb.errorCounts.Clone(),
+	}
+
+	// Calculate failure rate
+	if stats.TotalRequests > 0 {
+		stats.FailureRate = float64(stats.TotalFailures) / float64(stats.TotalRequests) * 100
+	}
+
+	// Get state tracking info
+	if cb.stateTracker != nil {
+		stats.StateEnteredAt = cb.stateTracker.GetStateEnteredAt()
+		stats.StateDurationMs = cb.stateTracker.GetStateDurationMs()
+		stats.StateDurations = cb.stateTracker.GetDurationSummary()
+		stats.Transitions = cb.stateTracker.GetTransitions()
+	}
+
+	// Calculate next half-open time when circuit is open
+	if cb.state == CircuitOpen && !cb.lastFailureTime.IsZero() {
+		stats.NextHalfOpenAt = cb.lastFailureTime.Add(cfg.ResetTimeout)
+	}
+
+	return stats
 }

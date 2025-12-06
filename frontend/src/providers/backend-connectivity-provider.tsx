@@ -53,12 +53,12 @@ export function BackendConnectivityProvider({ children }: BackendConnectivityPro
       // Simple logging without feature flag dependency to prevent circular dependency
       Debug.log('[BackendConnectivity] Checking connectivity to:', backendUrl);
 
-      // Use the /live endpoint as it's a simple health check
+      // Use the /livez endpoint for lightweight liveness checks (K8s-aligned naming)
       const controller = new AbortController();
       activeRequestRef.current = controller;
       const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 
-      const response = await fetch(`${backendUrl}/live`, {
+      const response = await fetch(`${backendUrl}/livez`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

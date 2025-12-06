@@ -239,6 +239,30 @@ func (m *CircuitBreakerManager) GetAllStats() map[string]CircuitBreakerStats {
 	return stats
 }
 
+// GetAllEnhancedStats returns enhanced statistics for all active circuit breakers.
+func (m *CircuitBreakerManager) GetAllEnhancedStats() map[string]EnhancedCircuitBreakerStats {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	stats := make(map[string]EnhancedCircuitBreakerStats, len(m.breakers))
+	for name, breaker := range m.breakers {
+		stats[name] = breaker.EnhancedStats(name)
+	}
+	return stats
+}
+
+// GetEnhancedStats returns enhanced statistics for a specific circuit breaker.
+func (m *CircuitBreakerManager) GetEnhancedStats(name string) (EnhancedCircuitBreakerStats, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	breaker, ok := m.breakers[name]
+	if !ok {
+		return EnhancedCircuitBreakerStats{}, false
+	}
+	return breaker.EnhancedStats(name), true
+}
+
 // ResetBreaker resets a specific circuit breaker to closed state.
 func (m *CircuitBreakerManager) ResetBreaker(name string) bool {
 	m.mu.RLock()

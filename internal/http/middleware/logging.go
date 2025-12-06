@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/jmylchreest/tvarr/internal/observability"
 )
 
 // responseWriter wraps http.ResponseWriter to capture the status code.
@@ -42,6 +44,7 @@ func (rw *responseWriter) Unwrap() http.ResponseWriter {
 }
 
 // NewLoggingMiddleware creates a logging middleware with the given logger.
+// Respects the enable_request_logging setting - when disabled, only logs errors.
 func NewLoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -49,6 +52,11 @@ func NewLoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 
 			wrapped := wrapResponseWriter(w)
 			next.ServeHTTP(wrapped, r)
+
+			// Skip logging if request logging is disabled and this is not an error
+			if !observability.IsRequestLoggingEnabled() && wrapped.status < 400 {
+				return
+			}
 
 			duration := time.Since(start)
 

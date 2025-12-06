@@ -758,6 +758,21 @@ export interface StartupConfigResponse {
   timestamp: string;
 }
 
+// Config Meta and Persist Types
+export interface ConfigMeta {
+  config_path?: string;
+  can_persist: boolean;
+  last_modified?: string;
+  source: 'file' | 'env' | 'defaults';
+}
+
+export interface ConfigPersistResponse {
+  success: boolean;
+  message: string;
+  path?: string;
+  sections?: string[];
+}
+
 // Expression Editor Types
 export interface ExpressionField {
   name: string;
