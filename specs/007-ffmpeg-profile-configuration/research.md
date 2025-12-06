@@ -1,0 +1,242 @@
+# Research: FFmpeg Profile Configuration
+
+**Feature**: FFmpeg Profile Configuration
+**Branch**: `007-ffmpeg-profile-configuration`
+**Date**: 2025-12-06
+
+## Research Objectives
+
+1. Determine best practices for FFmpeg flag injection safety
+2. Research hardware acceleration configuration patterns
+3. Investigate profile testing approaches for live streams
+4. Analyze existing relay profile implementation gaps
+
+## Findings
+
+### R1: Existing RelayProfile Fields Analysis
+
+**Current Model Fields (internal/models/relay_profile.go)**:
+
+```go
+// Already exists but NOT wired to FFmpeg command builder:
+InputOptions  string `gorm:"size:1000" json:"input_options,omitempty"`
+OutputOptions string `gorm:"size:1000" json:"output_options,omitempty"`
+FilterComplex string `gorm:"size:2000" json:"filter_complex,omitempty"`
+
+// Hardware acceleration (exists):
+HWAccel       HWAccelType `gorm:"size:50;default:'none'" json:"hw_accel"`
+HWAccelDevice string      `gorm:"size:100" json:"hw_accel_device,omitempty"`
+```
+
+**Gap Analysis**:
+- `InputOptions`, `OutputOptions`, `FilterComplex` fields exist but are NOT applied in `session.go:runFFmpegPipeline()`
+- No validation for these fields in `RelayProfile.Validate()`
+- No frontend UI exposes these fields
+- Hardware acceleration options are limited (no decoder-specific options)
+
+**Decision**: Wire existing fields into command builder, add validation, extend HW accel options
+
+### R2: FFmpeg Flag Injection Prevention
+
+**Attack Vectors**:
+1. Shell metacharacter injection (`;`, `|`, `&&`, `$()`)
+2. File path traversal via `-i` overwrite
+3. Command substitution via backticks
+
+**Mitigations (Best Practices)**:
+1. **Never use shell execution** - Use `exec.Command()` directly (already done in tvarr)
+2. **Validate flag patterns** - Must start with `-` or `--`
+3. **Blocklist dangerous flags** - `-i`, `-y`, `-filter_script`, etc.
+4. **Quote validation** - Balanced quotes only
+5. **No environment variable expansion** - Reject `$VAR` patterns
+
+**Validation Regex Patterns**:
+```go
+// Dangerous patterns to reject
+dangerousPatterns := []string{
+    `\$\(`,           // Command substitution $(...)
+    "`",              // Backtick substitution
+    `\$\{`,           // Variable expansion ${...}
+    `\$[A-Za-z_]`,    // Variable reference $VAR
+    `;`,              // Command separator
+    `\|(?!\|)`,       // Pipe (but allow ||)
+    `&&`,             // Command chaining
+    `>>?`,            // Redirection
+    `<`,              // Input redirection
+}
+
+// Flags that should never be in custom options
+blockedFlags := []string{
+    "-i",             // Input specification (controlled separately)
+    "-y",             // Overwrite output (controlled separately)
+    "-n",             // Never overwrite
+    "-filter_script", // Could load arbitrary script files
+    "-f concat",      // Concat demuxer security risk
+    "-protocol_whitelist", // Could enable dangerous protocols
+}
+```
+
+**Decision**: Implement validation service with warning-only mode for advanced users
+
+### R3: Hardware Acceleration Configuration Patterns
+
+**FFmpeg Hardware Acceleration Stack**:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Input Stream                          │
+└─────────────────────────┬───────────────────────────────┘
+                          │
+              ┌───────────▼───────────┐
+              │   Hardware Decoder    │ (-hwaccel, -c:v xxx_cuvid)
+              │   NVDEC/QSV/VAAPI     │
+              └───────────┬───────────┘
+                          │
+              ┌───────────▼───────────┐
+              │   GPU Memory Format   │ (-hwaccel_output_format)
+              │   cuda/qsv/vaapi      │
+              └───────────┬───────────┘
+                          │
+              ┌───────────▼───────────┐
+              │   Video Filters       │ (scale_cuda, overlay_cuda)
+              │   (GPU-accelerated)   │
+              └───────────┬───────────┘
+                          │
+              ┌───────────▼───────────┐
+              │   Hardware Encoder    │ (-c:v h264_nvenc)
+              │   NVENC/QSV/VAAPI     │
+              └───────────┬───────────┘
+                          │
+              ┌───────────▼───────────┐
+              │    Output Stream      │
+              └───────────────────────┘
+```
+
+**New Fields Needed**:
+
+| Field | Type | Description | Example |
+|-------|------|-------------|---------|
+| `HWAccelOutputFormat` | string | Memory format for hwaccel | `cuda`, `qsv`, `vaapi` |
+| `HWAccelDecoderCodec` | string | Hardware decoder codec | `h264_cuvid`, `hevc_qsv` |
+| `HWAccelExtraOptions` | string | Additional hwaccel options | `-extra_hw_frames 10` |
+| `GpuIndex` | int | GPU device index | `0`, `1` |
+
+**Platform-Specific Considerations**:
+
+| Platform | Acceleration | Device Path | Init Options |
+|----------|--------------|-------------|--------------|
+| NVIDIA | CUDA/NVDEC | GPU index (0,1) | `-hwaccel cuda -hwaccel_device 0` |
+| Intel | QSV | `/dev/dri/renderD128` | `-init_hw_device qsv=hw -filter_hw_device hw` |
+| AMD/Intel Linux | VAAPI | `/dev/dri/renderD128` | `-vaapi_device /dev/dri/renderD128 -hwaccel vaapi` |
+| macOS | VideoToolbox | N/A | `-hwaccel videotoolbox` |
+
+**Decision**: Add `HWAccelOutputFormat`, `GpuIndex` fields; use `InputOptions` for advanced decoder options
+
+### R4: Profile Testing Strategy
+
+**Testing Approach**:
+
+1. **Quick Validation Test** (Default):
+   - Duration: 5 seconds of transcoding
+   - Input: User-provided test stream URL
+   - Output: `/dev/null` (discard)
+   - Capture: stderr for FFmpeg diagnostics
+   - Parse: Frame count, FPS, bitrate, codec detection
+
+2. **Test Result Structure**:
+```go
+type ProfileTestResult struct {
+    Success          bool            `json:"success"`
+    Duration         time.Duration   `json:"duration"`
+    FramesProcessed  int64           `json:"frames_processed"`
+    FPS              float64         `json:"fps"`
+    DetectedCodecs   []string        `json:"detected_codecs"`
+    HWAccelActive    bool            `json:"hw_accel_active"`
+    HWAccelDevice    string          `json:"hw_accel_device,omitempty"`
+    Warnings         []string        `json:"warnings,omitempty"`
+    Errors           []string        `json:"errors,omitempty"`
+    FFmpegOutput     string          `json:"ffmpeg_output,omitempty"`
+    Suggestions      []string        `json:"suggestions,omitempty"`
+    CommandExecuted  string          `json:"command_executed"`
+}
+```
+
+3. **Hardware Acceleration Verification**:
+   - Parse FFmpeg output for device initialization messages
+   - Check for encoder/decoder names containing platform suffix (_nvenc, _qsv, _vaapi)
+   - Verify no fallback warnings in output
+
+4. **Common Error Patterns & Suggestions**:
+
+| Error Pattern | Suggestion |
+|---------------|------------|
+| `NVENC session cap exceeded` | Reduce concurrent encoding sessions or use consumer GPU |
+| `Cannot load libcuda.so` | NVIDIA drivers not installed or not in PATH |
+| `No VA display` | VAAPI not available - check /dev/dri permissions |
+| `decoder (h264) not found` | Install FFmpeg with codec support |
+| `Connection refused` | Stream URL not accessible - check network |
+| `Invalid data found` | Stream format not recognized - try different analyzer settings |
+
+**Decision**: Implement test endpoint with 30s timeout, structured results, and suggestions
+
+### R5: Command Preview Implementation
+
+**Approach**:
+- Use existing `CommandBuilder.Build().String()` method
+- Generate preview without executing
+- Include placeholder for stream URL: `{{STREAM_URL}}`
+
+**Preview Response Structure**:
+```go
+type CommandPreview struct {
+    Command     string   `json:"command"`
+    Arguments   []string `json:"arguments"`
+    Environment []string `json:"environment,omitempty"`
+    Warnings    []string `json:"warnings,omitempty"`
+}
+```
+
+**Decision**: Add preview endpoint to relay profile handler, reuse CommandBuilder
+
+### R6: Existing Code Integration Points
+
+**Files to Modify**:
+
+1. **internal/models/relay_profile.go**:
+   - Add new HW accel fields
+   - Add validation logic for custom flags
+
+2. **internal/ffmpeg/wrapper.go**:
+   - Extend `CommandBuilder` with custom options methods
+   - Add methods for HW accel output format
+
+3. **internal/relay/session.go**:
+   - Wire `InputOptions`, `OutputOptions`, `FilterComplex` into FFmpeg command
+   - Apply HW accel configuration properly
+
+4. **internal/http/handlers/relay_profile.go** (or create new):
+   - Add test profile endpoint
+   - Add command preview endpoint
+
+5. **Frontend components**:
+   - Profile form with custom flags fields
+   - Hardware acceleration configuration UI
+   - Test dialog with results
+   - Command preview with copy button
+
+## Summary of Decisions
+
+| ID | Decision | Rationale |
+|----|----------|-----------|
+| D1 | Wire existing `InputOptions`/`OutputOptions`/`FilterComplex` fields | Fields already exist in model, just not connected |
+| D2 | Warning-only validation for custom flags | Allow advanced users to use edge cases |
+| D3 | Add `HWAccelOutputFormat`, `GpuIndex` fields | Enable proper GPU pipeline configuration |
+| D4 | 30s timeout for profile testing | Balance between thorough test and responsiveness |
+| D5 | Blocklist dangerous flags | Security without breaking legitimate use cases |
+| D6 | Structured test results with suggestions | Improve user experience for debugging |
+
+## Next Steps
+
+1. Create data-model.md with extended RelayProfile schema
+2. Create OpenAPI contracts for new endpoints
+3. Create quickstart.md for testing the feature
