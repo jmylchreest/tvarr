@@ -737,6 +737,27 @@ export interface SettingsResponse {
   applied_changes: string[];
 }
 
+// Startup Config Types (read-only)
+export interface StartupConfigSetting {
+  key: string;
+  value: string | number | boolean;
+  type: string;
+  description: string;
+}
+
+export interface StartupConfigSection {
+  name: string;
+  description: string;
+  settings: StartupConfigSetting[];
+}
+
+export interface StartupConfigResponse {
+  success: boolean;
+  message: string;
+  sections: StartupConfigSection[];
+  timestamp: string;
+}
+
 // Expression Editor Types
 export interface ExpressionField {
   name: string;

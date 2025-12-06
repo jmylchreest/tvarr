@@ -1542,7 +1542,7 @@ export default function EpgPage() {
                             <div className="flex">
                               {(() => {
                                 const programWidths = [80, 120, 160, 180, 240];
-                                let remainingWidth = 240 * 6;
+                                const remainingWidth = 240 * 6;
                                 const programs: number[] = [];
                                 let totalUsed = 0;
 

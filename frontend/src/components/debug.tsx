@@ -83,7 +83,8 @@ interface CircuitBreakerProfile {
   operation_timeout: string;
   reset_timeout: string;
   success_threshold: number;
-  acceptable_status_codes: string[];
+  half_open_max: number;
+  acceptable_status_codes: string; // Backend returns as string like "200-299"
 }
 
 interface CircuitBreakerConfig {
@@ -961,7 +962,7 @@ export function Debug() {
                                           </div>
                                           <div>
                                             {config.operation_timeout} op • {config.reset_timeout}{' '}
-                                            reset • {config.acceptable_status_codes.join(', ')}
+                                            reset • {config.acceptable_status_codes || 'default'}
                                           </div>
                                         </span>
                                       </TooltipTrigger>
@@ -987,7 +988,7 @@ export function Debug() {
                                           </div>
                                           <div>
                                             <strong>Acceptable Codes:</strong>{' '}
-                                            {config.acceptable_status_codes.join(', ')}
+                                            {config.acceptable_status_codes || 'default'}
                                           </div>
                                         </div>
                                       </TooltipContent>

@@ -200,7 +200,7 @@ function MultiSelectModal({
           </SheetDescription>
         </SheetHeader>
 
-        <div className="space-y-4">
+        <div className="space-y-4 px-4">
           {loading ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin" />
@@ -371,11 +371,7 @@ function AssignedItemsList({
       {itemsArray.length === 0 ? (
         <Card className="border-dashed border-2">
           <CardContent className="flex flex-col items-center justify-center py-6">
-            <p className="text-xs text-muted-foreground mb-2">No {title.toLowerCase()} added</p>
-            <Button type="button" variant="ghost" size="sm" onClick={onAddItems} className="gap-2">
-              <Plus className="h-4 w-4" />
-              Add {title}
-            </Button>
+            <p className="text-xs text-muted-foreground">No {title.toLowerCase()} added</p>
           </CardContent>
         </Card>
       ) : (

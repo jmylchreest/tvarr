@@ -6,7 +6,7 @@ require (
 	github.com/andybalholm/brotli v1.2.0
 	github.com/asticode/go-astits v1.14.0
 	github.com/bluenviron/gohlslib/v2 v2.2.4
-	github.com/bluenviron/mediacommon/v2 v2.5.1
+	github.com/bluenviron/mediacommon/v2 v2.5.2
 	github.com/danielgtaylor/huma/v2 v2.34.1
 	github.com/dsnet/compress v0.0.1
 	github.com/go-chi/chi/v5 v5.2.3
@@ -29,7 +29,7 @@ require (
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/abema/go-mp4 v1.4.1 // indirect
-	github.com/asticode/go-astikit v0.30.0 // indirect
+	github.com/asticode/go-astikit v0.57.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect

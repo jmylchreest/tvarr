@@ -111,7 +111,7 @@ export const SimpleTsPlayer: React.FC<SimpleTsPlayerProps> = memo(
     const log = useCallback(
       (...a: unknown[]) => {
         if (debug) {
-          // eslint-disable-next-line no-console
+           
           console.debug('[SimpleTsPlayer]', ...a);
         }
       },

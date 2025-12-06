@@ -232,9 +232,26 @@ func (s *RelaySession) runFFmpegPipeline() error {
 		inputURL = s.Classification.SelectedMediaPlaylist
 	}
 
+	// Build FFmpeg command with proper settings for live streaming
+	// Based on m3u-proxy's proven approach:
+	// 1. Use analyzeduration and probesize for proper stream analysis (finds SPS/PPS)
+	// 2. Do NOT use -re flag (causes timing issues and missing NAL units)
+	// 3. Use explicit stream mapping
+	// 4. Use proper MPEG-TS output settings
 	builder := ffmpeg.NewCommandBuilder(binInfo.FFmpegPath).
-		Input(inputURL).
-		InputArgs("-re") // Read at native frame rate
+		// Input analysis settings - give FFmpeg time to find stream parameters including SPS/PPS
+		InputArgs("-analyzeduration", "10000000"). // 10 seconds
+		InputArgs("-probesize", "10000000").       // 10MB
+		Input(inputURL)
+
+	// Apply hardware acceleration before codec settings
+	if s.Profile != nil && s.Profile.HWAccel != models.HWAccelNone {
+		builder.HWAccel(string(s.Profile.HWAccel))
+	}
+
+	// Explicit stream mapping for first video and audio streams
+	builder.OutputArgs("-map", "0:v:0").
+		OutputArgs("-map", "0:a:0?") // ? makes audio optional (won't fail if no audio)
 
 	// Apply profile settings
 	if s.Profile != nil {
@@ -267,17 +284,17 @@ func (s *RelaySession) runFFmpegPipeline() error {
 				builder.AudioChannels(s.Profile.AudioChannels)
 			}
 		}
-
-		// Apply hardware acceleration
-		if s.Profile.HWAccel != models.HWAccelNone {
-			builder.HWAccel(string(s.Profile.HWAccel))
-		}
 	}
 
-	// Output to pipe
+	// MPEG-TS output settings for proper timestamp handling
 	builder.OutputFormat(string(s.Profile.OutputFormat)).
-		Output("pipe:1").
-		OutputArgs("-fflags", "+genpts")
+		OutputArgs("-mpegts_copyts", "1").          // Preserve timestamps
+		OutputArgs("-avoid_negative_ts", "disabled").
+		OutputArgs("-mpegts_start_pid", "256").     // Start PID for streams
+		OutputArgs("-mpegts_pmt_start_pid", "4096"). // Different PID for PMT
+		OutputArgs("-fflags", "+genpts").
+		OutputArgs("-y"). // Overwrite output
+		Output("pipe:1")
 
 	// Build and run FFmpeg, write to buffer
 	cmd := builder.Build()

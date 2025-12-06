@@ -299,21 +299,21 @@ test.describe('Logos Search Focus Investigation', () => {
     await gridViewButton.click();
     await page.waitForTimeout(200);
 
-    let focusState1 = await isFocused(searchInput);
+    const focusState1 = await isFocused(searchInput);
     console.log(`[TEST] Focus after switching to grid view: ${focusState1}`);
 
     // Switch to list view during search
     await listViewButton.click();
     await page.waitForTimeout(200);
 
-    let focusState2 = await isFocused(searchInput);
+    const focusState2 = await isFocused(searchInput);
     console.log(`[TEST] Focus after switching to list view: ${focusState2}`);
 
     // Switch to table view during search
     await tableViewButton.click();
     await page.waitForTimeout(200);
 
-    let focusState3 = await isFocused(searchInput);
+    const focusState3 = await isFocused(searchInput);
     console.log(`[TEST] Focus after switching to table view: ${focusState3}`);
 
     // Final wait for debounced search

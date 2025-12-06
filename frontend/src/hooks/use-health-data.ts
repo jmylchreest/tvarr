@@ -14,11 +14,9 @@ export function useHealthData(refreshInterval: number = 30000) {
         const backendUrl = getBackendUrl();
         const response = await fetch(`${backendUrl}/health`);
         if (response.ok) {
-          // The health endpoint returns data wrapped in ApiResponse format
-          const apiResponse = await response.json();
-          if (apiResponse.success && apiResponse.data) {
-            setHealthData(apiResponse.data);
-          }
+          // The health endpoint returns HealthResponse directly (not wrapped)
+          const healthResponse: HealthData = await response.json();
+          setHealthData(healthResponse);
         }
       } catch (error) {
         console.warn('Failed to fetch health data from health endpoint:', error);

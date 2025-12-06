@@ -7,6 +7,7 @@ import (
 
 	"github.com/jmylchreest/tvarr/internal/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // epgProgramRepo implements EpgProgramRepository using GORM.
@@ -28,18 +29,32 @@ func (r *epgProgramRepo) Create(ctx context.Context, program *models.EpgProgram)
 }
 
 // CreateBatch creates multiple programs in a single batch.
+// Uses UPSERT to handle duplicates: when a program with the same (source_id, channel_id, start)
+// already exists, it will be updated with the new data instead of causing a constraint error.
 func (r *epgProgramRepo) CreateBatch(ctx context.Context, programs []*models.EpgProgram) error {
 	if len(programs) == 0 {
 		return nil
 	}
 
-	if err := r.db.WithContext(ctx).Create(programs).Error; err != nil {
+	// Use ON CONFLICT DO UPDATE to handle duplicates in XMLTV files.
+	// The unique constraint is on (source_id, channel_id, start).
+	// When a duplicate is found, update all non-key fields with the new values.
+	if err := r.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "source_id"}, {Name: "channel_id"}, {Name: "start"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"stop", "title", "sub_title", "description", "category",
+			"icon", "episode_num", "rating", "language", "credits",
+			"is_new", "is_premiere", "updated_at",
+		}),
+	}).Create(programs).Error; err != nil {
 		return fmt.Errorf("creating EPG program batch: %w", err)
 	}
 	return nil
 }
 
 // CreateInBatches creates multiple programs in smaller batches for memory efficiency.
+// Uses UPSERT to handle duplicates: when a program with the same (source_id, channel_id, start)
+// already exists, it will be updated with the new data instead of causing a constraint error.
 func (r *epgProgramRepo) CreateInBatches(ctx context.Context, programs []*models.EpgProgram, batchSize int) error {
 	if len(programs) == 0 {
 		return nil
@@ -48,7 +63,15 @@ func (r *epgProgramRepo) CreateInBatches(ctx context.Context, programs []*models
 		batchSize = 1000
 	}
 
-	if err := r.db.WithContext(ctx).CreateInBatches(programs, batchSize).Error; err != nil {
+	// Use ON CONFLICT DO UPDATE to handle duplicates in XMLTV files.
+	if err := r.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "source_id"}, {Name: "channel_id"}, {Name: "start"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"stop", "title", "sub_title", "description", "category",
+			"icon", "episode_num", "rating", "language", "credits",
+			"is_new", "is_premiere", "updated_at",
+		}),
+	}).CreateInBatches(programs, batchSize).Error; err != nil {
 		return fmt.Errorf("creating EPG programs in batches: %w", err)
 	}
 	return nil

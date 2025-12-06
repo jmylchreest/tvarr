@@ -649,9 +649,9 @@ type ProcessMemoryInfo struct {
 
 // HealthComponents contains health status of various components.
 type HealthComponents struct {
-	Database        DatabaseHealth        `json:"database"`
-	Scheduler       SchedulerHealth       `json:"scheduler"`
-	CircuitBreakers []CircuitBreakerStatus `json:"circuit_breakers"`
+	Database        DatabaseHealth                  `json:"database"`
+	Scheduler       SchedulerHealth                 `json:"scheduler"`
+	CircuitBreakers map[string]CircuitBreakerStatus `json:"circuit_breakers"`
 }
 
 // DatabaseHealth contains database health information.
@@ -682,9 +682,13 @@ type SourcesScheduled struct {
 
 // CircuitBreakerStatus represents the status of a circuit breaker.
 type CircuitBreakerStatus struct {
-	Name     string `json:"name"`
-	State    string `json:"state"`
-	Failures int    `json:"failures"`
+	Name            string  `json:"name"`
+	State           string  `json:"state"`
+	Failures        int     `json:"failures"`
+	SuccessfulCalls int64   `json:"successful_calls"`
+	FailedCalls     int64   `json:"failed_calls"`
+	TotalCalls      int64   `json:"total_calls"`
+	FailureRate     float64 `json:"failure_rate"`
 }
 
 // Channel types
@@ -697,10 +701,11 @@ type ChannelResponse struct {
 	ExtID         string      `json:"ext_id,omitempty"`
 	TvgID         string      `json:"tvg_id,omitempty"`
 	TvgName       string      `json:"tvg_name,omitempty"`
+	TvgChno       string      `json:"tvg_chno,omitempty"`
 	TvgLogo       string      `json:"tvg_logo,omitempty"`
 	LogoURL       string      `json:"logo_url,omitempty"`
-	GroupTitle    string      `json:"group_title,omitempty"`
-	ChannelName   string      `json:"channel_name"`
+	Group         string      `json:"group,omitempty"`
+	Name          string      `json:"name"`
 	ChannelNumber int         `json:"channel_number,omitempty"`
 	StreamURL     string      `json:"stream_url"`
 	StreamType    string      `json:"stream_type,omitempty"`
@@ -713,16 +718,23 @@ type ChannelResponse struct {
 
 // ChannelFromModel converts a model to a response.
 func ChannelFromModel(c *models.Channel) ChannelResponse {
+	// Convert channel number to string for tvg_chno field
+	tvgChno := ""
+	if c.ChannelNumber > 0 {
+		tvgChno = fmt.Sprintf("%d", c.ChannelNumber)
+	}
+
 	return ChannelResponse{
 		ID:            c.ID,
 		SourceID:      c.SourceID,
 		ExtID:         c.ExtID,
 		TvgID:         c.TvgID,
 		TvgName:       c.TvgName,
+		TvgChno:       tvgChno,
 		TvgLogo:       c.TvgLogo,
 		LogoURL:       c.TvgLogo, // Use TvgLogo as LogoURL
-		GroupTitle:    c.GroupTitle,
-		ChannelName:   c.ChannelName,
+		Group:         c.GroupTitle,
+		Name:          c.ChannelName,
 		ChannelNumber: c.ChannelNumber,
 		StreamURL:     c.StreamURL,
 		StreamType:    c.StreamType,

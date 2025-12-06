@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/jmylchreest/tvarr/internal/expression/helpers"
 	"github.com/jmylchreest/tvarr/internal/pipeline/core"
@@ -29,6 +31,27 @@ type LogoCacher interface {
 
 	// Contains checks if a logo URL is already cached.
 	Contains(logoURL string) bool
+}
+
+// ConcurrentLogoCacher extends LogoCacher with concurrency information.
+type ConcurrentLogoCacher interface {
+	LogoCacher
+	// Concurrency returns the configured concurrency level for downloads.
+	Concurrency() int
+}
+
+// logoJob represents a single logo download job for the worker pool.
+type logoJob struct {
+	url string
+}
+
+// logoResult represents the result of a logo download job.
+type logoResult struct {
+	url       string
+	meta      *storage.CachedLogoMetadata
+	err       error
+	cached    bool // true if already cached
+	skipped   bool // true if skipped (local/unfetchable)
 }
 
 // Stats holds statistics from the logo caching stage execution.
@@ -62,17 +85,27 @@ type Stats struct {
 // Stage caches channel logos during pipeline processing.
 type Stage struct {
 	shared.BaseStage
-	cacher  LogoCacher
-	baseURL string
-	logger  *slog.Logger
-	stats   Stats
+	cacher      LogoCacher
+	baseURL     string
+	logger      *slog.Logger
+	stats       Stats
+	concurrency int // number of concurrent download workers
 }
+
+// DefaultConcurrency is the default number of concurrent logo download workers.
+const DefaultConcurrency = 10
 
 // New creates a new logo caching stage.
 func New(cacher LogoCacher) *Stage {
+	concurrency := DefaultConcurrency
+	// Check if cacher provides concurrency configuration
+	if cc, ok := cacher.(ConcurrentLogoCacher); ok {
+		concurrency = cc.Concurrency()
+	}
 	return &Stage{
-		BaseStage: shared.NewBaseStage(StageID, StageName),
-		cacher:    cacher,
+		BaseStage:   shared.NewBaseStage(StageID, StageName),
+		cacher:      cacher,
+		concurrency: concurrency,
 	}
 }
 
@@ -139,16 +172,26 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	// 2. The caching logic correctly identifies them as local (not needing remote fetch)
 	s.processLogoHelpers(ctx, state)
 
+	// Calculate total for progress reporting
+	totalItems := 0
+	if cacheChannelLogos {
+		totalItems += len(state.Channels)
+	}
+	if cacheProgramLogos {
+		totalItems += len(state.Programs)
+	}
+	processedItems := 0
+
 	// Process channel logos if enabled
 	if cacheChannelLogos && len(state.Channels) > 0 {
-		if err := s.cacheChannelLogos(ctx, state, batchSize); err != nil {
+		if err := s.cacheChannelLogos(ctx, state, batchSize, &processedItems, totalItems); err != nil {
 			return nil, err
 		}
 	}
 
 	// Process program logos if enabled
 	if cacheProgramLogos && len(state.Programs) > 0 {
-		if err := s.cacheProgramLogos(ctx, state, batchSize); err != nil {
+		if err := s.cacheProgramLogos(ctx, state, batchSize, &processedItems, totalItems); err != nil {
 			return nil, err
 		}
 	}
@@ -202,7 +245,7 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 }
 
 // cacheChannelLogos processes and caches logos from channel TvgLogo fields.
-func (s *Stage) cacheChannelLogos(ctx context.Context, state *core.State, batchSize int) error {
+func (s *Stage) cacheChannelLogos(ctx context.Context, state *core.State, batchSize int, processedItems *int, totalItems int) error {
 	// Collect unique channel logo URLs
 	logoURLs := make(map[string]struct{})
 	for _, ch := range state.Channels {
@@ -217,6 +260,13 @@ func (s *Stage) cacheChannelLogos(ctx context.Context, state *core.State, batchS
 			s.stats.ChannelsWithLogos++
 			logoURLs[ch.TvgLogo] = struct{}{}
 		}
+
+		// Report progress for scanning phase
+		*processedItems++
+		if state.ProgressReporter != nil && *processedItems%100 == 0 {
+			state.ProgressReporter.ReportItemProgress(ctx, StageID, *processedItems, totalItems,
+				fmt.Sprintf("Scanning channels: %d/%d", *processedItems, totalItems))
+		}
 	}
 
 	s.stats.UniqueChannelLogoURLs = len(logoURLs)
@@ -227,18 +277,18 @@ func (s *Stage) cacheChannelLogos(ctx context.Context, state *core.State, batchS
 	}
 
 	s.log(ctx, slog.LevelDebug, "caching channel logos",
-		slog.Int("unique_urls", len(logoURLs)))
+		slog.Int("unique_urls", len(logoURLs)),
+		slog.Int("concurrency", s.concurrency))
 
-	// Process each unique logo URL
-	processed := 0
-	totalLogos := len(logoURLs)
+	// Reset progress for caching phase - report unique logos to cache
+	if state.ProgressReporter != nil {
+		state.ProgressReporter.ReportItemProgress(ctx, StageID, 0, s.stats.UniqueChannelLogoURLs,
+			fmt.Sprintf("Caching %d unique channel logos (concurrency: %d)", s.stats.UniqueChannelLogoURLs, s.concurrency))
+	}
+
+	// Filter URLs that need fetching vs those we can skip
+	urlsToFetch := make([]string, 0, len(logoURLs))
 	for logoURL := range logoURLs {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
 		// Skip unfetchable logo URLs (relative paths without scheme, @logo: refs)
 		if isUnfetchableLogoURL(logoURL) {
 			s.stats.ChannelLogosLocalSkip++
@@ -266,43 +316,105 @@ func (s *Stage) cacheChannelLogos(ctx context.Context, state *core.State, batchS
 			continue
 		}
 
-		// Cache the logo
-		meta, err := s.cacher.CacheLogo(ctx, logoURL)
-		if err != nil {
-			s.stats.ChannelLogoErrors++
+		urlsToFetch = append(urlsToFetch, logoURL)
+	}
+
+	// If nothing to fetch, we're done
+	if len(urlsToFetch) == 0 {
+		return nil
+	}
+
+	// Use concurrent workers to cache logos
+	var (
+		processed int32
+		errors    int32
+		newlyCached int32
+	)
+
+	// Create job and result channels
+	jobs := make(chan logoJob, len(urlsToFetch))
+	results := make(chan logoResult, len(urlsToFetch))
+
+	// Start worker pool
+	var wg sync.WaitGroup
+	workerCount := s.concurrency
+	if workerCount > len(urlsToFetch) {
+		workerCount = len(urlsToFetch)
+	}
+
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range jobs {
+				select {
+				case <-ctx.Done():
+					results <- logoResult{url: job.url, err: ctx.Err()}
+					return
+				default:
+				}
+
+				// Cache the logo
+				meta, err := s.cacher.CacheLogo(ctx, job.url)
+				results <- logoResult{
+					url:  job.url,
+					meta: meta,
+					err:  err,
+				}
+			}
+		}()
+	}
+
+	// Send jobs to workers
+	go func() {
+		for _, url := range urlsToFetch {
+			jobs <- logoJob{url: url}
+		}
+		close(jobs)
+	}()
+
+	// Collect results in a separate goroutine
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Process results
+	total := len(urlsToFetch)
+	for result := range results {
+		current := int(atomic.AddInt32(&processed, 1))
+
+		if result.err != nil {
+			atomic.AddInt32(&errors, 1)
 			if s.logger != nil {
 				s.logger.Warn("failed to cache channel logo",
-					"url", logoURL,
-					"error", err)
+					"url", result.url,
+					"error", result.err)
 			}
-			continue
+		} else {
+			atomic.AddInt32(&newlyCached, 1)
+			if s.logger != nil {
+				s.logger.Debug("cached channel logo",
+					"url", result.url,
+					"id", result.meta.GetID())
+			}
 		}
 
-		s.stats.ChannelLogosNewly++
-
-		if s.logger != nil {
-			s.logger.Debug("cached channel logo",
-				"url", logoURL,
-				"id", meta.GetID())
-		}
-
-		processed++
-		if processed%batchSize == 0 {
-			batchNum := processed / batchSize
-			totalBatches := (totalLogos + batchSize - 1) / batchSize
-			s.log(ctx, slog.LevelDebug, "channel logo caching batch progress",
-				slog.Int("batch_num", batchNum),
-				slog.Int("total_batches", totalBatches),
-				slog.Int("items_processed", processed),
-				slog.Int("total_items", totalLogos))
+		// Report progress periodically (every 10 items or at the end)
+		if state.ProgressReporter != nil && (current%10 == 0 || current == total) {
+			state.ProgressReporter.ReportItemProgress(ctx, StageID, current, total,
+				fmt.Sprintf("Channel logos: %d/%d (new: %d, errors: %d)", current, total, newlyCached, errors))
 		}
 	}
+
+	s.stats.ChannelLogosNewly = int(newlyCached)
+	s.stats.ChannelLogoErrors = int(errors)
 
 	return nil
 }
 
 // cacheProgramLogos processes and caches logos from program Icon fields.
-func (s *Stage) cacheProgramLogos(ctx context.Context, state *core.State, batchSize int) error {
+func (s *Stage) cacheProgramLogos(ctx context.Context, state *core.State, batchSize int, processedItems *int, totalItems int) error {
 	// Collect unique program logo URLs
 	logoURLs := make(map[string]struct{})
 	for _, prog := range state.Programs {
@@ -317,6 +429,13 @@ func (s *Stage) cacheProgramLogos(ctx context.Context, state *core.State, batchS
 			s.stats.ProgramsWithLogos++
 			logoURLs[prog.Icon] = struct{}{}
 		}
+
+		// Report progress for scanning phase
+		*processedItems++
+		if state.ProgressReporter != nil && *processedItems%1000 == 0 {
+			state.ProgressReporter.ReportItemProgress(ctx, StageID, *processedItems, totalItems,
+				fmt.Sprintf("Scanning programs: %d/%d", *processedItems, totalItems))
+		}
 	}
 
 	s.stats.UniqueProgramLogoURLs = len(logoURLs)
@@ -327,18 +446,18 @@ func (s *Stage) cacheProgramLogos(ctx context.Context, state *core.State, batchS
 	}
 
 	s.log(ctx, slog.LevelDebug, "caching program logos",
-		slog.Int("unique_urls", len(logoURLs)))
+		slog.Int("unique_urls", len(logoURLs)),
+		slog.Int("concurrency", s.concurrency))
 
-	// Process each unique logo URL
-	processed := 0
-	totalLogos := len(logoURLs)
+	// Reset progress for caching phase - report unique logos to cache
+	if state.ProgressReporter != nil {
+		state.ProgressReporter.ReportItemProgress(ctx, StageID, 0, s.stats.UniqueProgramLogoURLs,
+			fmt.Sprintf("Caching %d unique program logos (concurrency: %d)", s.stats.UniqueProgramLogoURLs, s.concurrency))
+	}
+
+	// Filter URLs that need fetching vs those we can skip
+	urlsToFetch := make([]string, 0, len(logoURLs))
 	for logoURL := range logoURLs {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
 		// Skip unfetchable logo URLs (relative paths, deferred references, @logo: refs)
 		if isUnfetchableLogoURL(logoURL) {
 			s.stats.ProgramLogosLocalSkip++
@@ -366,37 +485,99 @@ func (s *Stage) cacheProgramLogos(ctx context.Context, state *core.State, batchS
 			continue
 		}
 
-		// Cache the logo
-		meta, err := s.cacher.CacheLogo(ctx, logoURL)
-		if err != nil {
-			s.stats.ProgramLogoErrors++
+		urlsToFetch = append(urlsToFetch, logoURL)
+	}
+
+	// If nothing to fetch, we're done
+	if len(urlsToFetch) == 0 {
+		return nil
+	}
+
+	// Use concurrent workers to cache logos
+	var (
+		processed   int32
+		errors      int32
+		newlyCached int32
+	)
+
+	// Create job and result channels
+	jobs := make(chan logoJob, len(urlsToFetch))
+	results := make(chan logoResult, len(urlsToFetch))
+
+	// Start worker pool
+	var wg sync.WaitGroup
+	workerCount := s.concurrency
+	if workerCount > len(urlsToFetch) {
+		workerCount = len(urlsToFetch)
+	}
+
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range jobs {
+				select {
+				case <-ctx.Done():
+					results <- logoResult{url: job.url, err: ctx.Err()}
+					return
+				default:
+				}
+
+				// Cache the logo
+				meta, err := s.cacher.CacheLogo(ctx, job.url)
+				results <- logoResult{
+					url:  job.url,
+					meta: meta,
+					err:  err,
+				}
+			}
+		}()
+	}
+
+	// Send jobs to workers
+	go func() {
+		for _, url := range urlsToFetch {
+			jobs <- logoJob{url: url}
+		}
+		close(jobs)
+	}()
+
+	// Collect results in a separate goroutine
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Process results
+	total := len(urlsToFetch)
+	for result := range results {
+		current := int(atomic.AddInt32(&processed, 1))
+
+		if result.err != nil {
+			atomic.AddInt32(&errors, 1)
 			if s.logger != nil {
 				s.logger.Warn("failed to cache program logo",
-					"url", logoURL,
-					"error", err)
+					"url", result.url,
+					"error", result.err)
 			}
-			continue
+		} else {
+			atomic.AddInt32(&newlyCached, 1)
+			if s.logger != nil {
+				s.logger.Debug("cached program logo",
+					"url", result.url,
+					"id", result.meta.GetID())
+			}
 		}
 
-		s.stats.ProgramLogosNewly++
-
-		if s.logger != nil {
-			s.logger.Debug("cached program logo",
-				"url", logoURL,
-				"id", meta.GetID())
-		}
-
-		processed++
-		if processed%batchSize == 0 {
-			batchNum := processed / batchSize
-			totalBatches := (totalLogos + batchSize - 1) / batchSize
-			s.log(ctx, slog.LevelDebug, "program logo caching batch progress",
-				slog.Int("batch_num", batchNum),
-				slog.Int("total_batches", totalBatches),
-				slog.Int("items_processed", processed),
-				slog.Int("total_items", totalLogos))
+		// Report progress periodically (every 50 items or at the end)
+		if state.ProgressReporter != nil && (current%50 == 0 || current == total) {
+			state.ProgressReporter.ReportItemProgress(ctx, StageID, current, total,
+				fmt.Sprintf("Program logos: %d/%d (new: %d, errors: %d)", current, total, newlyCached, errors))
 		}
 	}
+
+	s.stats.ProgramLogosNewly = int(newlyCached)
+	s.stats.ProgramLogoErrors = int(errors)
 
 	return nil
 }

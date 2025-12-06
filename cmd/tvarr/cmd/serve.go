@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -22,6 +21,7 @@ import (
 	"github.com/jmylchreest/tvarr/internal/http/handlers"
 	"github.com/jmylchreest/tvarr/internal/ingestor"
 	"github.com/jmylchreest/tvarr/internal/models"
+	"github.com/jmylchreest/tvarr/internal/observability"
 	"github.com/jmylchreest/tvarr/internal/pipeline"
 	"github.com/jmylchreest/tvarr/internal/repository"
 	"github.com/jmylchreest/tvarr/internal/scheduler"
@@ -81,6 +81,16 @@ func init() {
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
+	// Initialize log level from config before creating logger
+	logLevel := viper.GetString("logging.level")
+	if logLevel == "" {
+		logLevel = "info"
+	}
+	observability.SetLogLevel(logLevel)
+
+	// Initialize request logging from config
+	observability.SetRequestLogging(viper.GetBool("logging.request_logging"))
+
 	// Initialize logs service and wrap the default slog handler
 	logsService := logs.New()
 	wrappedHandler := logsService.WrapHandler(slog.Default().Handler())
@@ -188,18 +198,35 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("initializing logo cache: %w", err)
 	}
 
-	// Create HTTP client for logo fetching with 200 and 404 as acceptable statuses
-	// (missing logos are expected and shouldn't trip the circuit breaker)
-	logoHTTPConfig := httpclient.DefaultConfig()
-	logoHTTPConfig.AcceptableStatusCodes = httpclient.StatusCodesFromSlice([]int{http.StatusOK, http.StatusNotFound})
-	logoHTTPConfig.Logger = logger
-	logoHTTPClient := httpclient.New(logoHTTPConfig)
+	// Configure logo service with circuit breaker and concurrency settings from config
+	logoServiceConfig := service.LogoServiceConfig{
+		Timeout:            viper.GetDuration("pipeline.logo_timeout"),
+		RetryAttempts:      viper.GetInt("pipeline.logo_retry_attempts"),
+		CircuitBreakerName: viper.GetString("pipeline.logo_circuit_breaker"),
+		Concurrency:        viper.GetInt("pipeline.logo_concurrency"),
+	}
 
-	// Register HTTP client for health monitoring
-	httpclient.DefaultRegistry.Register("logo-fetcher", logoHTTPClient)
+	// Apply defaults if not configured
+	if logoServiceConfig.Timeout == 0 {
+		logoServiceConfig.Timeout = 30 * time.Second
+	}
+	if logoServiceConfig.RetryAttempts == 0 {
+		logoServiceConfig.RetryAttempts = 3
+	}
+	if logoServiceConfig.CircuitBreakerName == "" {
+		logoServiceConfig.CircuitBreakerName = "logos"
+	}
+	if logoServiceConfig.Concurrency == 0 {
+		logoServiceConfig.Concurrency = 10
+	}
 
-	logoService := service.NewLogoService(logoCache).
-		WithHTTPClient(logoHTTPClient.StandardClient()).
+	logger.Info("initializing logo service",
+		slog.Duration("timeout", logoServiceConfig.Timeout),
+		slog.Int("retry_attempts", logoServiceConfig.RetryAttempts),
+		slog.String("circuit_breaker", logoServiceConfig.CircuitBreakerName),
+		slog.Int("concurrency", logoServiceConfig.Concurrency))
+
+	logoService := service.NewLogoServiceWithConfig(logoCache, logoServiceConfig).
 		WithLogger(logger)
 
 	// Load logo index with pruning of stale cached logos
@@ -446,8 +473,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	relayStreamHandler.Register(server.API())
 	relayStreamHandler.RegisterChiRoutes(server.Router())
 
-	channelHandler := handlers.NewChannelHandler(db, relayService)
+	channelHandler := handlers.NewChannelHandler(db, relayService).WithLogger(logger)
 	channelHandler.Register(server.API())
+	channelHandler.RegisterChiRoutes(server.Router())
 
 	epgHandler := handlers.NewEpgHandler(db)
 	epgHandler.Register(server.API())

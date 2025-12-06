@@ -38,8 +38,13 @@ func NewStaticHandler() *StaticHandler {
 // It implements SPA (Single Page Application) routing by serving index.html
 // for paths that don't match actual files.
 func (h *StaticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Always return 404 for API routes that weren't matched by registered handlers
-	if strings.HasPrefix(r.URL.Path, "/api/") {
+	// Always return 404 for API routes that weren't matched by registered handlers.
+	// This includes /api/* and backend streaming routes like /channel/*, /proxy/*, /relay/*, /live/*
+	if strings.HasPrefix(r.URL.Path, "/api/") ||
+		strings.HasPrefix(r.URL.Path, "/channel/") ||
+		strings.HasPrefix(r.URL.Path, "/proxy/") ||
+		strings.HasPrefix(r.URL.Path, "/relay/") ||
+		strings.HasPrefix(r.URL.Path, "/live/") {
 		http.NotFound(w, r)
 		return
 	}
@@ -90,8 +95,7 @@ func (h *StaticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, err := fs.Stat(staticFS, filePath)
 
 	if err != nil {
-		// File not found - try serving index.html for SPA routing
-		// Check if it's a directory path (might have index.html)
+		// File not found - check if it's a directory path with index.html
 		indexPath := path.Join(filePath, "index.html")
 		if _, err := fs.Stat(staticFS, indexPath); err == nil {
 			// Serve the directory's index.html
@@ -101,16 +105,7 @@ func (h *StaticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// For SPA routing, serve root index.html for non-file paths
-		// (paths without file extensions that aren't API routes)
-		if !strings.Contains(path.Base(urlPath), ".") && !strings.HasPrefix(urlPath, "/api/") {
-			r.URL.Path = "/index.html"
-			h.setHeaders(w, "index.html")
-			h.fileServer.ServeHTTP(w, r)
-			return
-		}
-
-		// Return 404 for actual file requests that don't exist
+		// File doesn't exist - return 404
 		http.NotFound(w, r)
 		return
 	}
