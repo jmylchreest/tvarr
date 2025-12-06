@@ -29,7 +29,7 @@ import {
   Zap,
   HardDrive,
 } from 'lucide-react';
-import { RuntimeSettings, UpdateSettingsRequest, SettingsResponse, StartupConfigResponse, StartupConfigSection } from '@/types/api';
+import { RuntimeSettings, UpdateSettingsRequest, SettingsResponse, StartupConfigResponse, StartupConfigSection, ConfigMeta, ConfigPersistResponse } from '@/types/api';
 import { apiClient } from '@/lib/api-client';
 import { FeatureFlagsEditor } from '@/components/feature-flags-editor';
 import { useFeatureFlags, invalidateFeatureFlagsCache } from '@/hooks/useFeatureFlags';
@@ -81,6 +81,11 @@ export function Settings() {
   // Startup config state (read-only)
   const [startupConfig, setStartupConfig] = useState<StartupConfigSection[]>([]);
   const [startupLoading, setStartupLoading] = useState(false);
+
+  // Config persistence state
+  const [configMeta, setConfigMeta] = useState<ConfigMeta | null>(null);
+  const [persisting, setPersisting] = useState(false);
+  const [persistResult, setPersistResult] = useState<{ success: boolean; message: string } | null>(null);
 
   const fetchSettings = async () => {
     setLoading(true);
@@ -174,13 +179,60 @@ export function Settings() {
     }
   };
 
+  const fetchConfigMeta = async () => {
+    try {
+      const backendUrl = getBackendUrl();
+      const response = await fetch(`${backendUrl}/api/v1/config`);
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.meta) {
+          setConfigMeta(data.meta);
+        }
+      }
+    } catch (err) {
+      console.warn('Config meta endpoint not available:', err);
+    }
+  };
+
+  const persistConfig = async () => {
+    setPersisting(true);
+    setPersistResult(null);
+
+    try {
+      const backendUrl = getBackendUrl();
+      const response = await fetch(`${backendUrl}/api/v1/config/persist`, {
+        method: 'POST',
+      });
+
+      const data: ConfigPersistResponse = await response.json();
+
+      if (response.ok && data.success) {
+        setPersistResult({ success: true, message: data.message });
+        // Refresh meta to update last_modified
+        await fetchConfigMeta();
+      } else {
+        setPersistResult({ success: false, message: data.message || 'Failed to save configuration' });
+      }
+    } catch (err) {
+      setPersistResult({
+        success: false,
+        message: err instanceof Error ? err.message : 'Failed to save configuration',
+      });
+    } finally {
+      setPersisting(false);
+      // Clear persist result after 5 seconds
+      setTimeout(() => setPersistResult(null), 5000);
+    }
+  };
+
   const fetchAll = async () => {
     setLoading(true);
     setError(null);
     setSaveSuccess(null);
 
     try {
-      await Promise.all([fetchSettings(), fetchFeatureFlags(), fetchCircuitBreakerData(), fetchStartupConfig()]);
+      await Promise.all([fetchSettings(), fetchFeatureFlags(), fetchCircuitBreakerData(), fetchStartupConfig(), fetchConfigMeta()]);
     } catch (err) {
       // Error handling is done in individual functions
     } finally {
@@ -419,6 +471,12 @@ export function Settings() {
           <p className="text-sm text-muted-foreground">
             Runtime application settings that can be changed without restart
           </p>
+          {configMeta && (
+            <p className="text-xs text-muted-foreground/70 mt-1">
+              Config source: {configMeta.source}
+              {configMeta.config_path && ` (${configMeta.config_path})`}
+            </p>
+          )}
         </div>
         <div className="flex gap-2">
           <Button onClick={fetchAll} disabled={loading} size="sm" variant="outline">
@@ -429,6 +487,18 @@ export function Settings() {
             <Save className={`h-4 w-4 mr-2 ${saving ? 'animate-spin' : ''}`} />
             Save All Changes
           </Button>
+          {configMeta?.can_persist && (
+            <Button
+              onClick={persistConfig}
+              disabled={persisting}
+              size="sm"
+              variant="secondary"
+              title="Save current runtime configuration to config file"
+            >
+              <HardDrive className={`h-4 w-4 mr-2 ${persisting ? 'animate-spin' : ''}`} />
+              Save to File
+            </Button>
+          )}
         </div>
       </div>
 
@@ -450,6 +520,19 @@ export function Settings() {
           <CheckCircle className="h-4 w-4" />
           <AlertDescription>
             <span className="font-medium">Success:</span> {saveSuccess}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {persistResult && (
+        <Alert variant={persistResult.success ? "success" : "destructive"}>
+          {persistResult.success ? (
+            <CheckCircle className="h-4 w-4" />
+          ) : (
+            <XCircle className="h-4 w-4" />
+          )}
+          <AlertDescription>
+            <span className="font-medium">{persistResult.success ? 'Saved:' : 'Error:'}</span> {persistResult.message}
           </AlertDescription>
         </Alert>
       )}
@@ -484,7 +567,7 @@ export function Settings() {
           ) : circuitBreakerConfig ? (
             <div className="space-y-3">
               {/* Circuit Breaker Cards */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Global Configuration Card */}
                 {circuitBreakerConfig?.global && (
                   <Card className="h-fit">
@@ -495,17 +578,10 @@ export function Settings() {
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-3">
-                      <div className="text-xs text-muted-foreground">
-                        Implementation:{' '}
-                        <span className="font-medium capitalize">
-                          {getCbGlobalValue('implementation_type')}
-                        </span>
-                      </div>
-
                       <div className="grid grid-cols-2 gap-2">
                         <div className="space-y-1">
                           <Label className="text-xs text-muted-foreground flex items-center gap-1">
-                            Failures
+                            Failure Threshold
                             {isCbGlobalModified('failure_threshold') && (
                               <Badge variant="secondary" className="text-xs">
                                 *
@@ -526,8 +602,8 @@ export function Settings() {
 
                         <div className="space-y-1">
                           <Label className="text-xs text-muted-foreground flex items-center gap-1">
-                            Success
-                            {isCbGlobalModified('success_threshold') && (
+                            Half-Open Max
+                            {isCbGlobalModified('half_open_max') && (
                               <Badge variant="secondary" className="text-xs">
                                 *
                               </Badge>
@@ -537,9 +613,9 @@ export function Settings() {
                             type="number"
                             min="1"
                             max="100"
-                            value={getCbGlobalValue('success_threshold') || ''}
+                            value={getCbGlobalValue('half_open_max') || ''}
                             onChange={(e) =>
-                              handleCbGlobalChange('success_threshold', parseInt(e.target.value))
+                              handleCbGlobalChange('half_open_max', parseInt(e.target.value))
                             }
                             className="h-7 text-xs"
                           />
@@ -547,27 +623,7 @@ export function Settings() {
 
                         <div className="space-y-1">
                           <Label className="text-xs text-muted-foreground flex items-center gap-1">
-                            Op Timeout
-                            {isCbGlobalModified('operation_timeout') && (
-                              <Badge variant="secondary" className="text-xs">
-                                *
-                              </Badge>
-                            )}
-                          </Label>
-                          <Input
-                            type="text"
-                            value={getCbGlobalValue('operation_timeout') || ''}
-                            onChange={(e) =>
-                              handleCbGlobalChange('operation_timeout', e.target.value)
-                            }
-                            placeholder="5s"
-                            className="h-7 text-xs"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <Label className="text-xs text-muted-foreground flex items-center gap-1">
-                            Reset
+                            Reset Timeout
                             {isCbGlobalModified('reset_timeout') && (
                               <Badge variant="secondary" className="text-xs">
                                 *
@@ -579,6 +635,26 @@ export function Settings() {
                             value={getCbGlobalValue('reset_timeout') || ''}
                             onChange={(e) => handleCbGlobalChange('reset_timeout', e.target.value)}
                             placeholder="30s"
+                            className="h-7 text-xs"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <Label className="text-xs text-muted-foreground flex items-center gap-1">
+                            Status Codes
+                            {isCbGlobalModified('acceptable_status_codes') && (
+                              <Badge variant="secondary" className="text-xs">
+                                *
+                              </Badge>
+                            )}
+                          </Label>
+                          <Input
+                            type="text"
+                            value={getCbGlobalValue('acceptable_status_codes') || ''}
+                            onChange={(e) =>
+                              handleCbGlobalChange('acceptable_status_codes', e.target.value)
+                            }
+                            placeholder="200-299"
                             className="h-7 text-xs"
                           />
                         </div>
@@ -599,17 +675,10 @@ export function Settings() {
                           </CardTitle>
                         </CardHeader>
                         <CardContent className="space-y-3">
-                          <div className="text-xs text-muted-foreground">
-                            Implementation:{' '}
-                            <span className="font-medium capitalize">
-                              {getCbProfileValue(serviceName, 'implementation_type')}
-                            </span>
-                          </div>
-
                           <div className="grid grid-cols-2 gap-2">
                             <div className="space-y-1">
                               <Label className="text-xs text-muted-foreground flex items-center gap-1">
-                                Failures
+                                Failure Threshold
                                 {isCbProfileModified(serviceName, 'failure_threshold') && (
                                   <Badge variant="secondary" className="text-xs">
                                     *
@@ -634,8 +703,8 @@ export function Settings() {
 
                             <div className="space-y-1">
                               <Label className="text-xs text-muted-foreground flex items-center gap-1">
-                                Success
-                                {isCbProfileModified(serviceName, 'success_threshold') && (
+                                Half-Open Max
+                                {isCbProfileModified(serviceName, 'half_open_max') && (
                                   <Badge variant="secondary" className="text-xs">
                                     *
                                   </Badge>
@@ -645,11 +714,11 @@ export function Settings() {
                                 type="number"
                                 min="1"
                                 max="100"
-                                value={getCbProfileValue(serviceName, 'success_threshold') || ''}
+                                value={getCbProfileValue(serviceName, 'half_open_max') || ''}
                                 onChange={(e) =>
                                   handleCbProfileChange(
                                     serviceName,
-                                    'success_threshold',
+                                    'half_open_max',
                                     parseInt(e.target.value)
                                   )
                                 }
@@ -659,31 +728,7 @@ export function Settings() {
 
                             <div className="space-y-1">
                               <Label className="text-xs text-muted-foreground flex items-center gap-1">
-                                Op Timeout
-                                {isCbProfileModified(serviceName, 'operation_timeout') && (
-                                  <Badge variant="secondary" className="text-xs">
-                                    *
-                                  </Badge>
-                                )}
-                              </Label>
-                              <Input
-                                type="text"
-                                value={getCbProfileValue(serviceName, 'operation_timeout') || ''}
-                                onChange={(e) =>
-                                  handleCbProfileChange(
-                                    serviceName,
-                                    'operation_timeout',
-                                    e.target.value
-                                  )
-                                }
-                                placeholder="5s"
-                                className="h-7 text-xs"
-                              />
-                            </div>
-
-                            <div className="space-y-1">
-                              <Label className="text-xs text-muted-foreground flex items-center gap-1">
-                                Reset
+                                Reset Timeout
                                 {isCbProfileModified(serviceName, 'reset_timeout') && (
                                   <Badge variant="secondary" className="text-xs">
                                     *
@@ -701,6 +746,30 @@ export function Settings() {
                                   )
                                 }
                                 placeholder="30s"
+                                className="h-7 text-xs"
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <Label className="text-xs text-muted-foreground flex items-center gap-1">
+                                Status Codes
+                                {isCbProfileModified(serviceName, 'acceptable_status_codes') && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    *
+                                  </Badge>
+                                )}
+                              </Label>
+                              <Input
+                                type="text"
+                                value={getCbProfileValue(serviceName, 'acceptable_status_codes') || ''}
+                                onChange={(e) =>
+                                  handleCbProfileChange(
+                                    serviceName,
+                                    'acceptable_status_codes',
+                                    e.target.value
+                                  )
+                                }
+                                placeholder="200-299"
                                 className="h-7 text-xs"
                               />
                             </div>

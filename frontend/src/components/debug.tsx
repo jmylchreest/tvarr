@@ -47,6 +47,8 @@ import { getStatusIndicatorClasses, getStatusType } from '@/lib/status-colors';
 import { getBackendUrl } from '@/lib/config';
 import { useHealthData } from '@/hooks/use-health-data';
 import { FeatureFlagsDebug } from '@/components/feature-flags-debug';
+import { CircuitBreakerCard } from '@/components/circuit-breaker';
+import { EnhancedCircuitBreakerStats, EnhancedStatsResponse } from '@/types/circuit-breaker';
 
 interface ChartDataPoint {
   timestamp: string;
@@ -77,20 +79,6 @@ interface MemoryInfo {
   processPercentage: number;
 }
 
-interface CircuitBreakerProfile {
-  implementation_type: string;
-  failure_threshold: number;
-  operation_timeout: string;
-  reset_timeout: string;
-  success_threshold: number;
-  half_open_max: number;
-  acceptable_status_codes: string; // Backend returns as string like "200-299"
-}
-
-interface CircuitBreakerConfig {
-  global: CircuitBreakerProfile;
-  profiles: Record<string, CircuitBreakerProfile>;
-}
 
 function formatUptime(uptimeSeconds: number): string {
   const days = Math.floor(uptimeSeconds / 86400);
@@ -162,33 +150,46 @@ function getStatusIcon(status: string | undefined | null) {
   }
 }
 
-interface LogoCacheData {
-  logo_cache: {
-    total_entries: number;
-    memory_usage: {
-      bytes: number;
-      megabytes: string;
-      bytes_per_entry: number;
-      avg_entry_size_bytes: number;
-    };
-    storage_usage: {
-      bytes: number;
-      megabytes: string;
-    };
-    efficiency: {
-      hash_based_indexing: boolean;
-      smart_dimension_encoding: string;
-      memory_vs_string_storage: string;
-    };
-    last_updated: string;
-    cache_directory: string;
-    max_size_mb?: number | null;
-    max_age_days?: number | null;
-  };
+interface LogoStatsData {
+  total_cached_logos: number;
+  total_uploaded_logos: number;
+  total_storage_used: number;
+  total_linked_assets: number;
+  cache_hit_rate?: number | null;
+  filesystem_cached_logos: number;
+  filesystem_cached_storage: number;
+}
+
+interface JobStatsData {
+  pending_count: number;
+  running_count: number;
+  completed_count: number;
+  failed_count: number;
+  by_type: Record<string, number>;
+}
+
+interface RunnerStatusData {
+  running: boolean;
+  worker_count: number;
+  worker_id: string;
+  pending_jobs: number;
+  running_jobs: number;
+  poll_interval: string;
+}
+
+interface JobData {
+  id: string;
+  type: string;
+  target_name?: string;
+  status: string;
+  cron_schedule?: string;
+  next_run_at?: string;
+  started_at?: string;
+  completed_at?: string;
 }
 
 function LogoCacheCard() {
-  const [cacheData, setCacheData] = useState<LogoCacheData | null>(null);
+  const [statsData, setStatsData] = useState<LogoStatsData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -198,14 +199,14 @@ function LogoCacheCard() {
 
     try {
       const backendUrl = getBackendUrl();
-      const response = await fetch(`${backendUrl}/debug/logo-cache`);
+      const response = await fetch(`${backendUrl}/api/v1/logos/stats`);
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
 
-      const data: LogoCacheData = await response.json();
-      setCacheData(data);
+      const data: LogoStatsData = await response.json();
+      setStatsData(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
@@ -221,6 +222,17 @@ function LogoCacheCard() {
     return () => clearInterval(interval);
   }, [fetchCacheData]);
 
+  const formatBytes = (bytes: number): string => {
+    if (bytes >= 1024 * 1024 * 1024) {
+      return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+    } else if (bytes >= 1024 * 1024) {
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    } else if (bytes >= 1024) {
+      return `${(bytes / 1024).toFixed(1)} KB`;
+    }
+    return `${bytes} B`;
+  };
+
   const formatNumber = (num: number): string => {
     if (num >= 1000000) {
       return `${(num / 1000000).toFixed(1)}M`;
@@ -231,6 +243,8 @@ function LogoCacheCard() {
     }
   };
 
+  const totalLogos = (statsData?.total_cached_logos ?? 0) + (statsData?.total_uploaded_logos ?? 0);
+
   return (
     <Card>
       <CardHeader>
@@ -239,7 +253,7 @@ function LogoCacheCard() {
           Logo Cache
           {loading && <RefreshCw className="h-4 w-4 animate-spin" />}
         </CardTitle>
-        <CardDescription>Ultra-compact logo indexing with hash-based matching</CardDescription>
+        <CardDescription>Logo storage and caching statistics</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {error && (
@@ -249,7 +263,7 @@ function LogoCacheCard() {
           </div>
         )}
 
-        {cacheData && (
+        {statsData && (
           <>
             {/* Status and Overview */}
             <div className="flex items-center gap-2">
@@ -258,32 +272,59 @@ function LogoCacheCard() {
                 Active
               </Badge>
               <Badge variant="outline" className="ml-auto">
-                {formatNumber(cacheData.logo_cache.total_entries)} entries
+                {formatNumber(totalLogos)} logos
               </Badge>
             </div>
 
-            {/* Performance Metrics */}
+            {/* Logo Counts */}
             <div className="space-y-2">
-              <h4 className="text-sm font-medium text-muted-foreground">Performance</h4>
+              <h4 className="text-sm font-medium text-muted-foreground">Logo Counts</h4>
               <div className="grid grid-cols-2 gap-2 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Memory:</span>
+                  <span className="text-muted-foreground">Cached:</span>
                   <span className="font-medium">
-                    {cacheData.logo_cache.memory_usage.megabytes} MB
+                    {formatNumber(statsData.total_cached_logos)}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Per Entry:</span>
+                  <span className="text-muted-foreground">Uploaded:</span>
                   <span className="font-medium">
-                    {cacheData.logo_cache.memory_usage.bytes_per_entry}B
+                    {formatNumber(statsData.total_uploaded_logos)}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Storage:</span>
+                  <span className="text-muted-foreground">Linked Assets:</span>
                   <span className="font-medium">
-                    {cacheData.logo_cache.storage_usage.megabytes} MB
+                    {formatNumber(statsData.total_linked_assets)}
                   </span>
                 </div>
+              </div>
+            </div>
+
+            {/* Storage */}
+            <div className="space-y-2">
+              <h4 className="text-sm font-medium text-muted-foreground">Storage</h4>
+              <div className="grid grid-cols-1 gap-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Total Used:</span>
+                  <span className="font-medium">
+                    {formatBytes(statsData.total_storage_used)}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Cached Storage:</span>
+                  <span className="font-medium">
+                    {formatBytes(statsData.filesystem_cached_storage)}
+                  </span>
+                </div>
+                {totalLogos > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Avg per Logo:</span>
+                    <span className="font-medium">
+                      {formatBytes(Math.round(statsData.total_storage_used / totalLogos))}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -295,50 +336,219 @@ function LogoCacheCard() {
                   <Hash className="h-3 w-3 text-green-500" />
                   <span>Hash-based indexing active</span>
                 </div>
-              </div>
-            </div>
-
-            {/* Configuration */}
-            <div className="space-y-2">
-              <h4 className="text-sm font-medium text-muted-foreground">Configuration</h4>
-              <div className="grid grid-cols-1 gap-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Size Limit:</span>
-                  <span className="font-medium">
-                    {cacheData.logo_cache.max_size_mb
-                      ? `${cacheData.logo_cache.max_size_mb} MB`
-                      : 'Unlimited'}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Age Limit:</span>
-                  <span className="font-medium">
-                    {cacheData.logo_cache.max_age_days
-                      ? `${cacheData.logo_cache.max_age_days} days`
-                      : 'Unlimited'}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Directory:</span>
-                  <span className="font-medium text-xs font-mono">
-                    {cacheData.logo_cache.cache_directory}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Last Updated:</span>
-                  <span className="font-medium text-xs">
-                    {new Date(cacheData.logo_cache.last_updated).toLocaleString()}
-                  </span>
-                </div>
+                {statsData.cache_hit_rate != null && (
+                  <div className="flex items-center gap-2">
+                    <Gauge className="h-3 w-3 text-blue-500" />
+                    <span>Cache hit rate: {(statsData.cache_hit_rate * 100).toFixed(1)}%</span>
+                  </div>
+                )}
               </div>
             </div>
           </>
         )}
 
-        {!cacheData && !loading && (
+        {!statsData && !loading && !error && (
           <div className="text-center py-4 text-muted-foreground">
             <Image className="h-8 w-8 mx-auto mb-2 opacity-50" />
             <p className="text-xs">Logo cache data not available</p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function JobsCard() {
+  const [statsData, setStatsData] = useState<JobStatsData | null>(null);
+  const [runnerData, setRunnerData] = useState<RunnerStatusData | null>(null);
+  const [upcomingJobs, setUpcomingJobs] = useState<JobData[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const backendUrl = getBackendUrl();
+
+  const fetchJobsData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const [statsRes, runnerRes, jobsRes] = await Promise.all([
+        fetch(`${backendUrl}/api/v1/jobs/stats`),
+        fetch(`${backendUrl}/api/v1/jobs/runner`),
+        fetch(`${backendUrl}/api/v1/jobs`),
+      ]);
+
+      if (statsRes.ok) {
+        const stats: JobStatsData = await statsRes.json();
+        setStatsData(stats);
+      }
+
+      if (runnerRes.ok) {
+        const runner: RunnerStatusData = await runnerRes.json();
+        setRunnerData(runner);
+      }
+
+      if (jobsRes.ok) {
+        const jobsData: { jobs: JobData[] } = await jobsRes.json();
+        // Filter jobs with next_run_at and sort by next run time
+        const scheduled = (jobsData.jobs || [])
+          .filter((j) => j.next_run_at && j.status === 'pending')
+          .sort((a, b) => {
+            const aTime = a.next_run_at ? new Date(a.next_run_at).getTime() : 0;
+            const bTime = b.next_run_at ? new Date(b.next_run_at).getTime() : 0;
+            return aTime - bTime;
+          })
+          .slice(0, 5); // Show top 5 upcoming
+        setUpcomingJobs(scheduled);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setLoading(false);
+    }
+  }, [backendUrl]);
+
+  useEffect(() => {
+    fetchJobsData();
+    const interval = setInterval(fetchJobsData, 15000); // Refresh every 15s
+    return () => clearInterval(interval);
+  }, [fetchJobsData]);
+
+  const formatJobType = (type: string): string => {
+    return type
+      .split('_')
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
+  };
+
+  const formatRelativeTime = (dateStr: string): string => {
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diffMs = date.getTime() - now.getTime();
+    const diffSecs = Math.round(diffMs / 1000);
+    const diffMins = Math.round(diffSecs / 60);
+    const diffHours = Math.round(diffMins / 60);
+
+    if (diffSecs < 0) return 'overdue';
+    if (diffSecs < 60) return `in ${diffSecs}s`;
+    if (diffMins < 60) return `in ${diffMins}m`;
+    if (diffHours < 24) return `in ${diffHours}h`;
+    return date.toLocaleDateString();
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Calendar className="h-5 w-5" />
+          Jobs
+          {loading && <RefreshCw className="h-4 w-4 animate-spin" />}
+        </CardTitle>
+        <CardDescription>Job scheduler and execution status</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {error && (
+          <div className="flex items-center gap-2 text-destructive">
+            <XCircle className="h-4 w-4" />
+            <span className="text-sm">Error: {error}</span>
+          </div>
+        )}
+
+        {/* Runner Status */}
+        {runnerData && (
+          <div className="flex items-center gap-2">
+            {runnerData.running ? (
+              <CheckCircle className="h-4 w-4 text-green-500" />
+            ) : (
+              <XCircle className="h-4 w-4 text-red-500" />
+            )}
+            <Badge
+              className={
+                runnerData.running
+                  ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100'
+                  : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100'
+              }
+            >
+              {runnerData.running ? 'Running' : 'Stopped'}
+            </Badge>
+            <Badge variant="outline" className="ml-auto">
+              {runnerData.worker_count} worker{runnerData.worker_count !== 1 ? 's' : ''}
+            </Badge>
+          </div>
+        )}
+
+        {/* Job Counts */}
+        {statsData && (
+          <div className="space-y-2">
+            <h4 className="text-sm font-medium text-muted-foreground">Job Status</h4>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Pending:</span>
+                <span className="font-medium">{statsData.pending_count}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Running:</span>
+                <span className="font-medium text-blue-600">{statsData.running_count}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Completed:</span>
+                <span className="font-medium text-green-600">{statsData.completed_count}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Failed:</span>
+                <span className="font-medium text-red-600">{statsData.failed_count}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Jobs by Type */}
+        {statsData?.by_type && Object.keys(statsData.by_type).length > 0 && (
+          <div className="space-y-2">
+            <h4 className="text-sm font-medium text-muted-foreground">Jobs by Type</h4>
+            <div className="space-y-1 text-sm">
+              {Object.entries(statsData.by_type).map(([type, count]) => (
+                <div key={type} className="flex justify-between">
+                  <span className="text-muted-foreground">{formatJobType(type)}:</span>
+                  <span className="font-medium">{count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Upcoming Jobs */}
+        {upcomingJobs.length > 0 && (
+          <div className="space-y-2">
+            <h4 className="text-sm font-medium text-muted-foreground">Next Scheduled Runs</h4>
+            <div className="space-y-2">
+              {upcomingJobs.map((job) => (
+                <div key={job.id} className="bg-muted/50 rounded p-2">
+                  <div className="flex justify-between items-start text-xs">
+                    <div>
+                      <div className="font-medium">{job.target_name || 'Unknown'}</div>
+                      <div className="text-muted-foreground">{formatJobType(job.type)}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-medium">
+                        {job.next_run_at ? formatRelativeTime(job.next_run_at) : 'N/A'}
+                      </div>
+                      {job.cron_schedule && (
+                        <div className="text-muted-foreground font-mono text-xs">
+                          {job.cron_schedule}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {!statsData && !runnerData && !loading && !error && (
+          <div className="text-center py-4 text-muted-foreground">
+            <Calendar className="h-8 w-8 mx-auto mb-2 opacity-50" />
+            <p className="text-xs">Job data not available</p>
           </div>
         )}
       </CardContent>
@@ -361,9 +571,7 @@ export function Debug() {
   const [refreshInterval, setRefreshInterval] = useState(stepValues[3]); // Default 15 seconds (index 3)
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const [isAutoRefresh, setIsAutoRefresh] = useState(true); // Start enabled
-  const [circuitBreakerConfig, setCircuitBreakerConfig] = useState<CircuitBreakerConfig | null>(
-    null
-  );
+  const [enhancedCBStats, setEnhancedCBStats] = useState<EnhancedCircuitBreakerStats[]>([]);
 
   // Use the health data hook
   const { healthData } = useHealthData(isAutoRefresh ? refreshInterval * 1000 : 0);
@@ -413,25 +621,25 @@ export function Debug() {
         });
       }
 
-      // Fetch Kubernetes probes
+      // Fetch Kubernetes probes (/livez and /readyz)
       try {
-        const liveResponse = await fetch(`${backendUrl}/live`);
+        const liveResponse = await fetch(`${backendUrl}/livez`);
         if (liveResponse.ok) {
           const liveData: KubernetesProbeResponse = await liveResponse.json();
           setLiveProbe(liveData);
         }
       } catch (err) {
-        console.warn('Live probe endpoint not available');
+        console.warn('Livez probe endpoint not available');
       }
 
       try {
-        const readyResponse = await fetch(`${backendUrl}/ready`);
+        const readyResponse = await fetch(`${backendUrl}/readyz`);
         if (readyResponse.ok) {
           const readyData: KubernetesProbeResponse = await readyResponse.json();
           setReadyProbe(readyData);
         }
       } catch (err) {
-        console.warn('Ready probe endpoint not available');
+        console.warn('Readyz probe endpoint not available');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error occurred');
@@ -502,23 +710,29 @@ export function Debug() {
     }
   }, [refreshInterval, isAutoRefresh, startAutoRefresh, stopAutoRefresh]);
 
-  // Fetch circuit breaker configuration on component mount
+  // Fetch circuit breaker enhanced stats
   useEffect(() => {
-    const fetchCircuitBreakerConfig = async () => {
+    const fetchCircuitBreakerStats = async () => {
       try {
         const backendUrl = getBackendUrl();
-        const response = await fetch(`${backendUrl}/api/v1/circuit-breakers/config`);
-        const result = await response.json();
+        const statsRes = await fetch(`${backendUrl}/api/v1/circuit-breakers/stats`);
 
-        if (result.success && result.data?.config) {
-          setCircuitBreakerConfig(result.data.config);
+        if (statsRes.ok) {
+          const statsResult: EnhancedStatsResponse = await statsRes.json();
+          if (statsResult.success && statsResult.data) {
+            setEnhancedCBStats(statsResult.data);
+          }
         }
       } catch (error) {
-        console.warn('Failed to fetch circuit breaker configuration:', error);
+        console.warn('Failed to fetch circuit breaker stats:', error);
       }
     };
 
-    fetchCircuitBreakerConfig();
+    fetchCircuitBreakerStats();
+
+    // Refresh CB stats periodically (every 10s)
+    const interval = setInterval(fetchCircuitBreakerStats, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   return (
@@ -900,176 +1114,40 @@ export function Debug() {
           {/* Feature Flags Debug */}
           <FeatureFlagsDebug />
 
-          {/* Circuit Breakers Component */}
-          {healthData?.components?.circuit_breakers &&
-            Object.keys(healthData.components.circuit_breakers).length > 0 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Shield className="h-5 w-5" />
-                    Circuit Breakers
-                  </CardTitle>
-                  <CardDescription>Active circuit breaker statistics</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <TooltipProvider>
-                    {Object.entries(healthData.components.circuit_breakers).map(
-                      ([serviceName, stats]) => {
-                        const successRate =
-                          (stats.successful_calls / (stats.total_calls || 1)) * 100;
-                        const successFormat = formatHumanNumber(stats.successful_calls);
-                        const failedFormat = formatHumanNumber(stats.failed_calls);
-                        const totalFormat = formatHumanNumber(stats.total_calls);
-
-                        // Get configuration for this service (use profile-specific or fallback to global)
-                        const config =
-                          circuitBreakerConfig?.profiles?.[serviceName] ||
-                          circuitBreakerConfig?.global;
-                        const profileType = circuitBreakerConfig?.profiles?.[serviceName]
-                          ? 'Custom'
-                          : 'Global';
-
-                        return (
-                          <div key={serviceName} className="bg-muted/50 rounded p-3">
-                            <div className="space-y-2">
-                              {/* Header row: Service name and Status badge */}
-                              <div className="flex justify-between items-center">
-                                <div className="font-medium font-mono">{serviceName}</div>
-                                <Badge
-                                  variant={
-                                    stats.state === 'Closed'
-                                      ? 'default'
-                                      : stats.state === 'Open'
-                                        ? 'destructive'
-                                        : 'secondary'
-                                  }
-                                  className="text-xs px-2 py-1 w-20 justify-center"
-                                >
-                                  {stats.state}
-                                </Badge>
-                              </div>
-
-                              {/* Configuration info with success badge aligned */}
-                              <div className="flex justify-between items-center">
-                                <div className="text-xs text-muted-foreground">
-                                  {config ? (
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <span className="cursor-help leading-relaxed">
-                                          <div>
-                                            {profileType}: {config.failure_threshold}→
-                                            {config.success_threshold} thresholds
-                                          </div>
-                                          <div>
-                                            {config.operation_timeout} op • {config.reset_timeout}{' '}
-                                            reset • {config.acceptable_status_codes || 'default'}
-                                          </div>
-                                        </span>
-                                      </TooltipTrigger>
-                                      <TooltipContent>
-                                        <div className="text-xs space-y-1">
-                                          <div>
-                                            <strong>Type:</strong> {config.implementation_type}
-                                          </div>
-                                          <div>
-                                            <strong>Failure Threshold:</strong>{' '}
-                                            {config.failure_threshold} failures to open
-                                          </div>
-                                          <div>
-                                            <strong>Success Threshold:</strong>{' '}
-                                            {config.success_threshold} successes to close
-                                          </div>
-                                          <div>
-                                            <strong>Operation Timeout:</strong>{' '}
-                                            {config.operation_timeout}
-                                          </div>
-                                          <div>
-                                            <strong>Reset Timeout:</strong> {config.reset_timeout}
-                                          </div>
-                                          <div>
-                                            <strong>Acceptable Codes:</strong>{' '}
-                                            {config.acceptable_status_codes || 'default'}
-                                          </div>
-                                        </div>
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  ) : (
-                                    <span>Profile: Loading...</span>
-                                  )}
-                                </div>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Badge
-                                      variant="outline"
-                                      className="text-xs px-2 py-1 text-green-600 border-green-600/50 w-20 justify-center"
-                                    >
-                                      {successFormat.display}
-                                    </Badge>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    <p>{successFormat.full} successful calls</p>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </div>
-
-                              {/* Success percentage and failed badge row */}
-                              <div className="flex justify-between items-center">
-                                <span className="text-sm font-medium text-muted-foreground">
-                                  {formatPercentage(successRate)} success
-                                </span>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Badge
-                                      variant="outline"
-                                      className="text-xs px-2 py-1 text-red-600 border-red-600/50 w-20 justify-center"
-                                    >
-                                      {failedFormat.display}
-                                    </Badge>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    <p>{failedFormat.full} failed calls</p>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </div>
-
-                              {/* Progress bar and total aligned */}
-                              <div className="flex items-center gap-3">
-                                <div className="flex-1 bg-gray-200 rounded-full h-2 dark:bg-gray-700">
-                                  <div
-                                    className="bg-gradient-to-r from-green-500 to-green-600 h-2 rounded-full transition-all duration-300"
-                                    style={{ width: `${successRate}%` }}
-                                  />
-                                </div>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Badge
-                                      variant="outline"
-                                      className="text-xs px-2 py-1 w-20 justify-center"
-                                    >
-                                      {totalFormat.display}
-                                    </Badge>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    <p>{totalFormat.full} total calls</p>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      }
-                    )}
-                  </TooltipProvider>
-
-                  {Object.keys(healthData.components.circuit_breakers).length === 0 && (
-                    <div className="text-center py-4 text-muted-foreground">
-                      <Shield className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                      <p className="text-xs">No active circuit breakers</p>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
+          {/* Circuit Breakers - Enhanced Visualization */}
+          {enhancedCBStats.length > 0 && (
+            <Card className="md:col-span-2">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Shield className="h-5 w-5" />
+                  Circuit Breakers
+                </CardTitle>
+                <CardDescription>
+                  Active circuit breaker statistics with error categorization and state tracking
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <TooltipProvider>
+                  <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
+                    {enhancedCBStats.map((stats) => (
+                      <CircuitBreakerCard
+                        key={stats.name}
+                        stats={stats}
+                        showActions={true}
+                        expanded={false}
+                      />
+                    ))}
+                  </div>
+                </TooltipProvider>
+                {enhancedCBStats.length === 0 && (
+                  <div className="text-center py-4 text-muted-foreground">
+                    <Shield className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                    <p className="text-xs">No active circuit breakers</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {/* Database Component - Enhanced */}
           <Card>
@@ -1185,98 +1263,8 @@ export function Debug() {
             </CardContent>
           </Card>
 
-          {/* Scheduler Component - Enhanced */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Calendar className="h-5 w-5" />
-                Scheduler
-              </CardTitle>
-              <CardDescription>Source scheduling and ingestion monitoring</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center gap-2">
-                {getStatusIcon(healthData?.components?.scheduler?.status)}
-                <Badge
-                  className={getStatusIndicatorClasses(healthData?.components?.scheduler?.status)}
-                >
-                  {healthData?.components?.scheduler?.status || 'Unknown'}
-                </Badge>
-              </div>
-
-              {/* Sources Overview */}
-              <div className="space-y-2">
-                <h4 className="text-sm font-medium text-muted-foreground">Configured Sources</h4>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Stream Sources:</span>
-                    <span className="font-medium">
-                      {healthData?.components?.scheduler?.sources_scheduled?.stream_sources || 0}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">EPG Sources:</span>
-                    <span className="font-medium">
-                      {healthData?.components?.scheduler?.sources_scheduled?.epg_sources || 0}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Activity Status */}
-              <div className="space-y-2">
-                <h4 className="text-sm font-medium text-muted-foreground">Current Activity</h4>
-                <div className="grid grid-cols-1 gap-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Active Ingestions:</span>
-                    <span className="font-medium">
-                      {healthData?.components?.scheduler?.active_ingestions || 0}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Last Cache Refresh:</span>
-                    <span className="font-medium text-xs">
-                      {new Date(
-                        healthData?.components?.scheduler?.last_cache_refresh || new Date()
-                      ).toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Next Scheduled Times */}
-              {healthData?.components?.scheduler?.next_scheduled_times &&
-                healthData.components.scheduler.next_scheduled_times.length > 0 && (
-                  <div className="space-y-2">
-                    <h4 className="text-sm font-medium text-muted-foreground">
-                      Next Scheduled Runs
-                    </h4>
-                    <div className="space-y-2">
-                      {(healthData?.components?.scheduler?.next_scheduled_times || []).map(
-                        (schedule, index) => (
-                          <div key={index} className="bg-muted/50 rounded p-2">
-                            <div className="flex justify-between items-start text-xs">
-                              <div>
-                                <div className="font-medium">{schedule.source_name}</div>
-                                <div className="text-muted-foreground">{schedule.source_type}</div>
-                              </div>
-                              <div className="text-right">
-                                <div className="font-medium">
-                                  {new Date(schedule.next_run).toLocaleString()}
-                                </div>
-                                <div className="text-muted-foreground font-mono text-xs">
-                                  {schedule.cron_expression}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        )
-                      )}
-                    </div>
-                  </div>
-                )}
-            </CardContent>
-          </Card>
+          {/* Jobs Card - replaces old Scheduler component */}
+          <JobsCard />
 
           {/* Sandbox Manager Component - Enhanced */}
           {healthData?.components?.sandbox_manager && (
@@ -1290,16 +1278,16 @@ export function Debug() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex items-center gap-2">
-                  {getStatusIcon(healthData.components.sandbox_manager.status)}
+                  {getStatusIcon(healthData.components.sandbox_manager?.status)}
                   <Badge
                     className={getStatusIndicatorClasses(
-                      healthData.components.sandbox_manager.status
+                      healthData.components.sandbox_manager?.status
                     )}
                   >
-                    {healthData.components.sandbox_manager.status || 'Unknown'}
+                    {healthData.components.sandbox_manager?.status || 'Unknown'}
                   </Badge>
                   <Badge variant="outline" className="ml-auto capitalize">
-                    {healthData.components.sandbox_manager.cleanup_status}
+                    {healthData.components.sandbox_manager?.cleanup_status ?? 'N/A'}
                   </Badge>
                 </div>
 
@@ -1310,13 +1298,15 @@ export function Debug() {
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Files Cleaned:</span>
                       <span className="font-medium">
-                        {healthData.components.sandbox_manager.temp_files_cleaned}
+                        {healthData.components.sandbox_manager?.temp_files_cleaned ?? 'N/A'}
                       </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Space Freed:</span>
                       <span className="font-medium">
-                        {formatMemorySize(healthData.components.sandbox_manager.disk_space_freed_mb)}
+                        {healthData.components.sandbox_manager?.disk_space_freed_mb != null
+                          ? formatMemorySize(healthData.components.sandbox_manager.disk_space_freed_mb)
+                          : 'N/A'}
                       </span>
                     </div>
                   </div>
@@ -1324,37 +1314,40 @@ export function Debug() {
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Last Cleanup:</span>
                       <span className="font-medium text-xs">
-                        {new Date(
-                          healthData.components.sandbox_manager.last_cleanup_run
-                        ).toLocaleString()}
+                        {healthData.components.sandbox_manager?.last_cleanup_run
+                          ? new Date(healthData.components.sandbox_manager.last_cleanup_run).toLocaleString()
+                          : 'N/A'}
                       </span>
                     </div>
                   </div>
                 </div>
 
                 {/* Managed Directories */}
-                <div className="space-y-2">
-                  <h4 className="text-sm font-medium text-muted-foreground">Managed Directories</h4>
+                {healthData.components.sandbox_manager?.managed_directories &&
+                  healthData.components.sandbox_manager.managed_directories.length > 0 && (
                   <div className="space-y-2">
-                    {healthData.components.sandbox_manager.managed_directories?.map((dir, index) => (
-                      <div key={index} className="bg-muted/50 rounded p-2">
-                        <div className="flex justify-between items-start text-xs">
-                          <div>
-                            <div className="font-medium font-mono">{dir.name}</div>
-                            <div className="text-muted-foreground">
-                              Retention: {dir.retention_duration} • Cleanup: {dir.cleanup_interval}
+                    <h4 className="text-sm font-medium text-muted-foreground">Managed Directories</h4>
+                    <div className="space-y-2">
+                      {healthData.components.sandbox_manager.managed_directories.map((dir, index) => (
+                        <div key={index} className="bg-muted/50 rounded p-2">
+                          <div className="flex justify-between items-start text-xs">
+                            <div>
+                              <div className="font-medium font-mono">{dir.name}</div>
+                              <div className="text-muted-foreground">
+                                Retention: {dir.retention_duration} • Cleanup: {dir.cleanup_interval}
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <Badge variant="outline" className="text-xs">
+                                Active
+                              </Badge>
                             </div>
                           </div>
-                          <div className="text-right">
-                            <Badge variant="outline" className="text-xs">
-                              Active
-                            </Badge>
-                          </div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
               </CardContent>
             </Card>
           )}
@@ -1363,87 +1356,89 @@ export function Debug() {
           <LogoCacheCard />
 
           {/* FFmpeg Information */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Settings className="h-5 w-5" />
-                FFmpeg
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex items-center gap-2">
-                {healthData.components.relay_system.ffmpeg_available ? (
-                  <CheckCircle className="h-4 w-4 text-green-500" />
-                ) : (
-                  <XCircle className="h-4 w-4 text-red-500" />
-                )}
-                <Badge
-                  variant={
-                    healthData.components.relay_system.ffmpeg_available ? 'default' : 'destructive'
-                  }
-                >
-                  {healthData.components.relay_system.ffmpeg_available
-                    ? 'Available'
-                    : 'Unavailable'}
-                </Badge>
-              </div>
-              <div className="space-y-1 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">FFmpeg Version:</span>
-                  <span className="font-medium">
-                    {healthData.components.relay_system.ffmpeg_version || 'null'}
-                  </span>
+          {healthData?.components?.relay_system && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Settings className="h-5 w-5" />
+                  FFmpeg
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-center gap-2">
+                  {healthData.components.relay_system?.ffmpeg_available ? (
+                    <CheckCircle className="h-4 w-4 text-green-500" />
+                  ) : (
+                    <XCircle className="h-4 w-4 text-red-500" />
+                  )}
+                  <Badge
+                    variant={
+                      healthData.components.relay_system?.ffmpeg_available ? 'default' : 'destructive'
+                    }
+                  >
+                    {healthData.components.relay_system?.ffmpeg_available
+                      ? 'Available'
+                      : 'Unavailable'}
+                  </Badge>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">FFprobe Version:</span>
-                  <span className="font-medium">
-                    {healthData.components.relay_system.ffprobe_version || 'null'}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">HW Accel:</span>
-                  <span className="font-medium">
-                    {healthData.components.relay_system.hwaccel_available ? (
-                      <CheckCircle className="h-3 w-3 text-green-500 inline" />
-                    ) : (
-                      <XCircle className="h-3 w-3 text-red-500 inline" />
-                    )}
-                  </span>
-                </div>
-                {healthData.components.relay_system.hwaccel_available &&
-                  healthData.components.relay_system.hwaccel_capabilities && (
-                    <div className="pt-2 border-t">
-                      <p className="text-xs font-medium text-muted-foreground mb-2">
-                        Hardware Acceleration Support Matrix:
-                      </p>
-                      <div className="space-y-2">
-                        {healthData.components.relay_system.hwaccel_capabilities.support_matrix &&
-                          Object.entries(
-                            healthData.components.relay_system.hwaccel_capabilities.support_matrix
-                          ).map(([accel, support]) => (
-                            <div key={accel} className="bg-muted/50 rounded p-2">
-                              <div className="flex justify-between items-center text-xs">
-                                <div className="font-medium">{accel.toUpperCase()}</div>
-                                <div className="flex gap-1">
-                                  {Object.entries(support).map(([codec, supported]) => (
-                                    <Badge
-                                      key={codec}
-                                      variant={supported ? 'default' : 'outline'}
-                                      className={`text-xs ${supported ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100' : 'text-muted-foreground'}`}
-                                    >
-                                      {codec.toUpperCase()}
-                                    </Badge>
-                                  ))}
+                <div className="space-y-1 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">FFmpeg Version:</span>
+                    <span className="font-medium">
+                      {healthData.components.relay_system?.ffmpeg_version || 'N/A'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">FFprobe Version:</span>
+                    <span className="font-medium">
+                      {healthData.components.relay_system?.ffprobe_version || 'N/A'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">HW Accel:</span>
+                    <span className="font-medium">
+                      {healthData.components.relay_system?.hwaccel_available ? (
+                        <CheckCircle className="h-3 w-3 text-green-500 inline" />
+                      ) : (
+                        <XCircle className="h-3 w-3 text-red-500 inline" />
+                      )}
+                    </span>
+                  </div>
+                  {healthData.components.relay_system?.hwaccel_available &&
+                    healthData.components.relay_system?.hwaccel_capabilities && (
+                      <div className="pt-2 border-t">
+                        <p className="text-xs font-medium text-muted-foreground mb-2">
+                          Hardware Acceleration Support Matrix:
+                        </p>
+                        <div className="space-y-2">
+                          {healthData.components.relay_system.hwaccel_capabilities?.support_matrix &&
+                            Object.entries(
+                              healthData.components.relay_system.hwaccel_capabilities.support_matrix
+                            ).map(([accel, support]) => (
+                              <div key={accel} className="bg-muted/50 rounded p-2">
+                                <div className="flex justify-between items-center text-xs">
+                                  <div className="font-medium">{accel.toUpperCase()}</div>
+                                  <div className="flex gap-1">
+                                    {Object.entries(support as Record<string, boolean>).map(([codec, supported]) => (
+                                      <Badge
+                                        key={codec}
+                                        variant={supported ? 'default' : 'outline'}
+                                        className={`text-xs ${supported ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100' : 'text-muted-foreground'}`}
+                                      >
+                                        {codec.toUpperCase()}
+                                      </Badge>
+                                    ))}
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          ))}
+                            ))}
+                        </div>
                       </div>
-                    </div>
-                  )}
-              </div>
-            </CardContent>
-          </Card>
+                    )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
 

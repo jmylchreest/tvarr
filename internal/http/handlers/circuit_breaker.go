@@ -35,6 +35,15 @@ func (h *CircuitBreakerHandler) Register(api huma.API) {
 	}, h.GetConfig)
 
 	huma.Register(api, huma.Operation{
+		OperationID: "getCircuitBreakerStats",
+		Method:      "GET",
+		Path:        "/api/v1/circuit-breakers/stats",
+		Summary:     "Get enhanced circuit breaker statistics",
+		Description: "Returns detailed statistics including error categorization, state durations, and transition history",
+		Tags:        []string{"Circuit Breakers"},
+	}, h.GetEnhancedStats)
+
+	huma.Register(api, huma.Operation{
 		OperationID: "updateCircuitBreakerConfig",
 		Method:      "PUT",
 		Path:        "/api/v1/circuit-breakers/config",
@@ -87,6 +96,157 @@ type CircuitBreakerStatusData struct {
 	TotalSuccesses   int64     `json:"total_successes"`
 	TotalFailures    int64     `json:"total_failures"`
 	LastFailure      time.Time `json:"last_failure,omitempty"`
+}
+
+// Enhanced stats types - mirrors pkg/httpclient/stats.go for API response
+
+// EnhancedErrorCounts categorizes errors for visualization.
+type EnhancedErrorCounts struct {
+	Success2xx     int64 `json:"success_2xx"`
+	ClientError4xx int64 `json:"client_error_4xx"`
+	ServerError5xx int64 `json:"server_error_5xx"`
+	Timeout        int64 `json:"timeout"`
+	NetworkError   int64 `json:"network_error"`
+}
+
+// EnhancedStateDurations tracks time spent in each state.
+type EnhancedStateDurations struct {
+	ClosedDurationMs   int64   `json:"closed_duration_ms"`
+	OpenDurationMs     int64   `json:"open_duration_ms"`
+	HalfOpenDurationMs int64   `json:"half_open_duration_ms"`
+	TotalDurationMs    int64   `json:"total_duration_ms"`
+	ClosedPercentage   float64 `json:"closed_percentage"`
+	OpenPercentage     float64 `json:"open_percentage"`
+	HalfOpenPercentage float64 `json:"half_open_percentage"`
+}
+
+// EnhancedStateTransition records a state change.
+type EnhancedStateTransition struct {
+	Timestamp        time.Time `json:"timestamp"`
+	FromState        string    `json:"from_state"`
+	ToState          string    `json:"to_state"`
+	Reason           string    `json:"reason"`
+	ConsecutiveCount int       `json:"consecutive_count"`
+}
+
+// EnhancedConfig contains the circuit breaker configuration.
+type EnhancedConfig struct {
+	FailureThreshold      int    `json:"failure_threshold"`
+	ResetTimeout          string `json:"reset_timeout"`
+	HalfOpenMax           int    `json:"half_open_max"`
+	AcceptableStatusCodes string `json:"acceptable_status_codes,omitempty"`
+}
+
+// EnhancedCircuitBreakerStats contains detailed CB statistics for visualization.
+type EnhancedCircuitBreakerStats struct {
+	Name                 string                    `json:"name"`
+	State                string                    `json:"state"`
+	StateEnteredAt       time.Time                 `json:"state_entered_at"`
+	StateDurationMs      int64                     `json:"state_duration_ms"`
+	ConsecutiveFailures  int                       `json:"consecutive_failures"`
+	ConsecutiveSuccesses int                       `json:"consecutive_successes"`
+	TotalRequests        int64                     `json:"total_requests"`
+	TotalSuccesses       int64                     `json:"total_successes"`
+	TotalFailures        int64                     `json:"total_failures"`
+	FailureRate          float64                   `json:"failure_rate"`
+	ErrorCounts          EnhancedErrorCounts       `json:"error_counts"`
+	StateDurations       EnhancedStateDurations    `json:"state_durations"`
+	RecentTransitions    []EnhancedStateTransition `json:"recent_transitions,omitempty"`
+	LastFailure          *time.Time                `json:"last_failure,omitempty"`
+	LastSuccess          *time.Time                `json:"last_success,omitempty"`
+	NextHalfOpenAt       *time.Time                `json:"next_half_open_at,omitempty"`
+	Config               EnhancedConfig            `json:"config"`
+}
+
+// GetEnhancedStatsInput is the input for getting enhanced stats.
+type GetEnhancedStatsInput struct{}
+
+// GetEnhancedStatsOutput is the output for getting enhanced stats.
+type GetEnhancedStatsOutput struct {
+	Body struct {
+		Success bool                          `json:"success"`
+		Data    []EnhancedCircuitBreakerStats `json:"data"`
+	}
+}
+
+// GetEnhancedStats returns enhanced circuit breaker statistics.
+func (h *CircuitBreakerHandler) GetEnhancedStats(ctx context.Context, input *GetEnhancedStatsInput) (*GetEnhancedStatsOutput, error) {
+	allStats := h.manager.GetAllEnhancedStats()
+	result := make([]EnhancedCircuitBreakerStats, 0, len(allStats))
+
+	for name, stats := range allStats {
+		// Convert transitions
+		transitions := make([]EnhancedStateTransition, 0, len(stats.Transitions))
+		for _, t := range stats.Transitions {
+			transitions = append(transitions, EnhancedStateTransition{
+				Timestamp:        t.Timestamp,
+				FromState:        t.FromState.String(),
+				ToState:          t.ToState.String(),
+				Reason:           string(t.Reason),
+				ConsecutiveCount: t.ConsecutiveCount,
+			})
+		}
+
+		// Build config
+		acceptableCodes := ""
+		if stats.Config.AcceptableStatusCodes != nil {
+			acceptableCodes = stats.Config.AcceptableStatusCodes.String()
+		}
+
+		enhanced := EnhancedCircuitBreakerStats{
+			Name:                 name,
+			State:                stats.State.String(),
+			StateEnteredAt:       stats.StateEnteredAt,
+			StateDurationMs:      stats.StateDurationMs,
+			ConsecutiveFailures:  stats.ConsecutiveFailures,
+			ConsecutiveSuccesses: stats.ConsecutiveSuccesses,
+			TotalRequests:        stats.TotalRequests,
+			TotalSuccesses:       stats.TotalSuccesses,
+			TotalFailures:        stats.TotalFailures,
+			FailureRate:          stats.FailureRate,
+			ErrorCounts: EnhancedErrorCounts{
+				Success2xx:     stats.ErrorCounts.Success2xx,
+				ClientError4xx: stats.ErrorCounts.ClientError4xx,
+				ServerError5xx: stats.ErrorCounts.ServerError5xx,
+				Timeout:        stats.ErrorCounts.Timeout,
+				NetworkError:   stats.ErrorCounts.NetworkError,
+			},
+			StateDurations: EnhancedStateDurations{
+				ClosedDurationMs:   stats.StateDurations.ClosedMs,
+				OpenDurationMs:     stats.StateDurations.OpenMs,
+				HalfOpenDurationMs: stats.StateDurations.HalfOpenMs,
+				TotalDurationMs:    stats.StateDurations.TotalMs,
+				ClosedPercentage:   stats.StateDurations.ClosedPct,
+				OpenPercentage:     stats.StateDurations.OpenPct,
+				HalfOpenPercentage: stats.StateDurations.HalfOpenPct,
+			},
+			RecentTransitions: transitions,
+			Config: EnhancedConfig{
+				FailureThreshold:      stats.Config.FailureThreshold,
+				ResetTimeout:          stats.Config.ResetTimeout.String(),
+				HalfOpenMax:           stats.Config.HalfOpenMax,
+				AcceptableStatusCodes: acceptableCodes,
+			},
+		}
+
+		// Set optional time fields only if not zero
+		if !stats.LastFailure.IsZero() {
+			enhanced.LastFailure = &stats.LastFailure
+		}
+		if !stats.LastSuccess.IsZero() {
+			enhanced.LastSuccess = &stats.LastSuccess
+		}
+		if !stats.NextHalfOpenAt.IsZero() {
+			enhanced.NextHalfOpenAt = &stats.NextHalfOpenAt
+		}
+
+		result = append(result, enhanced)
+	}
+
+	resp := &GetEnhancedStatsOutput{}
+	resp.Body.Success = true
+	resp.Body.Data = result
+	return resp, nil
 }
 
 // GetConfigInput is the input for getting circuit breaker config.
