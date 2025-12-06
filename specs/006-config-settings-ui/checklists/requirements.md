@@ -61,11 +61,13 @@ Circuit breaker cards include:
 | - | `POST /api/v1/config/persist` (new) |
 | Reset actions | Keep separate |
 | Health | Keep separate (enhanced) |
-| - | `GET /live` (new - UI polling) |
-| - | `GET /livez`, `GET /readyz` (new - K8s) |
+| `/live` (missing) | Migrated to `/livez` |
+| - | `GET /livez` (new - liveness) |
+| - | `GET /readyz` (new - readiness) |
 
-## Health & Liveness Endpoints
+## Health & Liveness Endpoints (K8s-aligned)
 
-- `/live`: Lightweight UI connectivity check (currently missing from backend)
+- `/livez`: Lightweight liveness check (UI polling + K8s liveness probe)
+- `/readyz`: Readiness check (K8s readiness probe - checks DB/scheduler)
 - `/health`: Detailed health metrics for debug page
-- `/livez`, `/readyz`: Kubernetes liveness/readiness probes (new)
+- Frontend migrates from `/live` to `/livez`

@@ -242,29 +242,35 @@ As an administrator, I want to adjust circuit breaker thresholds and timeouts at
 
 ## Health & Liveness Endpoints
 
-The system requires distinct endpoints for different health-check purposes:
+The system requires distinct endpoints for different health-check purposes, aligned with Kubernetes naming conventions.
 
 ### Current State
 
 - **`/live`**: Frontend uses this for UI connectivity polling (60s interval) - **currently missing from backend**
-- **`/health`**: Full health data for debug page (CPU, memory, circuit breakers) - **exists, used for UI polling**
-- **No Kubernetes-standard endpoints**: `/livez`, `/readyz`, `/healthz` are not implemented
+- **`/health`**: Full health data for debug page (CPU, memory, circuit breakers) - **exists, used for detailed metrics**
+- **No Kubernetes-standard endpoints**: `/livez`, `/readyz` are not implemented
 
 ### Endpoint Purpose Separation
 
 | Endpoint | Purpose | Response | Use Case |
 | -------- | ------- | -------- | -------- |
-| `GET /live` | Simple liveness check | `{"status":"ok"}` | UI connectivity polling (lightweight, fast) |
+| `GET /livez` | Liveness check | `{"status":"ok"}` | UI connectivity polling + K8s liveness probe |
+| `GET /readyz` | Readiness check | `{"status":"ok/not_ready"}` | K8s readiness probe (checks DB, scheduler) |
 | `GET /health` | Detailed health metrics | Full CPU/memory/circuit breaker data | Debug page, monitoring dashboards |
-| `GET /livez` | Kubernetes liveness probe | `200 OK` or `503` | K8s determines if pod should restart |
-| `GET /readyz` | Kubernetes readiness probe | `200 OK` or `503` | K8s determines if pod can receive traffic |
+
+### Migration
+
+- Frontend will migrate from `/live` to `/livez`
+- `/livez` serves both UI polling and Kubernetes liveness needs
+- `/readyz` checks startup dependencies (database connected, scheduler running)
 
 ### Requirements
 
-- **FR-043**: System MUST provide a lightweight `/live` endpoint for UI connectivity checks
-- **FR-044**: The `/live` endpoint MUST respond within 100ms under normal conditions
-- **FR-045**: System SHOULD provide `/livez` and `/readyz` endpoints for Kubernetes deployments
+- **FR-043**: System MUST provide a lightweight `/livez` endpoint for liveness checks
+- **FR-044**: The `/livez` endpoint MUST respond within 100ms under normal conditions
+- **FR-045**: System MUST provide `/readyz` endpoint that verifies database and scheduler health
 - **FR-046**: Health/liveness endpoints MUST NOT be consolidated with config endpoints
+- **FR-047**: Frontend MUST migrate from `/live` to `/livez` for connectivity polling
 
 ## Current API Structure (for reference)
 
@@ -283,9 +289,9 @@ The following endpoints currently exist and may be consolidated:
 | `GET /api/v1/features` | Feature flags | Unified config endpoint |
 | `PUT /api/v1/features` | Update feature flags | Unified config endpoint |
 | `GET /health` | Health metrics | Keep separate (detailed health) |
-| `GET /live` | UI connectivity check | **New** - Keep separate (lightweight) |
-| `GET /livez` | K8s liveness probe | **New** - Keep separate (K8s) |
-| `GET /readyz` | K8s readiness probe | **New** - Keep separate (K8s) |
+| `GET /live` | UI connectivity check | **Migrate to `/livez`** |
+| `GET /livez` | Liveness probe | **New** - UI polling + K8s liveness |
+| `GET /readyz` | Readiness probe | **New** - K8s readiness (checks DB/scheduler) |
 
 **Proposed Consolidated Structure:**
 - `GET /api/v1/config` - All configuration in single response
@@ -294,9 +300,8 @@ The following endpoints currently exist and may be consolidated:
 - `POST /api/v1/circuit-breakers/{name}/reset` - Keep (action endpoint)
 - `POST /api/v1/circuit-breakers/reset` - Keep (action endpoint)
 - `GET /health` - Keep (detailed health check, enhanced with circuit breaker stats)
-- `GET /live` - Keep (lightweight liveness for UI polling)
-- `GET /livez` - Keep (Kubernetes liveness probe)
-- `GET /readyz` - Keep (Kubernetes readiness probe)
+- `GET /livez` - Keep (lightweight liveness for UI polling + K8s)
+- `GET /readyz` - Keep (readiness probe checking DB/scheduler)
 
 ## Circuit Breaker Visualization Design
 
