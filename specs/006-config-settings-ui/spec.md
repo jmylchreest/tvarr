@@ -240,6 +240,32 @@ As an administrator, I want to adjust circuit breaker thresholds and timeouts at
 - The `/health` endpoint remains separate as it serves a different purpose (health checks vs configuration)
 - State transition history is stored in memory only (reset on service restart) - persistence optional
 
+## Health & Liveness Endpoints
+
+The system requires distinct endpoints for different health-check purposes:
+
+### Current State
+
+- **`/live`**: Frontend uses this for UI connectivity polling (60s interval) - **currently missing from backend**
+- **`/health`**: Full health data for debug page (CPU, memory, circuit breakers) - **exists, used for UI polling**
+- **No Kubernetes-standard endpoints**: `/livez`, `/readyz`, `/healthz` are not implemented
+
+### Endpoint Purpose Separation
+
+| Endpoint | Purpose | Response | Use Case |
+| -------- | ------- | -------- | -------- |
+| `GET /live` | Simple liveness check | `{"status":"ok"}` | UI connectivity polling (lightweight, fast) |
+| `GET /health` | Detailed health metrics | Full CPU/memory/circuit breaker data | Debug page, monitoring dashboards |
+| `GET /livez` | Kubernetes liveness probe | `200 OK` or `503` | K8s determines if pod should restart |
+| `GET /readyz` | Kubernetes readiness probe | `200 OK` or `503` | K8s determines if pod can receive traffic |
+
+### Requirements
+
+- **FR-043**: System MUST provide a lightweight `/live` endpoint for UI connectivity checks
+- **FR-044**: The `/live` endpoint MUST respond within 100ms under normal conditions
+- **FR-045**: System SHOULD provide `/livez` and `/readyz` endpoints for Kubernetes deployments
+- **FR-046**: Health/liveness endpoints MUST NOT be consolidated with config endpoints
+
 ## Current API Structure (for reference)
 
 The following endpoints currently exist and may be consolidated:
@@ -256,7 +282,10 @@ The following endpoints currently exist and may be consolidated:
 | `POST /api/v1/circuit-breakers/reset` | Reset all breakers | Keep separate (action) |
 | `GET /api/v1/features` | Feature flags | Unified config endpoint |
 | `PUT /api/v1/features` | Update feature flags | Unified config endpoint |
-| `GET /health` | Health metrics | Keep separate (health check) |
+| `GET /health` | Health metrics | Keep separate (detailed health) |
+| `GET /live` | UI connectivity check | **New** - Keep separate (lightweight) |
+| `GET /livez` | K8s liveness probe | **New** - Keep separate (K8s) |
+| `GET /readyz` | K8s readiness probe | **New** - Keep separate (K8s) |
 
 **Proposed Consolidated Structure:**
 - `GET /api/v1/config` - All configuration in single response
@@ -264,7 +293,10 @@ The following endpoints currently exist and may be consolidated:
 - `POST /api/v1/config/persist` - Save to config file
 - `POST /api/v1/circuit-breakers/{name}/reset` - Keep (action endpoint)
 - `POST /api/v1/circuit-breakers/reset` - Keep (action endpoint)
-- `GET /health` - Keep (standard health check, enhanced with circuit breaker stats)
+- `GET /health` - Keep (detailed health check, enhanced with circuit breaker stats)
+- `GET /live` - Keep (lightweight liveness for UI polling)
+- `GET /livez` - Keep (Kubernetes liveness probe)
+- `GET /readyz` - Keep (Kubernetes readiness probe)
 
 ## Circuit Breaker Visualization Design
 

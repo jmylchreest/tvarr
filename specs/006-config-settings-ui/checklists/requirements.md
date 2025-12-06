@@ -53,11 +53,19 @@ Circuit breaker cards include:
 
 ## API Consolidation Plan
 
-| Before (10+ endpoints) | After (3 unified) |
-| ---------------------- | ----------------- |
+| Before (10+ endpoints) | After (3 unified + health endpoints) |
+| ---------------------- | ------------------------------------ |
 | Multiple settings endpoints | `GET/PUT /api/v1/config` |
 | Circuit breaker config | ↳ merged |
 | Feature flags | ↳ merged |
 | - | `POST /api/v1/config/persist` (new) |
 | Reset actions | Keep separate |
 | Health | Keep separate (enhanced) |
+| - | `GET /live` (new - UI polling) |
+| - | `GET /livez`, `GET /readyz` (new - K8s) |
+
+## Health & Liveness Endpoints
+
+- `/live`: Lightweight UI connectivity check (currently missing from backend)
+- `/health`: Detailed health metrics for debug page
+- `/livez`, `/readyz`: Kubernetes liveness/readiness probes (new)
