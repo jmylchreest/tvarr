@@ -42,7 +42,7 @@ import {
   ChartLegendContent,
   type ChartConfig,
 } from '@/components/ui/chart';
-import { ApiResponse, HealthData, KubernetesProbeResponse } from '@/types/api';
+import { ApiResponse, HealthData, LivezProbeResponse, ReadyzProbeResponse } from '@/types/api';
 import { getStatusIndicatorClasses, getStatusType } from '@/lib/status-colors';
 import { getBackendUrl } from '@/lib/config';
 import { useHealthData } from '@/hooks/use-health-data';
@@ -559,8 +559,8 @@ function JobsCard() {
 export function Debug() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [liveProbe, setLiveProbe] = useState<KubernetesProbeResponse | null>(null);
-  const [readyProbe, setReadyProbe] = useState<KubernetesProbeResponse | null>(null);
+  const [liveProbe, setLiveProbe] = useState<LivezProbeResponse | null>(null);
+  const [readyProbe, setReadyProbe] = useState<ReadyzProbeResponse | null>(null);
   const [copied, setCopied] = useState(false);
   const [rawJsonExpanded, setRawJsonExpanded] = useState(false);
 
@@ -625,7 +625,7 @@ export function Debug() {
       try {
         const liveResponse = await fetch(`${backendUrl}/livez`);
         if (liveResponse.ok) {
-          const liveData: KubernetesProbeResponse = await liveResponse.json();
+          const liveData: LivezProbeResponse = await liveResponse.json();
           setLiveProbe(liveData);
         }
       } catch (err) {
@@ -635,7 +635,7 @@ export function Debug() {
       try {
         const readyResponse = await fetch(`${backendUrl}/readyz`);
         if (readyResponse.ok) {
-          const readyData: KubernetesProbeResponse = await readyResponse.json();
+          const readyData: ReadyzProbeResponse = await readyResponse.json();
           setReadyProbe(readyData);
         }
       } catch (err) {
@@ -873,15 +873,15 @@ export function Debug() {
               <div className="space-y-1">
                 <div className="flex items-center gap-1 text-xs">
                   <div
-                    className={`h-2 w-2 rounded-full ${liveProbe?.success ? 'bg-green-500' : 'bg-red-500'}`}
+                    className={`h-2 w-2 rounded-full ${liveProbe?.status === 'ok' ? 'bg-green-500' : 'bg-red-500'}`}
                   />
-                  <span>Live: {liveProbe?.success ? 'OK' : 'Fail'}</span>
+                  <span>Live: {liveProbe?.status === 'ok' ? 'OK' : 'Fail'}</span>
                 </div>
                 <div className="flex items-center gap-1 text-xs">
                   <div
-                    className={`h-2 w-2 rounded-full ${readyProbe?.success ? 'bg-green-500' : 'bg-red-500'}`}
+                    className={`h-2 w-2 rounded-full ${readyProbe?.status === 'ok' ? 'bg-green-500' : 'bg-red-500'}`}
                   />
-                  <span>Ready: {readyProbe?.success ? 'OK' : 'Fail'}</span>
+                  <span>Ready: {readyProbe?.status === 'ok' ? 'OK' : 'Fail'}</span>
                 </div>
               </div>
             </CardContent>

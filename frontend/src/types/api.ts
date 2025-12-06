@@ -527,6 +527,17 @@ export interface HealthData {
   };
 }
 
+// K8s-aligned probe responses matching backend LivezResponse and ReadyzResponse
+export interface LivezProbeResponse {
+  status: string; // "ok" when healthy
+}
+
+export interface ReadyzProbeResponse {
+  status: string; // "ok" when ready, "not_ready" otherwise
+  components?: Record<string, string>; // e.g., { database: "ok", scheduler: "ok" }
+}
+
+// Legacy alias for backward compatibility
 export interface KubernetesProbeResponse {
   success: boolean;
   timestamp: string;
