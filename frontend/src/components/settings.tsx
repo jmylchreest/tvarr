@@ -42,13 +42,13 @@ interface FeatureFlag {
   config: Record<string, any>;
 }
 
-// Standard Rust tracing log levels
+// Log levels (lowercase to match Go slog/backend)
 const LOG_LEVELS = [
-  { value: 'TRACE', label: 'TRACE', description: 'Most verbose, includes all details' },
-  { value: 'DEBUG', label: 'DEBUG', description: 'Debugging information' },
-  { value: 'INFO', label: 'INFO', description: 'General information (default)' },
-  { value: 'WARN', label: 'WARN', description: 'Warning messages' },
-  { value: 'ERROR', label: 'ERROR', description: 'Error messages only' },
+  { value: 'trace', label: 'TRACE', description: 'Most verbose, includes all details' },
+  { value: 'debug', label: 'DEBUG', description: 'Debugging information' },
+  { value: 'info', label: 'INFO', description: 'General information (default)' },
+  { value: 'warn', label: 'WARN', description: 'Warning messages' },
+  { value: 'error', label: 'ERROR', description: 'Error messages only' },
 ] as const;
 
 function getStatusIcon(success: boolean) {
@@ -822,7 +822,7 @@ export function Settings() {
                   )}
                 </Label>
                 <Select
-                  value={String(getCurrentValue('log_level') || 'INFO')}
+                  value={String(getCurrentValue('log_level') || 'info')}
                   onValueChange={(value) => handleInputChange('log_level', value)}
                 >
                   <SelectTrigger className="h-8 text-sm">
