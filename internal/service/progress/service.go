@@ -618,6 +618,8 @@ func (u *StageUpdater) SetItemProgress(current, total int, currentItem string) {
 				op.Stages[i].Current = current
 				op.Stages[i].Total = total
 				op.Stages[i].CurrentItem = currentItem
+				op.Stages[i].Message = currentItem // Also update Message for UI display
+				op.Message = currentItem           // Update overall message too
 				if total > 0 {
 					op.Stages[i].Progress = float64(current) / float64(total)
 				}

@@ -276,7 +276,9 @@ export const ManualChannelEditor: React.FC<ManualChannelEditorProps> = ({
       // Simple defer without forcing focus when element not mounted
       if (fieldRef.current) {
         requestAnimationFrame(() => {
-          fieldRef.current && fieldRef.current.focus();
+          if (fieldRef.current) {
+            fieldRef.current.focus();
+          }
         });
       }
     };

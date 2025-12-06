@@ -26,11 +26,12 @@ func setupTestDB(t *testing.T) *gorm.DB {
 func TestAllMigrations_ReturnsExpectedCount(t *testing.T) {
 	migrations := AllMigrations()
 
-	// We have 19 migrations: 3 for stream sources, 2 for EPG, 5 for proxy, 3 for filters/rules,
+	// We have 21 migrations: 3 for stream sources, 2 for EPG, 5 for proxy, 3 for filters/rules,
 	// 2 for relay, 1 for is_system column, 1 for EPG timezone fields, 1 for channel index fix,
-	// 1 for renaming order->priority in proxy_filters/proxy_mapping_rules
+	// 1 for renaming order->priority in proxy_filters/proxy_mapping_rules,
+	// 1 for EPG api_method column, 1 for jobs and job_history tables
 	// (Logo caching uses file-based storage with in-memory indexing, no database tables)
-	assert.Len(t, migrations, 19)
+	assert.Len(t, migrations, 21)
 }
 
 func TestAllMigrations_VersionsAreUnique(t *testing.T) {
@@ -103,7 +104,7 @@ func TestMigrator_Status(t *testing.T) {
 	// Before running migrations
 	statuses, err := migrator.Status(ctx)
 	require.NoError(t, err)
-	assert.Len(t, statuses, 19)
+	assert.Len(t, statuses, 21)
 
 	for _, s := range statuses {
 		assert.False(t, s.Applied)
@@ -134,13 +135,13 @@ func TestMigrator_Down_RollsBackLastMigration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Roll back migrations one by one until we've removed data_mapping_rules and filters tables
-	// Current order: 019, 018, 017, 016, 015, 014, 013, 012, 011...
-	// Need to roll back through 019 (rename order to priority), 018 (channel index fix),
-	// 017 (EPG timezone), 016 (is_system), 015 (default relay profiles), 014 (relay_profiles table),
-	// 013 (default filters/rules), 012 (data_mapping_rules), 011 (filters)
+	// Current order (21 migrations): 021 (jobs), 020 (api_method), 019 (priority rename),
+	// 018 (channel index fix), 017 (EPG timezone), 016 (is_system), 015 (default relay profiles),
+	// 014 (relay_profiles table), 013 (default filters/rules), 012 (data_mapping_rules), 011 (filters)
 
-	// Roll back 019-013 (order->priority rename, channel index, EPG timezone, is_system, relay profiles, default data)
-	for i := 0; i < 7; i++ {
+	// Roll back 021-013 (9 migrations: jobs, api_method, priority rename, channel index, EPG timezone,
+	// is_system, relay profiles table, default relay profiles, default filters/rules)
+	for i := 0; i < 9; i++ {
 		err = migrator.Down(ctx)
 		require.NoError(t, err)
 	}
@@ -173,7 +174,7 @@ func TestMigrator_Pending(t *testing.T) {
 	// All should be pending initially
 	pending, err := migrator.Pending(ctx)
 	require.NoError(t, err)
-	assert.Len(t, pending, 19)
+	assert.Len(t, pending, 21)
 
 	// Run migrations
 	err = migrator.Up(ctx)

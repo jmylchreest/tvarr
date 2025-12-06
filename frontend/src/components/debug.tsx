@@ -83,7 +83,8 @@ interface CircuitBreakerProfile {
   operation_timeout: string;
   reset_timeout: string;
   success_threshold: number;
-  acceptable_status_codes: string[];
+  half_open_max: number;
+  acceptable_status_codes: string; // Backend returns as string like "200-299"
 }
 
 interface CircuitBreakerConfig {
@@ -961,7 +962,7 @@ export function Debug() {
                                           </div>
                                           <div>
                                             {config.operation_timeout} op • {config.reset_timeout}{' '}
-                                            reset • {config.acceptable_status_codes.join(', ')}
+                                            reset • {config.acceptable_status_codes || 'default'}
                                           </div>
                                         </span>
                                       </TooltipTrigger>
@@ -987,7 +988,7 @@ export function Debug() {
                                           </div>
                                           <div>
                                             <strong>Acceptable Codes:</strong>{' '}
-                                            {config.acceptable_status_codes.join(', ')}
+                                            {config.acceptable_status_codes || 'default'}
                                           </div>
                                         </div>
                                       </TooltipContent>
@@ -1278,83 +1279,85 @@ export function Debug() {
           </Card>
 
           {/* Sandbox Manager Component - Enhanced */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FolderOpen className="h-5 w-5" />
-                Sandbox Manager
-              </CardTitle>
-              <CardDescription>File management and cleanup operations</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center gap-2">
-                {getStatusIcon(healthData?.components?.sandbox_manager?.status)}
-                <Badge
-                  className={getStatusIndicatorClasses(
-                    healthData?.components?.sandbox_manager?.status
-                  )}
-                >
-                  {healthData?.components?.sandbox_manager?.status || 'Unknown'}
-                </Badge>
-                <Badge variant="outline" className="ml-auto capitalize">
-                  {healthData.components.sandbox_manager.cleanup_status}
-                </Badge>
-              </div>
-
-              {/* Cleanup Statistics */}
-              <div className="space-y-2">
-                <h4 className="text-sm font-medium text-muted-foreground">Latest Cleanup</h4>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Files Cleaned:</span>
-                    <span className="font-medium">
-                      {healthData.components.sandbox_manager.temp_files_cleaned}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Space Freed:</span>
-                    <span className="font-medium">
-                      {formatMemorySize(healthData.components.sandbox_manager.disk_space_freed_mb)}
-                    </span>
-                  </div>
+          {healthData?.components?.sandbox_manager && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FolderOpen className="h-5 w-5" />
+                  Sandbox Manager
+                </CardTitle>
+                <CardDescription>File management and cleanup operations</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center gap-2">
+                  {getStatusIcon(healthData.components.sandbox_manager.status)}
+                  <Badge
+                    className={getStatusIndicatorClasses(
+                      healthData.components.sandbox_manager.status
+                    )}
+                  >
+                    {healthData.components.sandbox_manager.status || 'Unknown'}
+                  </Badge>
+                  <Badge variant="outline" className="ml-auto capitalize">
+                    {healthData.components.sandbox_manager.cleanup_status}
+                  </Badge>
                 </div>
-                <div className="grid grid-cols-1 gap-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Last Cleanup:</span>
-                    <span className="font-medium text-xs">
-                      {new Date(
-                        healthData.components.sandbox_manager.last_cleanup_run
-                      ).toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-              </div>
 
-              {/* Managed Directories */}
-              <div className="space-y-2">
-                <h4 className="text-sm font-medium text-muted-foreground">Managed Directories</h4>
+                {/* Cleanup Statistics */}
                 <div className="space-y-2">
-                  {healthData.components.sandbox_manager.managed_directories.map((dir, index) => (
-                    <div key={index} className="bg-muted/50 rounded p-2">
-                      <div className="flex justify-between items-start text-xs">
-                        <div>
-                          <div className="font-medium font-mono">{dir.name}</div>
-                          <div className="text-muted-foreground">
-                            Retention: {dir.retention_duration} • Cleanup: {dir.cleanup_interval}
+                  <h4 className="text-sm font-medium text-muted-foreground">Latest Cleanup</h4>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Files Cleaned:</span>
+                      <span className="font-medium">
+                        {healthData.components.sandbox_manager.temp_files_cleaned}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Space Freed:</span>
+                      <span className="font-medium">
+                        {formatMemorySize(healthData.components.sandbox_manager.disk_space_freed_mb)}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Last Cleanup:</span>
+                      <span className="font-medium text-xs">
+                        {new Date(
+                          healthData.components.sandbox_manager.last_cleanup_run
+                        ).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Managed Directories */}
+                <div className="space-y-2">
+                  <h4 className="text-sm font-medium text-muted-foreground">Managed Directories</h4>
+                  <div className="space-y-2">
+                    {healthData.components.sandbox_manager.managed_directories?.map((dir, index) => (
+                      <div key={index} className="bg-muted/50 rounded p-2">
+                        <div className="flex justify-between items-start text-xs">
+                          <div>
+                            <div className="font-medium font-mono">{dir.name}</div>
+                            <div className="text-muted-foreground">
+                              Retention: {dir.retention_duration} • Cleanup: {dir.cleanup_interval}
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <Badge variant="outline" className="text-xs">
+                              Active
+                            </Badge>
                           </div>
                         </div>
-                        <div className="text-right">
-                          <Badge variant="outline" className="text-xs">
-                            Active
-                          </Badge>
-                        </div>
                       </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Logo Cache Component */}
           <LogoCacheCard />

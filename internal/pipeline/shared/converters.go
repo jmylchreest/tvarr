@@ -2,10 +2,21 @@
 package shared
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/pkg/m3u"
 	"github.com/jmylchreest/tvarr/pkg/xmltv"
 )
+
+// BuildProxyStreamURL builds the proxy stream URL for a channel.
+// Format: {baseURL}/proxy/{proxyId}/{channelId}
+func BuildProxyStreamURL(baseURL string, proxyID, channelID models.ULID) string {
+	// Ensure baseURL doesn't have a trailing slash
+	baseURL = strings.TrimSuffix(baseURL, "/")
+	return fmt.Sprintf("%s/proxy/%s/%s", baseURL, proxyID.String(), channelID.String())
+}
 
 // ChannelToM3UEntry converts a Channel model to an M3U Entry.
 func ChannelToM3UEntry(ch *models.Channel, channelNum int) *m3u.Entry {

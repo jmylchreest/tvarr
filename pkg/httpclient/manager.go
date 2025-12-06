@@ -179,10 +179,29 @@ func (m *CircuitBreakerManager) RemoveServiceConfig(name string) {
 }
 
 // GetConfig returns a copy of the current full configuration.
+// This includes both statically configured profiles and dynamically created service configs.
 func (m *CircuitBreakerManager) GetConfig() CircuitBreakerConfig {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return *m.config.Clone()
+
+	result := *m.config.Clone()
+
+	// Ensure Profiles map is initialized
+	if result.Profiles == nil {
+		result.Profiles = make(map[string]CircuitBreakerProfileConfig)
+	}
+
+	// Include dynamically created service configs (from active breakers)
+	for name, cfg := range m.configs {
+		if cfg != nil {
+			// Only add if not already in the static profiles
+			if _, exists := result.Profiles[name]; !exists {
+				result.Profiles[name] = *cfg
+			}
+		}
+	}
+
+	return result
 }
 
 // GetServiceConfig returns the effective config for a service (merged global + profile).

@@ -62,7 +62,7 @@ func TestProgressHandler_ListOperations(t *testing.T) {
 		// Start an operation
 		ownerID := models.NewULID()
 		stages := []progress.StageInfo{{ID: "test", Name: "Test", Weight: 1.0}}
-		_, err := svc.StartOperation(progress.OpStreamIngestion, ownerID, "stream_source", stages)
+		_, err := svc.StartOperation(progress.OpStreamIngestion, ownerID, "stream_source", "Test Source", stages)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest("GET", "/api/v1/progress/operations", nil)
@@ -86,9 +86,9 @@ func TestProgressHandler_ListOperations(t *testing.T) {
 		owner1 := models.NewULID()
 		owner2 := models.NewULID()
 		stages := []progress.StageInfo{{ID: "test", Name: "Test", Weight: 1.0}}
-		_, err := svc.StartOperation(progress.OpStreamIngestion, owner1, "stream_source", stages)
+		_, err := svc.StartOperation(progress.OpStreamIngestion, owner1, "stream_source", "Test Source 1", stages)
 		require.NoError(t, err)
-		_, err = svc.StartOperation(progress.OpEpgIngestion, owner2, "epg_source", stages)
+		_, err = svc.StartOperation(progress.OpEpgIngestion, owner2, "epg_source", "Test EPG", stages)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest("GET", "/api/v1/progress/operations?operation_type=stream_ingestion", nil)
@@ -111,13 +111,13 @@ func TestProgressHandler_ListOperations(t *testing.T) {
 		// Start and complete one operation
 		owner1 := models.NewULID()
 		stages := []progress.StageInfo{{ID: "test", Name: "Test", Weight: 1.0}}
-		mgr1, err := svc.StartOperation(progress.OpStreamIngestion, owner1, "stream_source", stages)
+		mgr1, err := svc.StartOperation(progress.OpStreamIngestion, owner1, "stream_source", "Test Source 1", stages)
 		require.NoError(t, err)
 		mgr1.Complete("completed")
 
 		// Start an active operation
 		owner2 := models.NewULID()
-		_, err = svc.StartOperation(progress.OpEpgIngestion, owner2, "epg_source", stages)
+		_, err = svc.StartOperation(progress.OpEpgIngestion, owner2, "epg_source", "Test EPG", stages)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest("GET", "/api/v1/progress/operations?active_only=true", nil)
@@ -142,7 +142,7 @@ func TestProgressHandler_GetOperation(t *testing.T) {
 		// Start an operation
 		ownerID := models.NewULID()
 		stages := []progress.StageInfo{{ID: "test", Name: "Test", Weight: 1.0}}
-		mgr, err := svc.StartOperation(progress.OpStreamIngestion, ownerID, "stream_source", stages)
+		mgr, err := svc.StartOperation(progress.OpStreamIngestion, ownerID, "stream_source", "Test Source", stages)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest("GET", "/api/v1/progress/operations/"+mgr.OperationID(), nil)
@@ -218,7 +218,7 @@ func TestProgressHandler_SSEEvents(t *testing.T) {
 		// Start an operation - should trigger an event
 		ownerID := models.NewULID()
 		stages := []progress.StageInfo{{ID: "test", Name: "Test", Weight: 1.0}}
-		_, err := svc.StartOperation(progress.OpStreamIngestion, ownerID, "stream_source", stages)
+		_, err := svc.StartOperation(progress.OpStreamIngestion, ownerID, "stream_source", "Test Source", stages)
 		require.NoError(t, err)
 
 		// Wait for context to cancel
@@ -251,9 +251,9 @@ func TestProgressHandler_SSEEvents(t *testing.T) {
 		owner1 := models.NewULID()
 		owner2 := models.NewULID()
 		stages := []progress.StageInfo{{ID: "test", Name: "Test", Weight: 1.0}}
-		_, err := svc.StartOperation(progress.OpStreamIngestion, owner1, "stream_source", stages)
+		_, err := svc.StartOperation(progress.OpStreamIngestion, owner1, "stream_source", "Test Source 1", stages)
 		require.NoError(t, err)
-		_, err = svc.StartOperation(progress.OpEpgIngestion, owner2, "epg_source", stages)
+		_, err = svc.StartOperation(progress.OpEpgIngestion, owner2, "epg_source", "Test EPG", stages)
 		require.NoError(t, err)
 
 		<-ctx.Done()
@@ -350,7 +350,7 @@ func TestProgressHandler_SSEIntegration(t *testing.T) {
 			{ID: "load", Name: "Load", Weight: 0.5},
 			{ID: "save", Name: "Save", Weight: 0.5},
 		}
-		mgr, err := svc.StartOperation(progress.OpProxyRegeneration, ownerID, "stream_proxy", stages)
+		mgr, err := svc.StartOperation(progress.OpProxyRegeneration, ownerID, "stream_proxy", "Test Proxy", stages)
 		require.NoError(t, err)
 
 		// Update progress
@@ -408,7 +408,7 @@ func TestProgressHandler_SSEIntegration(t *testing.T) {
 		// Start an operation - both should receive it
 		ownerID := models.NewULID()
 		stages := []progress.StageInfo{{ID: "test", Name: "Test", Weight: 1.0}}
-		_, err := svc.StartOperation(progress.OpStreamIngestion, ownerID, "stream_source", stages)
+		_, err := svc.StartOperation(progress.OpStreamIngestion, ownerID, "stream_source", "Test Source", stages)
 		require.NoError(t, err)
 
 		<-ctx.Done()
@@ -431,7 +431,7 @@ func TestProgressHandler_ConcurrentOperationBlocking(t *testing.T) {
 		// Start an operation
 		ownerID := models.NewULID()
 		stages := []progress.StageInfo{{ID: "test", Name: "Test", Weight: 1.0}}
-		_, err := svc.StartOperation(progress.OpStreamIngestion, ownerID, "stream_source", stages)
+		_, err := svc.StartOperation(progress.OpStreamIngestion, ownerID, "stream_source", "Test Source", stages)
 		require.NoError(t, err)
 
 		// Try to get the operation - should still work
@@ -447,7 +447,7 @@ func TestProgressHandler_ConcurrentOperationBlocking(t *testing.T) {
 		assert.Len(t, resp.Body.Operations, 1)
 
 		// The service should block a second operation with the same owner
-		_, err = svc.StartOperation(progress.OpStreamIngestion, ownerID, "stream_source", stages)
+		_, err = svc.StartOperation(progress.OpStreamIngestion, ownerID, "stream_source", "Test Source", stages)
 		assert.ErrorIs(t, err, progress.ErrOperationExists)
 	})
 }
@@ -465,7 +465,7 @@ func TestProgressHandler_MultiStageProgress(t *testing.T) {
 			{ID: "save", Name: "Save", Weight: 0.2},
 		}
 
-		mgr, err := svc.StartOperation(progress.OpProxyRegeneration, ownerID, "stream_proxy", stages)
+		mgr, err := svc.StartOperation(progress.OpProxyRegeneration, ownerID, "stream_proxy", "Test Proxy", stages)
 		require.NoError(t, err)
 
 		// Complete first stage
@@ -512,7 +512,7 @@ func TestProgressHandler_StaleOperationCleanup(t *testing.T) {
 		ownerID := models.NewULID()
 		stages := []progress.StageInfo{{ID: "test", Name: "Test", Weight: 1.0}}
 
-		mgr, err := svc.StartOperation(progress.OpStreamIngestion, ownerID, "stream_source", stages)
+		mgr, err := svc.StartOperation(progress.OpStreamIngestion, ownerID, "stream_source", "Test Source", stages)
 		require.NoError(t, err)
 
 		// Complete the operation
@@ -525,7 +525,7 @@ func TestProgressHandler_StaleOperationCleanup(t *testing.T) {
 
 		// After completing, a new operation with the same owner should work
 		// (the blocking is removed upon completion)
-		mgr2, err := svc.StartOperation(progress.OpStreamIngestion, ownerID, "stream_source", stages)
+		mgr2, err := svc.StartOperation(progress.OpStreamIngestion, ownerID, "stream_source", "Test Source 2", stages)
 		require.NoError(t, err)
 		assert.NotEqual(t, mgr.OperationID(), mgr2.OperationID())
 	})

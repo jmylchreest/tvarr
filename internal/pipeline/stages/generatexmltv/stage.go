@@ -117,6 +117,7 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	// Write programmes
 	// T038: DEBUG logging for batch progress
 	const batchSize = 1000
+	const progressReportInterval = 500
 	totalPrograms := len(state.Programs)
 	programCount := 0
 	for i, prog := range state.Programs {
@@ -144,6 +145,12 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 		}
 
 		programCount++
+
+		// Report progress periodically
+		if state.ProgressReporter != nil && (i+1)%progressReportInterval == 0 {
+			state.ProgressReporter.ReportItemProgress(ctx, StageID, i+1, totalPrograms,
+				fmt.Sprintf("Writing programs: %d/%d", i+1, totalPrograms))
+		}
 
 		// T038: DEBUG logging for batch progress
 		if (i+1)%batchSize == 0 {

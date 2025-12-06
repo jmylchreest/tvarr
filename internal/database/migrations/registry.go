@@ -52,6 +52,9 @@ func AllMigrations() []Migration {
 		// Job and job history tables for scheduler
 		migration021JobsTable(),
 
+		// Add hls_collapse column to stream_proxies table
+		migration022StreamProxyHLSCollapse(),
+
 		// Note: Logo caching (Phase 10) uses file-based storage with
 		// in-memory indexing, no database tables required.
 	}
@@ -680,6 +683,28 @@ func migration021JobsTable() Migration {
 				return err
 			}
 			return tx.Migrator().DropTable("jobs")
+		},
+	}
+}
+
+// migration022StreamProxyHLSCollapse adds the hls_collapse column to stream_proxies table.
+func migration022StreamProxyHLSCollapse() Migration {
+	return Migration{
+		Version:     "022",
+		Description: "Add hls_collapse column to stream_proxies",
+		Up: func(tx *gorm.DB) error {
+			// AutoMigrate will add the new column to the existing table
+			return tx.AutoMigrate(&models.StreamProxy{})
+		},
+		Down: func(tx *gorm.DB) error {
+			// Drop the column
+			migrator := tx.Migrator()
+			if migrator.HasColumn(&models.StreamProxy{}, "hls_collapse") {
+				if err := migrator.DropColumn(&models.StreamProxy{}, "hls_collapse"); err != nil {
+					return err
+				}
+			}
+			return nil
 		},
 	}
 }

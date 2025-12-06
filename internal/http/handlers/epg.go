@@ -92,6 +92,15 @@ func (h *EpgHandler) Register(api huma.API) {
 		Description: "Search EPG programs by title, description, or category",
 		Tags:        []string{"EPG"},
 	}, h.Search)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "getEpgGuide",
+		Method:      "GET",
+		Path:        "/api/v1/epg/guide",
+		Summary:     "Get EPG TV guide",
+		Description: "Returns EPG data formatted for TV guide display with channels and programs",
+		Tags:        []string{"EPG"},
+	}, h.GetGuide)
 }
 
 // ListProgramsInput is the input for listing EPG programs.
@@ -526,4 +535,209 @@ func (h *EpgHandler) Search(ctx context.Context, input *SearchInput) (*SearchOut
 	resp.Body.TotalPages = totalPages
 
 	return resp, nil
+}
+
+// GetGuideInput is the input for getting the EPG TV guide.
+type GetGuideInput struct {
+	StartTime string `query:"start_time"` // RFC3339 time, defaults to current hour
+	EndTime   string `query:"end_time"`   // RFC3339 time, defaults to start + 12 hours
+	SourceID  string `query:"source_id"`  // Comma-separated source IDs to filter
+}
+
+// GuideChannelInfo represents channel info in the guide response.
+type GuideChannelInfo struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Logo string `json:"logo,omitempty"`
+}
+
+// GuideProgramInfo represents a program in the guide response.
+type GuideProgramInfo struct {
+	ID          string `json:"id"`
+	ChannelID   string `json:"channel_id"`
+	ChannelName string `json:"channel_name"`
+	ChannelLogo string `json:"channel_logo,omitempty"`
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+	StartTime   string `json:"start_time"`
+	EndTime     string `json:"end_time"`
+	Category    string `json:"category,omitempty"`
+	Rating      string `json:"rating,omitempty"`
+	SourceID    string `json:"source_id,omitempty"`
+	IsLive      bool   `json:"is_live"`
+}
+
+// GetGuideOutput is the output for the EPG TV guide.
+type GetGuideOutput struct {
+	Body struct {
+		Success   bool                          `json:"success"`
+		Data      *GuideData                    `json:"data"`
+	}
+}
+
+// GuideData contains the guide response data.
+type GuideData struct {
+	Channels  map[string]GuideChannelInfo  `json:"channels"`
+	Programs  map[string][]GuideProgramInfo `json:"programs"`
+	TimeSlots []string                      `json:"time_slots"`
+	StartTime string                        `json:"start_time"`
+	EndTime   string                        `json:"end_time"`
+}
+
+// GetGuide returns EPG data formatted for TV guide display.
+func (h *EpgHandler) GetGuide(ctx context.Context, input *GetGuideInput) (*GetGuideOutput, error) {
+	// Parse time range
+	now := time.Now()
+	startTime := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), 0, 0, 0, now.Location())
+	endTime := startTime.Add(12 * time.Hour)
+
+	if input.StartTime != "" {
+		if t, err := time.Parse(time.RFC3339, input.StartTime); err == nil {
+			startTime = t
+		}
+	}
+	if input.EndTime != "" {
+		if t, err := time.Parse(time.RFC3339, input.EndTime); err == nil {
+			endTime = t
+		}
+	}
+
+	// Build query for programs in time range
+	query := h.db.WithContext(ctx).Model(&models.EpgProgram{}).
+		Where("start < ? AND stop > ?", endTime, startTime)
+
+	// Apply source filter if provided
+	if input.SourceID != "" {
+		query = query.Where("source_id IN ?", splitSourceIDs(input.SourceID))
+	}
+
+	// Fetch programs
+	var programs []models.EpgProgram
+	if err := query.Order("channel_id ASC, start ASC").Find(&programs).Error; err != nil {
+		return nil, huma.Error500InternalServerError("Failed to fetch EPG programs")
+	}
+
+	// Build response data
+	channels := make(map[string]GuideChannelInfo)
+	programsByChannel := make(map[string][]GuideProgramInfo)
+
+	for _, p := range programs {
+		// Add channel info if not already present
+		if _, exists := channels[p.ChannelID]; !exists {
+			channels[p.ChannelID] = GuideChannelInfo{
+				ID:   p.ChannelID,
+				Name: p.ChannelID, // Will be updated below if we can find the channel name
+				Logo: "",
+			}
+		}
+
+		// Check if program is currently live
+		isLive := now.After(p.Start) && now.Before(p.Stop)
+
+		// Add program
+		programInfo := GuideProgramInfo{
+			ID:          p.ID.String(),
+			ChannelID:   p.ChannelID,
+			ChannelName: p.ChannelID,
+			Title:       p.Title,
+			Description: p.Description,
+			StartTime:   p.Start.Format(time.RFC3339),
+			EndTime:     p.Stop.Format(time.RFC3339),
+			Category:    p.Category,
+			Rating:      p.Rating,
+			SourceID:    p.SourceID.String(),
+			IsLive:      isLive,
+		}
+		programsByChannel[p.ChannelID] = append(programsByChannel[p.ChannelID], programInfo)
+	}
+
+	// Try to get channel names from the channels table
+	var channelIDs []string
+	for id := range channels {
+		channelIDs = append(channelIDs, id)
+	}
+
+	if len(channelIDs) > 0 {
+		var dbChannels []models.Channel
+		if err := h.db.WithContext(ctx).
+			Where("tvg_id IN ?", channelIDs).
+			Find(&dbChannels).Error; err == nil {
+			for _, ch := range dbChannels {
+				if info, exists := channels[ch.TvgID]; exists {
+					info.Name = ch.ChannelName
+					info.Logo = ch.TvgLogo
+					channels[ch.TvgID] = info
+					// Update program channel names
+					for i := range programsByChannel[ch.TvgID] {
+						programsByChannel[ch.TvgID][i].ChannelName = ch.ChannelName
+						programsByChannel[ch.TvgID][i].ChannelLogo = ch.TvgLogo
+					}
+				}
+			}
+		}
+	}
+
+	// Generate time slots (hourly)
+	var timeSlots []string
+	for t := startTime; t.Before(endTime); t = t.Add(time.Hour) {
+		timeSlots = append(timeSlots, t.Format(time.RFC3339))
+	}
+
+	resp := &GetGuideOutput{}
+	resp.Body.Success = true
+	resp.Body.Data = &GuideData{
+		Channels:  channels,
+		Programs:  programsByChannel,
+		TimeSlots: timeSlots,
+		StartTime: startTime.Format(time.RFC3339),
+		EndTime:   endTime.Format(time.RFC3339),
+	}
+
+	return resp, nil
+}
+
+// splitSourceIDs splits a comma-separated string of source IDs.
+func splitSourceIDs(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var ids []string
+	for _, id := range splitString(s, ',') {
+		id = trimSpace(id)
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// splitString splits a string by a separator.
+func splitString(s string, sep rune) []string {
+	var result []string
+	var current string
+	for _, r := range s {
+		if r == sep {
+			result = append(result, current)
+			current = ""
+		} else {
+			current += string(r)
+		}
+	}
+	if current != "" {
+		result = append(result, current)
+	}
+	return result
+}
+
+// trimSpace removes leading and trailing whitespace.
+func trimSpace(s string) string {
+	start := 0
+	end := len(s)
+	for start < end && (s[start] == ' ' || s[start] == '\t' || s[start] == '\n' || s[start] == '\r') {
+		start++
+	}
+	for end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\n' || s[end-1] == '\r') {
+		end--
+	}
+	return s[start:end]
 }

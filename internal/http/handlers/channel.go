@@ -2,8 +2,12 @@ package handlers
 
 import (
 	"context"
+	"io"
+	"log/slog"
+	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/go-chi/chi/v5"
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/service"
 	"gorm.io/gorm"
@@ -13,6 +17,7 @@ import (
 type ChannelHandler struct {
 	db           *gorm.DB
 	relayService *service.RelayService
+	logger       *slog.Logger
 }
 
 // NewChannelHandler creates a new channel handler.
@@ -20,7 +25,14 @@ func NewChannelHandler(db *gorm.DB, relayService *service.RelayService) *Channel
 	return &ChannelHandler{
 		db:           db,
 		relayService: relayService,
+		logger:       slog.Default(),
 	}
+}
+
+// WithLogger sets the logger for the handler.
+func (h *ChannelHandler) WithLogger(logger *slog.Logger) *ChannelHandler {
+	h.logger = logger
+	return h
 }
 
 // Register registers the channel routes with the API.
@@ -316,4 +328,182 @@ func (h *ChannelHandler) GetGroups(ctx context.Context, input *GetGroupsInput) (
 	resp.Body.Count = len(groups)
 
 	return resp, nil
+}
+
+// RegisterChiRoutes registers raw Chi routes for streaming endpoints.
+// This is needed for proper CORS and streaming support that Huma doesn't handle well.
+func (h *ChannelHandler) RegisterChiRoutes(router chi.Router) {
+	router.Get("/channel/{channelId}/stream", h.handleChannelStream)
+	router.Options("/channel/{channelId}/stream", h.handleChannelStreamOptions)
+	router.Head("/channel/{channelId}/stream", h.handleChannelStreamHead)
+}
+
+// handleChannelStreamOptions handles CORS preflight requests for the stream endpoint.
+func (h *ChannelHandler) handleChannelStreamOptions(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept, Range")
+	w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Content-Type")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleChannelStreamHead handles HEAD requests for stream availability check.
+func (h *ChannelHandler) handleChannelStreamHead(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	channelIDStr := chi.URLParam(r, "channelId")
+
+	// Look up channel
+	var channel models.Channel
+	if err := h.db.WithContext(ctx).Where("id = ?", channelIDStr).First(&channel).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			http.Error(w, "channel not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to fetch channel", http.StatusInternalServerError)
+		return
+	}
+
+	// Set CORS headers
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+	w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Content-Type")
+
+	// Try to get content type from upstream
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, channel.StreamURL, nil)
+	if err != nil {
+		w.Header().Set("Content-Type", "video/mp2t")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		w.Header().Set("Content-Type", "video/mp2t")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Forward content type from upstream
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	} else {
+		w.Header().Set("Content-Type", "video/mp2t")
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleChannelStream streams a channel directly for preview playback.
+func (h *ChannelHandler) handleChannelStream(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	channelIDStr := chi.URLParam(r, "channelId")
+
+	// Look up channel
+	var channel models.Channel
+	if err := h.db.WithContext(ctx).Where("id = ?", channelIDStr).First(&channel).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			http.Error(w, "channel not found", http.StatusNotFound)
+			return
+		}
+		h.logger.Error("Failed to fetch channel", "channel_id", channelIDStr, "error", err)
+		http.Error(w, "failed to fetch channel", http.StatusInternalServerError)
+		return
+	}
+
+	h.logger.Info("Channel preview stream requested",
+		"channel_id", channelIDStr,
+		"channel_name", channel.ChannelName,
+		"stream_url", channel.StreamURL,
+	)
+
+	// Set CORS headers first
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept, Range")
+	w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Content-Type")
+
+	// Create request to upstream
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, channel.StreamURL, nil)
+	if err != nil {
+		h.logger.Error("Failed to create upstream request", "error", err)
+		http.Error(w, "failed to create upstream request", http.StatusBadGateway)
+		return
+	}
+
+	// Forward relevant headers
+	if ua := r.Header.Get("User-Agent"); ua != "" {
+		req.Header.Set("User-Agent", ua)
+	}
+	if accept := r.Header.Get("Accept"); accept != "" {
+		req.Header.Set("Accept", accept)
+	}
+	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
+		req.Header.Set("Range", rangeHeader)
+	}
+
+	// Execute request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		h.logger.Error("Upstream request failed", "error", err)
+		http.Error(w, "upstream request failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Set content type from upstream or default
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "video/mp2t"
+	}
+	w.Header().Set("Content-Type", contentType)
+
+	// Forward content length if available
+	if contentLength := resp.Header.Get("Content-Length"); contentLength != "" {
+		w.Header().Set("Content-Length", contentLength)
+	}
+
+	// Forward content range for partial content
+	if resp.StatusCode == http.StatusPartialContent {
+		if contentRange := resp.Header.Get("Content-Range"); contentRange != "" {
+			w.Header().Set("Content-Range", contentRange)
+		}
+		w.WriteHeader(http.StatusPartialContent)
+	} else {
+		w.Header().Set("Cache-Control", "no-cache, no-store")
+		w.Header().Set("Connection", "keep-alive")
+		w.WriteHeader(http.StatusOK)
+	}
+
+	// Stream data to client
+	buf := make([]byte, 32*1024) // 32KB buffer
+	for {
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+				h.logger.Debug("Client disconnected during stream",
+					"channel_id", channelIDStr,
+					"error", writeErr,
+				)
+				break
+			}
+			// Flush if possible
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+		if err != nil {
+			if err != io.EOF {
+				h.logger.Debug("Upstream read error",
+					"channel_id", channelIDStr,
+					"error", err,
+				)
+			}
+			break
+		}
+	}
+
+	h.logger.Info("Channel preview stream ended", "channel_id", channelIDStr)
 }

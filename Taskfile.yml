@@ -209,7 +209,7 @@ tasks:
     desc: Install frontend dependencies
     dir: "{{.FRONTEND_DIR}}"
     cmds:
-      - npm install
+      - pnpm install
     sources:
       - package.json
       - package-lock.json
@@ -220,7 +220,7 @@ tasks:
     desc: Run frontend in development mode
     dir: "{{.FRONTEND_DIR}}"
     cmds:
-      - npm run dev
+      - pnpm run dev
 
   frontend:build:
     desc: Build frontend for production
@@ -229,7 +229,7 @@ tasks:
     env:
       VERSION: "{{.VERSION}}"
     cmds:
-      - npm run build
+      - pnpm run build
 
   frontend:embed:
     desc: Build frontend and copy to assets for Go embedding
@@ -238,7 +238,7 @@ tasks:
     env:
       VERSION: "{{.VERSION}}"
     cmds:
-      - npm run build:embed
+      - pnpm run build:embed
     sources:
       - src/**/*
       - public/**/*
@@ -252,13 +252,13 @@ tasks:
     desc: Lint frontend code
     dir: "{{.FRONTEND_DIR}}"
     cmds:
-      - npm run lint
+      - pnpm run lint
 
   frontend:typecheck:
     desc: Run TypeScript type checking
     dir: "{{.FRONTEND_DIR}}"
     cmds:
-      - npm run type-check
+      - pnpm run type-check
 
   # ============================================
   # Release Tasks
@@ -498,6 +498,12 @@ tasks:
       - task: deps:update
       - task: frontend:deps:update
 
+  deps:upgrade:all:
+    desc: Upgrade all dependencies to latest versions (Go + frontend, may have breaking changes)
+    cmds:
+      - task: deps:update
+      - task: frontend:deps:upgrade:apply
+
   deps:check:
     desc: Check for available Go dependency updates (like cargo outdated)
     cmds:
@@ -518,36 +524,26 @@ tasks:
     desc: Update frontend dependencies (npm)
     dir: "{{.FRONTEND_DIR}}"
     cmds:
-      - npm update
+      - pnpm update
 
   frontend:deps:check:
     desc: Check for available frontend dependency updates (like cargo outdated)
     dir: "{{.FRONTEND_DIR}}"
     cmds:
-      - npm outdated || true
+      - pnpm outdated || true
 
   frontend:deps:upgrade:
-    desc: Interactively upgrade frontend dependencies to latest versions
+    desc: Check available frontend dependency upgrades (use :apply to install)
     dir: "{{.FRONTEND_DIR}}"
     cmds:
-      - |
-        if ! command -v npm-check-updates &> /dev/null; then
-          echo "Installing npm-check-updates globally..."
-          npm install -g npm-check-updates
-        fi
-      - ncu
+      - npx npm-check-updates
 
   frontend:deps:upgrade:apply:
     desc: Apply all frontend dependency upgrades (may have breaking changes)
     dir: "{{.FRONTEND_DIR}}"
     cmds:
-      - |
-        if ! command -v npm-check-updates &> /dev/null; then
-          echo "Installing npm-check-updates globally..."
-          npm install -g npm-check-updates
-        fi
-      - ncu -u
-      - npm install
+      - npx npm-check-updates -u
+      - pnpm install
 
   # ============================================
   # Code Generation Tasks
@@ -995,7 +991,8 @@ tasks:
           {{if .M3U_URL}}-m3u-url "{{.M3U_URL}}"{{end}} \
           {{if .EPG_URL}}-epg-url "{{.EPG_URL}}"{{end}} \
           {{if .CACHE_CHANNEL_LOGOS}}-cache-channel-logos{{end}} \
-          {{if .CACHE_PROGRAM_LOGOS}}-cache-program-logos{{end}}
+          {{if .CACHE_PROGRAM_LOGOS}}-cache-program-logos{{end}} \
+          -test-proxy-modes
 
   help:
     desc: Show all available tasks

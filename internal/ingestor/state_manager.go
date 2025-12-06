@@ -45,7 +45,9 @@ func (m *StateManager) StartWithID(id models.ULID, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, exists := m.states[id]; exists {
+	// Only error if an ingestion is actively in progress (status == "ingesting")
+	// Completed/failed states may still exist briefly during cleanup window
+	if state, exists := m.states[id]; exists && state.Status == "ingesting" {
 		return fmt.Errorf("ingestion already in progress for source %s", id)
 	}
 

@@ -118,6 +118,11 @@ type RelayProfile struct {
 	// Thread settings
 	Threads     int `gorm:"default:0" json:"threads,omitempty"`      // 0 = auto
 	ThreadQueue int `gorm:"default:512" json:"thread_queue"`         // Thread queue size
+
+	// Fallback settings for error handling
+	FallbackEnabled          bool `gorm:"default:true" json:"fallback_enabled"`            // Enable fallback stream on error
+	FallbackErrorThreshold   int  `gorm:"default:3" json:"fallback_error_threshold"`       // Errors before fallback (1-10)
+	FallbackRecoveryInterval int  `gorm:"default:30" json:"fallback_recovery_interval"`    // Seconds between recovery attempts (5-300)
 }
 
 // TableName returns the table name for RelayProfile.
@@ -135,6 +140,13 @@ func (p *RelayProfile) Validate() error {
 	}
 	if p.AudioBitrate < 0 {
 		return ErrRelayProfileInvalidBitrate
+	}
+	// Validate fallback settings
+	if p.FallbackErrorThreshold < 1 || p.FallbackErrorThreshold > 10 {
+		p.FallbackErrorThreshold = 3 // Reset to default if invalid
+	}
+	if p.FallbackRecoveryInterval < 5 || p.FallbackRecoveryInterval > 300 {
+		p.FallbackRecoveryInterval = 30 // Reset to default if invalid
 	}
 	return nil
 }

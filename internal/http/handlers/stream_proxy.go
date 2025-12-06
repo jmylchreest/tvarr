@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/jmylchreest/tvarr/internal/models"
@@ -17,6 +18,7 @@ import (
 type StreamProxyHandler struct {
 	proxyService *service.ProxyService
 	baseURL      string
+	logger       *slog.Logger
 }
 
 // buildOrderMapFromIDs creates an order map from array indices.
@@ -49,6 +51,7 @@ func NewStreamProxyHandler(proxyService *service.ProxyService) *StreamProxyHandl
 	return &StreamProxyHandler{
 		proxyService: proxyService,
 		baseURL:      baseURL,
+		logger:       slog.Default(),
 	}
 }
 
@@ -398,19 +401,43 @@ type GenerateProxyOutput struct {
 }
 
 // Generate triggers generation for a stream proxy.
+// This is an async operation - it starts generation in the background and returns immediately.
+// Progress is tracked via the SSE /api/v1/progress endpoint.
 func (h *StreamProxyHandler) Generate(ctx context.Context, input *GenerateProxyInput) (*GenerateProxyOutput, error) {
 	id, err := models.ParseULID(input.ID)
 	if err != nil {
 		return nil, huma.Error400BadRequest("invalid ID format", err)
 	}
 
-	// Use background context for generation to avoid HTTP request timeout cancellation.
-	// Generation can take several minutes for large datasets (millions of EPG programs).
-	// Progress is tracked via the progress service SSE endpoint, not this request.
-	result, err := h.proxyService.Generate(context.Background(), id)
+	// Check if proxy exists first
+	proxy, err := h.proxyService.GetByID(ctx, id)
 	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to generate proxy output", err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, huma.Error404NotFound(fmt.Sprintf("stream proxy %s not found", input.ID))
+		}
+		return nil, huma.Error500InternalServerError("failed to get proxy", err)
 	}
+	if proxy == nil {
+		return nil, huma.Error404NotFound(fmt.Sprintf("stream proxy %s not found", input.ID))
+	}
+
+	// Capture proxy name for goroutine (avoid closure issues)
+	proxyName := proxy.Name
+
+	// Start generation in a goroutine - this is async.
+	// Progress is tracked via the progress service SSE endpoint, not this request.
+	go func() {
+		// Use background context to avoid HTTP request cancellation
+		_, err := h.proxyService.Generate(context.Background(), id)
+		if err != nil {
+			// Error is logged by the service layer and tracked in progress
+			h.logger.Error("proxy generation failed",
+				"proxy_id", id.String(),
+				"proxy_name", proxyName,
+				"error", err,
+			)
+		}
+	}()
 
 	return &GenerateProxyOutput{
 		Body: struct {
@@ -419,10 +446,10 @@ func (h *StreamProxyHandler) Generate(ctx context.Context, input *GenerateProxyI
 			ProgramCount int    `json:"program_count"`
 			Duration     string `json:"duration"`
 		}{
-			Message:      fmt.Sprintf("generation completed for proxy %s", input.ID),
-			ChannelCount: result.ChannelCount,
-			ProgramCount: result.ProgramCount,
-			Duration:     result.Duration.String(),
+			Message:      fmt.Sprintf("generation started for proxy %s", input.ID),
+			ChannelCount: 0, // Will be updated via SSE progress
+			ProgramCount: 0,
+			Duration:     "in progress",
 		},
 	}, nil
 }

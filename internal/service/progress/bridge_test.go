@@ -209,12 +209,12 @@ func TestStartPipelineOperation(t *testing.T) {
 		}
 
 		// First operation succeeds
-		mgr1, err := progress.StartPipelineOperation(svc, "stream_proxy", ownerID, stages)
+		mgr1, err := progress.StartPipelineOperation(svc, "stream_proxy", ownerID, "Test Proxy", stages)
 		require.NoError(t, err)
 		require.NotNil(t, mgr1)
 
 		// Second operation with same owner should fail
-		mgr2, err := progress.StartPipelineOperation(svc, "stream_proxy", ownerID, stages)
+		mgr2, err := progress.StartPipelineOperation(svc, "stream_proxy", ownerID, "Test Proxy", stages)
 		assert.Error(t, err)
 		assert.Nil(t, mgr2)
 	})

@@ -82,6 +82,10 @@ type StreamProxy struct {
 	// MaxConcurrentStreams is the maximum concurrent streams (0 = unlimited).
 	MaxConcurrentStreams int `gorm:"default:0" json:"max_concurrent_streams"`
 
+	// HLSCollapse enables HLS collapse mode for proxy mode streaming.
+	// When enabled, multi-variant HLS streams are converted to continuous MPEG-TS.
+	HLSCollapse bool `gorm:"default:false" json:"hls_collapse"`
+
 	// CacheChannelLogos indicates whether to cache channel logos locally.
 	CacheChannelLogos bool `gorm:"default:false" json:"cache_channel_logos"`
 

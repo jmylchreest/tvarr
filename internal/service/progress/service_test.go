@@ -27,7 +27,7 @@ func TestService_StartOperation(t *testing.T) {
 	}
 
 	t.Run("creates operation successfully", func(t *testing.T) {
-		mgr, err := svc.StartOperation(OpProxyRegeneration, ownerID, "stream_proxy", stages)
+		mgr, err := svc.StartOperation(OpProxyRegeneration, ownerID, "stream_proxy", "Test Proxy", stages)
 		require.NoError(t, err)
 		require.NotNil(t, mgr)
 
@@ -36,30 +36,31 @@ func TestService_StartOperation(t *testing.T) {
 		assert.Equal(t, OpProxyRegeneration, op.OperationType)
 		assert.Equal(t, ownerID, op.OwnerID)
 		assert.Equal(t, "stream_proxy", op.OwnerType)
+		assert.Equal(t, "Test Proxy", op.OwnerName)
 		assert.Equal(t, StatePreparing, op.State)
 		assert.Len(t, op.Stages, 3)
 	})
 
 	t.Run("blocks duplicate active operation", func(t *testing.T) {
 		anotherOwner := models.NewULID()
-		_, err := svc.StartOperation(OpProxyRegeneration, anotherOwner, "stream_proxy", stages)
+		_, err := svc.StartOperation(OpProxyRegeneration, anotherOwner, "stream_proxy", "Another Proxy", stages)
 		require.NoError(t, err)
 
 		// Try to start another operation for the same owner
-		_, err = svc.StartOperation(OpProxyRegeneration, anotherOwner, "stream_proxy", stages)
+		_, err = svc.StartOperation(OpProxyRegeneration, anotherOwner, "stream_proxy", "Another Proxy", stages)
 		assert.ErrorIs(t, err, ErrOperationExists)
 	})
 
 	t.Run("allows new operation after completion", func(t *testing.T) {
 		newOwner := models.NewULID()
-		mgr, err := svc.StartOperation(OpProxyRegeneration, newOwner, "stream_proxy", stages)
+		mgr, err := svc.StartOperation(OpProxyRegeneration, newOwner, "stream_proxy", "New Proxy", stages)
 		require.NoError(t, err)
 
 		// Complete the operation
 		mgr.Complete("Done")
 
 		// Should allow new operation
-		mgr2, err := svc.StartOperation(OpProxyRegeneration, newOwner, "stream_proxy", stages)
+		mgr2, err := svc.StartOperation(OpProxyRegeneration, newOwner, "stream_proxy", "New Proxy", stages)
 		require.NoError(t, err)
 		assert.NotEqual(t, mgr.OperationID(), mgr2.OperationID())
 	})
@@ -73,7 +74,7 @@ func TestService_GetOperation(t *testing.T) {
 		{ID: "load", Name: "Load", Weight: 1.0},
 	}
 
-	mgr, err := svc.StartOperation(OpStreamIngestion, ownerID, "stream_source", stages)
+	mgr, err := svc.StartOperation(OpStreamIngestion, ownerID, "stream_source", "Test Source", stages)
 	require.NoError(t, err)
 
 	t.Run("returns operation by ID", func(t *testing.T) {
@@ -96,7 +97,7 @@ func TestService_GetOperationByOwner(t *testing.T) {
 		{ID: "load", Name: "Load", Weight: 1.0},
 	}
 
-	mgr, err := svc.StartOperation(OpStreamIngestion, ownerID, "stream_source", stages)
+	mgr, err := svc.StartOperation(OpStreamIngestion, ownerID, "stream_source", "Test Source", stages)
 	require.NoError(t, err)
 
 	t.Run("returns operation by owner", func(t *testing.T) {
@@ -121,9 +122,9 @@ func TestService_ListOperations(t *testing.T) {
 	owner2 := models.NewULID()
 	owner3 := models.NewULID()
 
-	mgr1, _ := svc.StartOperation(OpProxyRegeneration, owner1, "stream_proxy", stages)
-	_, _ = svc.StartOperation(OpStreamIngestion, owner2, "stream_source", stages)
-	mgr3, _ := svc.StartOperation(OpProxyRegeneration, owner3, "stream_proxy", stages)
+	mgr1, _ := svc.StartOperation(OpProxyRegeneration, owner1, "stream_proxy", "Proxy 1", stages)
+	_, _ = svc.StartOperation(OpStreamIngestion, owner2, "stream_source", "Source 1", stages)
+	mgr3, _ := svc.StartOperation(OpProxyRegeneration, owner3, "stream_proxy", "Proxy 3", stages)
 	mgr3.Complete("Done")
 
 	t.Run("returns all operations with nil filter", func(t *testing.T) {
@@ -165,7 +166,7 @@ func TestService_Subscribe(t *testing.T) {
 		defer svc.Unsubscribe(sub.ID)
 
 		// Start operation after subscribing
-		mgr, err := svc.StartOperation(OpProxyRegeneration, ownerID, "stream_proxy", stages)
+		mgr, err := svc.StartOperation(OpProxyRegeneration, ownerID, "stream_proxy", "Test Proxy", stages)
 		require.NoError(t, err)
 
 		// Should receive initial event
@@ -203,7 +204,7 @@ func TestService_Subscribe(t *testing.T) {
 
 		// Start a proxy operation (should not match)
 		proxyOwner := models.NewULID()
-		_, err := svc.StartOperation(OpProxyRegeneration, proxyOwner, "stream_proxy", stages)
+		_, err := svc.StartOperation(OpProxyRegeneration, proxyOwner, "stream_proxy", "Filter Test Proxy", stages)
 		require.NoError(t, err)
 
 		// Should not receive event
@@ -216,7 +217,7 @@ func TestService_Subscribe(t *testing.T) {
 
 		// Start a stream ingestion (should match)
 		ingestOwner := models.NewULID()
-		_, err = svc.StartOperation(OpStreamIngestion, ingestOwner, "stream_source", stages)
+		_, err = svc.StartOperation(OpStreamIngestion, ingestOwner, "stream_source", "Filter Test Source", stages)
 		require.NoError(t, err)
 
 		// Should receive event
@@ -239,7 +240,7 @@ func TestOperationManager_StageWorkflow(t *testing.T) {
 		{ID: "save", Name: "Save Results", Weight: 0.2},
 	}
 
-	mgr, err := svc.StartOperation(OpProxyRegeneration, ownerID, "stream_proxy", stages)
+	mgr, err := svc.StartOperation(OpProxyRegeneration, ownerID, "stream_proxy", "Stage Workflow Proxy", stages)
 	require.NoError(t, err)
 
 	// Start first stage
@@ -298,7 +299,7 @@ func TestOperationManager_Fail(t *testing.T) {
 	sub := svc.Subscribe(nil)
 	defer svc.Unsubscribe(sub.ID)
 
-	mgr, err := svc.StartOperation(OpProxyRegeneration, ownerID, "stream_proxy", stages)
+	mgr, err := svc.StartOperation(OpProxyRegeneration, ownerID, "stream_proxy", "Fail Test Proxy", stages)
 	require.NoError(t, err)
 
 	// Clear initial event from StartOperation
@@ -337,7 +338,7 @@ func TestOperationManager_Cancel(t *testing.T) {
 	sub := svc.Subscribe(nil)
 	defer svc.Unsubscribe(sub.ID)
 
-	mgr, err := svc.StartOperation(OpProxyRegeneration, ownerID, "stream_proxy", stages)
+	mgr, err := svc.StartOperation(OpProxyRegeneration, ownerID, "stream_proxy", "Cancel Test Proxy", stages)
 	require.NoError(t, err)
 
 	// Clear initial event from StartOperation
@@ -371,7 +372,7 @@ func TestOperationManager_Metadata(t *testing.T) {
 		{ID: "load", Name: "Load", Weight: 1.0},
 	}
 
-	mgr, err := svc.StartOperation(OpProxyRegeneration, ownerID, "stream_proxy", stages)
+	mgr, err := svc.StartOperation(OpProxyRegeneration, ownerID, "stream_proxy", "Metadata Test Proxy", stages)
 	require.NoError(t, err)
 
 	mgr.SetMetadata("channel_count", 100)
@@ -389,7 +390,7 @@ func TestService_CleanupStaleOperations(t *testing.T) {
 	ownerID := models.NewULID()
 	stages := []StageInfo{{ID: "s1", Name: "Stage 1", Weight: 1.0}}
 
-	mgr, err := svc.StartOperation(OpProxyRegeneration, ownerID, "stream_proxy", stages)
+	mgr, err := svc.StartOperation(OpProxyRegeneration, ownerID, "stream_proxy", "Cleanup Test Proxy", stages)
 	require.NoError(t, err)
 
 	// Complete the operation

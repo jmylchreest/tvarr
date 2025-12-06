@@ -75,17 +75,24 @@ func (h *HealthHandler) GetHealth(ctx context.Context, input *HealthInput) (*Hea
 	// Get memory info
 	memInfo := h.getMemoryInfo()
 
-	// Get circuit breaker statuses
-	var circuitBreakers []CircuitBreakerStatus
+	// Get circuit breaker statuses as a map keyed by service name
+	circuitBreakers := make(map[string]CircuitBreakerStatus)
 	if h.cbManager != nil {
 		stats := h.cbManager.GetAllStats()
-		circuitBreakers = make([]CircuitBreakerStatus, 0, len(stats))
 		for name, s := range stats {
-			circuitBreakers = append(circuitBreakers, CircuitBreakerStatus{
-				Name:     name,
-				State:    s.State.String(),
-				Failures: s.Failures,
-			})
+			var failureRate float64
+			if s.TotalRequests > 0 {
+				failureRate = float64(s.TotalFailures) / float64(s.TotalRequests) * 100
+			}
+			circuitBreakers[name] = CircuitBreakerStatus{
+				Name:            name,
+				State:           s.State.String(),
+				Failures:        s.Failures,
+				SuccessfulCalls: s.TotalSuccesses,
+				FailedCalls:     s.TotalFailures,
+				TotalCalls:      s.TotalRequests,
+				FailureRate:     failureRate,
+			}
 		}
 	}
 

@@ -23,8 +23,13 @@ import {
   XCircle,
   Shield,
   Activity,
+  Lock,
+  Server,
+  Database,
+  Zap,
+  HardDrive,
 } from 'lucide-react';
-import { RuntimeSettings, UpdateSettingsRequest, SettingsResponse } from '@/types/api';
+import { RuntimeSettings, UpdateSettingsRequest, SettingsResponse, StartupConfigResponse, StartupConfigSection } from '@/types/api';
 import { apiClient } from '@/lib/api-client';
 import { FeatureFlagsEditor } from '@/components/feature-flags-editor';
 import { useFeatureFlags, invalidateFeatureFlagsCache } from '@/hooks/useFeatureFlags';
@@ -37,13 +42,13 @@ interface FeatureFlag {
   config: Record<string, any>;
 }
 
-// Standard Rust tracing log levels
+// Log levels (lowercase to match Go slog/backend)
 const LOG_LEVELS = [
-  { value: 'TRACE', label: 'TRACE', description: 'Most verbose, includes all details' },
-  { value: 'DEBUG', label: 'DEBUG', description: 'Debugging information' },
-  { value: 'INFO', label: 'INFO', description: 'General information (default)' },
-  { value: 'WARN', label: 'WARN', description: 'Warning messages' },
-  { value: 'ERROR', label: 'ERROR', description: 'Error messages only' },
+  { value: 'trace', label: 'TRACE', description: 'Most verbose, includes all details' },
+  { value: 'debug', label: 'DEBUG', description: 'Debugging information' },
+  { value: 'info', label: 'INFO', description: 'General information (default)' },
+  { value: 'warn', label: 'WARN', description: 'Warning messages' },
+  { value: 'error', label: 'ERROR', description: 'Error messages only' },
 ] as const;
 
 function getStatusIcon(success: boolean) {
@@ -72,6 +77,10 @@ export function Settings() {
   const [editedCbConfig, setEditedCbConfig] = useState<any>({});
   const [cbLoading, setCbLoading] = useState(false);
   const [cbSaving, setCbSaving] = useState(false);
+
+  // Startup config state (read-only)
+  const [startupConfig, setStartupConfig] = useState<StartupConfigSection[]>([]);
+  const [startupLoading, setStartupLoading] = useState(false);
 
   const fetchSettings = async () => {
     setLoading(true);
@@ -145,13 +154,33 @@ export function Settings() {
     }
   };
 
+  const fetchStartupConfig = async () => {
+    setStartupLoading(true);
+    try {
+      const backendUrl = getBackendUrl();
+      const response = await fetch(`${backendUrl}/api/v1/settings/startup`);
+
+      if (response.ok) {
+        const data: StartupConfigResponse = await response.json();
+        if (data.success && data.sections) {
+          setStartupConfig(data.sections);
+        }
+      }
+    } catch (err) {
+      console.warn('Startup config endpoint not available:', err);
+      // Don't set error since startup config is informational
+    } finally {
+      setStartupLoading(false);
+    }
+  };
+
   const fetchAll = async () => {
     setLoading(true);
     setError(null);
     setSaveSuccess(null);
 
     try {
-      await Promise.all([fetchSettings(), fetchFeatureFlags(), fetchCircuitBreakerData()]);
+      await Promise.all([fetchSettings(), fetchFeatureFlags(), fetchCircuitBreakerData(), fetchStartupConfig()]);
     } catch (err) {
       // Error handling is done in individual functions
     } finally {
@@ -683,7 +712,7 @@ export function Settings() {
               </div>
 
               <div className="text-xs text-muted-foreground p-2 bg-muted/50 rounded text-center">
-                Changes apply immediately and persist to config. Check debug page for statistics.
+                Changes apply immediately (runtime only - will be lost on restart). Check debug page for statistics.
               </div>
             </div>
           ) : (
@@ -693,6 +722,76 @@ export function Settings() {
               <p className="text-sm mt-1">
                 Configure circuit breakers in your application config to see them here
               </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Startup Configuration (Read-Only) */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Lock className="h-5 w-5" />
+            Startup Configuration
+            <Badge variant="secondary" className="text-xs">Read-Only</Badge>
+          </CardTitle>
+          <CardDescription>
+            These settings are configured at startup and require a restart to change
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {startupLoading ? (
+            <div className="flex items-center gap-2">
+              <RefreshCw className="h-4 w-4 animate-spin" />
+              <span>Loading startup configuration...</span>
+            </div>
+          ) : startupConfig.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {startupConfig.map((section) => {
+                // Pick icon based on section name
+                const SectionIcon = section.name === 'Pipeline' ? Zap
+                  : section.name === 'Relay' ? Activity
+                  : section.name === 'Ingestion' ? Database
+                  : section.name === 'Server' ? Server
+                  : section.name === 'Storage' ? HardDrive
+                  : SettingsIcon;
+
+                return (
+                  <Card key={section.name} className="h-fit bg-muted/30">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <SectionIcon className="h-4 w-4" />
+                        {section.name}
+                      </CardTitle>
+                      <CardDescription className="text-xs">
+                        {section.description}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      {section.settings.map((setting) => (
+                        <div key={setting.key} className="flex flex-col gap-0.5">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-xs text-muted-foreground truncate" title={setting.key}>
+                              {setting.key.split('.').pop()}
+                            </Label>
+                            <Badge variant="outline" className="text-xs font-mono ml-2">
+                              {String(setting.value)}
+                            </Badge>
+                          </div>
+                          <span className="text-[10px] text-muted-foreground/70">
+                            {setting.description}
+                          </span>
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-center py-8 text-muted-foreground">
+              <Lock className="h-12 w-12 mx-auto mb-3 opacity-50" />
+              <p>No startup configuration available</p>
             </div>
           )}
         </CardContent>
@@ -723,7 +822,7 @@ export function Settings() {
                   )}
                 </Label>
                 <Select
-                  value={String(getCurrentValue('log_level') || 'INFO')}
+                  value={String(getCurrentValue('log_level') || 'info')}
                   onValueChange={(value) => handleInputChange('log_level', value)}
                 >
                   <SelectTrigger className="h-8 text-sm">

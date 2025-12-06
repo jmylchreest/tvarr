@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jmylchreest/tvarr/internal/storage"
+	"github.com/jmylchreest/tvarr/pkg/httpclient"
 )
 
 // HTTPClient defines the interface for HTTP operations.
@@ -28,6 +29,28 @@ type LogoStats struct {
 	UploadedSize  int64 // Total size of uploaded logos
 }
 
+// LogoServiceConfig holds configuration for the LogoService.
+type LogoServiceConfig struct {
+	// Timeout is the timeout for individual logo downloads.
+	Timeout time.Duration
+	// RetryAttempts is the number of retry attempts for failed downloads.
+	RetryAttempts int
+	// CircuitBreakerName is the namespace for the circuit breaker.
+	CircuitBreakerName string
+	// Concurrency is the number of concurrent download workers.
+	Concurrency int
+}
+
+// DefaultLogoServiceConfig returns sensible defaults for LogoServiceConfig.
+func DefaultLogoServiceConfig() LogoServiceConfig {
+	return LogoServiceConfig{
+		Timeout:            30 * time.Second,
+		RetryAttempts:      3,
+		CircuitBreakerName: "logos",
+		Concurrency:        10,
+	}
+}
+
 // LogoService provides business logic for logo caching.
 // It uses file-based storage with an in-memory index for fast lookups.
 // All raster images are converted to PNG format for consistent display.
@@ -35,21 +58,56 @@ type LogoService struct {
 	cache              *storage.LogoCache
 	indexer            *LogoIndexer
 	httpClient         HTTPClient
+	resilientClient    *httpclient.Client
 	logger             *slog.Logger
 	converter          *ImageConverter
 	stalenessThreshold time.Duration // For pruning during maintenance
+	config             LogoServiceConfig
 }
 
-// NewLogoService creates a new LogoService.
+// NewLogoService creates a new LogoService with default configuration.
 func NewLogoService(cache *storage.LogoCache) *LogoService {
+	return NewLogoServiceWithConfig(cache, DefaultLogoServiceConfig())
+}
+
+// NewLogoServiceWithConfig creates a new LogoService with the given configuration.
+func NewLogoServiceWithConfig(cache *storage.LogoCache, cfg LogoServiceConfig) *LogoService {
 	indexer := NewLogoIndexer(cache)
+
+	// Create resilient HTTP client with circuit breaker
+	// For logos, we accept 404 as a "success" to not trip the circuit breaker
+	// since 404 means the logo simply doesn't exist (not a server failure)
+	acceptableCodes := httpclient.MustParseStatusCodes("200-299,404")
+
+	// Get or create circuit breaker from the default manager
+	breaker := httpclient.DefaultManager.GetOrCreate(cfg.CircuitBreakerName)
+
+	clientConfig := httpclient.Config{
+		Timeout:               cfg.Timeout,
+		RetryAttempts:         cfg.RetryAttempts,
+		RetryDelay:            1 * time.Second,
+		RetryMaxDelay:         10 * time.Second,
+		BackoffMultiplier:     2.0,
+		CircuitThreshold:      5,
+		CircuitTimeout:        30 * time.Second,
+		CircuitHalfOpenMax:    1,
+		UserAgent:             "tvarr-logo-service/1.0",
+		Logger:                slog.Default(),
+		EnableDecompression:   true,
+		AcceptableStatusCodes: acceptableCodes,
+	}
+
+	resilientClient := httpclient.NewWithBreaker(clientConfig, breaker)
+
 	return &LogoService{
 		cache:              cache,
 		indexer:            indexer,
-		httpClient:         http.DefaultClient,
+		httpClient:         resilientClient.StandardClient(),
+		resilientClient:    resilientClient,
 		logger:             slog.Default(),
 		converter:          NewImageConverter(),
 		stalenessThreshold: 7 * 24 * time.Hour, // Default: 7 days
+		config:             cfg,
 	}
 }
 
@@ -64,6 +122,16 @@ func (s *LogoService) WithLogger(logger *slog.Logger) *LogoService {
 	s.logger = logger
 	s.indexer = s.indexer.WithLogger(logger)
 	return s
+}
+
+// Config returns the current configuration.
+func (s *LogoService) Config() LogoServiceConfig {
+	return s.config
+}
+
+// Concurrency returns the configured concurrency level for downloads.
+func (s *LogoService) Concurrency() int {
+	return s.config.Concurrency
 }
 
 // WithStalenessThreshold sets the threshold for pruning stale logos during maintenance.
