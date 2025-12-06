@@ -1,0 +1,653 @@
+# OpenAPI Specification: Configuration Settings & Debug UI Consolidation
+# Feature: 006-config-settings-ui
+# This defines NEW and MODIFIED endpoints only
+
+openapi: 3.0.3
+info:
+  title: tvarr Configuration API
+  version: 1.0.0
+  description: |
+    Unified configuration management API for tvarr.
+    Consolidates settings, features, and circuit breaker configuration.
+
+paths:
+  # ============================================================
+  # NEW ENDPOINTS
+  # ============================================================
+
+  /api/v1/config:
+    get:
+      operationId: getConfig
+      summary: Get unified configuration
+      description: |
+        Returns all configuration data in a single response:
+        - Runtime settings (modifiable)
+        - Feature flags (modifiable)
+        - Circuit breaker config (modifiable)
+        - Startup config (read-only)
+        - Config file metadata
+      tags:
+        - Configuration
+      responses:
+        '200':
+          description: Configuration retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedConfigResponse'
+
+    put:
+      operationId: updateConfig
+      summary: Update runtime configuration
+      description: |
+        Updates runtime-modifiable configuration.
+        Omitted fields are not modified (partial update).
+      tags:
+        - Configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnifiedConfigUpdate'
+      responses:
+        '200':
+          description: Configuration updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigUpdateResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/config/persist:
+    post:
+      operationId: persistConfig
+      summary: Save configuration to file
+      description: |
+        Persists current runtime configuration to the config file.
+        Requires write permission to config file location.
+      tags:
+        - Configuration
+      responses:
+        '200':
+          description: Configuration persisted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigPersistResponse'
+        '403':
+          description: Config file not writable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Write error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /livez:
+    get:
+      operationId: getLivez
+      summary: Liveness probe
+      description: |
+        Lightweight liveness check for UI polling and Kubernetes.
+        Returns 200 OK if the service is running.
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LivezResponse'
+
+  /readyz:
+    get:
+      operationId: getReadyz
+      summary: Readiness probe
+      description: |
+        Readiness check for Kubernetes.
+        Verifies database connection and scheduler are ready.
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Service is ready to accept traffic
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadyzResponse'
+        '503':
+          description: Service not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadyzResponse'
+
+  # ============================================================
+  # ENHANCED ENDPOINTS (existing, with new response fields)
+  # ============================================================
+
+  /health:
+    get:
+      operationId: getHealth
+      summary: Detailed health check
+      description: |
+        Returns comprehensive health information including:
+        - CPU and memory metrics
+        - Database health
+        - Circuit breaker stats with enhanced error categorization
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Health data retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  # ============================================================
+  # DEPRECATED ENDPOINTS (kept for backward compatibility)
+  # ============================================================
+
+  /api/v1/settings:
+    get:
+      operationId: getSettings
+      summary: Get runtime settings
+      deprecated: true
+      description: |
+        **DEPRECATED**: Use GET /api/v1/config instead.
+        Returns runtime settings only.
+      tags:
+        - Settings (Deprecated)
+      responses:
+        '200':
+          description: Settings retrieved
+          headers:
+            X-Deprecated:
+              schema:
+                type: string
+              description: Deprecation notice
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LegacySettingsResponse'
+
+components:
+  schemas:
+    # ============================================================
+    # UNIFIED CONFIG SCHEMAS
+    # ============================================================
+
+    UnifiedConfigResponse:
+      type: object
+      required:
+        - success
+        - runtime
+        - startup
+        - meta
+      properties:
+        success:
+          type: boolean
+          example: true
+        runtime:
+          $ref: '#/components/schemas/RuntimeConfig'
+        startup:
+          $ref: '#/components/schemas/StartupConfig'
+        meta:
+          $ref: '#/components/schemas/ConfigMeta'
+
+    RuntimeConfig:
+      type: object
+      required:
+        - settings
+        - features
+        - circuit_breakers
+      properties:
+        settings:
+          $ref: '#/components/schemas/RuntimeSettings'
+        features:
+          type: object
+          additionalProperties:
+            type: boolean
+          example:
+            debug-frontend: false
+            feature-cache: true
+        feature_config:
+          type: object
+          additionalProperties:
+            type: object
+          example:
+            feature-cache:
+              cache-duration: 300000
+        circuit_breakers:
+          $ref: '#/components/schemas/CircuitBreakerConfig'
+
+    RuntimeSettings:
+      type: object
+      required:
+        - log_level
+        - enable_request_logging
+      properties:
+        log_level:
+          type: string
+          enum: [trace, debug, info, warn, error]
+          example: info
+        enable_request_logging:
+          type: boolean
+          example: false
+
+    CircuitBreakerConfig:
+      type: object
+      required:
+        - global
+      properties:
+        global:
+          $ref: '#/components/schemas/CircuitBreakerProfileConfig'
+        profiles:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/CircuitBreakerProfileConfig'
+
+    CircuitBreakerProfileConfig:
+      type: object
+      required:
+        - failure_threshold
+        - reset_timeout
+        - half_open_max
+      properties:
+        failure_threshold:
+          type: integer
+          minimum: 1
+          example: 3
+        reset_timeout:
+          type: string
+          description: Duration string (e.g., "30s", "1m")
+          example: "30s"
+        half_open_max:
+          type: integer
+          minimum: 1
+          example: 1
+        acceptable_status_codes:
+          type: string
+          description: Comma-separated HTTP status codes
+          example: "200,201,204"
+
+    StartupConfig:
+      type: object
+      description: Read-only startup configuration (requires restart to change)
+      properties:
+        server:
+          type: object
+        database:
+          type: object
+        storage:
+          type: object
+        pipeline:
+          type: object
+        scheduler:
+          type: object
+        relay:
+          type: object
+        ingestion:
+          type: object
+
+    ConfigMeta:
+      type: object
+      required:
+        - can_persist
+        - source
+      properties:
+        config_path:
+          type: string
+          example: "/etc/tvarr/config.yaml"
+        can_persist:
+          type: boolean
+          description: Whether config file is writable
+          example: true
+        last_modified:
+          type: string
+          format: date-time
+        source:
+          type: string
+          enum: [file, env, defaults]
+          example: file
+
+    # ============================================================
+    # UPDATE SCHEMAS
+    # ============================================================
+
+    UnifiedConfigUpdate:
+      type: object
+      description: Partial update - omitted fields are not modified
+      properties:
+        settings:
+          $ref: '#/components/schemas/RuntimeSettings'
+        features:
+          type: object
+          additionalProperties:
+            type: boolean
+        circuit_breakers:
+          $ref: '#/components/schemas/CircuitBreakerConfigUpdate'
+
+    CircuitBreakerConfigUpdate:
+      type: object
+      properties:
+        global:
+          $ref: '#/components/schemas/CircuitBreakerProfileConfig'
+        profiles:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/CircuitBreakerProfileConfig'
+
+    ConfigUpdateResponse:
+      type: object
+      required:
+        - success
+        - message
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Configuration updated successfully"
+        applied_changes:
+          type: array
+          items:
+            type: string
+          example:
+            - "log_level: info -> debug"
+            - "features.debug-frontend: false -> true"
+
+    ConfigPersistResponse:
+      type: object
+      required:
+        - success
+        - message
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Configuration saved to /etc/tvarr/config.yaml"
+        path:
+          type: string
+          example: "/etc/tvarr/config.yaml"
+        sections:
+          type: array
+          items:
+            type: string
+          example:
+            - logging
+            - features
+            - circuit_breakers
+
+    # ============================================================
+    # HEALTH SCHEMAS
+    # ============================================================
+
+    LivezResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [ok]
+          example: ok
+
+    ReadyzResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [ok, not_ready]
+          example: ok
+        components:
+          type: object
+          additionalProperties:
+            type: string
+          example:
+            database: ok
+            scheduler: ok
+
+    HealthResponse:
+      type: object
+      description: Full health response with enhanced circuit breaker stats
+      properties:
+        status:
+          type: string
+          example: healthy
+        timestamp:
+          type: string
+          format: date-time
+        version:
+          type: string
+          example: "1.0.0"
+        uptime:
+          type: string
+          example: "2h 15m 30s"
+        components:
+          $ref: '#/components/schemas/HealthComponents'
+
+    HealthComponents:
+      type: object
+      properties:
+        database:
+          type: object
+        scheduler:
+          type: object
+        circuit_breakers:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/CircuitBreakerStats'
+
+    # ============================================================
+    # CIRCUIT BREAKER STATS (ENHANCED)
+    # ============================================================
+
+    CircuitBreakerStats:
+      type: object
+      required:
+        - name
+        - state
+        - total_requests
+      properties:
+        name:
+          type: string
+          example: logos
+        state:
+          type: string
+          enum: [closed, open, half_open]
+          example: closed
+        state_entered_at:
+          type: string
+          format: date-time
+        state_duration_ms:
+          type: integer
+          format: int64
+          example: 8100000
+        consecutive_failures:
+          type: integer
+          example: 0
+        consecutive_successes:
+          type: integer
+          example: 5
+        total_requests:
+          type: integer
+          format: int64
+          example: 15000
+        total_successes:
+          type: integer
+          format: int64
+          example: 14850
+        total_failures:
+          type: integer
+          format: int64
+          example: 150
+        failure_rate:
+          type: number
+          format: double
+          example: 1.0
+        error_counts:
+          $ref: '#/components/schemas/ErrorCategoryCount'
+        state_durations:
+          $ref: '#/components/schemas/StateDurationSummary'
+        transitions:
+          type: array
+          items:
+            $ref: '#/components/schemas/StateTransition'
+        last_failure:
+          type: string
+          format: date-time
+        last_success:
+          type: string
+          format: date-time
+        next_half_open_at:
+          type: string
+          format: date-time
+          description: When Open, shows when recovery will be attempted
+        config:
+          $ref: '#/components/schemas/CircuitBreakerProfileConfig'
+
+    ErrorCategoryCount:
+      type: object
+      properties:
+        success_2xx:
+          type: integer
+          format: int64
+          example: 14850
+        client_error_4xx:
+          type: integer
+          format: int64
+          example: 50
+        server_error_5xx:
+          type: integer
+          format: int64
+          example: 75
+        timeout:
+          type: integer
+          format: int64
+          example: 20
+        network_error:
+          type: integer
+          format: int64
+          example: 5
+
+    StateDurationSummary:
+      type: object
+      properties:
+        closed_ms:
+          type: integer
+          format: int64
+          example: 82260000
+        open_ms:
+          type: integer
+          format: int64
+          example: 2700000
+        half_open_ms:
+          type: integer
+          format: int64
+          example: 1440000
+        total_ms:
+          type: integer
+          format: int64
+          example: 86400000
+        closed_pct:
+          type: number
+          format: double
+          example: 95.2
+        open_pct:
+          type: number
+          format: double
+          example: 3.1
+        half_open_pct:
+          type: number
+          format: double
+          example: 1.7
+
+    StateTransition:
+      type: object
+      required:
+        - timestamp
+        - from_state
+        - to_state
+        - reason
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        from_state:
+          type: string
+          enum: [closed, open, half_open]
+        to_state:
+          type: string
+          enum: [closed, open, half_open]
+        reason:
+          type: string
+          enum:
+            - threshold_exceeded
+            - timeout_recovery
+            - probe_success
+            - probe_failure
+            - manual_reset
+        consecutive_count:
+          type: integer
+          description: Failures or successes at time of transition
+
+    # ============================================================
+    # ERROR SCHEMAS
+    # ============================================================
+
+    ErrorResponse:
+      type: object
+      required:
+        - success
+        - message
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: "Validation error: invalid log_level"
+        errors:
+          type: array
+          items:
+            type: string
+
+    # ============================================================
+    # LEGACY SCHEMAS (for deprecated endpoints)
+    # ============================================================
+
+    LegacySettingsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        settings:
+          $ref: '#/components/schemas/RuntimeSettings'
+
+tags:
+  - name: Configuration
+    description: Unified configuration management
+  - name: Health
+    description: Health and liveness endpoints
+  - name: Settings (Deprecated)
+    description: Legacy settings endpoints - use /api/v1/config instead
