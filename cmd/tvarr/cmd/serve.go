@@ -450,6 +450,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	epgSourceHandler := handlers.NewEpgSourceHandler(epgService)
 	epgSourceHandler.Register(server.API())
 
+	unifiedSourcesHandler := handlers.NewUnifiedSourcesHandler(sourceService, epgService)
+	unifiedSourcesHandler.Register(server.API())
+
 	proxyHandler := handlers.NewStreamProxyHandler(proxyService)
 	proxyHandler.Register(server.API())
 

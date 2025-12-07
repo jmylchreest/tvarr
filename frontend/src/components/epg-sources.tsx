@@ -95,8 +95,34 @@ function getSourceTypeColor(type: EpgSourceType): string {
   }
 }
 
-function getStatusColor(isActive: boolean): string {
-  return isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800';
+function getStatusColor(status: string): string {
+  switch (status) {
+    case 'success':
+      return 'bg-green-100 text-green-800';
+    case 'ingesting':
+      return 'bg-blue-100 text-blue-800';
+    case 'pending':
+      return 'bg-yellow-100 text-yellow-800';
+    case 'failed':
+      return 'bg-red-100 text-red-800';
+    default:
+      return 'bg-gray-100 text-gray-800';
+  }
+}
+
+function getStatusLabel(status: string): string {
+  switch (status) {
+    case 'success':
+      return 'Success';
+    case 'ingesting':
+      return 'Ingesting';
+    case 'pending':
+      return 'Pending';
+    case 'failed':
+      return 'Failed';
+    default:
+      return status;
+  }
 }
 
 function CreateEpgSourceSheet({
@@ -694,7 +720,7 @@ export function EpgSources() {
   > | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<EpgSourceType | 'all'>('all');
-  const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive'>('all');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'ingesting' | 'success' | 'failed'>('all');
   const [currentPage, setCurrentPage] = useState(1);
 
   const [loading, setLoading] = useState<LoadingState>({
@@ -729,9 +755,7 @@ export function EpgSources() {
 
     // Filter by status
     if (filterStatus !== 'all') {
-      filtered = filtered.filter((source) =>
-        filterStatus === 'active' ? source.is_active : !source.is_active
-      );
+      filtered = filtered.filter((source) => source.status === filterStatus);
     }
 
     // Filter by search term
@@ -744,7 +768,8 @@ export function EpgSources() {
           source.source_type.toLowerCase(),
           source.update_cron.toLowerCase(),
           // Status labels
-          source.is_active ? 'active enabled' : 'inactive disabled',
+          source.status,
+          source.enabled ? 'enabled' : 'disabled',
           // Relative time and formatted dates
           formatRelativeTime(source.created_at).toLowerCase(),
           formatRelativeTime(source.updated_at).toLowerCase(),
@@ -980,7 +1005,7 @@ export function EpgSources() {
   };
 
   const totalPrograms = allSources?.reduce((sum, source) => sum + source.program_count, 0) || 0;
-  const activeSources = allSources?.filter((s) => s.is_active).length || 0;
+  const successfulSources = allSources?.filter((s) => s.status === 'success').length || 0;
   const xmltvSources = allSources?.filter((s) => s.source_type === 'xmltv').length || 0;
   const xtreamSources = allSources?.filter((s) => s.source_type === 'xtream').length || 0;
 
@@ -1062,7 +1087,7 @@ export function EpgSources() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{pagination?.total || 0}</div>
-              <p className="text-xs text-muted-foreground">{activeSources} active</p>
+              <p className="text-xs text-muted-foreground">{successfulSources} successful</p>
             </CardContent>
           </Card>
 
@@ -1139,7 +1164,7 @@ export function EpgSources() {
               </Select>
               <Select
                 value={filterStatus}
-                onValueChange={(value) => setFilterStatus(value as 'all' | 'active' | 'inactive')}
+                onValueChange={(value) => setFilterStatus(value as 'all' | 'pending' | 'ingesting' | 'success' | 'failed')}
                 disabled={loading.sources}
               >
                 <SelectTrigger className="w-full sm:w-[180px]">
@@ -1147,8 +1172,10 @@ export function EpgSources() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Status</SelectItem>
-                  <SelectItem value="active">Active Only</SelectItem>
-                  <SelectItem value="inactive">Inactive Only</SelectItem>
+                  <SelectItem value="success">Success</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="ingesting">Ingesting</SelectItem>
+                  <SelectItem value="failed">Failed</SelectItem>
                 </SelectContent>
               </Select>
 
@@ -1261,8 +1288,8 @@ export function EpgSources() {
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            <Badge className={getStatusColor(source.is_active)}>
-                              {source.is_active ? 'Active' : 'Inactive'}
+                            <Badge className={getStatusColor(source.status)}>
+                              {getStatusLabel(source.status)}
                             </Badge>
                           </TableCell>
                           <TableCell>
@@ -1367,8 +1394,8 @@ export function EpgSources() {
                               <CardTitle className="text-base">{source.name}</CardTitle>
                               <Badge variant="outline">{source.source_type?.toUpperCase()}</Badge>
                             </div>
-                            <Badge variant={source.is_active ? 'default' : 'secondary'}>
-                              {source.is_active ? 'Active' : 'Inactive'}
+                            <Badge className={getStatusColor(source.status)}>
+                              {getStatusLabel(source.status)}
                             </Badge>
                           </div>
                         </CardHeader>
@@ -1447,8 +1474,8 @@ export function EpgSources() {
                               <div className="flex items-center gap-2">
                                 <h3 className="font-medium">{source.name}</h3>
                                 <Badge variant="outline">{source.source_type?.toUpperCase()}</Badge>
-                                <Badge variant={source.is_active ? 'default' : 'secondary'}>
-                                  {source.is_active ? 'Active' : 'Inactive'}
+                                <Badge className={getStatusColor(source.status)}>
+                                  {getStatusLabel(source.status)}
                                 </Badge>
                               </div>
                               <p className="text-sm text-muted-foreground truncate">{source.url}</p>

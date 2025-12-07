@@ -274,6 +274,8 @@ type LastKnownCodecRepository interface {
 	DeleteBySourceID(ctx context.Context, sourceID models.ULID) (int64, error)
 	// DeleteExpired deletes expired codec entries.
 	DeleteExpired(ctx context.Context) (int64, error)
+	// DeleteAll deletes all codec cache entries.
+	DeleteAll(ctx context.Context) (int64, error)
 	// Touch updates the access time and increments hit count for a stream URL.
 	Touch(ctx context.Context, streamURL string) error
 	// GetValidCount returns the count of valid (non-expired, no error) entries.

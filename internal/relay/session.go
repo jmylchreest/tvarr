@@ -394,14 +394,15 @@ func (s *RelaySession) runFFmpegPipeline() error {
 	// for faster startup since we already know the stream format
 	if s.CachedCodecInfo != nil && s.CachedCodecInfo.IsValid() {
 		// Minimal probing - we already know the codec from ffprobe cache
-		builder.InputArgs("-analyzeduration", "1000000"). // 1 second
-			InputArgs("-probesize", "1000000")            // 1MB
+		builder.InputArgs("-analyzeduration", "500000"). // 0.5 seconds
+			InputArgs("-probesize", "500000")            // 500KB
 		slog.Debug("Using reduced probe settings with cached codec info",
 			slog.String("video_codec", s.CachedCodecInfo.VideoCodec))
 	} else {
-		// Full probing - no cached info available
-		builder.InputArgs("-analyzeduration", "10000000"). // 10 seconds
-			InputArgs("-probesize", "10000000")            // 10MB
+		// Live stream probing - 3 seconds is sufficient for MPEG-TS/HLS detection
+		// Previous 10 second values caused significant startup delays
+		builder.InputArgs("-analyzeduration", "3000000"). // 3 seconds
+			InputArgs("-probesize", "3000000")            // 3MB
 	}
 	builder.Reconnect() // Enable auto-reconnect for network streams
 

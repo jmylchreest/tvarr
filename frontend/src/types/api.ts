@@ -23,6 +23,9 @@ export interface PaginatedResponse<T> {
 // Added 'manual' to align with backend enum (m3u | xtream | manual)
 export type StreamSourceType = 'm3u' | 'xtream' | 'manual';
 
+// Source status represents the ingestion state
+export type SourceStatus = 'pending' | 'ingesting' | 'success' | 'failed';
+
 // Manual channel definition (only used when source_type === 'manual')
 export interface ManualChannelInput {
   channel_number?: number;
@@ -48,9 +51,11 @@ export interface StreamSource {
   ignore_channel_numbers: boolean;
   created_at: string;
   updated_at: string;
-  is_active: boolean;
+  enabled: boolean;
+  status: SourceStatus;
   field_map?: string;
   last_ingestion_at?: string;
+  last_error?: string;
   username?: string;
   password?: string;
   // (Optional future extension) manual_channels?: ManualChannelInput[];  // not included in current backend list response
@@ -75,8 +80,10 @@ export interface EpgSource {
   time_offset: string;
   created_at: string;
   updated_at: string;
-  is_active: boolean;
+  enabled: boolean;
+  status: SourceStatus;
   last_ingestion_at?: string;
+  last_error?: string;
   original_timezone?: string;
   username?: string;
   password?: string;

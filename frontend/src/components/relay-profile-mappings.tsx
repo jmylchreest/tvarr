@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -9,6 +9,13 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import {
   Sheet,
   SheetContent,
@@ -41,6 +48,10 @@ import {
   Globe,
   GripVertical,
   Shield,
+  Check,
+  X,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { RelayProfileMapping, CreateRelayProfileMappingRequest, UpdateRelayProfileMappingRequest, ContainerFormat } from '@/types/api';
 import { apiClient, ApiError } from '@/lib/api-client';
@@ -61,6 +72,78 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+
+// Available codecs for selection
+const AVAILABLE_VIDEO_CODECS = [
+  { value: 'h264', label: 'H.264' },
+  { value: 'hevc', label: 'HEVC (H.265)' },
+  { value: 'vp9', label: 'VP9' },
+  { value: 'av1', label: 'AV1' },
+];
+
+const AVAILABLE_AUDIO_CODECS = [
+  { value: 'aac', label: 'AAC' },
+  { value: 'opus', label: 'Opus' },
+  { value: 'mp3', label: 'MP3' },
+  { value: 'ac3', label: 'AC3' },
+  { value: 'eac3', label: 'E-AC3' },
+];
+
+const AVAILABLE_CONTAINERS = [
+  { value: 'mpegts', label: 'MPEG-TS' },
+  { value: 'fmp4', label: 'fMP4' },
+];
+
+// Expression validation hook with debouncing
+function useExpressionValidation(expression: string, delay = 500) {
+  const [validationState, setValidationState] = useState<{
+    isValid: boolean | null;
+    error: string | null;
+    isValidating: boolean;
+  }>({ isValid: null, error: null, isValidating: false });
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    // Clear previous timeout
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+
+    // Don't validate empty expressions
+    if (!expression.trim()) {
+      setValidationState({ isValid: null, error: null, isValidating: false });
+      return;
+    }
+
+    setValidationState((prev) => ({ ...prev, isValidating: true }));
+
+    // Debounce the validation
+    timeoutRef.current = setTimeout(async () => {
+      try {
+        const result = await apiClient.testRelayProfileMappingExpression({
+          expression,
+          test_data: { user_agent: 'Test/1.0' },
+        });
+
+        if (result.error) {
+          setValidationState({ isValid: false, error: result.error, isValidating: false });
+        } else {
+          setValidationState({ isValid: true, error: null, isValidating: false });
+        }
+      } catch {
+        setValidationState({ isValid: false, error: 'Failed to validate expression', isValidating: false });
+      }
+    }, delay);
+
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, [expression, delay]);
+
+  return validationState;
+}
 
 interface LoadingState {
   mappings: boolean;
@@ -168,17 +251,33 @@ function SortableRow({
         </code>
       </TableCell>
       <TableCell>
-        <div className="flex flex-wrap gap-1">
-          <Badge variant="outline" className="text-xs">
-            {mapping.preferred_video_codec.toUpperCase()}
-          </Badge>
-          <Badge variant="outline" className="text-xs">
-            {mapping.preferred_audio_codec.toUpperCase()}
-          </Badge>
-          <Badge variant="secondary" className="text-xs">
-            {mapping.preferred_container.toUpperCase()}
-          </Badge>
-        </div>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex flex-wrap gap-1 cursor-help">
+                <Badge variant="outline" className="text-xs">
+                  {mapping.preferred_video_codec.toUpperCase()}
+                </Badge>
+                <Badge variant="outline" className="text-xs">
+                  {mapping.preferred_audio_codec.toUpperCase()}
+                </Badge>
+                <Badge variant="secondary" className="text-xs">
+                  {mapping.preferred_container.toUpperCase()}
+                </Badge>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="max-w-xs">
+              <div className="space-y-2 text-xs">
+                <p className="font-medium">Accepted Codecs (Passthrough)</p>
+                <div className="space-y-1">
+                  <p><span className="opacity-70">Video:</span> {mapping.accepted_video_codecs?.map(c => c.toUpperCase()).join(', ') || 'none'}</p>
+                  <p><span className="opacity-70">Audio:</span> {mapping.accepted_audio_codecs?.map(c => c.toUpperCase()).join(', ') || 'none'}</p>
+                  <p><span className="opacity-70">Container:</span> {mapping.accepted_containers?.map(c => c.toUpperCase()).join(', ') || 'none'}</p>
+                </div>
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </TableCell>
       <TableCell>
         <Switch
@@ -228,6 +327,7 @@ function CreateMappingSheet({
   error: string | null;
 }) {
   const [open, setOpen] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [formData, setFormData] = useState<CreateRelayProfileMappingRequest>({
     name: '',
     expression: '',
@@ -241,11 +341,15 @@ function CreateMappingSheet({
     preferred_container: 'mpegts',
   });
 
+  // Expression validation
+  const expressionValidation = useExpressionValidation(formData.expression);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     await onCreateMapping(formData);
     if (!error) {
       setOpen(false);
+      setShowAdvanced(false);
       setFormData({
         name: '',
         expression: '',
@@ -258,6 +362,21 @@ function CreateMappingSheet({
         preferred_audio_codec: 'aac',
         preferred_container: 'mpegts',
       });
+    }
+  };
+
+  const toggleCodec = (list: string[] | undefined, codec: string, type: 'video' | 'audio' | 'container') => {
+    const currentList = list || [];
+    const newList = currentList.includes(codec)
+      ? currentList.filter((c) => c !== codec)
+      : [...currentList, codec];
+
+    if (type === 'video') {
+      setFormData({ ...formData, accepted_video_codecs: newList });
+    } else if (type === 'audio') {
+      setFormData({ ...formData, accepted_audio_codecs: newList });
+    } else {
+      setFormData({ ...formData, accepted_containers: newList });
     }
   };
 
@@ -300,16 +419,38 @@ function CreateMappingSheet({
 
           <div className="space-y-2">
             <Label htmlFor="expression">Expression</Label>
-            <Textarea
-              id="expression"
-              value={formData.expression}
-              onChange={(e) => setFormData({ ...formData, expression: e.target.value })}
-              placeholder='e.g., user_agent contains "Chrome"'
-              required
-              disabled={loading}
-              className="font-mono text-sm"
-              rows={3}
-            />
+            <div className="relative">
+              <Textarea
+                id="expression"
+                value={formData.expression}
+                onChange={(e) => setFormData({ ...formData, expression: e.target.value })}
+                placeholder='e.g., user_agent contains "Chrome"'
+                required
+                disabled={loading}
+                className={`font-mono text-sm pr-10 ${
+                  expressionValidation.isValid === false
+                    ? 'border-destructive focus-visible:ring-destructive'
+                    : expressionValidation.isValid === true
+                    ? 'border-green-500 focus-visible:ring-green-500'
+                    : ''
+                }`}
+                rows={3}
+              />
+              {formData.expression && (
+                <div className="absolute right-2 top-2">
+                  {expressionValidation.isValidating ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  ) : expressionValidation.isValid === true ? (
+                    <Check className="h-4 w-4 text-green-500" />
+                  ) : expressionValidation.isValid === false ? (
+                    <X className="h-4 w-4 text-destructive" />
+                  ) : null}
+                </div>
+              )}
+            </div>
+            {expressionValidation.error && (
+              <p className="text-xs text-destructive">{expressionValidation.error}</p>
+            )}
             <p className="text-xs text-muted-foreground">
               Available fields: <code className="bg-muted px-1 rounded">user_agent</code>, <code className="bg-muted px-1 rounded">client_ip</code>, <code className="bg-muted px-1 rounded">request_path</code>, <code className="bg-muted px-1 rounded">request_url</code>, <code className="bg-muted px-1 rounded">query_params</code>, <code className="bg-muted px-1 rounded">x_forwarded_for</code>, <code className="bg-muted px-1 rounded">x_real_ip</code>, <code className="bg-muted px-1 rounded">accept</code>, <code className="bg-muted px-1 rounded">host</code>, <code className="bg-muted px-1 rounded">referer</code>
             </p>
@@ -337,51 +478,150 @@ function CreateMappingSheet({
             <Label htmlFor="is_enabled">Enabled</Label>
           </div>
 
-          <div className="grid grid-cols-3 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="preferred_video_codec">Video Codec</Label>
-              <select
-                id="preferred_video_codec"
-                value={formData.preferred_video_codec || 'h264'}
-                onChange={(e) => setFormData({ ...formData, preferred_video_codec: e.target.value })}
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
-                disabled={loading}
-              >
-                <option value="copy">Copy</option>
-                <option value="h264">H.264</option>
-                <option value="hevc">HEVC</option>
-                <option value="vp9">VP9</option>
-                <option value="av1">AV1</option>
-              </select>
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Preferred Codecs (Transcode Target)</Label>
+            <p className="text-xs text-muted-foreground">When source cannot be copied, transcode to these codecs.</p>
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="preferred_video_codec" className="text-xs text-muted-foreground">Video</Label>
+                <select
+                  id="preferred_video_codec"
+                  value={formData.preferred_video_codec || 'h264'}
+                  onChange={(e) => setFormData({ ...formData, preferred_video_codec: e.target.value })}
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+                  disabled={loading}
+                >
+                  <option value="copy">Copy</option>
+                  <option value="h264">H.264</option>
+                  <option value="hevc">HEVC</option>
+                  <option value="vp9">VP9</option>
+                  <option value="av1">AV1</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="preferred_audio_codec" className="text-xs text-muted-foreground">Audio</Label>
+                <select
+                  id="preferred_audio_codec"
+                  value={formData.preferred_audio_codec || 'aac'}
+                  onChange={(e) => setFormData({ ...formData, preferred_audio_codec: e.target.value })}
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+                  disabled={loading}
+                >
+                  <option value="copy">Copy</option>
+                  <option value="aac">AAC</option>
+                  <option value="opus">Opus</option>
+                  <option value="mp3">MP3</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="preferred_container" className="text-xs text-muted-foreground">Container</Label>
+                <select
+                  id="preferred_container"
+                  value={formData.preferred_container || 'mpegts'}
+                  onChange={(e) => setFormData({ ...formData, preferred_container: e.target.value as ContainerFormat })}
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+                  disabled={loading}
+                >
+                  <option value="mpegts">MPEG-TS</option>
+                  <option value="fmp4">fMP4</option>
+                </select>
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="preferred_audio_codec">Audio Codec</Label>
-              <select
-                id="preferred_audio_codec"
-                value={formData.preferred_audio_codec || 'aac'}
-                onChange={(e) => setFormData({ ...formData, preferred_audio_codec: e.target.value })}
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
-                disabled={loading}
-              >
-                <option value="copy">Copy</option>
-                <option value="aac">AAC</option>
-                <option value="opus">Opus</option>
-                <option value="mp3">MP3</option>
-              </select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="preferred_container">Container</Label>
-              <select
-                id="preferred_container"
-                value={formData.preferred_container || 'mpegts'}
-                onChange={(e) => setFormData({ ...formData, preferred_container: e.target.value as ContainerFormat })}
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
-                disabled={loading}
-              >
-                <option value="mpegts">MPEG-TS</option>
-                <option value="fmp4">fMP4</option>
-              </select>
-            </div>
+          </div>
+
+          {/* Advanced: Accepted Codecs */}
+          <div className="border rounded-md">
+            <button
+              type="button"
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              className="flex w-full items-center justify-between p-3 text-sm font-medium hover:bg-muted/50"
+            >
+              <span>Accepted Codecs (Passthrough)</span>
+              {showAdvanced ? (
+                <ChevronUp className="h-4 w-4" />
+              ) : (
+                <ChevronDown className="h-4 w-4" />
+              )}
+            </button>
+            {showAdvanced && (
+              <div className="p-4 pt-0 space-y-4 border-t">
+                <p className="text-xs text-muted-foreground">
+                  Codecs the client can accept without transcoding. If the source matches these, it will be copied directly.
+                </p>
+
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground">Accepted Video Codecs</Label>
+                  <div className="flex flex-wrap gap-3">
+                    {AVAILABLE_VIDEO_CODECS.map((codec) => (
+                      <div key={codec.value} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`video-${codec.value}`}
+                          checked={formData.accepted_video_codecs?.includes(codec.value) ?? false}
+                          onCheckedChange={() =>
+                            toggleCodec(formData.accepted_video_codecs, codec.value, 'video')
+                          }
+                          disabled={loading}
+                        />
+                        <label
+                          htmlFor={`video-${codec.value}`}
+                          className="text-sm cursor-pointer"
+                        >
+                          {codec.label}
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground">Accepted Audio Codecs</Label>
+                  <div className="flex flex-wrap gap-3">
+                    {AVAILABLE_AUDIO_CODECS.map((codec) => (
+                      <div key={codec.value} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`audio-${codec.value}`}
+                          checked={formData.accepted_audio_codecs?.includes(codec.value) ?? false}
+                          onCheckedChange={() =>
+                            toggleCodec(formData.accepted_audio_codecs, codec.value, 'audio')
+                          }
+                          disabled={loading}
+                        />
+                        <label
+                          htmlFor={`audio-${codec.value}`}
+                          className="text-sm cursor-pointer"
+                        >
+                          {codec.label}
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground">Accepted Containers</Label>
+                  <div className="flex flex-wrap gap-3">
+                    {AVAILABLE_CONTAINERS.map((container) => (
+                      <div key={container.value} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`container-${container.value}`}
+                          checked={formData.accepted_containers?.includes(container.value) ?? false}
+                          onCheckedChange={() =>
+                            toggleCodec(formData.accepted_containers, container.value, 'container')
+                          }
+                          disabled={loading}
+                        />
+                        <label
+                          htmlFor={`container-${container.value}`}
+                          className="text-sm cursor-pointer"
+                        >
+                          {container.label}
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </form>
 
@@ -404,12 +644,10 @@ function CreateMappingSheet({
 // Fallback rule card component
 function FallbackRuleCard({
   fallbackRule,
-  onToggleEnabled,
   onUpdateFallback,
   loading,
 }: {
   fallbackRule: RelayProfileMapping | null;
-  onToggleEnabled: (mapping: RelayProfileMapping) => void;
   onUpdateFallback: (updates: UpdateRelayProfileMappingRequest) => void;
   loading: boolean;
 }) {
@@ -418,16 +656,9 @@ function FallbackRuleCard({
   return (
     <Card className="border-dashed border-2">
       <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Shield className="h-5 w-5 text-muted-foreground" />
-            <CardTitle className="text-base">Default Fallback Rule</CardTitle>
-          </div>
-          <Switch
-            checked={fallbackRule.is_enabled}
-            onCheckedChange={() => onToggleEnabled(fallbackRule)}
-            disabled={loading}
-          />
+        <div className="flex items-center gap-2">
+          <Shield className="h-5 w-5 text-muted-foreground" />
+          <CardTitle className="text-base">Default Fallback Rule</CardTitle>
         </div>
         <CardDescription>
           This rule matches all unmatched clients and provides maximum compatibility settings.
@@ -560,8 +791,19 @@ export function RelayProfileMappings() {
 
   const handleToggleEnabled = async (mapping: RelayProfileMapping) => {
     try {
+      // Send all mapping fields to satisfy backend validation
       await apiClient.updateRelayProfileMapping(mapping.id, {
+        name: mapping.name,
+        description: mapping.description,
+        expression: mapping.expression,
+        priority: mapping.priority,
         is_enabled: !mapping.is_enabled,
+        accepted_video_codecs: mapping.accepted_video_codecs,
+        accepted_audio_codecs: mapping.accepted_audio_codecs,
+        accepted_containers: mapping.accepted_containers,
+        preferred_video_codec: mapping.preferred_video_codec,
+        preferred_audio_codec: mapping.preferred_audio_codec,
+        preferred_container: mapping.preferred_container,
       });
       await fetchMappings();
     } catch (err) {
@@ -604,7 +846,21 @@ export function RelayProfileMappings() {
     if (!fallbackRule) return;
 
     try {
-      await apiClient.updateRelayProfileMapping(fallbackRule.id, updates);
+      // Send all mapping fields with the specific update applied
+      await apiClient.updateRelayProfileMapping(fallbackRule.id, {
+        name: fallbackRule.name,
+        description: fallbackRule.description,
+        expression: fallbackRule.expression,
+        priority: fallbackRule.priority,
+        is_enabled: fallbackRule.is_enabled,
+        accepted_video_codecs: fallbackRule.accepted_video_codecs,
+        accepted_audio_codecs: fallbackRule.accepted_audio_codecs,
+        accepted_containers: fallbackRule.accepted_containers,
+        preferred_video_codec: fallbackRule.preferred_video_codec,
+        preferred_audio_codec: fallbackRule.preferred_audio_codec,
+        preferred_container: fallbackRule.preferred_container,
+        ...updates, // Override with the specific update
+      });
       await fetchMappings();
     } catch (err) {
       const message = err instanceof ApiError ? err.message : 'Failed to update fallback rule';
@@ -725,7 +981,6 @@ export function RelayProfileMappings() {
       {/* Fallback Rule - Always at bottom */}
       <FallbackRuleCard
         fallbackRule={fallbackRule || null}
-        onToggleEnabled={handleToggleEnabled}
         onUpdateFallback={handleUpdateFallback}
         loading={loading.reorder}
       />

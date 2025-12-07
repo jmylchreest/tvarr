@@ -285,8 +285,9 @@ func parseFramerate(fr string) float64 {
 }
 
 // QuickProbe does a fast probe with minimal options.
+// Optimized for live streaming with aggressive timeouts for fast startup.
 func (p *Prober) QuickProbe(ctx context.Context, url string) (*StreamInfo, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	args := []string{
@@ -294,9 +295,12 @@ func (p *Prober) QuickProbe(ctx context.Context, url string) (*StreamInfo, error
 		"-print_format", "json",
 		"-show_format",
 		"-show_streams",
-		"-select_streams", "v:0", // Only first video stream
-		"-read_intervals", "%+1", // Only read first second
-		"-timeout", "10000000",    // 10 second timeout
+		// Don't use -select_streams - we need both video AND audio streams
+		// Time is limited by -read_intervals, -analyzeduration, and -probesize instead
+		"-read_intervals", "%+0.5", // Only read first 500ms
+		"-analyzeduration", "2000000", // 2 second analyze limit
+		"-probesize", "2000000", // 2MB probe limit
+		"-timeout", "5000000",    // 5 second timeout
 	}
 
 	// Add URL-specific options

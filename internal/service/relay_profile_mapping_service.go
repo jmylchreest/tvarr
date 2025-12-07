@@ -200,7 +200,13 @@ func (s *RelayProfileMappingService) EvaluateRequest(ctx context.Context, r *htt
 			}
 
 			// Determine video codec
-			if sourceCodecs != nil && mapping.AcceptsVideoCodec(sourceCodecs.VideoCodec) {
+			// If source codec is unknown (empty), default to copy (optimistic passthrough)
+			// Most streams use standard codecs and transcoding is expensive
+			if sourceCodecs != nil && sourceCodecs.VideoCodec != "" && mapping.AcceptsVideoCodec(sourceCodecs.VideoCodec) {
+				decision.VideoAction = "copy"
+				decision.TargetVideoCodec = models.VideoCodecCopy
+			} else if sourceCodecs == nil || sourceCodecs.VideoCodec == "" {
+				// Source codec unknown - default to copy (optimistic)
 				decision.VideoAction = "copy"
 				decision.TargetVideoCodec = models.VideoCodecCopy
 			} else {
@@ -209,7 +215,12 @@ func (s *RelayProfileMappingService) EvaluateRequest(ctx context.Context, r *htt
 			}
 
 			// Determine audio codec
-			if sourceCodecs != nil && mapping.AcceptsAudioCodec(sourceCodecs.AudioCodec) {
+			// If source codec is unknown (empty), default to copy (optimistic passthrough)
+			if sourceCodecs != nil && sourceCodecs.AudioCodec != "" && mapping.AcceptsAudioCodec(sourceCodecs.AudioCodec) {
+				decision.AudioAction = "copy"
+				decision.TargetAudioCodec = models.AudioCodecCopy
+			} else if sourceCodecs == nil || sourceCodecs.AudioCodec == "" {
+				// Source codec unknown - default to copy (optimistic)
 				decision.AudioAction = "copy"
 				decision.TargetAudioCodec = models.AudioCodecCopy
 			} else {
@@ -218,7 +229,10 @@ func (s *RelayProfileMappingService) EvaluateRequest(ctx context.Context, r *htt
 			}
 
 			// Determine container
-			if sourceCodecs != nil && mapping.AcceptsContainer(sourceCodecs.Container) {
+			if sourceCodecs != nil && sourceCodecs.Container != "" && mapping.AcceptsContainer(sourceCodecs.Container) {
+				decision.TargetContainer = models.ContainerFormatAuto
+			} else if sourceCodecs == nil || sourceCodecs.Container == "" {
+				// Source container unknown - default to auto
 				decision.TargetContainer = models.ContainerFormatAuto
 			} else {
 				decision.TargetContainer = mapping.PreferredContainer

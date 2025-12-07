@@ -310,6 +310,33 @@ func TestStreamClassifier_DASH(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("DetectMPEGTSByURL", func(t *testing.T) {
+		mpegtsURLs := []string{
+			"http://example.com/stream.ts",
+			"http://example.com/live/123.ts?token=abc",
+			"http://example.com/video.TS",
+		}
+
+		for _, url := range mpegtsURLs {
+			if !isMPEGTSURL(url) {
+				t.Errorf("isMPEGTSURL(%q) = false, want true", url)
+			}
+		}
+
+		nonMPEGTSURLs := []string{
+			"http://example.com/stream.m3u8",
+			"http://example.com/manifest.mpd",
+			"http://example.com/video.mp4",
+			"http://example.com/ts-stream.m3u8", // ts in path but m3u8 extension
+		}
+
+		for _, url := range nonMPEGTSURLs {
+			if isMPEGTSURL(url) {
+				t.Errorf("isMPEGTSURL(%q) = true, want false", url)
+			}
+		}
+	})
 }
 
 // TestFormatRouter_Passthrough tests the format router passthrough registration.

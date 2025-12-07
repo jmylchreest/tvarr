@@ -55,6 +55,8 @@ function transformStreamSourceResponse(source: any): StreamSourceResponse {
     source_type: source.type || source.source_type,
     update_cron: source.cron_schedule || source.update_cron || '',
     max_concurrent_streams: source.max_concurrent_streams || 0,
+    enabled: source.enabled ?? true,
+    status: source.status || 'pending',
   };
 }
 
@@ -64,6 +66,8 @@ function transformEpgSourceResponse(source: any): EpgSourceResponse {
     ...source,
     source_type: source.type || source.source_type,
     update_cron: source.cron_schedule || source.update_cron || '',
+    enabled: source.enabled ?? true,
+    status: source.status || 'pending',
   };
 }
 
@@ -1052,6 +1056,26 @@ class ApiClient {
 
   async getRelayProfileMappingStats(): Promise<RelayProfileMappingStats> {
     return this.request<RelayProfileMappingStats>('/api/v1/relay-profile-mappings/stats');
+  }
+
+  // Last Known Codec Cache API
+  async getLastKnownCodecsStats(): Promise<{
+    total_entries: number;
+    valid_entries: number;
+    expired_entries: number;
+    error_entries: number;
+    total_hits: number;
+  }> {
+    return this.request('/api/v1/relay/lastknowncodecs');
+  }
+
+  async clearLastKnownCodecs(): Promise<{
+    deleted_count: number;
+    message: string;
+  }> {
+    return this.request('/api/v1/relay/lastknowncodecs', {
+      method: 'DELETE',
+    });
   }
 }
 

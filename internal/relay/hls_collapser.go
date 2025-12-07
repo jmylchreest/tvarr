@@ -459,7 +459,7 @@ type StreamClassifier struct {
 func NewStreamClassifier(client *http.Client) *StreamClassifier {
 	return &StreamClassifier{
 		client:  client,
-		timeout: 10 * time.Second,
+		timeout: 3 * time.Second, // Reduced from 10s for faster startup
 	}
 }
 
@@ -477,6 +477,14 @@ func (c *StreamClassifier) Classify(ctx context.Context, streamURL string) Class
 	// Check for DASH streams first (by URL extension)
 	if isDASHURL(streamURL) {
 		return c.classifyDASH(ctx, streamURL, &result)
+	}
+
+	// Check for raw MPEG-TS streams (by URL extension) - skip HLS probing
+	if isMPEGTSURL(streamURL) {
+		result.SourceFormat = SourceFormatMPEGTS
+		result.Mode = StreamModePassthroughRawTS
+		result.Reasons = append(result.Reasons, "Raw MPEG-TS detected by extension")
+		return result
 	}
 
 	// Check for HLS streams (by URL extension or probing)
@@ -583,6 +591,13 @@ func isHLSURL(streamURL string) bool {
 		strings.HasSuffix(lowerURL, ".m3u") ||
 		strings.Contains(lowerURL, ".m3u8?") ||
 		strings.Contains(lowerURL, ".m3u?")
+}
+
+// isMPEGTSURL checks if the URL is a raw MPEG-TS stream based on extension.
+func isMPEGTSURL(streamURL string) bool {
+	lowerURL := strings.ToLower(streamURL)
+	return strings.HasSuffix(lowerURL, ".ts") ||
+		strings.Contains(lowerURL, ".ts?")
 }
 
 // classifyTracks analyzes discovered tracks.

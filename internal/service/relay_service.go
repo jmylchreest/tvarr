@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jmylchreest/tvarr/internal/ffmpeg"
@@ -228,14 +229,24 @@ func (s *RelayService) ProbeStream(ctx context.Context, streamURL string) (*mode
 	codec := &models.LastKnownCodec{
 		StreamURL:       streamURL,
 		VideoCodec:      streamInfo.VideoCodec,
+		VideoProfile:    streamInfo.VideoProfile,
+		VideoLevel:      streamInfo.VideoLevel,
 		VideoWidth:      streamInfo.VideoWidth,
 		VideoHeight:     streamInfo.VideoHeight,
 		VideoFramerate:  streamInfo.VideoFramerate,
 		VideoBitrate:    streamInfo.VideoBitrate,
+		VideoPixFmt:     streamInfo.VideoPixFmt,
 		AudioCodec:      streamInfo.AudioCodec,
 		AudioSampleRate: streamInfo.AudioSampleRate,
 		AudioChannels:   streamInfo.AudioChannels,
 		AudioBitrate:    streamInfo.AudioBitrate,
+		ContainerFormat: streamInfo.ContainerFormat,
+		Duration:        streamInfo.Duration,
+		IsLiveStream:    streamInfo.IsLiveStream,
+		HasSubtitles:    streamInfo.HasSubtitles,
+		StreamCount:     streamInfo.StreamCount,
+		Title:           streamInfo.Title,
+		ProbedAt:        models.Now(),
 	}
 
 	// Store the probed information
@@ -255,6 +266,16 @@ func (s *RelayService) GetCodecCacheStats(ctx context.Context) (*repository.Code
 // CleanupExpiredCodecs removes expired codec cache entries.
 func (s *RelayService) CleanupExpiredCodecs(ctx context.Context) (int64, error) {
 	return s.lastKnownCodecRepo.DeleteExpired(ctx)
+}
+
+// ClearCodecCache clears the codec cache for a specific stream URL.
+func (s *RelayService) ClearCodecCache(ctx context.Context, streamURL string) error {
+	return s.lastKnownCodecRepo.DeleteByStreamURL(ctx, streamURL)
+}
+
+// ClearAllCodecCache clears all codec cache entries.
+func (s *RelayService) ClearAllCodecCache(ctx context.Context) (int64, error) {
+	return s.lastKnownCodecRepo.DeleteAll(ctx)
 }
 
 // Relay session operations
@@ -288,8 +309,8 @@ func (s *RelayService) StartRelay(ctx context.Context, channelID models.ULID, pr
 	// Convert ULID to UUID for relay manager
 	channelUUID := uuid.UUID(channelID)
 
-	// Start the relay session
-	session, err := s.relayManager.GetOrCreateSession(ctx, channelUUID, channel.ChannelName, channel.StreamURL, profile)
+	// Start the relay session, passing channel's UpdatedAt to invalidate stale codec cache
+	session, err := s.relayManager.GetOrCreateSession(ctx, channelUUID, channel.ChannelName, channel.StreamURL, profile, time.Time(channel.UpdatedAt))
 	if err != nil {
 		return nil, fmt.Errorf("starting relay session: %w", err)
 	}
@@ -321,8 +342,8 @@ func (s *RelayService) StartRelayWithProfile(ctx context.Context, channelID mode
 	// Convert ULID to UUID for relay manager
 	channelUUID := uuid.UUID(channelID)
 
-	// Start the relay session
-	session, err := s.relayManager.GetOrCreateSession(ctx, channelUUID, channel.ChannelName, channel.StreamURL, profile)
+	// Start the relay session, passing channel's UpdatedAt to invalidate stale codec cache
+	session, err := s.relayManager.GetOrCreateSession(ctx, channelUUID, channel.ChannelName, channel.StreamURL, profile, time.Time(channel.UpdatedAt))
 	if err != nil {
 		return nil, fmt.Errorf("starting relay session: %w", err)
 	}

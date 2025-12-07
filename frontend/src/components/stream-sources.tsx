@@ -99,8 +99,34 @@ function getSourceTypeColor(type: StreamSourceType): string {
   }
 }
 
-function getStatusColor(isActive: boolean): string {
-  return isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800';
+function getStatusColor(status: string): string {
+  switch (status) {
+    case 'success':
+      return 'bg-green-100 text-green-800';
+    case 'ingesting':
+      return 'bg-blue-100 text-blue-800';
+    case 'pending':
+      return 'bg-yellow-100 text-yellow-800';
+    case 'failed':
+      return 'bg-red-100 text-red-800';
+    default:
+      return 'bg-gray-100 text-gray-800';
+  }
+}
+
+function getStatusLabel(status: string): string {
+  switch (status) {
+    case 'success':
+      return 'Success';
+    case 'ingesting':
+      return 'Ingesting';
+    case 'pending':
+      return 'Pending';
+    case 'failed':
+      return 'Failed';
+    default:
+      return status;
+  }
 }
 
 function CreateSourceSheet({
@@ -775,7 +801,7 @@ export function StreamSources() {
   > | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<StreamSourceType | 'all'>('all');
-  const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive'>('all');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'ingesting' | 'success' | 'failed'>('all');
   const [currentPage, setCurrentPage] = useState(1);
 
   const [loading, setLoading] = useState<LoadingState>({
@@ -813,9 +839,7 @@ export function StreamSources() {
 
     // Filter by status
     if (filterStatus !== 'all') {
-      filtered = filtered.filter((source) =>
-        filterStatus === 'active' ? source.is_active : !source.is_active
-      );
+      filtered = filtered.filter((source) => source.status === filterStatus);
     }
 
     // Filter by search term
@@ -831,7 +855,8 @@ export function StreamSources() {
           source.update_cron.toLowerCase(),
           source.max_concurrent_streams.toString(),
           // Status labels
-          source.is_active ? 'active enabled' : 'inactive disabled',
+          source.status,
+          source.enabled ? 'enabled' : 'disabled',
           // Relative time and formatted dates
           formatRelativeTime(source.created_at).toLowerCase(),
           formatRelativeTime(source.updated_at).toLowerCase(),
@@ -1082,7 +1107,7 @@ export function StreamSources() {
   };
 
   const totalChannels = allSources?.reduce((sum, source) => sum + source.channel_count, 0) || 0;
-  const activeSources = allSources?.filter((s) => s.is_active).length || 0;
+  const successfulSources = allSources?.filter((s) => s.status === 'success').length || 0;
   const m3uSources = allSources?.filter((s) => s.source_type === 'm3u').length || 0;
   const xtreamSources = allSources?.filter((s) => s.source_type === 'xtream').length || 0;
 
@@ -1164,7 +1189,7 @@ export function StreamSources() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{pagination?.total || 0}</div>
-              <p className="text-xs text-muted-foreground">{activeSources} active</p>
+              <p className="text-xs text-muted-foreground">{successfulSources} successful</p>
             </CardContent>
           </Card>
 
@@ -1240,15 +1265,17 @@ export function StreamSources() {
               </Select>
               <Select
                 value={filterStatus}
-                onValueChange={(value) => setFilterStatus(value as 'all' | 'active' | 'inactive')}
+                onValueChange={(value) => setFilterStatus(value as 'all' | 'pending' | 'ingesting' | 'success' | 'failed')}
               >
                 <SelectTrigger className="w-full sm:w-[180px]">
                   <SelectValue placeholder="Filter by status" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Status</SelectItem>
-                  <SelectItem value="active">Active Only</SelectItem>
-                  <SelectItem value="inactive">Inactive Only</SelectItem>
+                  <SelectItem value="success">Success</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="ingesting">Ingesting</SelectItem>
+                  <SelectItem value="failed">Failed</SelectItem>
                 </SelectContent>
               </Select>
 
@@ -1364,8 +1391,8 @@ export function StreamSources() {
                           </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
-                              <Badge className={getStatusColor(source.is_active)}>
-                                {source.is_active ? 'Active' : 'Inactive'}
+                              <Badge className={getStatusColor(source.status)}>
+                                {getStatusLabel(source.status)}
                               </Badge>
                               {/* T049: Operation error/warning indicator */}
                               <OperationStatusIndicator resourceId={source.id} />
@@ -1482,8 +1509,8 @@ export function StreamSources() {
                               </Badge>
                             </div>
                             <div className="flex items-center gap-2">
-                              <Badge className={getStatusColor(source.is_active)}>
-                                {source.is_active ? 'Active' : 'Inactive'}
+                              <Badge className={getStatusColor(source.status)}>
+                                {getStatusLabel(source.status)}
                               </Badge>
                               {/* T049: Operation error/warning indicator */}
                               <OperationStatusIndicator resourceId={source.id} />
@@ -1568,8 +1595,8 @@ export function StreamSources() {
                                 <Badge className={getSourceTypeColor(source.source_type)}>
                                   {source.source_type.toUpperCase()}
                                 </Badge>
-                                <Badge className={getStatusColor(source.is_active)}>
-                                  {source.is_active ? 'Active' : 'Inactive'}
+                                <Badge className={getStatusColor(source.status)}>
+                                  {getStatusLabel(source.status)}
                                 </Badge>
                                 {/* T049: Operation error/warning indicator */}
                                 <OperationStatusIndicator resourceId={source.id} />

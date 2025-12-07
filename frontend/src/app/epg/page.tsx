@@ -423,7 +423,7 @@ export default function EpgPage() {
           const epgSourcesData: { success: boolean; data: { items: any[] } } =
             await epgSourcesResponse.json();
           if (epgSourcesData.success && epgSourcesData.data.items) {
-            const activeEpgSources = epgSourcesData.data.items.filter((source) => source.is_active);
+            const activeEpgSources = epgSourcesData.data.items.filter((source) => source.enabled);
             setSources(activeEpgSources);
             activeEpgSources.forEach((source) => {
               options.push({

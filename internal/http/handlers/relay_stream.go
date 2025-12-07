@@ -59,7 +59,7 @@ func (h *RelayStreamHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "probeStream",
 		Method:      "POST",
-		Path:        "/relay/probe",
+		Path:        "/api/v1/relay/probe",
 		Summary:     "Probe a stream URL",
 		Description: "Probes a stream URL to detect codec information",
 		Tags:        []string{"Stream Relay"},
@@ -68,20 +68,29 @@ func (h *RelayStreamHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "classifyStream",
 		Method:      "POST",
-		Path:        "/relay/classify",
+		Path:        "/api/v1/relay/classify",
 		Summary:     "Classify a stream URL",
 		Description: "Classifies a stream URL to determine processing mode",
 		Tags:        []string{"Stream Relay"},
 	}, h.ClassifyStream)
 
 	huma.Register(api, huma.Operation{
-		OperationID: "getCodecCache",
+		OperationID: "getLastKnownCodecs",
 		Method:      "GET",
-		Path:        "/relay/codecs",
-		Summary:     "Get codec cache stats",
-		Description: "Returns statistics about the codec cache",
+		Path:        "/api/v1/relay/lastknowncodecs",
+		Summary:     "Get last known codec cache stats",
+		Description: "Returns statistics about the cached codec information from ffprobe",
 		Tags:        []string{"Stream Relay"},
 	}, h.GetCodecCacheStats)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "clearLastKnownCodecs",
+		Method:      "DELETE",
+		Path:        "/api/v1/relay/lastknowncodecs",
+		Summary:     "Clear last known codec cache",
+		Description: "Clears all cached codec information, forcing re-probe on next stream request",
+		Tags:        []string{"Stream Relay"},
+	}, h.ClearCodecCache)
 }
 
 // RegisterChiRoutes registers streaming routes as raw Chi handlers.
@@ -436,6 +445,25 @@ func (h *RelayStreamHandler) resolveProfileWithAutoDetection(ctx context.Context
 		channelName = info.Channel.ChannelName
 	}
 
+	// Get cached codec info for source comparison (enables passthrough when client supports source codecs)
+	var sourceCodecs *service.CodecInfo
+	if info.Channel != nil && info.Channel.StreamURL != "" {
+		cachedCodec, err := h.relayService.GetLastKnownCodec(ctx, info.Channel.StreamURL)
+		if err == nil && cachedCodec != nil && cachedCodec.IsValid() {
+			sourceCodecs = &service.CodecInfo{
+				VideoCodec: models.VideoCodec(cachedCodec.VideoCodec),
+				AudioCodec: models.AudioCodec(cachedCodec.AudioCodec),
+				Container:  models.ContainerFormat(cachedCodec.ContainerFormat),
+			}
+			h.logger.Debug("Client detection: using cached source codecs",
+				"channel", channelName,
+				"video_codec", cachedCodec.VideoCodec,
+				"audio_codec", cachedCodec.AudioCodec,
+				"container", cachedCodec.ContainerFormat,
+			)
+		}
+	}
+
 	// Check if mapping service is available
 	if h.profileMappingService == nil {
 		h.logger.Warn("Profile has auto codecs but mapping service not configured, using defaults",
@@ -453,8 +481,8 @@ func (h *RelayStreamHandler) resolveProfileWithAutoDetection(ctx context.Context
 		return &resolved
 	}
 
-	// Evaluate request against mappings
-	decision, err := h.profileMappingService.EvaluateRequest(ctx, r, nil) // TODO: pass source codec info when available
+	// Evaluate request against mappings (pass source codecs to enable passthrough when client supports them)
+	decision, err := h.profileMappingService.EvaluateRequest(ctx, r, sourceCodecs)
 	if err != nil {
 		h.logger.Warn("Failed to evaluate client detection, using copy mode",
 			"profile_id", profile.ID,
@@ -501,7 +529,8 @@ func (h *RelayStreamHandler) resolveProfileWithAutoDetection(ctx context.Context
 		resolved.AudioCodec = decision.TargetAudioCodec
 	}
 
-	h.logger.Info("Client detection: matched rule",
+	// Build log message with source codec info if available
+	logAttrs := []any{
 		"channel", channelName,
 		"profile", profile.Name,
 		"client_ip", clientIP,
@@ -511,7 +540,14 @@ func (h *RelayStreamHandler) resolveProfileWithAutoDetection(ctx context.Context
 		"resolved_video", string(resolved.VideoCodec),
 		"resolved_audio", string(resolved.AudioCodec),
 		"user_agent", r.UserAgent(),
-	)
+	}
+	if sourceCodecs != nil {
+		logAttrs = append(logAttrs,
+			"source_video", string(sourceCodecs.VideoCodec),
+			"source_audio", string(sourceCodecs.AudioCodec),
+		)
+	}
+	h.logger.Info("Client detection: matched rule", logAttrs...)
 
 	return &resolved
 }
@@ -1028,6 +1064,35 @@ func (h *RelayStreamHandler) GetCodecCacheStats(ctx context.Context, input *GetC
 			ExpiredEntries: stats.ExpiredEntries,
 			ErrorEntries:   stats.ErrorEntries,
 			TotalHits:      stats.TotalHits,
+		},
+	}, nil
+}
+
+// ClearCodecCacheInput is the input for clearing codec cache.
+type ClearCodecCacheInput struct{}
+
+// ClearCodecCacheOutput is the output for clearing codec cache.
+type ClearCodecCacheOutput struct {
+	Body struct {
+		DeletedCount int64  `json:"deleted_count" doc:"Number of cache entries deleted"`
+		Message      string `json:"message" doc:"Status message"`
+	}
+}
+
+// ClearCodecCache clears all codec cache entries.
+func (h *RelayStreamHandler) ClearCodecCache(ctx context.Context, input *ClearCodecCacheInput) (*ClearCodecCacheOutput, error) {
+	count, err := h.relayService.ClearAllCodecCache(ctx)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to clear codec cache", err)
+	}
+
+	return &ClearCodecCacheOutput{
+		Body: struct {
+			DeletedCount int64  `json:"deleted_count" doc:"Number of cache entries deleted"`
+			Message      string `json:"message" doc:"Status message"`
+		}{
+			DeletedCount: count,
+			Message:      "Codec cache cleared successfully. Streams will be re-probed on next request.",
 		},
 	}, nil
 }

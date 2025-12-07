@@ -23,6 +23,43 @@ func NewExpressionHandler() *ExpressionHandler {
 
 // Register registers the expression routes with the API.
 func (h *ExpressionHandler) Register(api huma.API) {
+	// Register fields endpoints for filters and data-mapping
+	huma.Register(api, huma.Operation{
+		OperationID: "getFilterFieldsStream",
+		Method:      "GET",
+		Path:        "/api/v1/filters/fields/stream",
+		Summary:     "Get available stream filter fields",
+		Description: "Returns all fields available for stream filtering expressions",
+		Tags:        []string{"Expressions"},
+	}, h.GetFilterFieldsStream)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "getFilterFieldsEPG",
+		Method:      "GET",
+		Path:        "/api/v1/filters/fields/epg",
+		Summary:     "Get available EPG filter fields",
+		Description: "Returns all fields available for EPG filtering expressions",
+		Tags:        []string{"Expressions"},
+	}, h.GetFilterFieldsEPG)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "getDataMappingFieldsStream",
+		Method:      "GET",
+		Path:        "/api/v1/data-mapping/fields/stream",
+		Summary:     "Get available stream data mapping fields",
+		Description: "Returns all fields available for stream data mapping expressions",
+		Tags:        []string{"Expressions"},
+	}, h.GetDataMappingFieldsStream)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "getDataMappingFieldsEPG",
+		Method:      "GET",
+		Path:        "/api/v1/data-mapping/fields/epg",
+		Summary:     "Get available EPG data mapping fields",
+		Description: "Returns all fields available for EPG data mapping expressions",
+		Tags:        []string{"Expressions"},
+	}, h.GetDataMappingFieldsEPG)
+
 	huma.Register(api, huma.Operation{
 		OperationID: "validateExpression",
 		Method:      "POST",
@@ -134,4 +171,62 @@ func (h *ExpressionHandler) Validate(ctx context.Context, input *ValidateExpress
 	}
 
 	return resp, nil
+}
+
+// FieldResponse represents a field in the API response.
+type FieldResponse struct {
+	Name        string   `json:"name" doc:"Field name"`
+	Type        string   `json:"type" doc:"Field data type (string, integer, float, boolean, datetime)"`
+	Description string   `json:"description" doc:"Field description"`
+	Aliases     []string `json:"aliases,omitempty" doc:"Alternative field names"`
+	ReadOnly    bool     `json:"read_only" doc:"Whether the field is read-only"`
+	SourceType  string   `json:"source_type" doc:"Source type (stream or epg)"`
+}
+
+// FieldsOutput is the output for field listing endpoints.
+type FieldsOutput struct {
+	Body []FieldResponse
+}
+
+// getFieldsForDomain returns fields for a given domain.
+func (h *ExpressionHandler) getFieldsForDomain(domain expression.FieldDomain, sourceType string) *FieldsOutput {
+	registry := expression.DefaultRegistry()
+	fields := registry.ListByDomain(domain)
+
+	resp := &FieldsOutput{
+		Body: make([]FieldResponse, 0, len(fields)),
+	}
+
+	for _, field := range fields {
+		resp.Body = append(resp.Body, FieldResponse{
+			Name:        field.Name,
+			Type:        string(field.Type),
+			Description: field.Description,
+			Aliases:     field.Aliases,
+			ReadOnly:    field.ReadOnly,
+			SourceType:  sourceType,
+		})
+	}
+
+	return resp
+}
+
+// GetFilterFieldsStream returns fields available for stream filtering.
+func (h *ExpressionHandler) GetFilterFieldsStream(ctx context.Context, input *struct{}) (*FieldsOutput, error) {
+	return h.getFieldsForDomain(expression.DomainStream, "stream"), nil
+}
+
+// GetFilterFieldsEPG returns fields available for EPG filtering.
+func (h *ExpressionHandler) GetFilterFieldsEPG(ctx context.Context, input *struct{}) (*FieldsOutput, error) {
+	return h.getFieldsForDomain(expression.DomainEPG, "epg"), nil
+}
+
+// GetDataMappingFieldsStream returns fields available for stream data mapping.
+func (h *ExpressionHandler) GetDataMappingFieldsStream(ctx context.Context, input *struct{}) (*FieldsOutput, error) {
+	return h.getFieldsForDomain(expression.DomainStream, "stream"), nil
+}
+
+// GetDataMappingFieldsEPG returns fields available for EPG data mapping.
+func (h *ExpressionHandler) GetDataMappingFieldsEPG(ctx context.Context, input *struct{}) (*FieldsOutput, error) {
+	return h.getFieldsForDomain(expression.DomainEPG, "epg"), nil
 }

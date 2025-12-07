@@ -98,7 +98,7 @@ export function DataMappingExpressionEditor({
       id: s.id,
       name: s.name,
       source_kind: s.source_kind,
-      is_active: s.is_active,
+      enabled: s.enabled,
     })),
     filteredSources: sources.map((s) => ({ id: s.id, name: s.name, source_kind: s.source_kind })),
   });
@@ -141,7 +141,7 @@ export function DataMappingExpressionEditor({
         if (response.ok) {
           const sourcesData = await response.json();
           if (Array.isArray(sourcesData)) {
-            setAllSources(sourcesData.filter((source) => source.is_active));
+            setAllSources(sourcesData.filter((source) => source.enabled));
           }
         }
       } catch (error) {

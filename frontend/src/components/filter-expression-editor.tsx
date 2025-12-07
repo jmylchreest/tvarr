@@ -112,7 +112,7 @@ export function FilterExpressionEditor({
         if (response.ok) {
           const sourcesData = await response.json();
           if (Array.isArray(sourcesData)) {
-            setAllSources(sourcesData.filter((source) => source.is_active));
+            setAllSources(sourcesData.filter((source) => source.enabled));
           }
         }
       } catch (error) {
