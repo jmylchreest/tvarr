@@ -19,7 +19,12 @@ const (
 	VideoCodecQSVH5   VideoCodec = "hevc_qsv"     // Intel QuickSync HEVC
 	VideoCodecVAAPI   VideoCodec = "h264_vaapi"   // Linux VA-API H.264
 	VideoCodecVAAPIH5 VideoCodec = "hevc_vaapi"   // Linux VA-API HEVC
-	// Note: VP9 (libvpx-vp9) and AV1 (libaom-av1) are not supported in MPEG-TS containers
+
+	// DASH-only codecs (supported in fMP4 containers, not MPEG-TS/HLS)
+	VideoCodecVP9      VideoCodec = "libvpx-vp9" // VP9 (DASH only)
+	VideoCodecAV1      VideoCodec = "libaom-av1" // AV1 software (DASH only)
+	VideoCodecAV1NVENC VideoCodec = "av1_nvenc"  // AV1 NVIDIA hardware (DASH only)
+	VideoCodecAV1QSV   VideoCodec = "av1_qsv"    // AV1 Intel QuickSync (DASH only)
 )
 
 // AudioCodec represents an audio codec for transcoding.
@@ -31,18 +36,21 @@ const (
 	AudioCodecMP3  AudioCodec = "libmp3lame" // MP3
 	AudioCodecAC3  AudioCodec = "ac3"        // Dolby Digital
 	AudioCodecEAC3 AudioCodec = "eac3"       // Dolby Digital Plus
-	// Note: Opus (libopus) is not supported in MPEG-TS containers
+
+	// DASH-only codec (supported in fMP4 containers, not MPEG-TS/HLS)
+	AudioCodecOpus AudioCodec = "libopus" // Opus (DASH only)
 )
 
 // OutputFormat represents the output container format.
 type OutputFormat string
 
 const (
-	OutputFormatMPEGTS OutputFormat = "mpegts"  // MPEG Transport Stream
-	OutputFormatHLS    OutputFormat = "hls"     // HTTP Live Streaming
-	OutputFormatFLV    OutputFormat = "flv"     // Flash Video
-	OutputFormatMKV    OutputFormat = "matroska"
-	OutputFormatMP4    OutputFormat = "mp4"
+	OutputFormatMPEGTS OutputFormat = "mpegts"   // MPEG Transport Stream (default)
+	OutputFormatHLS    OutputFormat = "hls"      // HTTP Live Streaming
+	OutputFormatDASH   OutputFormat = "dash"     // Dynamic Adaptive Streaming over HTTP
+	OutputFormatFLV    OutputFormat = "flv"      // Flash Video
+	OutputFormatMKV    OutputFormat = "matroska" // Matroska container
+	OutputFormatMP4    OutputFormat = "mp4"      // MP4 container
 )
 
 // HWAccelType represents hardware acceleration type.
@@ -105,9 +113,9 @@ type RelayProfile struct {
 	GpuIndex            int         `gorm:"default:-1" json:"gpu_index"`                      // -1 = auto, 0+ = specific GPU
 
 	// Output settings
-	OutputFormat   OutputFormat `gorm:"size:50;default:'mpegts'" json:"output_format"`
-	SegmentTime    int          `gorm:"default:0" json:"segment_time,omitempty"`      // HLS segment duration (seconds)
-	PlaylistSize   int          `gorm:"default:0" json:"playlist_size,omitempty"`     // HLS playlist entries
+	OutputFormat    OutputFormat `gorm:"size:50;default:'mpegts'" json:"output_format"`
+	SegmentDuration int          `gorm:"default:6" json:"segment_duration,omitempty"` // HLS/DASH segment duration (seconds), 2-10
+	PlaylistSize    int          `gorm:"default:5" json:"playlist_size,omitempty"`    // HLS/DASH playlist entries, 3-20
 
 	// Buffer and timeout settings
 	InputBufferSize  int `gorm:"default:8192" json:"input_buffer_size"`    // KB
@@ -169,6 +177,14 @@ func (p *RelayProfile) Validate() error {
 	if p.FallbackRecoveryInterval < 5 || p.FallbackRecoveryInterval > 300 {
 		p.FallbackRecoveryInterval = 30 // Reset to default if invalid
 	}
+	// Validate codec/format compatibility
+	if err := p.ValidateCodecFormat(); err != nil {
+		return err
+	}
+	// Validate segment configuration
+	if err := p.ValidateSegmentConfig(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -198,6 +214,71 @@ func (p *RelayProfile) UsesHardwareAccel() bool {
 // NeedsTranscode returns true if any transcoding is required.
 func (p *RelayProfile) NeedsTranscode() bool {
 	return p.VideoCodec != VideoCodecCopy || p.AudioCodec != AudioCodecCopy
+}
+
+// ValidateCodecFormat validates that the selected codecs are compatible with the output format.
+// VP9, AV1, and Opus codecs require DASH output format (fMP4 containers).
+func (p *RelayProfile) ValidateCodecFormat() error {
+	// DASH-only video codecs
+	dashOnlyVideoCodecs := []VideoCodec{
+		VideoCodecVP9,
+		VideoCodecAV1,
+		VideoCodecAV1NVENC,
+		VideoCodecAV1QSV,
+	}
+
+	// DASH-only audio codecs
+	dashOnlyAudioCodecs := []AudioCodec{
+		AudioCodecOpus,
+	}
+
+	// If not using DASH, check for incompatible codecs
+	if p.OutputFormat != OutputFormatDASH {
+		for _, codec := range dashOnlyVideoCodecs {
+			if p.VideoCodec == codec {
+				return ErrRelayProfileInvalidCodecFormat
+			}
+		}
+		for _, codec := range dashOnlyAudioCodecs {
+			if p.AudioCodec == codec {
+				return ErrRelayProfileInvalidCodecFormat
+			}
+		}
+	}
+
+	return nil
+}
+
+// ValidateSegmentConfig validates segment duration and playlist size settings.
+func (p *RelayProfile) ValidateSegmentConfig() error {
+	// Only validate if non-zero (0 means use defaults)
+	if p.SegmentDuration != 0 && (p.SegmentDuration < 2 || p.SegmentDuration > 10) {
+		return ErrRelayProfileInvalidSegmentDuration
+	}
+	if p.PlaylistSize != 0 && (p.PlaylistSize < 3 || p.PlaylistSize > 20) {
+		return ErrRelayProfileInvalidPlaylistSize
+	}
+	return nil
+}
+
+// IsDASHOnlyVideoCodec returns true if the codec is only supported in DASH format.
+func IsDASHOnlyVideoCodec(codec VideoCodec) bool {
+	switch codec {
+	case VideoCodecVP9, VideoCodecAV1, VideoCodecAV1NVENC, VideoCodecAV1QSV:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsDASHOnlyAudioCodec returns true if the codec is only supported in DASH format.
+func IsDASHOnlyAudioCodec(codec AudioCodec) bool {
+	switch codec {
+	case AudioCodecOpus:
+		return true
+	default:
+		return false
+	}
 }
 
 // Clone creates a copy of the profile suitable for customization.

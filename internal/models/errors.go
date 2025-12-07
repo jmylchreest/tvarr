@@ -90,6 +90,15 @@ var (
 	// ErrRelayProfileNotFound indicates a relay profile was not found.
 	ErrRelayProfileNotFound = errors.New("relay profile not found")
 
+	// ErrRelayProfileInvalidCodecFormat indicates an invalid codec/format combination.
+	ErrRelayProfileInvalidCodecFormat = errors.New("codec requires DASH output format")
+
+	// ErrRelayProfileInvalidSegmentDuration indicates an invalid segment duration.
+	ErrRelayProfileInvalidSegmentDuration = errors.New("segment duration must be 2-10 seconds")
+
+	// ErrRelayProfileInvalidPlaylistSize indicates an invalid playlist size.
+	ErrRelayProfileInvalidPlaylistSize = errors.New("playlist size must be 3-20 segments")
+
 	// ErrStreamURLNotFound indicates a stream URL was not found.
 	ErrStreamURLNotFound = errors.New("stream URL not found")
 

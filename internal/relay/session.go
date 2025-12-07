@@ -29,11 +29,20 @@ type RelaySession struct {
 	IdleSince      time.Time // When the session became idle (0 clients), zero if not idle
 
 	manager            *Manager
-	buffer             *CyclicBuffer
+	buffer             *CyclicBuffer    // Legacy buffer for MPEG-TS streaming (deprecated, use unifiedBuffer)
+	unifiedBuffer      *UnifiedBuffer   // Unified buffer for all streaming formats
 	ctx                context.Context
 	cancel             context.CancelFunc
 	fallbackController *FallbackController
 	fallbackGenerator  *FallbackGenerator
+
+	// Multi-format streaming support
+	formatRouter     *FormatRouter     // Routes requests to appropriate output handler
+	outputFormat     models.OutputFormat // Current output format
+
+	// Passthrough handlers for HLS/DASH sources
+	hlsPassthrough  *HLSPassthroughHandler
+	dashPassthrough *DASHPassthroughHandler
 
 	mu             sync.RWMutex
 	ffmpegCmd      *ffmpeg.Command // Running FFmpeg command for stats access
@@ -124,10 +133,22 @@ func (s *RelaySession) runNormalPipeline() error {
 
 	if needsTranscoding {
 		return s.runFFmpegPipeline()
-	} else if s.Classification.Mode == StreamModeCollapsedHLS {
-		return s.runHLSCollapsePipeline()
 	}
-	return s.runPassthroughPipeline()
+
+	// Handle passthrough based on source format classification
+	switch s.Classification.Mode {
+	case StreamModeCollapsedHLS:
+		return s.runHLSCollapsePipeline()
+	case StreamModePassthroughHLS, StreamModeTransparentHLS:
+		// Use HLS passthrough handler for HLS sources
+		return s.runHLSPassthroughPipeline()
+	case StreamModePassthroughDASH:
+		// Use DASH passthrough handler for DASH sources
+		return s.runDASHPassthroughPipeline()
+	default:
+		// Raw MPEG-TS or unknown - use direct passthrough
+		return s.runPassthroughPipeline()
+	}
 }
 
 // runFallbackStream runs the fallback stream until recovery or cancellation.
@@ -619,6 +640,79 @@ func (s *RelaySession) runPassthroughPipeline() error {
 	}
 }
 
+// runHLSPassthroughPipeline runs the HLS passthrough proxy pipeline.
+// This initializes the HLS passthrough handler and waits for cancellation.
+// The handler serves requests directly via the format router.
+func (s *RelaySession) runHLSPassthroughPipeline() error {
+	// Get the upstream playlist URL
+	playlistURL := s.StreamURL
+	if s.Classification.SelectedMediaPlaylist != "" {
+		playlistURL = s.Classification.SelectedMediaPlaylist
+	}
+
+	// Build the base URL for proxy URLs
+	// This will be used by the handler to rewrite segment URLs
+	baseURL := s.buildProxyBaseURL()
+
+	// Initialize HLS passthrough handler
+	config := DefaultHLSPassthroughConfig()
+	config.HTTPClient = s.manager.config.HTTPClient
+	s.hlsPassthrough = NewHLSPassthroughHandler(playlistURL, baseURL, config)
+
+	// Register with format router if available
+	s.mu.Lock()
+	if s.formatRouter != nil {
+		s.formatRouter.RegisterPassthroughHandler(FormatValueHLS, s.hlsPassthrough)
+	}
+	s.mu.Unlock()
+
+	slog.Info("Started HLS passthrough pipeline",
+		slog.String("session_id", s.ID.String()),
+		slog.String("upstream_url", playlistURL),
+		slog.String("base_url", baseURL))
+
+	// Wait for context cancellation - passthrough handlers serve on demand
+	<-s.ctx.Done()
+	return s.ctx.Err()
+}
+
+// runDASHPassthroughPipeline runs the DASH passthrough proxy pipeline.
+// This initializes the DASH passthrough handler and waits for cancellation.
+// The handler serves requests directly via the format router.
+func (s *RelaySession) runDASHPassthroughPipeline() error {
+	// Build the base URL for proxy URLs
+	baseURL := s.buildProxyBaseURL()
+
+	// Initialize DASH passthrough handler
+	config := DefaultDASHPassthroughConfig()
+	config.HTTPClient = s.manager.config.HTTPClient
+	s.dashPassthrough = NewDASHPassthroughHandler(s.StreamURL, baseURL, config)
+
+	// Register with format router if available
+	s.mu.Lock()
+	if s.formatRouter != nil {
+		s.formatRouter.RegisterPassthroughHandler(FormatValueDASH, s.dashPassthrough)
+	}
+	s.mu.Unlock()
+
+	slog.Info("Started DASH passthrough pipeline",
+		slog.String("session_id", s.ID.String()),
+		slog.String("upstream_url", s.StreamURL),
+		slog.String("base_url", baseURL))
+
+	// Wait for context cancellation - passthrough handlers serve on demand
+	<-s.ctx.Done()
+	return s.ctx.Err()
+}
+
+// buildProxyBaseURL constructs the base URL for passthrough proxy URLs.
+func (s *RelaySession) buildProxyBaseURL() string {
+	// This should be constructed based on the server's configuration
+	// For now, use a placeholder that will be replaced by the handler
+	// The actual base URL would come from server config or request context
+	return fmt.Sprintf("/api/v1/relay/stream/%s", s.ID.String())
+}
+
 // AddClient adds a client to the session and returns a reader.
 func (s *RelaySession) AddClient(userAgent, remoteAddr string) (*BufferClient, *StreamReader, error) {
 	s.mu.RLock()
@@ -740,6 +834,24 @@ func (s *RelaySession) Stats() SessionStats {
 		}
 	}
 
+	// Include segment buffer stats for HLS/DASH sessions
+	if s.unifiedBuffer != nil {
+		ubStats := s.unifiedBuffer.Stats()
+		stats.SegmentBufferStats = &SessionSegmentBufferStats{
+			ChunkCount:         ubStats.ChunkCount,
+			SegmentCount:       ubStats.SegmentCount,
+			BufferSizeBytes:    ubStats.BufferSize,
+			TotalBytesWritten:  ubStats.TotalBytesWritten,
+			FirstSegment:       ubStats.FirstSegment,
+			LastSegment:        ubStats.LastSegment,
+			MaxBufferSizeBytes: ubStats.MaxBufferSize,
+			BufferUtilization:  ubStats.BufferUtilization,
+			AverageChunkSize:   ubStats.AverageChunkSize,
+			AverageSegmentSize: ubStats.AverageSegmentSize,
+			TotalChunksWritten: ubStats.TotalChunksWritten,
+		}
+	}
+
 	return stats
 }
 
@@ -768,6 +880,25 @@ type SessionStats struct {
 	FFmpegStats *FFmpegProcessStats `json:"ffmpeg_stats,omitempty"`
 	// Connected client details
 	Clients []ClientStats `json:"clients,omitempty"`
+	// Segment buffer stats (only present for HLS/DASH sessions)
+	SegmentBufferStats *SessionSegmentBufferStats `json:"segment_buffer_stats,omitempty"`
+}
+
+// SessionSegmentBufferStats contains segment buffer statistics for a session.
+type SessionSegmentBufferStats struct {
+	ChunkCount        int    `json:"chunk_count" doc:"Number of chunks in buffer"`
+	SegmentCount      int    `json:"segment_count" doc:"Number of segments available"`
+	BufferSizeBytes   int64  `json:"buffer_size_bytes" doc:"Current buffer size in bytes"`
+	TotalBytesWritten uint64 `json:"total_bytes_written" doc:"Total bytes written to buffer"`
+	FirstSegment      uint64 `json:"first_segment" doc:"First available segment sequence"`
+	LastSegment       uint64 `json:"last_segment" doc:"Last available segment sequence"`
+
+	// Memory usage metrics
+	MaxBufferSizeBytes int64   `json:"max_buffer_size_bytes" doc:"Configured maximum buffer size"`
+	BufferUtilization  float64 `json:"buffer_utilization" doc:"Buffer usage percentage (0-100)"`
+	AverageChunkSize   int64   `json:"average_chunk_size" doc:"Average bytes per chunk"`
+	AverageSegmentSize int64   `json:"average_segment_size" doc:"Average bytes per segment"`
+	TotalChunksWritten uint64  `json:"total_chunks_written" doc:"Total chunks written since creation"`
 }
 
 // FFmpegProcessStats contains resource usage for the FFmpeg process.
@@ -779,4 +910,118 @@ type FFmpegProcessStats struct {
 	BytesWritten   uint64  `json:"bytes_written"`
 	WriteRateMbps  float64 `json:"write_rate_mbps"`
 	DurationSecs   float64 `json:"duration_secs"`
+}
+
+// InitMultiFormatOutput initializes the unified buffer and format router for multi-format output.
+// This should be called when the session's output format is HLS or DASH.
+func (s *RelaySession) InitMultiFormatOutput() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Determine unified buffer config from profile
+	config := DefaultUnifiedBufferConfig()
+	if s.Profile != nil {
+		if s.Profile.SegmentDuration > 0 {
+			config.TargetSegmentDuration = s.Profile.SegmentDuration
+		}
+		if s.Profile.PlaylistSize > 0 {
+			config.MaxSegments = s.Profile.PlaylistSize
+		}
+		s.outputFormat = s.Profile.OutputFormat
+	}
+
+	// Create unified buffer (replaces both CyclicBuffer and SegmentBuffer)
+	s.unifiedBuffer = NewUnifiedBuffer(config)
+
+	// Create format router with default format
+	defaultFormat := models.OutputFormatMPEGTS
+	if s.Profile != nil && s.Profile.OutputFormat != "" {
+		defaultFormat = s.Profile.OutputFormat
+	}
+	s.formatRouter = NewFormatRouter(defaultFormat)
+
+	// Register format handlers using the unified buffer as SegmentProvider
+	// The unified buffer implements SegmentProvider interface
+	s.formatRouter.RegisterHandler(FormatValueHLS, NewHLSHandler(s.unifiedBuffer))
+	s.formatRouter.RegisterHandler(FormatValueDASH, NewDASHHandler(s.unifiedBuffer))
+}
+
+// GetUnifiedBuffer returns the unified buffer for all streaming formats.
+func (s *RelaySession) GetUnifiedBuffer() *UnifiedBuffer {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.unifiedBuffer
+}
+
+// GetSegmentProvider returns the segment provider (implements SegmentProvider interface).
+// This can be used by handlers that need to access segments.
+func (s *RelaySession) GetSegmentProvider() SegmentProvider {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.unifiedBuffer
+}
+
+// GetFormatRouter returns the format router for handling output format requests.
+func (s *RelaySession) GetFormatRouter() *FormatRouter {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.formatRouter
+}
+
+// GetOutputFormat returns the current output format.
+func (s *RelaySession) GetOutputFormat() models.OutputFormat {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.outputFormat
+}
+
+// SupportsFormat returns true if the session can serve content in the requested format.
+func (s *RelaySession) SupportsFormat(format string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.formatRouter == nil {
+		// Only MPEG-TS is supported without format router
+		return format == FormatValueMPEGTS || format == ""
+	}
+
+	// Check for passthrough mode first
+	if s.formatRouter.IsPassthroughMode(format) {
+		return true
+	}
+
+	return s.formatRouter.HasHandler(format)
+}
+
+// GetOutputHandler returns the appropriate output handler for the requested format.
+func (s *RelaySession) GetOutputHandler(req OutputRequest) (OutputHandler, error) {
+	s.mu.RLock()
+	router := s.formatRouter
+	s.mu.RUnlock()
+
+	if router == nil {
+		return nil, ErrNoHandlerAvailable
+	}
+	return router.GetHandler(req)
+}
+
+// IsPassthroughMode returns true if the session is using passthrough handlers.
+func (s *RelaySession) IsPassthroughMode() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.hlsPassthrough != nil || s.dashPassthrough != nil
+}
+
+// GetHLSPassthrough returns the HLS passthrough handler if available.
+func (s *RelaySession) GetHLSPassthrough() *HLSPassthroughHandler {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.hlsPassthrough
+}
+
+// GetDASHPassthrough returns the DASH passthrough handler if available.
+func (s *RelaySession) GetDASHPassthrough() *DASHPassthroughHandler {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.dashPassthrough
 }

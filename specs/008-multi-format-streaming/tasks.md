@@ -24,10 +24,10 @@ Based on plan.md structure:
 
 **Purpose**: Project initialization and core types
 
-- [ ] T001 Add format/codec constants and content types in internal/relay/constants.go
-- [ ] T002 [P] Add VP9, AV1, Opus codec constants to internal/models/relay_profile.go
-- [ ] T003 [P] Add DASH output format constant to internal/models/relay_profile.go
-- [ ] T004 Add database migration for segment_duration and playlist_size fields in internal/database/migrations/
+- [x] T001 Add format/codec constants and content types in internal/relay/constants.go
+- [x] T002 [P] Add VP9, AV1, Opus codec constants to internal/models/relay_profile.go
+- [x] T003 [P] Add DASH output format constant to internal/models/relay_profile.go
+- [x] T004 Add database migration for segment_duration and playlist_size fields in internal/database/migrations/
 
 ---
 
@@ -37,14 +37,14 @@ Based on plan.md structure:
 
 **CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T005 Create Segment type in internal/relay/segment.go
-- [ ] T006 Create SegmentBuffer with ring buffer implementation in internal/relay/segment_buffer.go
-- [ ] T007 [P] Create SegmentClient tracking in internal/relay/segment_buffer.go
-- [ ] T008 Create OutputHandler interface in internal/relay/output_handler.go
-- [ ] T009 Create FormatRouter with format detection logic in internal/relay/format_router.go
-- [ ] T010 Add ValidateCodecFormat method to RelayProfile in internal/models/relay_profile.go
-- [ ] T011 Add ?format= query parameter parsing to internal/http/handlers/relay_stream.go
-- [ ] T012 [P] Unit tests for SegmentBuffer in internal/relay/segment_buffer_test.go
+- [x] T005 Create Segment type in internal/relay/segment.go
+- [x] T006 Create SegmentBuffer with ring buffer implementation in internal/relay/segment_buffer.go
+- [x] T007 [P] Create SegmentClient tracking in internal/relay/segment_buffer.go
+- [x] T008 Create OutputHandler interface in internal/relay/output_handler.go
+- [x] T009 Create FormatRouter with format detection logic in internal/relay/format_router.go
+- [x] T010 Add ValidateCodecFormat method to RelayProfile in internal/models/relay_profile.go
+- [x] T011 Add ?format= query parameter parsing to internal/http/handlers/relay_stream.go
+- [x] T012 [P] Unit tests for SegmentBuffer in internal/relay/segment_buffer_test.go
 
 **Checkpoint**: Foundation ready - user story implementation can now begin
 
@@ -58,16 +58,16 @@ Based on plan.md structure:
 
 ### Implementation for User Story 1
 
-- [ ] T013 [US1] Create HLSHandler implementing OutputHandler in internal/relay/hls_handler.go
-- [ ] T014 [US1] Implement GeneratePlaylist method in HLSHandler (EXT-X-VERSION 3+, TARGETDURATION, MEDIA-SEQUENCE)
-- [ ] T015 [US1] Implement ServePlaylist in HLSHandler with Content-Type: application/vnd.apple.mpegurl
-- [ ] T016 [US1] Implement ServeSegment in HLSHandler with Content-Type: video/MP2T
-- [ ] T017 [US1] Add segment extraction from MPEG-TS stream in internal/relay/segment_extractor.go
-- [ ] T018 [US1] Integrate SegmentBuffer into RelaySession in internal/relay/session.go
-- [ ] T019 [US1] Add HLS format routing in FormatRouter for format=hls requests
-- [ ] T020 [US1] Handle ?seg= query parameter for segment requests in internal/http/handlers/relay_stream.go
-- [ ] T021 [P] [US1] Unit tests for HLSHandler playlist generation in internal/relay/hls_handler_test.go
-- [ ] T022 [P] [US1] Integration test for HLS streaming in internal/relay/hls_integration_test.go
+- [x] T013 [US1] Create HLSHandler implementing OutputHandler in internal/relay/hls_handler.go
+- [x] T014 [US1] Implement GeneratePlaylist method in HLSHandler (EXT-X-VERSION 3+, TARGETDURATION, MEDIA-SEQUENCE)
+- [x] T015 [US1] Implement ServePlaylist in HLSHandler with Content-Type: application/vnd.apple.mpegurl
+- [x] T016 [US1] Implement ServeSegment in HLSHandler with Content-Type: video/MP2T
+- [x] T017 [US1] Add segment extraction from MPEG-TS stream in internal/relay/segment_extractor.go
+- [x] T018 [US1] Integrate SegmentBuffer into RelaySession in internal/relay/session.go
+- [x] T019 [US1] Add HLS format routing in FormatRouter for format=hls requests
+- [x] T020 [US1] Handle ?seg= query parameter for segment requests in internal/http/handlers/relay_stream.go
+- [x] T021 [P] [US1] Unit tests for HLSHandler playlist generation in internal/relay/hls_handler_test.go
+- [x] T022 [P] [US1] Integration test for HLS streaming in internal/relay/hls_integration_test.go
 
 **Checkpoint**: HLS output fully functional - test with Safari/iOS/VLC
 
@@ -81,15 +81,15 @@ Based on plan.md structure:
 
 ### Implementation for User Story 2
 
-- [ ] T023 [US2] Create DASHHandler implementing OutputHandler in internal/relay/dash_handler.go
-- [ ] T024 [US2] Implement GenerateManifest method in DASHHandler (DASH-IF compliant, SegmentTemplate)
-- [ ] T025 [US2] Implement ServePlaylist in DASHHandler with Content-Type: application/dash+xml
-- [ ] T026 [US2] Implement ServeInitSegment for video/audio init segments with Content-Type: video/mp4
-- [ ] T027 [US2] Implement ServeSegment in DASHHandler with Content-Type: video/iso.segment
+- [x] T023 [US2] Create DASHHandler implementing OutputHandler in internal/relay/dash_handler.go
+- [x] T024 [US2] Implement GenerateManifest method in DASHHandler (DASH-IF compliant, SegmentTemplate)
+- [x] T025 [US2] Implement ServePlaylist in DASHHandler with Content-Type: application/dash+xml
+- [x] T026 [US2] Implement ServeInitSegment for video/audio init segments with Content-Type: video/mp4
+- [x] T027 [US2] Implement ServeSegment in DASHHandler with Content-Type: video/iso.segment
 - [ ] T028 [US2] Add fMP4 segment creation for DASH in internal/relay/fmp4_muxer.go
-- [ ] T029 [US2] Handle ?init= query parameter for initialization segments in internal/http/handlers/relay_stream.go
-- [ ] T030 [US2] Add DASH format routing in FormatRouter for format=dash requests
-- [ ] T031 [P] [US2] Unit tests for DASHHandler manifest generation in internal/relay/dash_handler_test.go
+- [x] T029 [US2] Handle ?init= query parameter for initialization segments in internal/http/handlers/relay_stream.go
+- [x] T030 [US2] Add DASH format routing in FormatRouter for format=dash requests
+- [x] T031 [P] [US2] Unit tests for DASHHandler manifest generation in internal/relay/dash_handler_test.go
 - [ ] T032 [P] [US2] Integration test for DASH streaming in internal/relay/dash_integration_test.go
 
 **Checkpoint**: DASH output fully functional - test with dash.js/Shaka Player
@@ -104,14 +104,15 @@ Based on plan.md structure:
 
 ### Implementation for User Story 3
 
-- [ ] T033 [US3] Create HLS passthrough handler with playlist URL rewriting in internal/relay/hls_passthrough.go
-- [ ] T034 [US3] Create DASH passthrough handler with manifest URL rewriting in internal/relay/dash_passthrough.go
-- [ ] T035 [US3] Implement segment caching for passthrough mode in internal/relay/segment_cache.go
-- [ ] T036 [US3] Add client multiplexing for cached segments in internal/relay/segment_cache.go
-- [ ] T037 [US3] Integrate passthrough detection in session.go based on source stream type
-- [ ] T038 [US3] Add upstream connection pooling for passthrough in internal/relay/connection_pool.go
-- [ ] T039 [P] [US3] Unit tests for playlist URL rewriting in internal/relay/hls_passthrough_test.go
-- [ ] T040 [P] [US3] Integration test for passthrough proxy in internal/relay/passthrough_integration_test.go
+- [x] T033 [US3] Create HLS passthrough handler with playlist URL rewriting in internal/relay/hls_passthrough.go
+- [x] T034 [US3] Create DASH passthrough handler with manifest URL rewriting in internal/relay/dash_passthrough.go
+- [x] T035 [US3] Implement segment caching for passthrough mode (integrated into passthrough handlers)
+- [x] T036 [US3] Add client multiplexing for cached segments (integrated into passthrough handlers)
+- [x] T037 [US3] Integrate passthrough detection in session.go based on source stream type
+- [x] T038 [US3] Add upstream connection pooling for passthrough in internal/relay/connection_pool.go
+- [x] T039 [P] [US3] Unit tests for playlist URL rewriting in internal/relay/hls_passthrough_test.go
+- [x] T039b [P] [US3] Unit tests for DASH passthrough in internal/relay/dash_passthrough_test.go
+- [x] T040 [P] [US3] Integration test for passthrough proxy in internal/relay/passthrough_integration_test.go
 
 **Checkpoint**: Passthrough proxy functional - verify reduced upstream connections
 
@@ -125,11 +126,11 @@ Based on plan.md structure:
 
 ### Implementation for User Story 4
 
-- [ ] T041 [US4] Implement DetectOptimalFormat in FormatRouter with User-Agent detection
-- [ ] T042 [US4] Add Accept header parsing for DASH preference detection in FormatRouter
-- [ ] T043 [US4] Add default format configuration to proxy settings in internal/models/proxy.go
-- [ ] T044 [US4] Handle format=auto in stream handler routing in internal/http/handlers/relay_stream.go
-- [ ] T045 [P] [US4] Unit tests for format detection logic in internal/relay/format_router_test.go
+- [x] T041 [US4] Implement DetectOptimalFormat in FormatRouter with User-Agent detection
+- [x] T042 [US4] Add Accept header parsing for DASH preference detection in FormatRouter
+- [x] T043 [US4] Add default format configuration to proxy settings in internal/models/relay_profile.go (OutputFormat field)
+- [x] T044 [US4] Handle format=auto in stream handler routing in internal/http/handlers/relay_stream.go
+- [x] T045 [P] [US4] Unit tests for format detection logic in internal/relay/format_router_test.go
 
 **Checkpoint**: Auto-detection functional - test with different clients
 
@@ -141,10 +142,10 @@ Based on plan.md structure:
 
 ### Backend Implementation
 
-- [ ] T046 Implement GET /relay/codecs endpoint with format filtering in internal/http/handlers/relay_profile.go
-- [ ] T047 Add codec/format validation in RelayService.CreateProfile in internal/service/relay_service.go
-- [ ] T048 Add codec/format validation in RelayService.UpdateProfile in internal/service/relay_service.go
-- [ ] T049 Return detailed error messages for codec/format mismatches
+- [x] T046 Implement GET /relay/codecs endpoint with format filtering in internal/http/handlers/relay_profile.go
+- [x] T047 Add codec/format validation in RelayService.CreateProfile in internal/service/relay_service.go (via GORM BeforeCreate hook)
+- [x] T048 Add codec/format validation in RelayService.UpdateProfile in internal/service/relay_service.go (via GORM BeforeUpdate hook)
+- [x] T049 Return detailed error messages for codec/format mismatches (ErrRelayProfileInvalidCodecFormat)
 
 ### Frontend Implementation
 
@@ -160,14 +161,14 @@ Based on plan.md structure:
 
 **Purpose**: Improvements that affect multiple user stories
 
-- [ ] T055 Add segment buffer stats to session statistics endpoint in internal/http/handlers/relay_stream.go
-- [ ] T056 [P] Add structured logging for segment operations in internal/relay/segment_buffer.go
-- [ ] T057 [P] Add structured logging for format routing decisions in internal/relay/format_router.go
-- [ ] T058 Add memory usage metrics for segment buffers
-- [ ] T059 Update API documentation with format query parameter
+- [x] T055 Add segment buffer stats to session statistics endpoint in internal/relay/session.go (SessionSegmentBufferStats)
+- [x] T056 [P] Add structured logging for segment operations in internal/relay/unified_buffer.go
+- [x] T057 [P] Add structured logging for format routing decisions in internal/relay/format_router.go
+- [x] T058 Add memory usage metrics for segment buffers (BufferUtilization, AverageChunkSize, etc. in UnifiedBufferStats)
+- [x] T059 Update API documentation with format query parameter (docs/relay-streaming-api.md)
 - [ ] T060 Run quickstart.md validation scenarios
-- [ ] T061 [P] Add error handling for segment expiration (404 responses)
-- [ ] T062 Add EXT-X-DISCONTINUITY handling for stream interruptions in HLSHandler
+- [x] T061 [P] Add error handling for segment expiration (404 responses) (HLS/DASH handlers return StatusNotFound)
+- [x] T062 Add EXT-X-DISCONTINUITY handling for stream interruptions in HLSHandler (Discontinuity field + playlist generation)
 
 ---
 

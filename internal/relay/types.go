@@ -10,6 +10,10 @@ const (
 	StreamModeCollapsedHLS
 	// StreamModeTransparentHLS is an HLS stream that must be passed through (multi-variant, encrypted, etc.).
 	StreamModeTransparentHLS
+	// StreamModePassthroughHLS is an HLS stream that should be proxied with URL rewriting.
+	StreamModePassthroughHLS
+	// StreamModePassthroughDASH is a DASH stream that should be proxied with URL rewriting.
+	StreamModePassthroughDASH
 	// StreamModeUnknown is an unknown stream type.
 	StreamModeUnknown
 )
@@ -22,14 +26,29 @@ func (m StreamMode) String() string {
 		return "collapsed-hls"
 	case StreamModeTransparentHLS:
 		return "transparent-hls"
+	case StreamModePassthroughHLS:
+		return "passthrough-hls"
+	case StreamModePassthroughDASH:
+		return "passthrough-dash"
 	default:
 		return "unknown"
 	}
 }
 
+// SourceFormat indicates the format of the source stream.
+type SourceFormat string
+
+const (
+	SourceFormatMPEGTS SourceFormat = "mpegts"
+	SourceFormatHLS    SourceFormat = "hls"
+	SourceFormatDASH   SourceFormat = "dash"
+	SourceFormatUnknown SourceFormat = "unknown"
+)
+
 // ClassificationResult holds the result of stream classification.
 type ClassificationResult struct {
 	Mode                  StreamMode
+	SourceFormat          SourceFormat // The source stream format (HLS, DASH, MPEG-TS)
 	VariantCount          int
 	TargetDuration        float64
 	IsEncrypted           bool

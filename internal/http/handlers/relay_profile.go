@@ -101,6 +101,15 @@ func (h *RelayProfileHandler) Register(api huma.API) {
 	}, h.GetFFmpegInfo)
 
 	huma.Register(api, huma.Operation{
+		OperationID: "getAvailableCodecs",
+		Method:      "GET",
+		Path:        "/api/v1/relay/codecs",
+		Summary:     "Get available codecs",
+		Description: "Returns available video and audio codecs, optionally filtered by output format. DASH-only codecs (VP9, AV1, Opus) are marked and excluded from non-DASH format results.",
+		Tags:        []string{"Relay Profiles"},
+	}, h.GetAvailableCodecs)
+
+	huma.Register(api, huma.Operation{
 		OperationID: "getRelayStats",
 		Method:      "GET",
 		Path:        "/api/v1/relay/stats",
@@ -1373,6 +1382,96 @@ func (h *RelayProfileHandler) PreviewCommand(ctx context.Context, input *Preview
 			BitstreamFilter: preview.BitstreamFilter,
 			Notes:           preview.Notes,
 		},
+	}
+
+	return resp, nil
+}
+
+// GetAvailableCodecsInput is the input for getting available codecs.
+type GetAvailableCodecsInput struct {
+	Format string `query:"format" doc:"Output format to filter codecs (mpegts, hls, dash). If not specified, returns all codecs with dash_only flags."`
+}
+
+// CodecInfo represents a single codec with metadata.
+type CodecInfo struct {
+	Value       string `json:"value" doc:"Codec value to use in API requests"`
+	Label       string `json:"label" doc:"Human-readable label"`
+	Description string `json:"description,omitempty" doc:"Additional description"`
+	DASHOnly    bool   `json:"dash_only" doc:"True if codec only works with DASH output format"`
+	HWAccel     string `json:"hw_accel,omitempty" doc:"Required hardware acceleration (nvenc, qsv, vaapi)"`
+}
+
+// GetAvailableCodecsOutput is the output for getting available codecs.
+type GetAvailableCodecsOutput struct {
+	Body struct {
+		VideoCodecs []CodecInfo `json:"video_codecs" doc:"Available video codecs"`
+		AudioCodecs []CodecInfo `json:"audio_codecs" doc:"Available audio codecs"`
+		Format      string      `json:"format,omitempty" doc:"Output format used for filtering (if specified)"`
+	}
+}
+
+// GetAvailableCodecs returns available video and audio codecs, optionally filtered by output format.
+func (h *RelayProfileHandler) GetAvailableCodecs(ctx context.Context, input *GetAvailableCodecsInput) (*GetAvailableCodecsOutput, error) {
+	// Define all available video codecs
+	allVideoCodecs := []CodecInfo{
+		{Value: string(models.VideoCodecCopy), Label: "Copy (Passthrough)", Description: "No transcoding, pass-through original video"},
+		{Value: string(models.VideoCodecH264), Label: "H.264 (Software)", Description: "libx264 software encoder"},
+		{Value: string(models.VideoCodecH265), Label: "H.265/HEVC (Software)", Description: "libx265 software encoder"},
+		{Value: string(models.VideoCodecNVENC), Label: "H.264 (NVIDIA)", Description: "NVIDIA NVENC hardware encoder", HWAccel: "nvenc"},
+		{Value: string(models.VideoCodecNVENCH5), Label: "H.265/HEVC (NVIDIA)", Description: "NVIDIA NVENC hardware encoder", HWAccel: "nvenc"},
+		{Value: string(models.VideoCodecQSV), Label: "H.264 (Intel QuickSync)", Description: "Intel QuickSync hardware encoder", HWAccel: "qsv"},
+		{Value: string(models.VideoCodecQSVH5), Label: "H.265/HEVC (Intel QuickSync)", Description: "Intel QuickSync hardware encoder", HWAccel: "qsv"},
+		{Value: string(models.VideoCodecVAAPI), Label: "H.264 (VA-API)", Description: "Linux VA-API hardware encoder", HWAccel: "vaapi"},
+		{Value: string(models.VideoCodecVAAPIH5), Label: "H.265/HEVC (VA-API)", Description: "Linux VA-API hardware encoder", HWAccel: "vaapi"},
+		{Value: string(models.VideoCodecVP9), Label: "VP9", Description: "VP9 codec (DASH only)", DASHOnly: true},
+		{Value: string(models.VideoCodecAV1), Label: "AV1 (Software)", Description: "AV1 software encoder (DASH only)", DASHOnly: true},
+		{Value: string(models.VideoCodecAV1NVENC), Label: "AV1 (NVIDIA)", Description: "AV1 NVIDIA hardware encoder (DASH only)", DASHOnly: true, HWAccel: "nvenc"},
+		{Value: string(models.VideoCodecAV1QSV), Label: "AV1 (Intel QuickSync)", Description: "AV1 Intel QuickSync hardware encoder (DASH only)", DASHOnly: true, HWAccel: "qsv"},
+	}
+
+	// Define all available audio codecs
+	allAudioCodecs := []CodecInfo{
+		{Value: string(models.AudioCodecCopy), Label: "Copy (Passthrough)", Description: "No transcoding, pass-through original audio"},
+		{Value: string(models.AudioCodecAAC), Label: "AAC", Description: "Advanced Audio Coding"},
+		{Value: string(models.AudioCodecMP3), Label: "MP3", Description: "MPEG Audio Layer 3"},
+		{Value: string(models.AudioCodecAC3), Label: "AC3 (Dolby Digital)", Description: "Dolby Digital audio"},
+		{Value: string(models.AudioCodecEAC3), Label: "E-AC3 (Dolby Digital Plus)", Description: "Enhanced Dolby Digital audio"},
+		{Value: string(models.AudioCodecOpus), Label: "Opus", Description: "Opus audio codec (DASH only)", DASHOnly: true},
+	}
+
+	resp := &GetAvailableCodecsOutput{}
+
+	// Filter by format if specified
+	format := input.Format
+	if format != "" {
+		resp.Body.Format = format
+
+		// If format is not DASH, filter out DASH-only codecs
+		if format != string(models.OutputFormatDASH) {
+			var filteredVideo []CodecInfo
+			for _, c := range allVideoCodecs {
+				if !c.DASHOnly {
+					filteredVideo = append(filteredVideo, c)
+				}
+			}
+			resp.Body.VideoCodecs = filteredVideo
+
+			var filteredAudio []CodecInfo
+			for _, c := range allAudioCodecs {
+				if !c.DASHOnly {
+					filteredAudio = append(filteredAudio, c)
+				}
+			}
+			resp.Body.AudioCodecs = filteredAudio
+		} else {
+			// DASH format - return all codecs
+			resp.Body.VideoCodecs = allVideoCodecs
+			resp.Body.AudioCodecs = allAudioCodecs
+		}
+	} else {
+		// No format filter - return all codecs with dash_only flags
+		resp.Body.VideoCodecs = allVideoCodecs
+		resp.Body.AudioCodecs = allAudioCodecs
 	}
 
 	return resp, nil

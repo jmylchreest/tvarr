@@ -6,10 +6,12 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/go-chi/chi/v5"
 	"github.com/jmylchreest/tvarr/internal/models"
+	"github.com/jmylchreest/tvarr/internal/relay"
 	"github.com/jmylchreest/tvarr/internal/service"
 )
 
@@ -176,6 +178,30 @@ func (h *RelayStreamHandler) handleRawStreamOptions(w http.ResponseWriter, r *ht
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept, Range")
 	w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// parseFormatParams parses the format-related query parameters from a request.
+// Returns an OutputRequest with the parsed format, segment number, and init type.
+func parseFormatParams(r *http.Request) relay.OutputRequest {
+	q := r.URL.Query()
+
+	req := relay.OutputRequest{
+		Format:    q.Get(relay.QueryParamFormat),
+		UserAgent: r.Header.Get("User-Agent"),
+		Accept:    r.Header.Get("Accept"),
+	}
+
+	// Parse segment number if present
+	if segStr := q.Get(relay.QueryParamSegment); segStr != "" {
+		if seg, err := strconv.ParseUint(segStr, 10, 64); err == nil {
+			req.Segment = &seg
+		}
+	}
+
+	// Parse init type if present (for DASH initialization segments)
+	req.InitType = q.Get(relay.QueryParamInit)
+
+	return req
 }
 
 // handleRawStream is the main raw HTTP handler for streaming.
@@ -474,8 +500,13 @@ func (h *RelayStreamHandler) streamRawDirectProxy(w http.ResponseWriter, r *http
 }
 
 // handleRawRelayMode starts or joins a relay session for FFmpeg transcoding.
+// Supports output format selection via ?format= query parameter (hls, dash, mpegts, auto).
+// For HLS/DASH formats, supports ?seg= for segment requests and ?init= for DASH init segments.
 func (h *RelayStreamHandler) handleRawRelayMode(w http.ResponseWriter, r *http.Request, info *service.StreamInfo) {
 	ctx := r.Context()
+
+	// Parse format query parameters
+	formatReq := parseFormatParams(r)
 
 	// Determine profile ID to use
 	var profileID *models.ULID
@@ -518,6 +549,7 @@ func (h *RelayStreamHandler) handleRawRelayMode(w http.ResponseWriter, r *http.R
 		"client_id", client.ID,
 		"proxy_id", info.Proxy.ID,
 		"channel_id", info.Channel.ID,
+		"format", formatReq.Format,
 	)
 
 	// Set CORS headers for browser compatibility
@@ -531,8 +563,58 @@ func (h *RelayStreamHandler) handleRawRelayMode(w http.ResponseWriter, r *http.R
 	w.Header().Set("X-Stream-Decision", "transcoded")
 	w.Header().Set("X-Stream-Mode", "relay-transcode")
 
-	// Set appropriate headers for streaming
-	w.Header().Set("Content-Type", "video/mp2t")
+	// Get the format router from the session (or create default)
+	router := session.GetFormatRouter()
+	if router == nil {
+		router = relay.NewFormatRouter(models.OutputFormatMPEGTS)
+	}
+
+	// Resolve format using FormatRouter with user agent and accept headers
+	formatReq.UserAgent = userAgent
+	formatReq.Accept = r.Header.Get("Accept")
+	resolvedFormat := router.ResolveFormat(formatReq)
+	w.Header().Set("X-Stream-Format", resolvedFormat)
+
+	// Handle format-specific requests for HLS/DASH
+	switch resolvedFormat {
+	case relay.FormatValueHLS:
+		// Check for passthrough mode first
+		if router.IsPassthroughMode(relay.FormatValueHLS) {
+			h.handleHLSPassthroughRequest(w, r, session, formatReq, client)
+			return
+		}
+		// Check for HLS output handler
+		if formatReq.IsPlaylistRequest() {
+			h.handleHLSPlaylistRequest(w, r, session, client)
+			return
+		} else if formatReq.IsSegmentRequest() {
+			h.handleHLSSegmentRequest(w, r, session, formatReq, client)
+			return
+		}
+		// Fall through to continuous streaming
+
+	case relay.FormatValueDASH:
+		// Check for passthrough mode first
+		if router.IsPassthroughMode(relay.FormatValueDASH) {
+			h.handleDASHPassthroughRequest(w, r, session, formatReq, client)
+			return
+		}
+		// Check for DASH output handler
+		if formatReq.IsPlaylistRequest() {
+			h.handleDASHManifestRequest(w, r, session, client)
+			return
+		} else if formatReq.IsInitRequest() {
+			h.handleDASHInitRequest(w, r, session, formatReq, client)
+			return
+		} else if formatReq.IsSegmentRequest() {
+			h.handleDASHSegmentRequest(w, r, session, formatReq, client)
+			return
+		}
+		// Fall through to continuous streaming
+	}
+
+	// Default: MPEG-TS continuous streaming
+	w.Header().Set("Content-Type", relay.ContentTypeMPEGTS)
 	w.Header().Set("Cache-Control", "no-cache, no-store")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Transfer-Encoding", "chunked")
@@ -1185,4 +1267,200 @@ func (h *RelayStreamHandler) handleRelayMode(ctx context.Context, info *service.
 			)
 		},
 	}, nil
+}
+
+// handleHLSPassthroughRequest handles HLS passthrough requests (playlist or segment).
+func (h *RelayStreamHandler) handleHLSPassthroughRequest(w http.ResponseWriter, r *http.Request, session *relay.RelaySession, formatReq relay.OutputRequest, client *relay.BufferClient) {
+	ctx := r.Context()
+	handler := session.GetHLSPassthrough()
+	if handler == nil {
+		http.Error(w, "HLS passthrough not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	var err error
+	if formatReq.IsPlaylistRequest() {
+		err = handler.ServePlaylist(ctx, w)
+	} else if formatReq.IsSegmentRequest() {
+		err = handler.ServeSegment(ctx, w, int(*formatReq.Segment))
+	} else {
+		// Default to playlist
+		err = handler.ServePlaylist(ctx, w)
+	}
+
+	if err != nil {
+		h.logger.Error("HLS passthrough error",
+			"session_id", session.ID,
+			"error", err,
+		)
+	}
+}
+
+// handleDASHPassthroughRequest handles DASH passthrough requests (manifest, init, or segment).
+func (h *RelayStreamHandler) handleDASHPassthroughRequest(w http.ResponseWriter, r *http.Request, session *relay.RelaySession, formatReq relay.OutputRequest, client *relay.BufferClient) {
+	ctx := r.Context()
+	handler := session.GetDASHPassthrough()
+	if handler == nil {
+		http.Error(w, "DASH passthrough not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	var err error
+	if formatReq.IsPlaylistRequest() {
+		err = handler.ServeManifest(ctx, w)
+	} else if formatReq.IsInitRequest() {
+		err = handler.ServeInitSegment(ctx, w, formatReq.InitType)
+	} else if formatReq.IsSegmentRequest() {
+		// For DASH passthrough, segment ID is passed as a string in InitType field or via query param
+		segmentID := r.URL.Query().Get(relay.QueryParamSegment)
+		err = handler.ServeSegment(ctx, w, segmentID)
+	} else {
+		// Default to manifest
+		err = handler.ServeManifest(ctx, w)
+	}
+
+	if err != nil {
+		h.logger.Error("DASH passthrough error",
+			"session_id", session.ID,
+			"error", err,
+		)
+	}
+}
+
+// handleHLSPlaylistRequest serves an HLS playlist from the output handler.
+func (h *RelayStreamHandler) handleHLSPlaylistRequest(w http.ResponseWriter, r *http.Request, session *relay.RelaySession, client *relay.BufferClient) {
+	handler, err := session.GetOutputHandler(relay.OutputRequest{Format: relay.FormatValueHLS})
+	if err != nil {
+		http.Error(w, "HLS handler not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Build base URL for segment URLs in the playlist
+	baseURL := buildBaseURL(r, session.ID.String())
+
+	if err := handler.ServePlaylist(w, baseURL); err != nil {
+		h.logger.Error("Failed to serve HLS playlist",
+			"session_id", session.ID,
+			"error", err,
+		)
+	}
+}
+
+// handleHLSSegmentRequest serves an HLS segment from the output handler.
+func (h *RelayStreamHandler) handleHLSSegmentRequest(w http.ResponseWriter, r *http.Request, session *relay.RelaySession, formatReq relay.OutputRequest, client *relay.BufferClient) {
+	handler, err := session.GetOutputHandler(relay.OutputRequest{Format: relay.FormatValueHLS})
+	if err != nil {
+		http.Error(w, "HLS handler not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	if err := handler.ServeSegment(w, *formatReq.Segment); err != nil {
+		if err == relay.ErrSegmentNotFound {
+			http.Error(w, "segment not found", http.StatusNotFound)
+			return
+		}
+		h.logger.Error("Failed to serve HLS segment",
+			"session_id", session.ID,
+			"segment", *formatReq.Segment,
+			"error", err,
+		)
+		http.Error(w, "failed to serve segment", http.StatusInternalServerError)
+	}
+}
+
+// handleDASHManifestRequest serves a DASH manifest from the output handler.
+func (h *RelayStreamHandler) handleDASHManifestRequest(w http.ResponseWriter, r *http.Request, session *relay.RelaySession, client *relay.BufferClient) {
+	handler, err := session.GetOutputHandler(relay.OutputRequest{Format: relay.FormatValueDASH})
+	if err != nil {
+		http.Error(w, "DASH handler not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Build base URL for segment URLs in the manifest
+	baseURL := buildBaseURL(r, session.ID.String())
+
+	if err := handler.ServePlaylist(w, baseURL); err != nil {
+		h.logger.Error("Failed to serve DASH manifest",
+			"session_id", session.ID,
+			"error", err,
+		)
+	}
+}
+
+// handleDASHInitRequest serves a DASH init segment from the output handler.
+// Note: This requires the DASHHandler to implement init segment serving.
+func (h *RelayStreamHandler) handleDASHInitRequest(w http.ResponseWriter, r *http.Request, session *relay.RelaySession, formatReq relay.OutputRequest, client *relay.BufferClient) {
+	// Get the DASH handler directly since we need the init segment method
+	router := session.GetFormatRouter()
+	if router == nil {
+		http.Error(w, "DASH handler not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Try to get DASH handler with init segment support
+	handler, err := router.GetHandler(relay.OutputRequest{Format: relay.FormatValueDASH})
+	if err != nil {
+		http.Error(w, "DASH handler not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// DASH init segments are typically embedded in the stream or served as segment 0
+	// For now, we'll serve segment 0 as a fallback for init requests
+	if err := handler.ServeSegment(w, 0); err != nil {
+		if err == relay.ErrSegmentNotFound {
+			http.Error(w, "init segment not found", http.StatusNotFound)
+			return
+		}
+		h.logger.Error("Failed to serve DASH init segment",
+			"session_id", session.ID,
+			"init_type", formatReq.InitType,
+			"error", err,
+		)
+		http.Error(w, "failed to serve init segment", http.StatusInternalServerError)
+	}
+}
+
+// handleDASHSegmentRequest serves a DASH segment from the output handler.
+func (h *RelayStreamHandler) handleDASHSegmentRequest(w http.ResponseWriter, r *http.Request, session *relay.RelaySession, formatReq relay.OutputRequest, client *relay.BufferClient) {
+	handler, err := session.GetOutputHandler(relay.OutputRequest{Format: relay.FormatValueDASH})
+	if err != nil {
+		http.Error(w, "DASH handler not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	if err := handler.ServeSegment(w, *formatReq.Segment); err != nil {
+		if err == relay.ErrSegmentNotFound {
+			http.Error(w, "segment not found", http.StatusNotFound)
+			return
+		}
+		h.logger.Error("Failed to serve DASH segment",
+			"session_id", session.ID,
+			"segment", *formatReq.Segment,
+			"error", err,
+		)
+		http.Error(w, "failed to serve segment", http.StatusInternalServerError)
+	}
+}
+
+// buildBaseURL constructs the base URL for segment URLs in playlists/manifests.
+func buildBaseURL(r *http.Request, sessionID string) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	// Check for X-Forwarded-Proto header
+	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+		scheme = proto
+	}
+
+	host := r.Host
+	// Check for X-Forwarded-Host header
+	if fwdHost := r.Header.Get("X-Forwarded-Host"); fwdHost != "" {
+		host = fwdHost
+	}
+
+	// Use the request path but strip any query params
+	path := r.URL.Path
+
+	return fmt.Sprintf("%s://%s%s", scheme, host, path)
 }

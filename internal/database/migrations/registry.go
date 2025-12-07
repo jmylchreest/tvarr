@@ -67,6 +67,9 @@ func AllMigrations() []Migration {
 		// Smart codec matching flags for relay profiles
 		migration026ForceTranscodeFlags(),
 
+		// Multi-format streaming support (feature 008)
+		migration027MultiFormatStreaming(),
+
 		// Note: Logo caching (Phase 10) uses file-based storage with
 		// in-memory indexing, no database tables required.
 	}
@@ -819,6 +822,59 @@ func migration026ForceTranscodeFlags() Migration {
 					}
 				}
 			}
+			return nil
+		},
+	}
+}
+
+// migration027MultiFormatStreaming renames segment_time to segment_duration and
+// updates defaults for HLS/DASH multi-format streaming support.
+func migration027MultiFormatStreaming() Migration {
+	return Migration{
+		Version:     "027",
+		Description: "Rename segment_time to segment_duration for multi-format streaming",
+		Up: func(tx *gorm.DB) error {
+			migrator := tx.Migrator()
+
+			// Rename segment_time to segment_duration if it exists
+			if migrator.HasColumn(&models.RelayProfile{}, "segment_time") {
+				if err := migrator.RenameColumn(&models.RelayProfile{}, "segment_time", "segment_duration"); err != nil {
+					// Log but continue - column might already be renamed
+					tx.Logger.Warn(tx.Statement.Context, "failed to rename segment_time: %v", err)
+				}
+			}
+
+			// AutoMigrate will ensure segment_duration column exists with correct defaults
+			if err := tx.AutoMigrate(&models.RelayProfile{}); err != nil {
+				return err
+			}
+
+			// Update existing profiles with 0 segment_duration to use default of 6
+			if err := tx.Model(&models.RelayProfile{}).
+				Where("segment_duration = ? OR segment_duration IS NULL", 0).
+				UpdateColumn("segment_duration", 6).Error; err != nil {
+				return err
+			}
+
+			// Update existing profiles with 0 playlist_size to use default of 5
+			if err := tx.Model(&models.RelayProfile{}).
+				Where("playlist_size = ? OR playlist_size IS NULL", 0).
+				UpdateColumn("playlist_size", 5).Error; err != nil {
+				return err
+			}
+
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			migrator := tx.Migrator()
+
+			// Rename segment_duration back to segment_time
+			if migrator.HasColumn(&models.RelayProfile{}, "segment_duration") {
+				if err := migrator.RenameColumn(&models.RelayProfile{}, "segment_duration", "segment_time"); err != nil {
+					tx.Logger.Warn(tx.Statement.Context, "failed to rename segment_duration: %v", err)
+				}
+			}
+
 			return nil
 		},
 	}
