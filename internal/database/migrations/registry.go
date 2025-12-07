@@ -67,6 +67,20 @@ func AllMigrations() []Migration {
 		// Smart codec matching flags for relay profiles
 		migration026ForceTranscodeFlags(),
 
+		// Multi-format streaming support (feature 008)
+		migration027MultiFormatStreaming(),
+
+		// CMAF + Smart Delivery Architecture (feature 009)
+		migration028ContainerFormat(),
+		migration029SmartDeliveryModes(),
+		migration030SimplifiedSystemProfiles(),
+		migration031SimplifyCodecs(),
+		migration032CleanupLegacyProfiles(),
+
+		// Client detection and relay profile mapping (feature 010)
+		migration033ProfileRenameAndAuto(),
+		migration034RelayProfileMappings(),
+
 		// Note: Logo caching (Phase 10) uses file-based storage with
 		// in-memory indexing, no database tables required.
 	}
@@ -352,7 +366,7 @@ func migration015DefaultRelayProfiles() Migration {
 					AudioBitrate:    128,
 					AudioSampleRate: 48000,
 					AudioChannels:   2,
-					OutputFormat:    models.OutputFormatMPEGTS,
+					ContainerFormat: models.ContainerFormatMPEGTS,
 					Timeout:         30,
 				},
 				{
@@ -369,7 +383,7 @@ func migration015DefaultRelayProfiles() Migration {
 					AudioBitrate:    128,
 					AudioSampleRate: 48000,
 					AudioChannels:   2,
-					OutputFormat:    models.OutputFormatMPEGTS,
+					ContainerFormat: models.ContainerFormatMPEGTS,
 					Timeout:         30,
 				},
 				{
@@ -386,7 +400,7 @@ func migration015DefaultRelayProfiles() Migration {
 					AudioBitrate:    192,
 					AudioSampleRate: 48000,
 					AudioChannels:   2,
-					OutputFormat:    models.OutputFormatMPEGTS,
+					ContainerFormat: models.ContainerFormatMPEGTS,
 					Timeout:         30,
 				},
 				{
@@ -403,7 +417,7 @@ func migration015DefaultRelayProfiles() Migration {
 					AudioBitrate:    96,
 					AudioSampleRate: 48000,
 					AudioChannels:   2,
-					OutputFormat:    models.OutputFormatMPEGTS,
+					ContainerFormat: models.ContainerFormatMPEGTS,
 					Timeout:         30,
 				},
 				{
@@ -420,20 +434,20 @@ func migration015DefaultRelayProfiles() Migration {
 					AudioBitrate:    192,
 					AudioSampleRate: 48000,
 					AudioChannels:   2,
-					OutputFormat:    models.OutputFormatMPEGTS,
+					ContainerFormat: models.ContainerFormatMPEGTS,
 					Timeout:         30,
 				},
 				// Note: AV1 profile removed - AV1 is not supported in MPEG-TS containers
 				{
-					Name:         "Copy Streams (No Transcoding)",
-					Description:  "Pass-through profile that copies streams without transcoding",
-					IsDefault:    false,
-					Enabled:      true,
-					IsSystem:     true,
-					VideoCodec:   models.VideoCodecCopy,
-					AudioCodec:   models.AudioCodecCopy,
-					OutputFormat: models.OutputFormatMPEGTS,
-					Timeout:      30,
+					Name:            "Copy Streams (No Transcoding)",
+					Description:     "Pass-through profile that copies streams without transcoding",
+					IsDefault:       false,
+					Enabled:         true,
+					IsSystem:        true,
+					VideoCodec:      models.VideoCodecCopy,
+					AudioCodec:      models.AudioCodecCopy,
+					ContainerFormat: models.ContainerFormatMPEGTS,
+					Timeout:         30,
 				},
 			}
 
@@ -820,6 +834,931 @@ func migration026ForceTranscodeFlags() Migration {
 				}
 			}
 			return nil
+		},
+	}
+}
+
+// migration027MultiFormatStreaming renames segment_time to segment_duration and
+// updates defaults for HLS/DASH multi-format streaming support.
+func migration027MultiFormatStreaming() Migration {
+	return Migration{
+		Version:     "027",
+		Description: "Rename segment_time to segment_duration for multi-format streaming",
+		Up: func(tx *gorm.DB) error {
+			migrator := tx.Migrator()
+
+			// Rename segment_time to segment_duration if it exists
+			if migrator.HasColumn(&models.RelayProfile{}, "segment_time") {
+				if err := migrator.RenameColumn(&models.RelayProfile{}, "segment_time", "segment_duration"); err != nil {
+					// Log but continue - column might already be renamed
+					tx.Logger.Warn(tx.Statement.Context, "failed to rename segment_time: %v", err)
+				}
+			}
+
+			// AutoMigrate will ensure segment_duration column exists with correct defaults
+			if err := tx.AutoMigrate(&models.RelayProfile{}); err != nil {
+				return err
+			}
+
+			// Update existing profiles with 0 segment_duration to use default of 6
+			if err := tx.Model(&models.RelayProfile{}).
+				Where("segment_duration = ? OR segment_duration IS NULL", 0).
+				UpdateColumn("segment_duration", 6).Error; err != nil {
+				return err
+			}
+
+			// Update existing profiles with 0 playlist_size to use default of 5
+			if err := tx.Model(&models.RelayProfile{}).
+				Where("playlist_size = ? OR playlist_size IS NULL", 0).
+				UpdateColumn("playlist_size", 5).Error; err != nil {
+				return err
+			}
+
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			migrator := tx.Migrator()
+
+			// Rename segment_duration back to segment_time
+			if migrator.HasColumn(&models.RelayProfile{}, "segment_duration") {
+				if err := migrator.RenameColumn(&models.RelayProfile{}, "segment_duration", "segment_time"); err != nil {
+					tx.Logger.Warn(tx.Statement.Context, "failed to rename segment_duration: %v", err)
+				}
+			}
+
+			return nil
+		},
+	}
+}
+
+// migration028ContainerFormat adds container_format column to relay_profiles
+// and migrates from output_format to container_format (if output_format exists).
+func migration028ContainerFormat() Migration {
+	return Migration{
+		Version:     "028",
+		Description: "Add container_format to relay_profiles for CMAF support",
+		Up: func(tx *gorm.DB) error {
+			migrator := tx.Migrator()
+
+			// AutoMigrate adds the container_format column
+			if err := tx.AutoMigrate(&models.RelayProfile{}); err != nil {
+				return err
+			}
+
+			// Only migrate from output_format if that column exists (legacy databases)
+			// Fresh databases won't have output_format since it was removed from the model
+			if migrator.HasColumn(&models.RelayProfile{}, "output_format") {
+				// Migrate output_format values to container_format
+				// mpegts -> mpegts, hls/dash -> auto (let system decide based on codec)
+				if err := tx.Model(&models.RelayProfile{}).
+					Where("output_format = ?", "mpegts").
+					UpdateColumn("container_format", "mpegts").Error; err != nil {
+					return err
+				}
+
+				// HLS and DASH become auto (system will use fMP4 for modern delivery)
+				if err := tx.Model(&models.RelayProfile{}).
+					Where("output_format IN ?", []string{"hls", "dash"}).
+					UpdateColumn("container_format", "auto").Error; err != nil {
+					return err
+				}
+			}
+
+			// Ensure any profiles with empty/null container_format get a default
+			if err := tx.Model(&models.RelayProfile{}).
+				Where("container_format = ? OR container_format IS NULL", "").
+				UpdateColumn("container_format", "auto").Error; err != nil {
+				return err
+			}
+
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			migrator := tx.Migrator()
+			if migrator.HasColumn(&models.RelayProfile{}, "container_format") {
+				if err := migrator.DropColumn(&models.RelayProfile{}, "container_format"); err != nil {
+					tx.Logger.Warn(tx.Statement.Context, "failed to drop container_format: %v", err)
+				}
+			}
+			return nil
+		},
+	}
+}
+
+// migration029SmartDeliveryModes converts proxy modes from the old 3-mode system
+// (redirect/proxy/relay) to the new 2-mode system (direct/smart).
+func migration029SmartDeliveryModes() Migration {
+	return Migration{
+		Version:     "029",
+		Description: "Convert proxy modes to direct/smart for smart delivery",
+		Up: func(tx *gorm.DB) error {
+			// redirect -> direct
+			if err := tx.Model(&models.StreamProxy{}).
+				Where("proxy_mode = ?", "redirect").
+				UpdateColumn("proxy_mode", "direct").Error; err != nil {
+				return err
+			}
+
+			// proxy -> smart (passthrough behavior preserved via profile=nil)
+			if err := tx.Model(&models.StreamProxy{}).
+				Where("proxy_mode = ?", "proxy").
+				UpdateColumn("proxy_mode", "smart").Error; err != nil {
+				return err
+			}
+
+			// relay -> smart (transcoding triggered by profile)
+			if err := tx.Model(&models.StreamProxy{}).
+				Where("proxy_mode = ?", "relay").
+				UpdateColumn("proxy_mode", "smart").Error; err != nil {
+				return err
+			}
+
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			// Note: Cannot perfectly reverse this migration because we don't know
+			// if "smart" was originally "proxy" or "relay".
+			// Best effort: smart without profile -> proxy, smart with profile -> relay
+
+			// smart -> proxy (for proxies without relay profile)
+			if err := tx.Model(&models.StreamProxy{}).
+				Where("proxy_mode = ? AND relay_profile_id IS NULL", "smart").
+				UpdateColumn("proxy_mode", "proxy").Error; err != nil {
+				return err
+			}
+
+			// smart -> relay (for proxies with relay profile)
+			if err := tx.Model(&models.StreamProxy{}).
+				Where("proxy_mode = ? AND relay_profile_id IS NOT NULL", "smart").
+				UpdateColumn("proxy_mode", "relay").Error; err != nil {
+				return err
+			}
+
+			// direct -> redirect
+			if err := tx.Model(&models.StreamProxy{}).
+				Where("proxy_mode = ?", "direct").
+				UpdateColumn("proxy_mode", "redirect").Error; err != nil {
+				return err
+			}
+
+			return nil
+		},
+	}
+}
+
+// migration030SimplifiedSystemProfiles replaces the existing system profiles
+// with 3 simplified profiles: Universal, Passthrough, Efficiency.
+func migration030SimplifiedSystemProfiles() Migration {
+	return Migration{
+		Version:     "030",
+		Description: "Replace system profiles with Universal, Passthrough, Efficiency",
+		Up: func(tx *gorm.DB) error {
+			// Delete old system profiles
+			oldProfileNames := []string{
+				"H.264 + AAC (Standard)",
+				"H.265 + AAC (Standard)",
+				"H.264 + AAC (High Quality)",
+				"H.264 + AAC (Low Bitrate)",
+				"H.265 + AAC (High Quality)",
+				"AV1 + AAC (Next-gen)",
+				"Copy Streams (No Transcoding)",
+			}
+			if err := tx.Where("name IN ? AND is_system = ?", oldProfileNames, true).
+				Delete(&models.RelayProfile{}).Error; err != nil {
+				return err
+			}
+
+			// Create new simplified profiles
+			newProfiles := []models.RelayProfile{
+				{
+					Name:            "Universal",
+					Description:     "Best compatibility - works on all devices (H.264/AAC)",
+					IsDefault:       true,
+					Enabled:         true,
+					IsSystem:        true,
+					VideoCodec:      models.VideoCodecH264,
+					VideoBitrate:    0, // Copy source bitrate
+					VideoPreset:     "fast",
+					VideoProfile:    "main",
+					AudioCodec:      models.AudioCodecAAC,
+					AudioBitrate:    0, // Copy source bitrate
+					ContainerFormat: models.ContainerFormatAuto,
+					HWAccel:         models.HWAccelAuto,
+					FallbackEnabled: true,
+					Timeout:         30,
+				},
+				{
+					Name:            "Passthrough",
+					Description:     "No transcoding - fastest performance, lowest CPU",
+					IsDefault:       false,
+					Enabled:         true,
+					IsSystem:        true,
+					VideoCodec:      models.VideoCodecCopy,
+					AudioCodec:      models.AudioCodecCopy,
+					ContainerFormat: models.ContainerFormatAuto,
+					FallbackEnabled: true,
+					Timeout:         30,
+				},
+				{
+					Name:            "Efficiency",
+					Description:     "HEVC encoding for smaller files (requires Apple 10+, Chrome, smart TVs 2018+)",
+					IsDefault:       false,
+					Enabled:         true,
+					IsSystem:        true,
+					VideoCodec:      models.VideoCodecH265,
+					VideoBitrate:    0, // Copy source bitrate
+					VideoPreset:     "medium",
+					VideoProfile:    "main",
+					AudioCodec:      models.AudioCodecAAC,
+					AudioBitrate:    0, // Copy source bitrate
+					ContainerFormat: models.ContainerFormatFMP4,
+					HWAccel:         models.HWAccelAuto,
+					FallbackEnabled: true,
+					Timeout:         30,
+				},
+			}
+
+			for _, profile := range newProfiles {
+				// Use Create to ensure ULID is generated
+				if err := tx.Create(&profile).Error; err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			// Delete new profiles
+			newProfileNames := []string{"Universal", "Passthrough", "Efficiency"}
+			if err := tx.Where("name IN ? AND is_system = ?", newProfileNames, true).
+				Delete(&models.RelayProfile{}).Error; err != nil {
+				return err
+			}
+
+			// Note: We don't restore old profiles in down migration.
+			// Users can re-run migration015DefaultRelayProfiles if needed.
+			return nil
+		},
+	}
+}
+
+// migration031SimplifyCodecs converts encoder-specific codec values to abstract codec types.
+// This allows the codec dropdown to be simpler (h264, h265, vp9, av1) while the
+// actual FFmpeg encoder is derived from codec + hwaccel setting at runtime.
+func migration031SimplifyCodecs() Migration {
+	return Migration{
+		Version:     "031",
+		Description: "Simplify codec values to abstract types (h264, h265, vp9, av1)",
+		Up: func(tx *gorm.DB) error {
+			// Map old encoder-specific values to new abstract codec types
+			videoCodecMappings := map[string]string{
+				// H.264 encoders -> h264
+				"libx264":            "h264",
+				"h264_nvenc":         "h264",
+				"h264_qsv":           "h264",
+				"h264_vaapi":         "h264",
+				"h264_videotoolbox":  "h264",
+				// H.265 encoders -> h265
+				"libx265":            "h265",
+				"hevc_nvenc":         "h265",
+				"hevc_qsv":           "h265",
+				"hevc_vaapi":         "h265",
+				"hevc_videotoolbox":  "h265",
+				// VP9 encoders -> vp9
+				"libvpx-vp9":         "vp9",
+				"vp9_qsv":            "vp9",
+				"vp9_vaapi":          "vp9",
+				// AV1 encoders -> av1
+				"libaom-av1":         "av1",
+				"av1_nvenc":          "av1",
+				"av1_qsv":            "av1",
+				"av1_vaapi":          "av1",
+			}
+
+			// Update video codecs (use UpdateColumn to bypass hooks/validations)
+			for oldValue, newValue := range videoCodecMappings {
+				if err := tx.Model(&models.RelayProfile{}).
+					Where("video_codec = ?", oldValue).
+					UpdateColumn("video_codec", newValue).Error; err != nil {
+					return err
+				}
+			}
+
+			// Map old audio codec values to new abstract types
+			audioCodecMappings := map[string]string{
+				"libmp3lame": "mp3",
+				"libopus":    "opus",
+			}
+
+			for oldValue, newValue := range audioCodecMappings {
+				if err := tx.Model(&models.RelayProfile{}).
+					Where("audio_codec = ?", oldValue).
+					UpdateColumn("audio_codec", newValue).Error; err != nil {
+					return err
+				}
+			}
+
+			// Clean up any test profiles that may have been created by earlier versions
+			profileNames := []string{
+				"Next-Gen (AV1 + Opus)",
+				"VP9 + Opus",
+				"AV1 NVENC (RTX 40+)",
+				"AV1 QSV (Intel Arc/12th+)",
+			}
+			return tx.Where("name IN ? AND is_system = ?", profileNames, true).
+				Delete(&models.RelayProfile{}).Error
+		},
+		Down: func(tx *gorm.DB) error {
+			// Reverse the mappings - convert back to encoder-specific values
+			// Note: This uses software encoders as the default since we don't know
+			// what hwaccel was originally intended
+			videoCodecMappings := map[string]string{
+				"h264": "libx264",
+				"h265": "libx265",
+				"vp9":  "libvpx-vp9",
+				"av1":  "libaom-av1",
+			}
+
+			for newValue, oldValue := range videoCodecMappings {
+				if err := tx.Model(&models.RelayProfile{}).
+					Where("video_codec = ?", newValue).
+					UpdateColumn("video_codec", oldValue).Error; err != nil {
+					return err
+				}
+			}
+
+			audioCodecMappings := map[string]string{
+				"mp3":  "libmp3lame",
+				"opus": "libopus",
+			}
+
+			for newValue, oldValue := range audioCodecMappings {
+				if err := tx.Model(&models.RelayProfile{}).
+					Where("audio_codec = ?", newValue).
+					UpdateColumn("audio_codec", oldValue).Error; err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+	}
+}
+
+// migration032CleanupLegacyProfiles removes legacy hardware-specific codec profiles
+// that were created by earlier versions of migration031, and ensures a default profile exists.
+func migration032CleanupLegacyProfiles() Migration {
+	return Migration{
+		Version:     "032",
+		Description: "Remove legacy hardware-specific profiles and ensure default exists",
+		Up: func(tx *gorm.DB) error {
+			// Delete any leftover hardware-specific profiles from earlier migration031 versions
+			legacyProfileNames := []string{
+				"Next-Gen (AV1 + Opus)",
+				"VP9 + Opus",
+				"AV1 NVENC (RTX 40+)",
+				"AV1 QSV (Intel Arc/12th+)",
+			}
+			if err := tx.Where("name IN ?", legacyProfileNames).
+				Delete(&models.RelayProfile{}).Error; err != nil {
+				return err
+			}
+
+			// Check if there's a default profile
+			var defaultCount int64
+			if err := tx.Model(&models.RelayProfile{}).
+				Where("is_default = ?", true).
+				Count(&defaultCount).Error; err != nil {
+				return err
+			}
+
+			// If no default, set Universal as default (if it exists)
+			if defaultCount == 0 {
+				if err := tx.Model(&models.RelayProfile{}).
+					Where("name = ?", "Universal").
+					UpdateColumn("is_default", true).Error; err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			// No-op - we don't restore deleted profiles
+			return nil
+		},
+	}
+}
+
+// migration033ProfileRenameAndAuto adds the Automatic profile (default),
+// renames Efficiency to h265/AAC and Universal to h264/AAC,
+// and adds VP9/Opus and AV1/Opus profiles.
+func migration033ProfileRenameAndAuto() Migration {
+	return Migration{
+		Version:     "033",
+		Description: "Add Automatic profile, rename Efficiency/Universal, add VP9/Opus and AV1/Opus",
+		Up: func(tx *gorm.DB) error {
+			// 1. Unset IsDefault on all existing profiles (use Table to avoid model validation)
+			if err := tx.Table("relay_profiles").
+				Where("is_default = ?", true).
+				UpdateColumn("is_default", false).Error; err != nil {
+				return err
+			}
+
+			// 2. Rename "Universal" to "h264/AAC"
+			if err := tx.Table("relay_profiles").
+				Where("name = ? AND is_system = ?", "Universal", true).
+				Updates(map[string]interface{}{
+					"name":        "h264/AAC",
+					"description": "H.264 video with AAC audio - maximum device compatibility",
+				}).Error; err != nil {
+				return err
+			}
+
+			// 3. Rename "Efficiency" to "h265/AAC"
+			if err := tx.Table("relay_profiles").
+				Where("name = ? AND is_system = ?", "Efficiency", true).
+				Updates(map[string]interface{}{
+					"name":        "h265/AAC",
+					"description": "H.265/HEVC video with AAC audio - better compression, modern devices",
+				}).Error; err != nil {
+				return err
+			}
+
+			// 4. Create new profiles using raw SQL to bypass validation hooks
+			type profileData struct {
+				ID              string
+				Name            string
+				Description     string
+				IsDefault       bool
+				IsSystem        bool
+				VideoCodec      string
+				AudioCodec      string
+				ContainerFormat string
+				HWAccel         string
+				FallbackEnabled bool
+				Timeout         int
+			}
+
+			newProfiles := []profileData{
+				{
+					ID:              models.NewULID().String(),
+					Name:            "Automatic",
+					Description:     "Automatically selects optimal codecs based on client detection rules. Configure rules in Admin > Relay Profile Mappings.",
+					IsDefault:       true,
+					IsSystem:        true,
+					VideoCodec:      string(models.VideoCodecAuto),
+					AudioCodec:      string(models.AudioCodecAuto),
+					ContainerFormat: string(models.ContainerFormatAuto),
+					HWAccel:         string(models.HWAccelAuto),
+					FallbackEnabled: true,
+					Timeout:         30,
+				},
+				{
+					ID:              models.NewULID().String(),
+					Name:            "VP9/Opus",
+					Description:     "VP9 video with Opus audio - open/royalty-free codecs, good for web",
+					IsDefault:       false,
+					IsSystem:        true,
+					VideoCodec:      string(models.VideoCodecVP9),
+					AudioCodec:      string(models.AudioCodecOpus),
+					ContainerFormat: string(models.ContainerFormatFMP4),
+					HWAccel:         string(models.HWAccelAuto),
+					FallbackEnabled: true,
+					Timeout:         30,
+				},
+				{
+					ID:              models.NewULID().String(),
+					Name:            "AV1/Opus",
+					Description:     "AV1 video with Opus audio - best compression, next-gen codecs",
+					IsDefault:       false,
+					IsSystem:        true,
+					VideoCodec:      string(models.VideoCodecAV1),
+					AudioCodec:      string(models.AudioCodecOpus),
+					ContainerFormat: string(models.ContainerFormatFMP4),
+					HWAccel:         string(models.HWAccelAuto),
+					FallbackEnabled: true,
+					Timeout:         30,
+				},
+			}
+
+			for _, p := range newProfiles {
+				if err := tx.Exec(`
+					INSERT INTO relay_profiles (id, name, description, is_default, is_system, enabled,
+						video_codec, audio_codec, container_format, hw_accel, fallback_enabled, timeout,
+						created_at, updated_at)
+					VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+				`, p.ID, p.Name, p.Description, p.IsDefault, p.IsSystem,
+					p.VideoCodec, p.AudioCodec, p.ContainerFormat, p.HWAccel,
+					p.FallbackEnabled, p.Timeout).Error; err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			// Delete new profiles (use raw delete to avoid validation)
+			newProfileNames := []string{"Automatic", "VP9/Opus", "AV1/Opus"}
+			if err := tx.Table("relay_profiles").
+				Where("name IN ? AND is_system = ?", newProfileNames, true).
+				Delete(nil).Error; err != nil {
+				return err
+			}
+
+			// Rename back to original names
+			if err := tx.Table("relay_profiles").
+				Where("name = ? AND is_system = ?", "h264/AAC", true).
+				Updates(map[string]interface{}{
+					"name":        "Universal",
+					"description": "Best compatibility - works on all devices (H.264/AAC)",
+					"is_default":  true,
+				}).Error; err != nil {
+				return err
+			}
+
+			if err := tx.Table("relay_profiles").
+				Where("name = ? AND is_system = ?", "h265/AAC", true).
+				Updates(map[string]interface{}{
+					"name":        "Efficiency",
+					"description": "HEVC encoding for smaller files (requires Apple 10+, Chrome, smart TVs 2018+)",
+				}).Error; err != nil {
+				return err
+			}
+
+			return nil
+		},
+	}
+}
+
+// migration034RelayProfileMappings creates the relay_profile_mappings table
+// and populates it with default client detection rules.
+func migration034RelayProfileMappings() Migration {
+	return Migration{
+		Version:     "034",
+		Description: "Create relay_profile_mappings table with default client detection rules",
+		Up: func(tx *gorm.DB) error {
+			// Create table
+			if err := tx.AutoMigrate(&models.RelayProfileMapping{}); err != nil {
+				return err
+			}
+
+			// Helper function to create codec arrays
+			videoCodecs := func(codecs ...string) models.PqStringArray {
+				return codecs
+			}
+			audioCodecs := func(codecs ...string) models.PqStringArray {
+				return codecs
+			}
+			containers := func(formats ...string) models.PqStringArray {
+				return formats
+			}
+
+			// Default client detection rules
+			defaultMappings := []models.RelayProfileMapping{
+				// Browsers (10-19)
+				{
+					Name:                 "Safari",
+					Description:          "Apple Safari browser - No VP9/Opus support",
+					Priority:             10,
+					Expression:           `user_agent contains "Safari" AND user_agent not_contains "Chrome"`,
+					IsEnabled:            true,
+					IsSystem:             true,
+					AcceptedVideoCodecs:  videoCodecs("h265", "h264"),
+					AcceptedAudioCodecs:  audioCodecs("aac"),
+					AcceptedContainers:   containers("fmp4", "mpegts"),
+					PreferredVideoCodec:  models.VideoCodecH265,
+					PreferredAudioCodec:  models.AudioCodecAAC,
+					PreferredContainer:   models.ContainerFormatFMP4,
+				},
+				{
+					Name:                 "Chrome/Chromium",
+					Description:          "Google Chrome/Chromium browser - Full modern codec support",
+					Priority:             11,
+					Expression:           `user_agent matches ".*(Chrome|Chromium).*" AND user_agent not_contains "Edg"`,
+					IsEnabled:            true,
+					IsSystem:             true,
+					AcceptedVideoCodecs:  videoCodecs("h265", "h264", "vp9", "av1"),
+					AcceptedAudioCodecs:  audioCodecs("aac", "opus"),
+					AcceptedContainers:   containers("fmp4", "mpegts"),
+					PreferredVideoCodec:  models.VideoCodecH265,
+					PreferredAudioCodec:  models.AudioCodecAAC,
+					PreferredContainer:   models.ContainerFormatFMP4,
+				},
+				{
+					Name:                 "Edge",
+					Description:          "Microsoft Edge browser - Chromium-based",
+					Priority:             12,
+					Expression:           `user_agent contains "Edg/"`,
+					IsEnabled:            true,
+					IsSystem:             true,
+					AcceptedVideoCodecs:  videoCodecs("h265", "h264", "vp9", "av1"),
+					AcceptedAudioCodecs:  audioCodecs("aac", "opus"),
+					AcceptedContainers:   containers("fmp4", "mpegts"),
+					PreferredVideoCodec:  models.VideoCodecH265,
+					PreferredAudioCodec:  models.AudioCodecAAC,
+					PreferredContainer:   models.ContainerFormatFMP4,
+				},
+				{
+					Name:                 "Firefox",
+					Description:          "Mozilla Firefox - No H.265 without system codec",
+					Priority:             13,
+					Expression:           `user_agent contains "Firefox"`,
+					IsEnabled:            true,
+					IsSystem:             true,
+					AcceptedVideoCodecs:  videoCodecs("h264", "vp9", "av1"),
+					AcceptedAudioCodecs:  audioCodecs("aac", "opus"),
+					AcceptedContainers:   containers("fmp4", "mpegts"),
+					PreferredVideoCodec:  models.VideoCodecH264,
+					PreferredAudioCodec:  models.AudioCodecAAC,
+					PreferredContainer:   models.ContainerFormatFMP4,
+				},
+				// Media Players (20-29)
+				{
+					Name:                 "VLC",
+					Description:          "VLC Media Player - Excellent codec support",
+					Priority:             20,
+					Expression:           `user_agent contains "VLC"`,
+					IsEnabled:            true,
+					IsSystem:             true,
+					AcceptedVideoCodecs:  videoCodecs("h265", "h264", "vp9", "av1"),
+					AcceptedAudioCodecs:  audioCodecs("aac", "opus", "ac3", "eac3"),
+					AcceptedContainers:   containers("fmp4", "mpegts"),
+					PreferredVideoCodec:  models.VideoCodecH265,
+					PreferredAudioCodec:  models.AudioCodecAAC,
+					PreferredContainer:   models.ContainerFormatMPEGTS,
+				},
+				{
+					Name:                 "MPV",
+					Description:          "MPV Media Player - Excellent codec support",
+					Priority:             21,
+					Expression:           `user_agent contains "mpv"`,
+					IsEnabled:            true,
+					IsSystem:             true,
+					AcceptedVideoCodecs:  videoCodecs("h265", "h264", "vp9", "av1"),
+					AcceptedAudioCodecs:  audioCodecs("aac", "opus", "ac3", "eac3"),
+					AcceptedContainers:   containers("fmp4", "mpegts"),
+					PreferredVideoCodec:  models.VideoCodecH265,
+					PreferredAudioCodec:  models.AudioCodecAAC,
+					PreferredContainer:   models.ContainerFormatMPEGTS,
+				},
+				{
+					Name:                 "ffmpeg/ffplay",
+					Description:          "FFmpeg/FFplay - Full codec support",
+					Priority:             22,
+					Expression:           `user_agent matches ".*(ffmpeg|ffplay|Lavf).*"`,
+					IsEnabled:            true,
+					IsSystem:             true,
+					AcceptedVideoCodecs:  videoCodecs("h265", "h264", "vp9", "av1"),
+					AcceptedAudioCodecs:  audioCodecs("aac", "opus", "ac3", "eac3"),
+					AcceptedContainers:   containers("fmp4", "mpegts"),
+					PreferredVideoCodec:  models.VideoCodecH265,
+					PreferredAudioCodec:  models.AudioCodecAAC,
+					PreferredContainer:   models.ContainerFormatMPEGTS,
+				},
+				// Media Servers/Apps (30-39)
+				{
+					Name:                 "Jellyfin",
+					Description:          "Jellyfin Media Server - Server transcodes further if needed",
+					Priority:             30,
+					Expression:           `user_agent contains "Jellyfin"`,
+					IsEnabled:            true,
+					IsSystem:             true,
+					AcceptedVideoCodecs:  videoCodecs("h265", "h264"),
+					AcceptedAudioCodecs:  audioCodecs("aac", "ac3", "eac3"),
+					AcceptedContainers:   containers("fmp4", "mpegts"),
+					PreferredVideoCodec:  models.VideoCodecH265,
+					PreferredAudioCodec:  models.AudioCodecAAC,
+					PreferredContainer:   models.ContainerFormatMPEGTS,
+				},
+				{
+					Name:                 "Plex",
+					Description:          "Plex Media Server - Server handles client compatibility",
+					Priority:             31,
+					Expression:           `user_agent matches ".*(Plex|PMS).*"`,
+					IsEnabled:            true,
+					IsSystem:             true,
+					AcceptedVideoCodecs:  videoCodecs("h265", "h264"),
+					AcceptedAudioCodecs:  audioCodecs("aac", "ac3", "eac3"),
+					AcceptedContainers:   containers("fmp4", "mpegts"),
+					PreferredVideoCodec:  models.VideoCodecH265,
+					PreferredAudioCodec:  models.AudioCodecAAC,
+					PreferredContainer:   models.ContainerFormatMPEGTS,
+				},
+				{
+					Name:                 "Emby",
+					Description:          "Emby Media Server - Similar to Jellyfin",
+					Priority:             32,
+					Expression:           `user_agent contains "Emby"`,
+					IsEnabled:            true,
+					IsSystem:             true,
+					AcceptedVideoCodecs:  videoCodecs("h265", "h264"),
+					AcceptedAudioCodecs:  audioCodecs("aac", "ac3", "eac3"),
+					AcceptedContainers:   containers("fmp4", "mpegts"),
+					PreferredVideoCodec:  models.VideoCodecH265,
+					PreferredAudioCodec:  models.AudioCodecAAC,
+					PreferredContainer:   models.ContainerFormatMPEGTS,
+				},
+				{
+					Name:                 "Kodi",
+					Description:          "Kodi Media Center - Codec support depends on device",
+					Priority:             33,
+					Expression:           `user_agent contains "Kodi"`,
+					IsEnabled:            true,
+					IsSystem:             true,
+					AcceptedVideoCodecs:  videoCodecs("h265", "h264", "vp9"),
+					AcceptedAudioCodecs:  audioCodecs("aac", "opus", "ac3", "eac3"),
+					AcceptedContainers:   containers("fmp4", "mpegts"),
+					PreferredVideoCodec:  models.VideoCodecH265,
+					PreferredAudioCodec:  models.AudioCodecAAC,
+					PreferredContainer:   models.ContainerFormatMPEGTS,
+				},
+				// Streaming Devices (40-49)
+				{
+					Name:                 "Android TV / Google TV",
+					Description:          "Android TV / Google TV / Chromecast - Modern codec support",
+					Priority:             40,
+					Expression:           `user_agent matches ".*(Android TV|GoogleTV|Chromecast).*"`,
+					IsEnabled:            true,
+					IsSystem:             true,
+					AcceptedVideoCodecs:  videoCodecs("h265", "h264", "vp9", "av1"),
+					AcceptedAudioCodecs:  audioCodecs("aac", "opus", "ac3", "eac3"),
+					AcceptedContainers:   containers("fmp4", "mpegts"),
+					PreferredVideoCodec:  models.VideoCodecH265,
+					PreferredAudioCodec:  models.AudioCodecAAC,
+					PreferredContainer:   models.ContainerFormatFMP4,
+				},
+				{
+					Name:                 "Roku",
+					Description:          "Roku devices - Limited VP9/AV1 support",
+					Priority:             41,
+					Expression:           `user_agent contains "Roku"`,
+					IsEnabled:            true,
+					IsSystem:             true,
+					AcceptedVideoCodecs:  videoCodecs("h265", "h264"),
+					AcceptedAudioCodecs:  audioCodecs("aac", "ac3", "eac3"),
+					AcceptedContainers:   containers("fmp4", "mpegts"),
+					PreferredVideoCodec:  models.VideoCodecH265,
+					PreferredAudioCodec:  models.AudioCodecAAC,
+					PreferredContainer:   models.ContainerFormatMPEGTS,
+				},
+				{
+					Name:                 "Apple TV",
+					Description:          "Apple TV - No VP9/Opus support",
+					Priority:             42,
+					Expression:           `user_agent contains "AppleTV"`,
+					IsEnabled:            true,
+					IsSystem:             true,
+					AcceptedVideoCodecs:  videoCodecs("h265", "h264"),
+					AcceptedAudioCodecs:  audioCodecs("aac", "ac3", "eac3"),
+					AcceptedContainers:   containers("fmp4", "mpegts"),
+					PreferredVideoCodec:  models.VideoCodecH265,
+					PreferredAudioCodec:  models.AudioCodecAAC,
+					PreferredContainer:   models.ContainerFormatFMP4,
+				},
+				{
+					Name:                 "Fire TV",
+					Description:          "Amazon Fire TV - Good modern codec support",
+					Priority:             43,
+					Expression:           `user_agent matches ".*(Fire TV|AFTM|AFT).*"`,
+					IsEnabled:            true,
+					IsSystem:             true,
+					AcceptedVideoCodecs:  videoCodecs("h265", "h264", "vp9", "av1"),
+					AcceptedAudioCodecs:  audioCodecs("aac", "opus", "ac3", "eac3"),
+					AcceptedContainers:   containers("fmp4", "mpegts"),
+					PreferredVideoCodec:  models.VideoCodecH265,
+					PreferredAudioCodec:  models.AudioCodecAAC,
+					PreferredContainer:   models.ContainerFormatFMP4,
+				},
+				{
+					Name:                 "Tizen (Samsung TV)",
+					Description:          "Samsung Smart TVs - Limited AV1/VP9 support",
+					Priority:             44,
+					Expression:           `user_agent contains "Tizen"`,
+					IsEnabled:            true,
+					IsSystem:             true,
+					AcceptedVideoCodecs:  videoCodecs("h265", "h264"),
+					AcceptedAudioCodecs:  audioCodecs("aac", "ac3", "eac3"),
+					AcceptedContainers:   containers("fmp4", "mpegts"),
+					PreferredVideoCodec:  models.VideoCodecH265,
+					PreferredAudioCodec:  models.AudioCodecAAC,
+					PreferredContainer:   models.ContainerFormatMPEGTS,
+				},
+				{
+					Name:                 "webOS (LG TV)",
+					Description:          "LG Smart TVs - Limited AV1/VP9 support",
+					Priority:             45,
+					Expression:           `user_agent contains "Web0S"`,
+					IsEnabled:            true,
+					IsSystem:             true,
+					AcceptedVideoCodecs:  videoCodecs("h265", "h264"),
+					AcceptedAudioCodecs:  audioCodecs("aac", "ac3", "eac3"),
+					AcceptedContainers:   containers("fmp4", "mpegts"),
+					PreferredVideoCodec:  models.VideoCodecH265,
+					PreferredAudioCodec:  models.AudioCodecAAC,
+					PreferredContainer:   models.ContainerFormatMPEGTS,
+				},
+				// Mobile (50-59)
+				{
+					Name:                 "iOS",
+					Description:          "iOS devices (native Safari) - No VP9/Opus",
+					Priority:             50,
+					Expression:           `user_agent matches ".*(iPhone|iPad).*" AND user_agent not_contains "CriOS"`,
+					IsEnabled:            true,
+					IsSystem:             true,
+					AcceptedVideoCodecs:  videoCodecs("h265", "h264"),
+					AcceptedAudioCodecs:  audioCodecs("aac"),
+					AcceptedContainers:   containers("fmp4", "mpegts"),
+					PreferredVideoCodec:  models.VideoCodecH265,
+					PreferredAudioCodec:  models.AudioCodecAAC,
+					PreferredContainer:   models.ContainerFormatFMP4,
+				},
+				{
+					Name:                 "Android",
+					Description:          "Android devices - Codec support varies by device",
+					Priority:             51,
+					Expression:           `user_agent contains "Android" AND user_agent not_contains "Android TV"`,
+					IsEnabled:            true,
+					IsSystem:             true,
+					AcceptedVideoCodecs:  videoCodecs("h265", "h264", "vp9", "av1"),
+					AcceptedAudioCodecs:  audioCodecs("aac", "opus"),
+					AcceptedContainers:   containers("fmp4", "mpegts"),
+					PreferredVideoCodec:  models.VideoCodecH265,
+					PreferredAudioCodec:  models.AudioCodecAAC,
+					PreferredContainer:   models.ContainerFormatFMP4,
+				},
+				// IPTV Apps (60-69)
+				{
+					Name:                 "TiviMate",
+					Description:          "TiviMate IPTV Player - Popular Android IPTV app",
+					Priority:             60,
+					Expression:           `user_agent contains "TiviMate"`,
+					IsEnabled:            true,
+					IsSystem:             true,
+					AcceptedVideoCodecs:  videoCodecs("h265", "h264"),
+					AcceptedAudioCodecs:  audioCodecs("aac", "ac3"),
+					AcceptedContainers:   containers("mpegts"),
+					PreferredVideoCodec:  models.VideoCodecH265,
+					PreferredAudioCodec:  models.AudioCodecAAC,
+					PreferredContainer:   models.ContainerFormatMPEGTS,
+				},
+				{
+					Name:                 "IPTV Smarters",
+					Description:          "IPTV Smarters - Conservative codec support",
+					Priority:             61,
+					Expression:           `user_agent matches ".*(Smarters|IPTV).*"`,
+					IsEnabled:            true,
+					IsSystem:             true,
+					AcceptedVideoCodecs:  videoCodecs("h265", "h264"),
+					AcceptedAudioCodecs:  audioCodecs("aac", "ac3"),
+					AcceptedContainers:   containers("mpegts"),
+					PreferredVideoCodec:  models.VideoCodecH264,
+					PreferredAudioCodec:  models.AudioCodecAAC,
+					PreferredContainer:   models.ContainerFormatMPEGTS,
+				},
+				{
+					Name:                 "GSE Smart IPTV",
+					Description:          "GSE Smart IPTV - iOS/Android IPTV app",
+					Priority:             62,
+					Expression:           `user_agent contains "GSE"`,
+					IsEnabled:            true,
+					IsSystem:             true,
+					AcceptedVideoCodecs:  videoCodecs("h265", "h264"),
+					AcceptedAudioCodecs:  audioCodecs("aac"),
+					AcceptedContainers:   containers("mpegts"),
+					PreferredVideoCodec:  models.VideoCodecH264,
+					PreferredAudioCodec:  models.AudioCodecAAC,
+					PreferredContainer:   models.ContainerFormatMPEGTS,
+				},
+				// Fallback (999)
+				{
+					Name:                 "Default (Universal)",
+					Description:          "Fallback rule - Maximum compatibility (H.264/AAC/MPEG-TS)",
+					Priority:             999,
+					Expression:           `user_agent contains ""`,
+					IsEnabled:            true,
+					IsSystem:             true,
+					AcceptedVideoCodecs:  videoCodecs("h264"),
+					AcceptedAudioCodecs:  audioCodecs("aac"),
+					AcceptedContainers:   containers("mpegts"),
+					PreferredVideoCodec:  models.VideoCodecH264,
+					PreferredAudioCodec:  models.AudioCodecAAC,
+					PreferredContainer:   models.ContainerFormatMPEGTS,
+				},
+			}
+
+			// Insert default mappings (skip hooks, set IDs explicitly)
+			for i := range defaultMappings {
+				defaultMappings[i].ID = models.NewULID()
+				if err := tx.Session(&gorm.Session{SkipHooks: true}).Create(&defaultMappings[i]).Error; err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			return tx.Migrator().DropTable("relay_profile_mappings")
 		},
 	}
 }

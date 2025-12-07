@@ -80,7 +80,7 @@ interface FilterAssignment {
 interface ProxyFormData {
   name: string;
   description?: string;
-  proxy_mode: 'redirect' | 'proxy' | 'relay';
+  proxy_mode: 'direct' | 'smart';
   upstream_timeout: number;
   max_concurrent_streams: number;
   starting_channel_number: number;
@@ -459,7 +459,7 @@ export function ProxySheet({
   const [formData, setFormData] = useState<ProxyFormData>({
     name: '',
     description: '',
-    proxy_mode: 'proxy',
+    proxy_mode: 'smart',
     upstream_timeout: 30,
     max_concurrent_streams: 0,
     starting_channel_number: 1,
@@ -536,7 +536,7 @@ export function ProxySheet({
             setFormData({
               name: sourceProxyData.name,
               description: sourceProxyData.description || '',
-              proxy_mode: sourceProxyData.proxy_mode as 'redirect' | 'proxy' | 'relay',
+              proxy_mode: sourceProxyData.proxy_mode as 'direct' | 'smart',
               upstream_timeout: sourceProxyData.upstream_timeout || 30,
               max_concurrent_streams: sourceProxyData.max_concurrent_streams ?? 0,
               starting_channel_number: sourceProxyData.starting_channel_number,
@@ -554,7 +554,7 @@ export function ProxySheet({
             setFormData({
               name: '',
               description: '',
-              proxy_mode: 'proxy',
+              proxy_mode: 'smart',
               upstream_timeout: 30,
               max_concurrent_streams: 0,
               starting_channel_number: 1,
@@ -664,7 +664,7 @@ export function ProxySheet({
           setFormData({
             name: '',
             description: '',
-            proxy_mode: 'proxy',
+            proxy_mode: 'smart',
             upstream_timeout: 30,
             max_concurrent_streams: 0,
             starting_channel_number: 1,
@@ -724,11 +724,11 @@ export function ProxySheet({
                     <Label htmlFor="proxy_mode">Proxy Mode</Label>
                     <Select
                       value={formData.proxy_mode}
-                      onValueChange={(value: 'redirect' | 'proxy' | 'relay') => {
+                      onValueChange={(value: 'direct' | 'smart') => {
                         setFormData((prev) => ({
                           ...prev,
                           proxy_mode: value,
-                          relay_profile_id: value !== 'relay' ? undefined : prev.relay_profile_id,
+                          relay_profile_id: value !== 'smart' ? undefined : prev.relay_profile_id,
                         }));
                       }}
                     >
@@ -736,16 +736,15 @@ export function ProxySheet({
                         <SelectValue placeholder="Select proxy mode" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="redirect">Redirect</SelectItem>
-                        <SelectItem value="proxy">Proxy</SelectItem>
-                        <SelectItem value="relay">Relay</SelectItem>
+                        <SelectItem value="direct">Direct (302 Redirect)</SelectItem>
+                        <SelectItem value="smart">Smart (Auto-optimize)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
 
-                {/* Relay Profile Selection - only show when proxy mode is relay */}
-                {formData.proxy_mode === 'relay' && (
+                {/* Relay Profile Selection - only show when proxy mode is smart */}
+                {formData.proxy_mode === 'smart' && (
                   <div className="space-y-2">
                     <Label htmlFor="relay_profile">Relay Profile</Label>
                     <Select
@@ -1014,8 +1013,7 @@ export function ProxySheet({
             onClick={handleSubmit}
             disabled={
               loading ||
-              !formData.name.trim() ||
-              (formData.proxy_mode === 'relay' && !formData.relay_profile_id)
+              !formData.name.trim()
             }
           >
             {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

@@ -1437,6 +1437,120 @@ func (c *APIClient) GetFirstRelayProfileID(ctx context.Context) (string, error) 
 	return id, nil
 }
 
+// ClientDetectionMapping represents a client detection rule
+type ClientDetectionMapping struct {
+	ID                   string   `json:"id"`
+	Name                 string   `json:"name"`
+	Description          string   `json:"description"`
+	Expression           string   `json:"expression"`
+	Priority             int      `json:"priority"`
+	IsEnabled            bool     `json:"is_enabled"`
+	IsSystem             bool     `json:"is_system"`
+	AcceptedVideoCodecs  []string `json:"accepted_video_codecs"`
+	AcceptedAudioCodecs  []string `json:"accepted_audio_codecs"`
+	AcceptedContainers   []string `json:"accepted_containers"`
+	PreferredVideoCodec  string   `json:"preferred_video_codec"`
+	PreferredAudioCodec  string   `json:"preferred_audio_codec"`
+	PreferredContainer   string   `json:"preferred_container"`
+}
+
+// ClientDetectionStats represents statistics about client detection mappings
+type ClientDetectionStats struct {
+	Total   int `json:"total"`
+	Enabled int `json:"enabled"`
+	System  int `json:"system"`
+	Custom  int `json:"custom"`
+}
+
+// GetClientDetectionMappings fetches all client detection mappings
+func (c *APIClient) GetClientDetectionMappings(ctx context.Context) ([]ClientDetectionMapping, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/relay-profile-mappings", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch client detection mappings failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("fetch client detection mappings failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Items []ClientDetectionMapping `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode response failed: %w", err)
+	}
+
+	return result.Items, nil
+}
+
+// GetClientDetectionStats fetches client detection statistics
+func (c *APIClient) GetClientDetectionStats(ctx context.Context) (*ClientDetectionStats, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/relay-profile-mappings/stats", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch client detection stats failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("fetch client detection stats failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var stats ClientDetectionStats
+	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
+		return nil, fmt.Errorf("decode response failed: %w", err)
+	}
+
+	return &stats, nil
+}
+
+// TestClientDetectionExpression tests an expression against sample data
+func (c *APIClient) TestClientDetectionExpression(ctx context.Context, expression string, testData map[string]string) (bool, error) {
+	body := map[string]interface{}{
+		"expression": expression,
+		"test_data":  testData,
+	}
+	jsonBody, _ := json.Marshal(body)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/v1/relay-profile-mappings/test", bytes.NewReader(jsonBody))
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("test expression failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return false, fmt.Errorf("test expression failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Matches bool `json:"matches"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return false, fmt.Errorf("decode response failed: %w", err)
+	}
+
+	return result.Matches, nil
+}
+
 // ValidateM3U checks if the M3U content is valid
 func ValidateM3U(content string) (channelCount int, err error) {
 	if !strings.HasPrefix(content, "#EXTM3U") {
@@ -1620,6 +1734,124 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 	// Phase 1: Setup - Health Check
 	r.runTest("Health Check", func() error {
 		return r.client.HealthCheck(ctx)
+	})
+
+	// Phase 1.1: Client Detection Rules (tests migration and rule engine)
+	r.runTest("Client Detection: List Mappings", func() error {
+		mappings, err := r.client.GetClientDetectionMappings(ctx)
+		if err != nil {
+			return err
+		}
+		if len(mappings) == 0 {
+			return fmt.Errorf("expected default client detection mappings, got none")
+		}
+		r.log("  Found %d client detection mappings", len(mappings))
+
+		// Verify default mappings exist and are ordered by priority
+		var lastPriority int = -1
+		for _, m := range mappings {
+			if m.Priority < lastPriority {
+				return fmt.Errorf("mappings not ordered by priority: %s (priority %d) came after priority %d",
+					m.Name, m.Priority, lastPriority)
+			}
+			lastPriority = m.Priority
+		}
+		r.log("  Mappings are correctly ordered by priority")
+		return nil
+	})
+
+	r.runTest("Client Detection: Get Stats", func() error {
+		stats, err := r.client.GetClientDetectionStats(ctx)
+		if err != nil {
+			return err
+		}
+		if stats.Total == 0 {
+			return fmt.Errorf("expected non-zero total mappings")
+		}
+		if stats.System == 0 {
+			return fmt.Errorf("expected non-zero system mappings")
+		}
+		if stats.Enabled == 0 {
+			return fmt.Errorf("expected non-zero enabled mappings")
+		}
+		r.log("  Stats: total=%d, enabled=%d, system=%d, custom=%d",
+			stats.Total, stats.Enabled, stats.System, stats.Custom)
+		return nil
+	})
+
+	r.runTest("Client Detection: Test Expression - Chrome Match", func() error {
+		// Test Chrome user agent detection
+		testData := map[string]string{
+			"user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+		}
+		matches, err := r.client.TestClientDetectionExpression(ctx, `user_agent contains "Chrome"`, testData)
+		if err != nil {
+			return err
+		}
+		if !matches {
+			return fmt.Errorf("expected Chrome expression to match Chrome user agent")
+		}
+		r.log("  Chrome expression matched correctly")
+		return nil
+	})
+
+	r.runTest("Client Detection: Test Expression - Safari Match", func() error {
+		// Test Safari user agent detection (Safari without Chrome)
+		testData := map[string]string{
+			"user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+		}
+		matches, err := r.client.TestClientDetectionExpression(ctx, `user_agent contains "Safari" AND user_agent not_contains "Chrome"`, testData)
+		if err != nil {
+			return err
+		}
+		if !matches {
+			return fmt.Errorf("expected Safari expression to match Safari user agent")
+		}
+		r.log("  Safari expression matched correctly")
+		return nil
+	})
+
+	r.runTest("Client Detection: Test Expression - Non-Match", func() error {
+		// Test that Firefox doesn't match Chrome rule
+		testData := map[string]string{
+			"user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
+		}
+		matches, err := r.client.TestClientDetectionExpression(ctx, `user_agent contains "Chrome"`, testData)
+		if err != nil {
+			return err
+		}
+		if matches {
+			return fmt.Errorf("expected Chrome expression to NOT match Firefox user agent")
+		}
+		r.log("  Chrome expression correctly did not match Firefox")
+		return nil
+	})
+
+	r.runTest("Client Detection: Verify Default Fallback Rule", func() error {
+		mappings, err := r.client.GetClientDetectionMappings(ctx)
+		if err != nil {
+			return err
+		}
+		// Find the fallback rule (should be last with priority 999)
+		// The fallback uses 'user_agent contains ""' which always matches (empty string in any string)
+		var fallbackFound bool
+		for _, m := range mappings {
+			if m.Priority == 999 && m.Expression == `user_agent contains ""` {
+				fallbackFound = true
+				if !m.IsSystem {
+					return fmt.Errorf("fallback rule should be a system rule")
+				}
+				if !m.IsEnabled {
+					return fmt.Errorf("fallback rule should be enabled")
+				}
+				r.log("  Found fallback rule: %s (priority %d)", m.Name, m.Priority)
+				break
+			}
+		}
+		if !fallbackFound {
+			return fmt.Errorf("expected fallback rule with priority 999 and expression 'user_agent contains \"\"'")
+		}
+		return nil
 	})
 
 	// Phase 1.5: Upload placeholder logos and create data mapping rules

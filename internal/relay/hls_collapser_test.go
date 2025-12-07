@@ -237,7 +237,7 @@ func TestNewStreamClassifier(t *testing.T) {
 	classifier := NewStreamClassifier(client)
 
 	assert.NotNil(t, classifier)
-	assert.Equal(t, 10*time.Second, classifier.timeout)
+	assert.Equal(t, 3*time.Second, classifier.timeout)
 }
 
 // Test StreamClassifier with invalid URL

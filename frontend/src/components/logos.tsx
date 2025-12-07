@@ -889,7 +889,17 @@ export function Logos() {
       });
     }
 
-    return filtered;
+    // Sort: uploaded logos first, then cached, each sorted alphabetically by name
+    // Spread to create a new array to avoid mutating state
+    return [...filtered].sort((a, b) => {
+      // Uploaded logos come first (asset_type === 'uploaded')
+      const aIsUploaded = a.asset_type === 'uploaded';
+      const bIsUploaded = b.asset_type === 'uploaded';
+      if (aIsUploaded && !bIsUploaded) return -1;
+      if (!aIsUploaded && bIsUploaded) return 1;
+      // Within same type, sort alphabetically by name
+      return a.name.localeCompare(b.name, undefined, { numeric: true });
+    });
   }, [allLogos, searchTerm, logoFilter]);
 
   const loadStats = useCallback(async () => {

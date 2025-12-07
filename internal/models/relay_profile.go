@@ -10,39 +10,154 @@ import (
 type VideoCodec string
 
 const (
-	VideoCodecCopy    VideoCodec = "copy"         // Pass-through (no transcoding)
-	VideoCodecH264    VideoCodec = "libx264"      // Software H.264
-	VideoCodecH265    VideoCodec = "libx265"      // Software H.265/HEVC
-	VideoCodecNVENC   VideoCodec = "h264_nvenc"   // NVIDIA hardware H.264
-	VideoCodecNVENCH5 VideoCodec = "hevc_nvenc"   // NVIDIA hardware HEVC
-	VideoCodecQSV     VideoCodec = "h264_qsv"     // Intel QuickSync H.264
-	VideoCodecQSVH5   VideoCodec = "hevc_qsv"     // Intel QuickSync HEVC
-	VideoCodecVAAPI   VideoCodec = "h264_vaapi"   // Linux VA-API H.264
-	VideoCodecVAAPIH5 VideoCodec = "hevc_vaapi"   // Linux VA-API HEVC
-	// Note: VP9 (libvpx-vp9) and AV1 (libaom-av1) are not supported in MPEG-TS containers
+	VideoCodecAuto VideoCodec = "auto" // Auto-detect based on client mapping rules
+	VideoCodecCopy VideoCodec = "copy" // Pass-through (no transcoding)
+	VideoCodecNone VideoCodec = "none" // No video codec (use FFmpeg flags)
+	VideoCodecH264 VideoCodec = "h264" // H.264/AVC
+	VideoCodecH265 VideoCodec = "h265" // H.265/HEVC
+	VideoCodecVP9  VideoCodec = "vp9"  // VP9 (fMP4 only)
+	VideoCodecAV1  VideoCodec = "av1"  // AV1 (fMP4 only)
 )
+
+// GetFFmpegEncoder returns the FFmpeg encoder name based on codec and hardware acceleration.
+// This maps abstract codec types to concrete FFmpeg encoder names.
+func (c VideoCodec) GetFFmpegEncoder(hwaccel HWAccelType) string {
+	switch c {
+	case VideoCodecAuto:
+		return "" // Auto requires resolution via RelayProfileMapping
+	case VideoCodecCopy:
+		return "copy"
+	case VideoCodecNone:
+		return "" // No encoder, user specifies via FFmpeg flags
+	case VideoCodecH264:
+		switch hwaccel {
+		case HWAccelNVDEC:
+			return "h264_nvenc"
+		case HWAccelQSV:
+			return "h264_qsv"
+		case HWAccelVAAPI:
+			return "h264_vaapi"
+		case HWAccelVT:
+			return "h264_videotoolbox"
+		default: // HWAccelNone, HWAccelAuto
+			return "libx264"
+		}
+	case VideoCodecH265:
+		switch hwaccel {
+		case HWAccelNVDEC:
+			return "hevc_nvenc"
+		case HWAccelQSV:
+			return "hevc_qsv"
+		case HWAccelVAAPI:
+			return "hevc_vaapi"
+		case HWAccelVT:
+			return "hevc_videotoolbox"
+		default:
+			return "libx265"
+		}
+	case VideoCodecVP9:
+		// VP9 hardware encoding is rare, default to software
+		switch hwaccel {
+		case HWAccelQSV:
+			return "vp9_qsv"
+		case HWAccelVAAPI:
+			return "vp9_vaapi"
+		default:
+			return "libvpx-vp9"
+		}
+	case VideoCodecAV1:
+		switch hwaccel {
+		case HWAccelNVDEC:
+			return "av1_nvenc"
+		case HWAccelQSV:
+			return "av1_qsv"
+		case HWAccelVAAPI:
+			return "av1_vaapi"
+		default:
+			return "libaom-av1"
+		}
+	default:
+		// Unknown codec, return as-is (might be a legacy value)
+		return string(c)
+	}
+}
+
+// IsFMP4Only returns true if this codec requires fMP4 container.
+func (c VideoCodec) IsFMP4Only() bool {
+	switch c {
+	case VideoCodecVP9, VideoCodecAV1:
+		return true
+	default:
+		return false
+	}
+}
 
 // AudioCodec represents an audio codec for transcoding.
 type AudioCodec string
 
 const (
-	AudioCodecCopy AudioCodec = "copy"       // Pass-through (no transcoding)
-	AudioCodecAAC  AudioCodec = "aac"        // AAC
-	AudioCodecMP3  AudioCodec = "libmp3lame" // MP3
-	AudioCodecAC3  AudioCodec = "ac3"        // Dolby Digital
-	AudioCodecEAC3 AudioCodec = "eac3"       // Dolby Digital Plus
-	// Note: Opus (libopus) is not supported in MPEG-TS containers
+	AudioCodecAuto AudioCodec = "auto" // Auto-detect based on client mapping rules
+	AudioCodecCopy AudioCodec = "copy" // Pass-through (no transcoding)
+	AudioCodecNone AudioCodec = "none" // No audio codec (use FFmpeg flags)
+	AudioCodecAAC  AudioCodec = "aac"  // AAC
+	AudioCodecMP3  AudioCodec = "mp3"  // MP3
+	AudioCodecAC3  AudioCodec = "ac3"  // Dolby Digital
+	AudioCodecEAC3 AudioCodec = "eac3" // Dolby Digital Plus
+	AudioCodecOpus AudioCodec = "opus" // Opus (fMP4 only)
 )
 
-// OutputFormat represents the output container format.
-type OutputFormat string
+// GetFFmpegEncoder returns the FFmpeg encoder name for this audio codec.
+func (c AudioCodec) GetFFmpegEncoder() string {
+	switch c {
+	case AudioCodecAuto:
+		return "" // Auto requires resolution via RelayProfileMapping
+	case AudioCodecCopy:
+		return "copy"
+	case AudioCodecNone:
+		return "" // No encoder, user specifies via FFmpeg flags
+	case AudioCodecAAC:
+		return "aac"
+	case AudioCodecMP3:
+		return "libmp3lame"
+	case AudioCodecAC3:
+		return "ac3"
+	case AudioCodecEAC3:
+		return "eac3"
+	case AudioCodecOpus:
+		return "libopus"
+	default:
+		// Unknown codec, return as-is (might be a legacy value)
+		return string(c)
+	}
+}
+
+// IsFMP4Only returns true if this codec requires fMP4 container.
+func (c AudioCodec) IsFMP4Only() bool {
+	switch c {
+	case AudioCodecOpus:
+		return true
+	default:
+		return false
+	}
+}
+
+// ContainerFormat represents the media container format for streaming.
+// This separates the container (TS/fMP4) from the manifest format (HLS/DASH).
+type ContainerFormat string
 
 const (
-	OutputFormatMPEGTS OutputFormat = "mpegts"  // MPEG Transport Stream
-	OutputFormatHLS    OutputFormat = "hls"     // HTTP Live Streaming
-	OutputFormatFLV    OutputFormat = "flv"     // Flash Video
-	OutputFormatMKV    OutputFormat = "matroska"
-	OutputFormatMP4    OutputFormat = "mp4"
+	// ContainerFormatAuto lets the system choose the best container based on codec and client.
+	// - fMP4 for: DASH requests, HLS requests from modern browsers (Chrome, Firefox, Edge, Safari 10+)
+	// - MPEG-TS for: explicit ?format=mpegts, legacy User-Agents, Accept header requesting video/MP2T
+	ContainerFormatAuto ContainerFormat = "auto"
+
+	// ContainerFormatFMP4 forces fragmented MP4 (CMAF) container.
+	// Required for VP9, AV1, and Opus codecs. Supports HLS v7+ and DASH.
+	ContainerFormatFMP4 ContainerFormat = "fmp4"
+
+	// ContainerFormatMPEGTS forces MPEG Transport Stream container.
+	// Maximum compatibility with legacy devices. Limited to H.264/H.265/AAC/MP3/AC3/EAC3.
+	ContainerFormatMPEGTS ContainerFormat = "mpegts"
 )
 
 // HWAccelType represents hardware acceleration type.
@@ -105,9 +220,9 @@ type RelayProfile struct {
 	GpuIndex            int         `gorm:"default:-1" json:"gpu_index"`                      // -1 = auto, 0+ = specific GPU
 
 	// Output settings
-	OutputFormat   OutputFormat `gorm:"size:50;default:'mpegts'" json:"output_format"`
-	SegmentTime    int          `gorm:"default:0" json:"segment_time,omitempty"`      // HLS segment duration (seconds)
-	PlaylistSize   int          `gorm:"default:0" json:"playlist_size,omitempty"`     // HLS playlist entries
+	ContainerFormat ContainerFormat `gorm:"size:20;default:'auto'" json:"container_format"`
+	SegmentDuration int             `gorm:"default:6" json:"segment_duration,omitempty"` // HLS/DASH segment duration (seconds), 2-10
+	PlaylistSize    int             `gorm:"default:5" json:"playlist_size,omitempty"`    // HLS/DASH playlist entries, 3-20
 
 	// Buffer and timeout settings
 	InputBufferSize  int `gorm:"default:8192" json:"input_buffer_size"`    // KB
@@ -169,6 +284,14 @@ func (p *RelayProfile) Validate() error {
 	if p.FallbackRecoveryInterval < 5 || p.FallbackRecoveryInterval > 300 {
 		p.FallbackRecoveryInterval = 30 // Reset to default if invalid
 	}
+	// Validate codec/format compatibility
+	if err := p.ValidateCodecFormat(); err != nil {
+		return err
+	}
+	// Validate segment configuration
+	if err := p.ValidateSegmentConfig(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -198,6 +321,76 @@ func (p *RelayProfile) UsesHardwareAccel() bool {
 // NeedsTranscode returns true if any transcoding is required.
 func (p *RelayProfile) NeedsTranscode() bool {
 	return p.VideoCodec != VideoCodecCopy || p.AudioCodec != AudioCodecCopy
+}
+
+// ValidateCodecFormat validates that the selected codecs are compatible with the container format.
+// VP9, AV1, and Opus codecs require fMP4 container (not MPEG-TS).
+func (p *RelayProfile) ValidateCodecFormat() error {
+	// If user explicitly requested MPEG-TS but codecs require fMP4, that's an error
+	if p.ContainerFormat == ContainerFormatMPEGTS && p.RequiresFMP4() {
+		return ErrRelayProfileCodecRequiresFMP4
+	}
+	return nil
+}
+
+// ValidateSegmentConfig validates segment duration and playlist size settings.
+func (p *RelayProfile) ValidateSegmentConfig() error {
+	// Only validate if non-zero (0 means use defaults)
+	if p.SegmentDuration != 0 && (p.SegmentDuration < 2 || p.SegmentDuration > 10) {
+		return ErrRelayProfileInvalidSegmentDuration
+	}
+	if p.PlaylistSize != 0 && (p.PlaylistSize < 3 || p.PlaylistSize > 20) {
+		return ErrRelayProfileInvalidPlaylistSize
+	}
+	return nil
+}
+
+// IsFMP4OnlyVideoCodec returns true if the codec requires fMP4 container (not compatible with MPEG-TS).
+func IsFMP4OnlyVideoCodec(codec VideoCodec) bool {
+	return codec.IsFMP4Only()
+}
+
+// IsFMP4OnlyAudioCodec returns true if the codec requires fMP4 container (not compatible with MPEG-TS).
+func IsFMP4OnlyAudioCodec(codec AudioCodec) bool {
+	return codec.IsFMP4Only()
+}
+
+// RequiresFMP4 returns true if the profile's codecs require fMP4 container.
+// VP9, AV1, and Opus codecs are not supported in MPEG-TS containers.
+func (p *RelayProfile) RequiresFMP4() bool {
+	return IsFMP4OnlyVideoCodec(p.VideoCodec) || IsFMP4OnlyAudioCodec(p.AudioCodec)
+}
+
+// DetermineContainer returns the effective container format for this profile.
+// When ContainerFormat is "auto", it selects based on codec requirements:
+// - fMP4 if codecs require it (VP9/AV1/Opus)
+// - fMP4 as modern default for H.264/H.265 (better seeking, caching)
+// - MPEG-TS only when explicitly configured or codec is "copy"
+func (p *RelayProfile) DetermineContainer() ContainerFormat {
+	// Explicit container format takes precedence (unless it conflicts with codecs)
+	if p.ContainerFormat == ContainerFormatFMP4 {
+		return ContainerFormatFMP4
+	}
+	if p.ContainerFormat == ContainerFormatMPEGTS {
+		// Even if explicitly MPEG-TS, modern codecs force fMP4
+		if p.RequiresFMP4() {
+			return ContainerFormatFMP4
+		}
+		return ContainerFormatMPEGTS
+	}
+
+	// Auto mode: determine based on codecs
+	if p.RequiresFMP4() {
+		return ContainerFormatFMP4
+	}
+
+	// For passthrough (copy), prefer MPEG-TS for maximum compatibility
+	if p.VideoCodec == VideoCodecCopy && p.AudioCodec == AudioCodecCopy {
+		return ContainerFormatMPEGTS
+	}
+
+	// Default to fMP4 for modern codecs (better seeking, HLS v7 support)
+	return ContainerFormatFMP4
 }
 
 // Clone creates a copy of the profile suitable for customization.

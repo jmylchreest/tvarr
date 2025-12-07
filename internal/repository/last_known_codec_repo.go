@@ -120,6 +120,12 @@ func (r *lastKnownCodecRepository) DeleteExpired(ctx context.Context) (int64, er
 	return result.RowsAffected, result.Error
 }
 
+// DeleteAll deletes all codec cache entries.
+func (r *lastKnownCodecRepository) DeleteAll(ctx context.Context) (int64, error) {
+	result := r.db.WithContext(ctx).Where("1 = 1").Delete(&models.LastKnownCodec{})
+	return result.RowsAffected, result.Error
+}
+
 // Touch updates the access time and increments hit count for a stream URL.
 func (r *lastKnownCodecRepository) Touch(ctx context.Context, streamURL string) error {
 	now := models.Now()

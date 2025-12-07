@@ -508,6 +508,49 @@ func (b *CommandBuilder) HLSArgs(segmentTime int, playlistSize int) *CommandBuil
 	return b
 }
 
+// FMP4Args adds fragmented MP4 (CMAF) output arguments for live streaming.
+// This configures FFmpeg to output fMP4 segments suitable for HLS v7+ and DASH.
+// fragDuration is the target fragment duration in seconds (typically matches segment duration).
+func (b *CommandBuilder) FMP4Args(fragDuration float64) *CommandBuilder {
+	// -f mp4: Use MP4 muxer
+	// -movflags: Control MP4 fragmentation behavior
+	//   - frag_keyframe: Start a new fragment at each keyframe (critical for seeking)
+	//   - empty_moov: Create an empty moov box and move atoms to moof/mdat pairs
+	//                 This is essential for streaming as it allows playback to start
+	//                 before the entire file is written
+	//   - default_base_moof: Use moof as base for data offsets (more compatible)
+	//   - skip_trailer: Don't write the trailer (not needed for live streaming)
+	//   - cmaf: Enable CMAF compliance mode for maximum compatibility
+	b.outputArgs = append(b.outputArgs,
+		"-f", "mp4",
+		"-movflags", "frag_keyframe+empty_moov+default_base_moof+skip_trailer+cmaf",
+	)
+
+	// Set fragment duration if specified
+	// This creates fragments of approximately this duration
+	if fragDuration > 0 {
+		// frag_duration is in microseconds
+		fragDurationUs := int(fragDuration * 1000000)
+		b.outputArgs = append(b.outputArgs, "-frag_duration", strconv.Itoa(fragDurationUs))
+	}
+
+	return b
+}
+
+// FMP4ArgsWithMinFrag adds fMP4 output arguments with minimum fragment duration.
+// This variant also sets min_frag_duration to prevent very short fragments.
+func (b *CommandBuilder) FMP4ArgsWithMinFrag(fragDuration, minFragDuration float64) *CommandBuilder {
+	b.FMP4Args(fragDuration)
+
+	if minFragDuration > 0 {
+		// min_frag_duration is in microseconds
+		minFragDurationUs := int(minFragDuration * 1000000)
+		b.outputArgs = append(b.outputArgs, "-min_frag_duration", strconv.Itoa(minFragDurationUs))
+	}
+
+	return b
+}
+
 // Output sets the output destination.
 func (b *CommandBuilder) Output(output string) *CommandBuilder {
 	b.output = output

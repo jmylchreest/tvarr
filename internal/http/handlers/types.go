@@ -467,7 +467,7 @@ func StreamProxyDetailFromModel(p *models.StreamProxy, baseURL string) StreamPro
 type CreateStreamProxyRequest struct {
 	Name                  string                 `json:"name" doc:"Unique name for the proxy" minLength:"1" maxLength:"255"`
 	Description           string                 `json:"description,omitempty" doc:"Optional description" maxLength:"1024"`
-	ProxyMode             models.StreamProxyMode `json:"proxy_mode,omitempty" doc:"How to serve streams: redirect, proxy, or relay" enum:"redirect,proxy,relay"`
+	ProxyMode             models.StreamProxyMode `json:"proxy_mode,omitempty" doc:"How to serve streams: direct (302 redirect) or smart (auto-optimize)" enum:"direct,smart"`
 	IsActive              *bool                  `json:"is_active,omitempty" doc:"Whether the proxy is active (default: true)"`
 	AutoRegenerate        *bool                  `json:"auto_regenerate,omitempty" doc:"Auto-regenerate when sources change (default: false)"`
 	StartingChannelNumber *int                   `json:"starting_channel_number,omitempty" doc:"Base channel number (default: 1)"`
@@ -488,7 +488,7 @@ func (r *CreateStreamProxyRequest) ToModel() *models.StreamProxy {
 	proxy := &models.StreamProxy{
 		Name:                  r.Name,
 		Description:           r.Description,
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect, // Default
 		IsActive:              true,
 		AutoRegenerate:        false,
 		StartingChannelNumber: 1,
@@ -499,7 +499,7 @@ func (r *CreateStreamProxyRequest) ToModel() *models.StreamProxy {
 		CacheProgramLogos:     true,
 		OutputPath:            r.OutputPath,
 	}
-	if r.ProxyMode != "" {
+	if r.ProxyMode != "" && models.IsValidProxyMode(r.ProxyMode) {
 		proxy.ProxyMode = r.ProxyMode
 	}
 	if r.IsActive != nil {
@@ -536,7 +536,7 @@ func (r *CreateStreamProxyRequest) ToModel() *models.StreamProxy {
 type UpdateStreamProxyRequest struct {
 	Name                  *string                 `json:"name,omitempty" doc:"Unique name for the proxy" maxLength:"255"`
 	Description           *string                 `json:"description,omitempty" doc:"Optional description" maxLength:"1024"`
-	ProxyMode             *models.StreamProxyMode `json:"proxy_mode,omitempty" doc:"How to serve streams" enum:"redirect,proxy,relay"`
+	ProxyMode             *models.StreamProxyMode `json:"proxy_mode,omitempty" doc:"How to serve streams: direct (302 redirect) or smart (auto-optimize)" enum:"direct,smart"`
 	IsActive              *bool                   `json:"is_active,omitempty" doc:"Whether the proxy is active"`
 	AutoRegenerate        *bool                   `json:"auto_regenerate,omitempty" doc:"Auto-regenerate when sources change"`
 	StartingChannelNumber *int                    `json:"starting_channel_number,omitempty" doc:"Base channel number"`
@@ -560,7 +560,7 @@ func (r *UpdateStreamProxyRequest) ApplyToModel(p *models.StreamProxy) {
 	if r.Description != nil {
 		p.Description = *r.Description
 	}
-	if r.ProxyMode != nil {
+	if r.ProxyMode != nil && models.IsValidProxyMode(*r.ProxyMode) {
 		p.ProxyMode = *r.ProxyMode
 	}
 	if r.IsActive != nil {

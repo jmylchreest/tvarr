@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -458,19 +459,38 @@ type StreamClassifier struct {
 func NewStreamClassifier(client *http.Client) *StreamClassifier {
 	return &StreamClassifier{
 		client:  client,
-		timeout: 10 * time.Second,
+		timeout: 3 * time.Second, // Reduced from 10s for faster startup
 	}
 }
 
 // Classify classifies a stream URL using gohlslib for track detection.
 func (c *StreamClassifier) Classify(ctx context.Context, streamURL string) ClassificationResult {
 	result := ClassificationResult{
-		Mode:    StreamModeUnknown,
-		Reasons: []string{},
+		Mode:         StreamModeUnknown,
+		SourceFormat: SourceFormatUnknown,
+		Reasons:      []string{},
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
+
+	// Check for DASH streams first (by URL extension)
+	if isDASHURL(streamURL) {
+		return c.classifyDASH(ctx, streamURL, &result)
+	}
+
+	// Check for raw MPEG-TS streams (by URL extension) - skip HLS probing
+	if isMPEGTSURL(streamURL) {
+		result.SourceFormat = SourceFormatMPEGTS
+		result.Mode = StreamModePassthroughRawTS
+		result.Reasons = append(result.Reasons, "Raw MPEG-TS detected by extension")
+		return result
+	}
+
+	// Check for HLS streams (by URL extension or probing)
+	if isHLSURL(streamURL) {
+		result.SourceFormat = SourceFormatHLS
+	}
 
 	// Try to start a gohlslib client to detect tracks
 	tracksCh := make(chan []*gohlslib.Track, 1)
@@ -505,14 +525,79 @@ func (c *StreamClassifier) Classify(ctx context.Context, streamURL string) Class
 	// Wait for tracks or timeout
 	select {
 	case tracks := <-tracksCh:
+		// Confirmed as HLS if we got tracks
+		result.SourceFormat = SourceFormatHLS
 		return c.classifyTracks(tracks, &result)
 	case err := <-errCh:
 		result.Reasons = append(result.Reasons, fmt.Sprintf("Client error: %v", err))
+		// If HLS detection failed, check if it might be raw MPEG-TS
+		if result.SourceFormat == SourceFormatUnknown {
+			result.SourceFormat = SourceFormatMPEGTS
+			result.Mode = StreamModePassthroughRawTS
+			result.Reasons = append(result.Reasons, "Not HLS/DASH, assuming MPEG-TS")
+		}
 		return result
 	case <-ctx.Done():
 		result.Reasons = append(result.Reasons, "Classification timeout")
 		return result
 	}
+}
+
+// classifyDASH classifies a DASH stream by probing the manifest.
+func (c *StreamClassifier) classifyDASH(ctx context.Context, streamURL string, result *ClassificationResult) ClassificationResult {
+	result.SourceFormat = SourceFormatDASH
+	result.Mode = StreamModePassthroughDASH
+	result.Reasons = append(result.Reasons, "DASH manifest detected")
+
+	// Probe the manifest to verify it's accessible
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, streamURL, nil)
+	if err != nil {
+		result.Mode = StreamModeUnknown
+		result.Reasons = append(result.Reasons, fmt.Sprintf("Failed to create request: %v", err))
+		return *result
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		result.Mode = StreamModeUnknown
+		result.Reasons = append(result.Reasons, fmt.Sprintf("Failed to probe DASH manifest: %v", err))
+		return *result
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		result.Mode = StreamModeUnknown
+		result.Reasons = append(result.Reasons, fmt.Sprintf("DASH manifest returned status %d", resp.StatusCode))
+		return *result
+	}
+
+	result.Reasons = append(result.Reasons, "DASH manifest accessible, using passthrough proxy")
+	return *result
+}
+
+// isDASHURL checks if the URL is a DASH manifest based on extension.
+func isDASHURL(streamURL string) bool {
+	// Check for common DASH manifest extensions
+	lowerURL := strings.ToLower(streamURL)
+	return strings.HasSuffix(lowerURL, ".mpd") ||
+		strings.Contains(lowerURL, ".mpd?") ||
+		strings.Contains(lowerURL, "/manifest(format=mpd")
+}
+
+// isHLSURL checks if the URL is an HLS playlist based on extension.
+func isHLSURL(streamURL string) bool {
+	lowerURL := strings.ToLower(streamURL)
+	return strings.HasSuffix(lowerURL, ".m3u8") ||
+		strings.HasSuffix(lowerURL, ".m3u") ||
+		strings.Contains(lowerURL, ".m3u8?") ||
+		strings.Contains(lowerURL, ".m3u?")
+}
+
+// isMPEGTSURL checks if the URL is a raw MPEG-TS stream based on extension.
+func isMPEGTSURL(streamURL string) bool {
+	lowerURL := strings.ToLower(streamURL)
+	return strings.HasSuffix(lowerURL, ".ts") ||
+		strings.Contains(lowerURL, ".ts?")
 }
 
 // classifyTracks analyzes discovered tracks.

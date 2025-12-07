@@ -15,7 +15,10 @@ import {
   Zap,
   Check,
   Table as TableIcon,
+  Trash2,
+  Loader2,
 } from 'lucide-react';
+import { apiClient } from '@/lib/api-client';
 import {
   Select,
   SelectContent,
@@ -143,6 +146,7 @@ export default function ChannelsPage() {
   const isSearchChangeRef = useRef(false);
   const [detailsChannel, setDetailsChannel] = useState<Channel | null>(null);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const [clearingCache, setClearingCache] = useState(false);
 
   // No longer need proxy resolution - only using direct stream sources
   // Fetch stream sources (id + name) for reliable ID-based filtering
@@ -447,6 +451,42 @@ export default function ChannelsPage() {
         newSet.delete(channel.id);
         return newSet;
       });
+    }
+  };
+
+  const handleClearCodecCache = async () => {
+    if (clearingCache) return;
+
+    try {
+      setClearingCache(true);
+      const result = await apiClient.clearLastKnownCodecs();
+      Debug.log('[Channels] Cleared codec cache:', result);
+
+      // Clear the codec info from displayed channels to reflect cache clear
+      setChannels((prev) =>
+        prev.map((ch) => ({
+          ...ch,
+          video_codec: undefined,
+          audio_codec: undefined,
+          resolution: undefined,
+          last_probed_at: undefined,
+          probe_method: undefined,
+          container_format: undefined,
+          video_width: undefined,
+          video_height: undefined,
+          framerate: undefined,
+          bitrate: null,
+          video_bitrate: null,
+          audio_bitrate: null,
+          audio_channels: null,
+          audio_sample_rate: null,
+          probe_source: undefined,
+        }))
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to clear codec cache');
+    } finally {
+      setClearingCache(false);
     }
   };
 
@@ -936,6 +976,27 @@ export default function ChannelsPage() {
                   <List className="w-4 h-4" />
                 </Button>
               </div>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    onClick={handleClearCodecCache}
+                    disabled={clearingCache}
+                    className="gap-2"
+                  >
+                    {clearingCache ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-4 h-4" />
+                    )}
+                    <span className="hidden sm:inline">Clear Probe Cache</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Clear all cached codec probe results. Streams will be re-probed on next access.</p>
+                </TooltipContent>
+              </Tooltip>
             </div>
           </CardContent>
         </Card>

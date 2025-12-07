@@ -23,6 +23,9 @@ export interface PaginatedResponse<T> {
 // Added 'manual' to align with backend enum (m3u | xtream | manual)
 export type StreamSourceType = 'm3u' | 'xtream' | 'manual';
 
+// Source status represents the ingestion state
+export type SourceStatus = 'pending' | 'ingesting' | 'success' | 'failed';
+
 // Manual channel definition (only used when source_type === 'manual')
 export interface ManualChannelInput {
   channel_number?: number;
@@ -48,9 +51,11 @@ export interface StreamSource {
   ignore_channel_numbers: boolean;
   created_at: string;
   updated_at: string;
-  is_active: boolean;
+  enabled: boolean;
+  status: SourceStatus;
   field_map?: string;
   last_ingestion_at?: string;
+  last_error?: string;
   username?: string;
   password?: string;
   // (Optional future extension) manual_channels?: ManualChannelInput[];  // not included in current backend list response
@@ -75,8 +80,10 @@ export interface EpgSource {
   time_offset: string;
   created_at: string;
   updated_at: string;
-  is_active: boolean;
+  enabled: boolean;
+  status: SourceStatus;
   last_ingestion_at?: string;
+  last_error?: string;
   original_timezone?: string;
   username?: string;
   password?: string;
@@ -94,7 +101,7 @@ export interface EpgSourceResponse extends EpgSource {
 export interface StreamProxy {
   id: string;
   name: string;
-  proxy_mode: string;
+  proxy_mode: ProxyMode;
   starting_channel_number: number;
   is_active: boolean;
   auto_regenerate: boolean;
@@ -171,8 +178,11 @@ export interface FilterWithMeta {
 // Backend uses FFmpeg codec names like 'libx264', 'libx265', 'copy', 'aac', etc.
 export type VideoCodec = string;
 export type AudioCodec = string;
-export type RelayOutputFormat = string;
+export type ContainerFormat = 'auto' | 'fmp4' | 'mpegts';
 export type HWAccelType = string;
+
+// Proxy mode: 'direct' = 302 redirect, 'smart' = intelligent delivery
+export type ProxyMode = 'direct' | 'smart';
 
 export interface RelayProfile {
   id: string;
@@ -194,7 +204,7 @@ export interface RelayProfile {
   hw_accel_decoder_codec?: string;
   hw_accel_extra_options?: string;
   gpu_index?: number;
-  output_format: RelayOutputFormat;
+  container_format: ContainerFormat;
   input_options?: string;
   output_options?: string;
   filter_complex?: string;
@@ -241,7 +251,7 @@ export interface CreateRelayProfileRequest {
   input_options?: string;
   output_options?: string;
   filter_complex?: string;
-  output_format?: RelayOutputFormat;
+  container_format?: ContainerFormat;
   is_default?: boolean;
   fallback_enabled?: boolean;
   fallback_error_threshold?: number;
@@ -272,7 +282,7 @@ export interface UpdateRelayProfileRequest {
   input_options?: string;
   output_options?: string;
   filter_complex?: string;
-  output_format?: RelayOutputFormat;
+  container_format?: ContainerFormat;
   enabled?: boolean;
   fallback_enabled?: boolean;
   fallback_error_threshold?: number;
@@ -726,7 +736,7 @@ export interface CreateEpgSourceRequest {
 
 export interface CreateStreamProxyRequest {
   name: string;
-  proxy_mode: string;
+  proxy_mode: ProxyMode;
   starting_channel_number: number;
   stream_sources: ProxySourceRequest[];
   epg_sources: ProxyEpgSourceRequest[];
@@ -743,7 +753,7 @@ export interface CreateStreamProxyRequest {
 
 export interface UpdateStreamProxyRequest {
   name: string;
-  proxy_mode: string;
+  proxy_mode: ProxyMode;
   starting_channel_number: number;
   stream_sources: ProxySourceRequest[];
   epg_sources: ProxyEpgSourceRequest[];
@@ -971,4 +981,79 @@ export interface ExpressionEditorConfig {
   sourceType: 'stream' | 'epg';
   debounceMs?: number;
   showTestResults?: boolean;
+}
+
+// Relay Profile Mapping Types (Client Auto-Detection)
+export interface RelayProfileMapping {
+  id: string;
+  name: string;
+  description?: string;
+  expression: string;
+  priority: number;
+  is_enabled: boolean;
+  is_system: boolean;
+  // Accepted codecs (array of codec strings the client can handle)
+  accepted_video_codecs: string[];
+  accepted_audio_codecs: string[];
+  accepted_containers: string[];
+  // Preferred codecs when transcoding is needed
+  preferred_video_codec: VideoCodec;
+  preferred_audio_codec: AudioCodec;
+  preferred_container: ContainerFormat;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RelayProfileMappingListResponse {
+  mappings: RelayProfileMapping[];
+}
+
+export interface RelayProfileMappingStats {
+  total: number;
+  enabled: number;
+  system: number;
+  custom: number;
+}
+
+export interface CreateRelayProfileMappingRequest {
+  name: string;
+  description?: string;
+  expression: string;
+  priority?: number;
+  is_enabled?: boolean;
+  accepted_video_codecs?: string[];
+  accepted_audio_codecs?: string[];
+  accepted_containers?: string[];
+  preferred_video_codec?: VideoCodec;
+  preferred_audio_codec?: AudioCodec;
+  preferred_container?: ContainerFormat;
+}
+
+export interface UpdateRelayProfileMappingRequest {
+  name?: string;
+  description?: string;
+  expression?: string;
+  priority?: number;
+  is_enabled?: boolean;
+  accepted_video_codecs?: string[];
+  accepted_audio_codecs?: string[];
+  accepted_containers?: string[];
+  preferred_video_codec?: VideoCodec;
+  preferred_audio_codec?: AudioCodec;
+  preferred_container?: ContainerFormat;
+}
+
+export interface ReorderMappingRequest {
+  id: string;
+  priority: number;
+}
+
+export interface TestMappingExpressionRequest {
+  expression: string;
+  test_data: Record<string, string>;
+}
+
+export interface TestMappingExpressionResponse {
+  matches: boolean;
+  error?: string;
 }

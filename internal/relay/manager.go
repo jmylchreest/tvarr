@@ -138,7 +138,8 @@ func (m *Manager) FallbackGenerator() *FallbackGenerator {
 }
 
 // GetOrCreateSession gets an existing session for the channel or creates a new one.
-func (m *Manager) GetOrCreateSession(ctx context.Context, channelID uuid.UUID, channelName string, streamURL string, profile *models.RelayProfile) (*RelaySession, error) {
+// channelUpdatedAt is used to invalidate stale codec cache entries.
+func (m *Manager) GetOrCreateSession(ctx context.Context, channelID uuid.UUID, channelName string, streamURL string, profile *models.RelayProfile, channelUpdatedAt time.Time) (*RelaySession, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -163,7 +164,7 @@ func (m *Manager) GetOrCreateSession(ctx context.Context, channelID uuid.UUID, c
 	}
 
 	// Create new session
-	session, err := m.createSession(ctx, channelID, channelName, streamURL, profile)
+	session, err := m.createSession(ctx, channelID, channelName, streamURL, profile, channelUpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -244,6 +245,14 @@ func (m *Manager) HTTPClient() *http.Client {
 // GetOrProbeCodecInfo retrieves cached codec info or probes the stream.
 // Returns nil if probing is not available or fails (non-fatal).
 func (m *Manager) GetOrProbeCodecInfo(ctx context.Context, streamURL string) *models.LastKnownCodec {
+	return m.GetOrProbeCodecInfoWithFreshness(ctx, streamURL, time.Time{})
+}
+
+// GetOrProbeCodecInfoWithFreshness retrieves cached codec info or probes the stream.
+// If mustBeNewerThan is non-zero, cached entries older than this are considered stale.
+// This allows forcing a re-probe when the channel has been updated.
+// Returns nil if probing is not available or fails (non-fatal).
+func (m *Manager) GetOrProbeCodecInfoWithFreshness(ctx context.Context, streamURL string, mustBeNewerThan time.Time) *models.LastKnownCodec {
 	// If no prober available, skip
 	if m.prober == nil {
 		return nil
@@ -253,17 +262,26 @@ func (m *Manager) GetOrProbeCodecInfo(ctx context.Context, streamURL string) *mo
 	if m.config.CodecRepo != nil {
 		cached, err := m.config.CodecRepo.GetByStreamURL(ctx, streamURL)
 		if err == nil && cached != nil && !cached.IsExpired() && cached.IsValid() {
-			// Update hit count in background
-			go func() {
-				if touchErr := m.config.CodecRepo.Touch(context.Background(), streamURL); touchErr != nil {
-					m.logger.Debug("Failed to touch codec cache", slog.String("error", touchErr.Error()))
-				}
-			}()
-			m.logger.Debug("Using cached codec info",
-				slog.String("stream_url", streamURL),
-				slog.String("video_codec", cached.VideoCodec),
-				slog.String("audio_codec", cached.AudioCodec))
-			return cached
+			// Check freshness - if cache is older than mustBeNewerThan, treat as stale
+			if !mustBeNewerThan.IsZero() && time.Time(cached.ProbedAt).Before(mustBeNewerThan) {
+				m.logger.Debug("Cached codec info is stale (older than channel update), will re-probe",
+					slog.String("stream_url", streamURL),
+					slog.Time("probed_at", time.Time(cached.ProbedAt)),
+					slog.Time("must_be_newer_than", mustBeNewerThan))
+				// Continue to re-probe below
+			} else {
+				// Update hit count in background
+				go func() {
+					if touchErr := m.config.CodecRepo.Touch(context.Background(), streamURL); touchErr != nil {
+						m.logger.Debug("Failed to touch codec cache", slog.String("error", touchErr.Error()))
+					}
+				}()
+				m.logger.Debug("Using cached codec info",
+					slog.String("stream_url", streamURL),
+					slog.String("video_codec", cached.VideoCodec),
+					slog.String("audio_codec", cached.AudioCodec))
+				return cached
+			}
 		}
 	}
 
@@ -341,7 +359,8 @@ func (m *Manager) GetOrProbeCodecInfo(ctx context.Context, streamURL string) *mo
 }
 
 // createSession creates a new relay session.
-func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, channelName string, streamURL string, profile *models.RelayProfile) (*RelaySession, error) {
+// channelUpdatedAt is used to invalidate stale codec cache entries.
+func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, channelName string, streamURL string, profile *models.RelayProfile, channelUpdatedAt time.Time) (*RelaySession, error) {
 	// Check circuit breaker
 	cb := m.circuitBreakers.Get(streamURL)
 	if !cb.Allow() {
@@ -358,8 +377,9 @@ func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, channe
 	}
 
 	// Pre-probe codec info for faster FFmpeg startup
+	// Use channelUpdatedAt to invalidate stale cache entries (e.g., after channel re-ingestion)
 	// This is non-blocking - if probe fails, we continue without cached info
-	codecInfo := m.GetOrProbeCodecInfo(ctx, probeURL)
+	codecInfo := m.GetOrProbeCodecInfoWithFreshness(ctx, probeURL, channelUpdatedAt)
 
 	sessionCtx, sessionCancel := context.WithCancel(m.ctx)
 

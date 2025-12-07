@@ -975,12 +975,6 @@ export function Filters() {
                                   </Badge>
                                 )}
                               </div>
-                              {filter.priority > 0 && (
-                                <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                                  <Hash className="h-3 w-3" />
-                                  Priority: {filter.priority}
-                                </div>
-                              )}
                             </div>
                             <div className="flex items-center gap-2">
                               {filter.expression && (
@@ -1110,13 +1104,6 @@ export function Filters() {
                         </CardHeader>
                         <CardContent>
                           <div className="space-y-4">
-                            {filter.priority > 0 && (
-                              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                                <Hash className="h-4 w-4" />
-                                <span>Priority: {filter.priority}</span>
-                              </div>
-                            )}
-
                             <div className="text-xs text-muted-foreground">
                               Created {formatRelativeTime(filter.created_at || '')}
                             </div>
@@ -1253,12 +1240,6 @@ export function Filters() {
                                     {!filter.is_enabled && (
                                       <Badge variant="outline" className="text-xs text-muted-foreground">
                                         Disabled
-                                      </Badge>
-                                    )}
-                                    {filter.priority > 0 && (
-                                      <Badge variant="secondary" className="text-xs">
-                                        <Hash className="h-3 w-3 mr-1" />
-                                        P{filter.priority}
                                       </Badge>
                                     )}
                                   </div>

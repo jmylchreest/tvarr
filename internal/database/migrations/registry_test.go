@@ -26,13 +26,32 @@ func setupTestDB(t *testing.T) *gorm.DB {
 func TestAllMigrations_ReturnsExpectedCount(t *testing.T) {
 	migrations := AllMigrations()
 
-	// We have 23 migrations: 3 for stream sources, 2 for EPG, 5 for proxy, 3 for filters/rules,
-	// 2 for relay, 1 for is_system column, 1 for EPG timezone fields, 1 for channel index fix,
-	// 1 for renaming order->priority in proxy_filters/proxy_mapping_rules,
-	// 1 for EPG api_method column, 1 for jobs and job_history tables,
-	// 1 for hls_collapse column, 1 for FFmpeg profile configuration extensions
-	// (Logo caching uses file-based storage with in-memory indexing, no database tables)
-	assert.Len(t, migrations, 23)
+	// We have 34 migrations:
+	// 001-003: stream sources, channels, manual_stream_channels
+	// 004-005: EPG sources and programs
+	// 006-010: proxy tables and joins
+	// 011-013: filters and data mapping rules
+	// 014-015: relay profiles
+	// 016: is_system column
+	// 017: EPG timezone fields
+	// 018: channel index fix
+	// 019: priority rename
+	// 020: api_method column
+	// 021: jobs and job_history
+	// 022: hls_collapse column
+	// 023: FFmpeg profile configuration extensions
+	// 024: hwaccel for system profiles
+	// 025: last_known_codecs table
+	// 026: force transcode flags
+	// 027: segment_duration rename
+	// 028: container_format for CMAF
+	// 029: smart delivery proxy modes
+	// 030: simplified system profiles
+	// 031: simplify codec values to abstract types
+	// 032: cleanup legacy profiles and ensure default
+	// 033: Automatic profile, rename Efficiency/Universal, add VP9/Opus and AV1/Opus
+	// 034: relay_profile_mappings table with default client detection rules
+	assert.Len(t, migrations, 34)
 }
 
 func TestAllMigrations_VersionsAreUnique(t *testing.T) {
@@ -105,7 +124,7 @@ func TestMigrator_Status(t *testing.T) {
 	// Before running migrations
 	statuses, err := migrator.Status(ctx)
 	require.NoError(t, err)
-	assert.Len(t, statuses, 23)
+	assert.Len(t, statuses, 34)
 
 	for _, s := range statuses {
 		assert.False(t, s.Applied)
@@ -136,15 +155,18 @@ func TestMigrator_Down_RollsBackLastMigration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Roll back migrations one by one until we've removed data_mapping_rules and filters tables
-	// Current order (23 migrations): 023 (FFmpeg profile config), 022 (hls_collapse), 021 (jobs),
+	// Current order (34 migrations): 034 (relay profile mappings), 033 (Automatic profile),
+	// 032 (cleanup legacy), 031 (simplify codecs), 030-028 (CMAF/smart delivery),
+	// 027-023 (segment rename through FFmpeg config), 022 (hls_collapse), 021 (jobs),
 	// 020 (api_method), 019 (priority rename), 018 (channel index fix), 017 (EPG timezone),
 	// 016 (is_system), 015 (default relay profiles), 014 (relay_profiles table),
 	// 013 (default filters/rules), 012 (data_mapping_rules), 011 (filters)
 
-	// Roll back 023-013 (11 migrations: FFmpeg profile config, hls_collapse, jobs, api_method,
-	// priority rename, channel index, EPG timezone, is_system, default relay profiles,
-	// relay profiles table, default filters/rules)
-	for i := 0; i < 11; i++ {
+	// Roll back 034-013 (22 migrations: relay profile mappings, Automatic profile, cleanup legacy,
+	// simplify codecs, CMAF/smart delivery 028-030, segment rename, force transcode, codecs table,
+	// hwaccel, FFmpeg profile config, hls_collapse, jobs, api_method, priority rename, channel index,
+	// EPG timezone, is_system, default relay profiles, relay profiles table, default filters/rules)
+	for i := 0; i < 22; i++ {
 		err = migrator.Down(ctx)
 		require.NoError(t, err)
 	}
@@ -177,7 +199,7 @@ func TestMigrator_Pending(t *testing.T) {
 	// All should be pending initially
 	pending, err := migrator.Pending(ctx)
 	require.NoError(t, err)
-	assert.Len(t, pending, 23)
+	assert.Len(t, pending, 34)
 
 	// Run migrations
 	err = migrator.Up(ctx)
@@ -222,7 +244,7 @@ func TestMigrations_CanInsertData(t *testing.T) {
 	// Test StreamProxy insert
 	proxy := &models.StreamProxy{
 		Name:                  "Test Proxy",
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
 	}
 	err = db.Create(proxy).Error
@@ -269,7 +291,7 @@ func TestMigrations_StreamProxyRelationships(t *testing.T) {
 
 	proxy := &models.StreamProxy{
 		Name:                  "Multi-Source Proxy",
-		ProxyMode:             models.StreamProxyModeProxy,
+		ProxyMode:             models.StreamProxyModeSmart,
 		StartingChannelNumber: 100,
 	}
 	require.NoError(t, db.Create(proxy).Error)

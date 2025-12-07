@@ -101,6 +101,15 @@ func (h *RelayProfileHandler) Register(api huma.API) {
 	}, h.GetFFmpegInfo)
 
 	huma.Register(api, huma.Operation{
+		OperationID: "getAvailableCodecs",
+		Method:      "GET",
+		Path:        "/api/v1/relay/codecs",
+		Summary:     "Get available codecs",
+		Description: "Returns available video and audio codecs, optionally filtered by output format. DASH-only codecs (VP9, AV1, Opus) are marked and excluded from non-DASH format results.",
+		Tags:        []string{"Relay Profiles"},
+	}, h.GetAvailableCodecs)
+
+	huma.Register(api, huma.Operation{
 		OperationID: "getRelayStats",
 		Method:      "GET",
 		Path:        "/api/v1/relay/stats",
@@ -194,7 +203,7 @@ type RelayProfileResponse struct {
 	HWAccelDecoderCodec      string `json:"hw_accel_decoder_codec,omitempty"`
 	HWAccelExtraOptions      string `json:"hw_accel_extra_options,omitempty"`
 	GpuIndex                 int    `json:"gpu_index,omitempty"`
-	OutputFormat             string `json:"output_format"`
+	ContainerFormat          string `json:"container_format"`
 	InputOptions             string `json:"input_options,omitempty" doc:"Custom FFmpeg input options"`
 	OutputOptions            string `json:"output_options,omitempty" doc:"Custom FFmpeg output options"`
 	FilterComplex            string `json:"filter_complex,omitempty" doc:"Custom filter complex string"`
@@ -240,7 +249,7 @@ func RelayProfileFromModel(p *models.RelayProfile) RelayProfileResponse {
 		HWAccelDecoderCodec:      p.HWAccelDecoderCodec,
 		HWAccelExtraOptions:      p.HWAccelExtraOptions,
 		GpuIndex:                 p.GpuIndex,
-		OutputFormat:             string(p.OutputFormat),
+		ContainerFormat:          string(p.ContainerFormat),
 		InputOptions:             p.InputOptions,
 		OutputOptions:            p.OutputOptions,
 		FilterComplex:            p.FilterComplex,
@@ -372,7 +381,7 @@ type CreateRelayProfileInput struct {
 		HWAccelDecoderCodec string `json:"hw_accel_decoder_codec,omitempty" doc:"Hardware acceleration decoder codec"`
 		HWAccelExtraOptions string `json:"hw_accel_extra_options,omitempty" doc:"Extra hardware acceleration options"`
 		GpuIndex            int    `json:"gpu_index,omitempty" doc:"GPU device index (-1 for auto)"`
-		OutputFormat        string `json:"output_format,omitempty" doc:"Output format (mpegts, hls, flv, mp4)"`
+		ContainerFormat     string `json:"container_format,omitempty" doc:"Container format (auto, fmp4, mpegts)"`
 		InputOptions        string `json:"input_options,omitempty" doc:"Custom FFmpeg input options"`
 		OutputOptions       string `json:"output_options,omitempty" doc:"Custom FFmpeg output options"`
 		FilterComplex            string `json:"filter_complex,omitempty" doc:"Custom filter complex string"`
@@ -425,7 +434,7 @@ func (h *RelayProfileHandler) Create(ctx context.Context, input *CreateRelayProf
 		HWAccelDecoderCodec:  input.Body.HWAccelDecoderCodec,
 		HWAccelExtraOptions:  input.Body.HWAccelExtraOptions,
 		GpuIndex:             input.Body.GpuIndex,
-		OutputFormat:         models.OutputFormat(input.Body.OutputFormat),
+		ContainerFormat:      models.ContainerFormat(input.Body.ContainerFormat),
 		InputOptions:         input.Body.InputOptions,
 		OutputOptions:        input.Body.OutputOptions,
 		FilterComplex:        input.Body.FilterComplex,
@@ -455,8 +464,8 @@ func (h *RelayProfileHandler) Create(ctx context.Context, input *CreateRelayProf
 	if profile.HWAccel == "" {
 		profile.HWAccel = models.HWAccelNone
 	}
-	if profile.OutputFormat == "" {
-		profile.OutputFormat = models.OutputFormatMPEGTS
+	if profile.ContainerFormat == "" {
+		profile.ContainerFormat = models.ContainerFormatAuto
 	}
 	// Default GPU index to -1 (auto)
 	if profile.GpuIndex == 0 && input.Body.GpuIndex == 0 {
@@ -494,7 +503,7 @@ type UpdateRelayProfileInput struct {
 		HWAccelDecoderCodec *string `json:"hw_accel_decoder_codec,omitempty" doc:"Hardware acceleration decoder codec"`
 		HWAccelExtraOptions *string `json:"hw_accel_extra_options,omitempty" doc:"Extra hardware acceleration options"`
 		GpuIndex            *int    `json:"gpu_index,omitempty" doc:"GPU device index (-1 for auto)"`
-		OutputFormat        string  `json:"output_format,omitempty" doc:"Output format"`
+		ContainerFormat     string  `json:"container_format,omitempty" doc:"Container format (auto, fmp4, mpegts)"`
 		InputOptions        *string `json:"input_options,omitempty" doc:"Custom FFmpeg input options"`
 		OutputOptions            *string `json:"output_options,omitempty" doc:"Custom FFmpeg output options"`
 		FilterComplex            *string `json:"filter_complex,omitempty" doc:"Custom filter complex string"`
@@ -536,7 +545,7 @@ func (h *RelayProfileHandler) Update(ctx context.Context, input *UpdateRelayProf
 			input.Body.VideoMaxrate != 0 || input.Body.VideoPreset != "" ||
 			input.Body.VideoWidth != 0 || input.Body.VideoHeight != 0 ||
 			input.Body.AudioSampleRate != 0 || input.Body.AudioChannels != 0 ||
-			input.Body.HWAccel != "" || input.Body.OutputFormat != "" ||
+			input.Body.HWAccel != "" || input.Body.ContainerFormat != "" ||
 			input.Body.InputOptions != nil || input.Body.OutputOptions != nil ||
 			input.Body.FilterComplex != nil || input.Body.HWAccelDevice != nil ||
 			input.Body.HWAccelOutputFormat != nil || input.Body.HWAccelDecoderCodec != nil ||
@@ -603,8 +612,8 @@ func (h *RelayProfileHandler) Update(ctx context.Context, input *UpdateRelayProf
 		if input.Body.GpuIndex != nil {
 			profile.GpuIndex = *input.Body.GpuIndex
 		}
-		if input.Body.OutputFormat != "" {
-			profile.OutputFormat = models.OutputFormat(input.Body.OutputFormat)
+		if input.Body.ContainerFormat != "" {
+			profile.ContainerFormat = models.ContainerFormat(input.Body.ContainerFormat)
 		}
 		if input.Body.InputOptions != nil {
 			profile.InputOptions = *input.Body.InputOptions
@@ -1373,6 +1382,90 @@ func (h *RelayProfileHandler) PreviewCommand(ctx context.Context, input *Preview
 			BitstreamFilter: preview.BitstreamFilter,
 			Notes:           preview.Notes,
 		},
+	}
+
+	return resp, nil
+}
+
+// GetAvailableCodecsInput is the input for getting available codecs.
+type GetAvailableCodecsInput struct {
+	Format string `query:"format" doc:"Output format to filter codecs (mpegts, hls, dash). If not specified, returns all codecs with dash_only flags."`
+}
+
+// CodecInfo represents a single codec with metadata.
+type CodecInfo struct {
+	Value       string `json:"value" doc:"Codec value to use in API requests"`
+	Label       string `json:"label" doc:"Human-readable label"`
+	Description string `json:"description,omitempty" doc:"Additional description"`
+	DASHOnly    bool   `json:"dash_only" doc:"True if codec only works with DASH output format"`
+	HWAccel     string `json:"hw_accel,omitempty" doc:"Required hardware acceleration (nvenc, qsv, vaapi)"`
+}
+
+// GetAvailableCodecsOutput is the output for getting available codecs.
+type GetAvailableCodecsOutput struct {
+	Body struct {
+		VideoCodecs []CodecInfo `json:"video_codecs" doc:"Available video codecs"`
+		AudioCodecs []CodecInfo `json:"audio_codecs" doc:"Available audio codecs"`
+		Format      string      `json:"format,omitempty" doc:"Output format used for filtering (if specified)"`
+	}
+}
+
+// GetAvailableCodecs returns available video and audio codecs, optionally filtered by output format.
+func (h *RelayProfileHandler) GetAvailableCodecs(ctx context.Context, input *GetAvailableCodecsInput) (*GetAvailableCodecsOutput, error) {
+	// Define all available video codecs (abstract types, actual encoder derived from hwaccel)
+	allVideoCodecs := []CodecInfo{
+		{Value: string(models.VideoCodecCopy), Label: "Copy (Passthrough)", Description: "No transcoding, pass-through original video"},
+		{Value: string(models.VideoCodecNone), Label: "None (use FFmpeg flags)", Description: "No video codec specified, use custom FFmpeg flags"},
+		{Value: string(models.VideoCodecH264), Label: "H.264", Description: "H.264/AVC - encoder selected based on hwaccel setting"},
+		{Value: string(models.VideoCodecH265), Label: "H.265/HEVC", Description: "H.265/HEVC - encoder selected based on hwaccel setting"},
+		{Value: string(models.VideoCodecVP9), Label: "VP9", Description: "VP9 (fMP4 only) - encoder selected based on hwaccel setting", DASHOnly: true},
+		{Value: string(models.VideoCodecAV1), Label: "AV1", Description: "AV1 (fMP4 only) - encoder selected based on hwaccel setting", DASHOnly: true},
+	}
+
+	// Define all available audio codecs
+	allAudioCodecs := []CodecInfo{
+		{Value: string(models.AudioCodecCopy), Label: "Copy (Passthrough)", Description: "No transcoding, pass-through original audio"},
+		{Value: string(models.AudioCodecNone), Label: "None (use FFmpeg flags)", Description: "No audio codec specified, use custom FFmpeg flags"},
+		{Value: string(models.AudioCodecAAC), Label: "AAC", Description: "Advanced Audio Coding"},
+		{Value: string(models.AudioCodecMP3), Label: "MP3", Description: "MPEG Audio Layer 3"},
+		{Value: string(models.AudioCodecAC3), Label: "AC3 (Dolby Digital)", Description: "Dolby Digital audio"},
+		{Value: string(models.AudioCodecEAC3), Label: "E-AC3 (Dolby Digital Plus)", Description: "Enhanced Dolby Digital audio"},
+		{Value: string(models.AudioCodecOpus), Label: "Opus", Description: "Opus audio (fMP4 only)", DASHOnly: true},
+	}
+
+	resp := &GetAvailableCodecsOutput{}
+
+	// Filter by format if specified
+	format := input.Format
+	if format != "" {
+		resp.Body.Format = format
+
+		// If format is not fMP4, filter out fMP4-only codecs (VP9, AV1, Opus)
+		if format != string(models.ContainerFormatFMP4) {
+			var filteredVideo []CodecInfo
+			for _, c := range allVideoCodecs {
+				if !c.DASHOnly {
+					filteredVideo = append(filteredVideo, c)
+				}
+			}
+			resp.Body.VideoCodecs = filteredVideo
+
+			var filteredAudio []CodecInfo
+			for _, c := range allAudioCodecs {
+				if !c.DASHOnly {
+					filteredAudio = append(filteredAudio, c)
+				}
+			}
+			resp.Body.AudioCodecs = filteredAudio
+		} else {
+			// DASH format - return all codecs
+			resp.Body.VideoCodecs = allVideoCodecs
+			resp.Body.AudioCodecs = allAudioCodecs
+		}
+	} else {
+		// No format filter - return all codecs with dash_only flags
+		resp.Body.VideoCodecs = allVideoCodecs
+		resp.Body.AudioCodecs = allAudioCodecs
 	}
 
 	return resp, nil

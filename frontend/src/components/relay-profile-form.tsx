@@ -33,26 +33,32 @@ interface RelayProfileFormProps {
   loading?: boolean;
 }
 
-// Backend uses FFmpeg codec names
-// Note: Only codecs compatible with MPEG-TS container are listed
+// Video codecs - abstract types, actual FFmpeg encoder derived from hwaccel setting
+// "none" allows users to specify codecs via advanced FFmpeg flags
 const VIDEO_CODECS = [
-  { value: 'libx264', label: 'H.264' },
-  { value: 'libx265', label: 'H.265/HEVC' },
   { value: 'copy', label: 'Copy (No transcode)' },
+  { value: 'none', label: 'None (use FFmpeg flags)' },
+  { value: 'h264', label: 'H.264' },
+  { value: 'h265', label: 'H.265/HEVC' },
+  { value: 'vp9', label: 'VP9 (fMP4 only)' },
+  { value: 'av1', label: 'AV1 (fMP4 only)' },
 ];
 
+// Audio codecs - actual FFmpeg encoder derived at runtime
 const AUDIO_CODECS = [
+  { value: 'copy', label: 'Copy (No transcode)' },
+  { value: 'none', label: 'None (use FFmpeg flags)' },
   { value: 'aac', label: 'AAC' },
-  { value: 'libmp3lame', label: 'MP3' },
+  { value: 'mp3', label: 'MP3' },
   { value: 'ac3', label: 'AC3 (Dolby Digital)' },
   { value: 'eac3', label: 'E-AC3 (Dolby Digital+)' },
-  { value: 'copy', label: 'Copy (No transcode)' },
+  { value: 'opus', label: 'Opus (fMP4 only)' },
 ];
 
-// Codec-specific presets - only some encoders support presets
+// Codec-specific presets - presets vary by codec/encoder
 const CODEC_PRESETS: Record<string, { value: string; label: string }[]> = {
-  // x264/x265 software encoders use the standard preset names
-  libx264: [
+  // H.264/H.265 use standard x264/x265 preset names (works for software and most hardware encoders)
+  h264: [
     { value: 'ultrafast', label: 'Ultra Fast' },
     { value: 'superfast', label: 'Super Fast' },
     { value: 'veryfast', label: 'Very Fast' },
@@ -63,7 +69,7 @@ const CODEC_PRESETS: Record<string, { value: string; label: string }[]> = {
     { value: 'slower', label: 'Slower' },
     { value: 'veryslow', label: 'Very Slow' },
   ],
-  libx265: [
+  h265: [
     { value: 'ultrafast', label: 'Ultra Fast' },
     { value: 'superfast', label: 'Super Fast' },
     { value: 'veryfast', label: 'Very Fast' },
@@ -73,6 +79,20 @@ const CODEC_PRESETS: Record<string, { value: string; label: string }[]> = {
     { value: 'slow', label: 'Slow' },
     { value: 'slower', label: 'Slower' },
     { value: 'veryslow', label: 'Very Slow' },
+  ],
+  // VP9 uses different preset names
+  vp9: [
+    { value: 'realtime', label: 'Realtime' },
+    { value: 'good', label: 'Good' },
+    { value: 'best', label: 'Best' },
+  ],
+  // AV1 uses numeric presets (0=slowest/best, 8=fastest)
+  av1: [
+    { value: '8', label: 'Fastest (8)' },
+    { value: '6', label: 'Fast (6)' },
+    { value: '4', label: 'Medium (4)' },
+    { value: '2', label: 'Slow (2)' },
+    { value: '0', label: 'Slowest (0)' },
   ],
 };
 
@@ -81,11 +101,14 @@ function getPresetsForCodec(codec: string): { value: string; label: string }[] {
   return CODEC_PRESETS[codec] || [];
 }
 
-// Note: Only MPEG-TS is suitable for live streaming via HTTP chunked transfer.
-// HLS requires file-based segments, MP4/MKV need seekable output, FLV requires RTMP.
-// The AutoHideSelectField will hide this when there's only one option.
-const OUTPUT_FORMATS = [
-  { value: 'mpegts', label: 'MPEG-TS' },
+// Container format options for relay streaming:
+// - auto: System chooses based on codecs (fMP4 for VP9/AV1/Opus, MPEG-TS for passthrough)
+// - fmp4: Fragmented MP4 (CMAF) - required for VP9, AV1, Opus; supports HLS v7+/DASH
+// - mpegts: MPEG Transport Stream - widest compatibility, but no VP9/AV1/Opus support
+const CONTAINER_FORMATS = [
+  { value: 'auto', label: 'Auto (Recommended)' },
+  { value: 'fmp4', label: 'fMP4 (CMAF) - Modern, VP9/AV1/Opus' },
+  { value: 'mpegts', label: 'MPEG-TS - Legacy compatibility' },
 ];
 
 const HWACCEL_OPTIONS = [
@@ -127,7 +150,7 @@ export function RelayProfileForm({
     input_options: profile?.input_options || '',
     output_options: profile?.output_options || '',
     filter_complex: profile?.filter_complex || '',
-    output_format: profile?.output_format || 'mpegts',  // GORM default: 'mpegts'
+    container_format: profile?.container_format || 'auto',  // GORM default: 'auto'
     fallback_enabled: profile?.fallback_enabled ?? true,  // GORM default: true
     fallback_error_threshold: profile?.fallback_error_threshold?.toString() || '3',
     fallback_recovery_interval: profile?.fallback_recovery_interval?.toString() || '30',  // GORM default: 30
@@ -178,7 +201,7 @@ export function RelayProfileForm({
         input_options: formData.input_options || undefined,
         output_options: formData.output_options || undefined,
         filter_complex: formData.filter_complex || undefined,
-        output_format: formData.output_format || undefined,
+        container_format: formData.container_format as 'auto' | 'fmp4' | 'mpegts' | undefined,
         fallback_enabled: formData.fallback_enabled,
         fallback_error_threshold: formData.fallback_error_threshold
           ? parseInt(formData.fallback_error_threshold)
@@ -514,14 +537,28 @@ export function RelayProfileForm({
         )}
       </div>
 
-      {/* Output Format - Auto-hides when only one option available */}
-      <AutoHideSelectField
-        id="output_format"
-        label="Output Format"
-        options={OUTPUT_FORMATS}
-        value={formData.output_format}
-        onValueChange={(value) => setFormData({ ...formData, output_format: value })}
-      />
+      {/* Container Format */}
+      <div className="space-y-2">
+        <Label htmlFor="container_format">Container Format</Label>
+        <Select
+          value={formData.container_format}
+          onValueChange={(value) => setFormData({ ...formData, container_format: value as 'auto' | 'fmp4' | 'mpegts' })}
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {CONTAINER_FORMATS.map((format) => (
+              <SelectItem key={format.value} value={format.value}>
+                {format.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          VP9, AV1, and Opus codecs require fMP4 container format
+        </p>
+      </div>
 
       {/* Custom FFmpeg Flags */}
       <Collapsible open={showCustomFlags} onOpenChange={setShowCustomFlags}>

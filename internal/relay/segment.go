@@ -1,0 +1,136 @@
+// Package relay provides streaming relay functionality for tvarr.
+package relay
+
+import (
+	"time"
+
+	"github.com/jmylchreest/tvarr/internal/models"
+)
+
+// Segment represents a discrete media segment for HLS/DASH output.
+type Segment struct {
+	// Sequence is the segment number (monotonically increasing).
+	Sequence uint64
+
+	// Duration is the segment duration in seconds.
+	Duration float64
+
+	// Data is the raw segment bytes (.ts for HLS, .m4s for DASH/CMAF).
+	Data []byte
+
+	// Timestamp is when the segment was created.
+	Timestamp time.Time
+
+	// IsKeyframe indicates if segment starts with a keyframe.
+	IsKeyframe bool
+
+	// PTS is the presentation timestamp of the first frame.
+	PTS int64
+
+	// DTS is the decode timestamp of the first frame.
+	DTS int64
+
+	// Discontinuity marks this segment as following a stream interruption.
+	// Players should reset their decoders when encountering discontinuity.
+	Discontinuity bool
+
+	// ContainerFormat indicates the container format of this segment.
+	// For fMP4/CMAF segments, this is ContainerFormatFMP4.
+	ContainerFormat models.ContainerFormat
+
+	// IsFragmented indicates if this is a fragmented MP4 segment (CMAF).
+	// When true, Data contains moof+mdat boxes rather than MPEG-TS.
+	IsFragmented bool
+
+	// FragmentSequence is the fragment sequence number within the fMP4 stream.
+	// This corresponds to the mfhd sequence_number in fMP4.
+	FragmentSequence uint32
+}
+
+// InitSegment represents the initialization segment for fMP4/CMAF streams.
+// This contains ftyp+moov boxes required before any media segments can be played.
+type InitSegment struct {
+	// Data is the raw init segment bytes (ftyp+moov).
+	Data []byte
+
+	// Timestamp is when the init segment was created.
+	Timestamp time.Time
+
+	// HasVideo indicates if the stream contains video.
+	HasVideo bool
+
+	// HasAudio indicates if the stream contains audio.
+	HasAudio bool
+
+	// Timescale is the media timescale from mvhd.
+	Timescale uint32
+}
+
+// Size returns the byte size of the segment.
+func (s *Segment) Size() int {
+	return len(s.Data)
+}
+
+// IsEmpty returns true if the segment has no data.
+func (s *Segment) IsEmpty() bool {
+	return len(s.Data) == 0
+}
+
+// Clone creates a copy of the segment with its own data buffer.
+func (s *Segment) Clone() *Segment {
+	clone := &Segment{
+		Sequence:         s.Sequence,
+		Duration:         s.Duration,
+		Timestamp:        s.Timestamp,
+		IsKeyframe:       s.IsKeyframe,
+		PTS:              s.PTS,
+		DTS:              s.DTS,
+		Discontinuity:    s.Discontinuity,
+		ContainerFormat:  s.ContainerFormat,
+		IsFragmented:     s.IsFragmented,
+		FragmentSequence: s.FragmentSequence,
+	}
+	if len(s.Data) > 0 {
+		clone.Data = make([]byte, len(s.Data))
+		copy(clone.Data, s.Data)
+	}
+	return clone
+}
+
+// IsFMP4 returns true if this is a fragmented MP4 segment.
+func (s *Segment) IsFMP4() bool {
+	return s.IsFragmented || s.ContainerFormat == models.ContainerFormatFMP4
+}
+
+// ContentType returns the MIME type for this segment.
+func (s *Segment) ContentType() string {
+	if s.IsFMP4() {
+		return ContentTypeFMP4Segment
+	}
+	return ContentTypeMPEGTS
+}
+
+// Clone creates a copy of the init segment with its own data buffer.
+func (i *InitSegment) Clone() *InitSegment {
+	clone := &InitSegment{
+		Timestamp: i.Timestamp,
+		HasVideo:  i.HasVideo,
+		HasAudio:  i.HasAudio,
+		Timescale: i.Timescale,
+	}
+	if len(i.Data) > 0 {
+		clone.Data = make([]byte, len(i.Data))
+		copy(clone.Data, i.Data)
+	}
+	return clone
+}
+
+// Size returns the byte size of the init segment.
+func (i *InitSegment) Size() int {
+	return len(i.Data)
+}
+
+// IsEmpty returns true if the init segment has no data.
+func (i *InitSegment) IsEmpty() bool {
+	return len(i.Data) == 0
+}

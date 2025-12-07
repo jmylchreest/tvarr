@@ -616,6 +616,8 @@ func TestStreamMode_String(t *testing.T) {
 		{StreamModePassthroughRawTS, "passthrough-raw-ts"},
 		{StreamModeCollapsedHLS, "collapsed-hls"},
 		{StreamModeTransparentHLS, "transparent-hls"},
+		{StreamModePassthroughHLS, "passthrough-hls"},
+		{StreamModePassthroughDASH, "passthrough-dash"},
 		{StreamModeUnknown, "unknown"},
 	}
 

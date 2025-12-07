@@ -22,13 +22,27 @@ const (
 type StreamProxyMode string
 
 const (
-	// StreamProxyModeRedirect redirects clients directly to the upstream URL.
-	StreamProxyModeRedirect StreamProxyMode = "redirect"
-	// StreamProxyModeProxy proxies the stream through tvarr.
-	StreamProxyModeProxy StreamProxyMode = "proxy"
-	// StreamProxyModeRelay relays the stream through FFmpeg for transcoding.
-	StreamProxyModeRelay StreamProxyMode = "relay"
+	// StreamProxyModeDirect sends HTTP 302 redirect to source URL (zero processing).
+	StreamProxyModeDirect StreamProxyMode = "direct"
+	// StreamProxyModeSmart automatically optimizes delivery based on source and client.
+	// When a profile is set, transcodes if needed. Otherwise, uses passthrough/repackage.
+	StreamProxyModeSmart StreamProxyMode = "smart"
 )
+
+// ValidProxyModes returns the list of valid proxy modes.
+func ValidProxyModes() []StreamProxyMode {
+	return []StreamProxyMode{StreamProxyModeDirect, StreamProxyModeSmart}
+}
+
+// IsValidProxyMode returns true if the mode is a valid proxy mode.
+func IsValidProxyMode(mode StreamProxyMode) bool {
+	switch mode {
+	case StreamProxyModeDirect, StreamProxyModeSmart:
+		return true
+	default:
+		return false
+	}
+}
 
 // NumberingMode determines how channel numbers are assigned.
 type NumberingMode string
@@ -54,7 +68,7 @@ type StreamProxy struct {
 	Description string `gorm:"size:1024" json:"description,omitempty"`
 
 	// ProxyMode determines how streams are served to clients.
-	ProxyMode StreamProxyMode `gorm:"not null;default:'redirect';size:20" json:"proxy_mode"`
+	ProxyMode StreamProxyMode `gorm:"not null;default:'direct';size:20" json:"proxy_mode"`
 
 	// IsActive indicates whether this proxy is active and should be served.
 	IsActive bool `gorm:"default:true" json:"is_active"`

@@ -169,6 +169,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	filterRepo := repository.NewFilterRepository(db)
 	dataMappingRuleRepo := repository.NewDataMappingRuleRepository(db)
 	relayProfileRepo := repository.NewRelayProfileRepository(db)
+	relayProfileMappingRepo := repository.NewRelayProfileMappingRepository(db)
 	lastKnownCodecRepo := repository.NewLastKnownCodecRepository(db)
 	jobRepo := repository.NewJobRepository(db)
 
@@ -333,6 +334,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 		channelRepo,
 		proxyRepo,
 	).WithLogger(logger)
+
+	relayProfileMappingService := service.NewRelayProfileMappingService(relayProfileMappingRepo).
+		WithLogger(logger)
+
+	// Validate client detection rules on startup
+	relayProfileMappingService.ValidateRulesOnLoad(context.Background())
+
 	logger.Debug("services initialized")
 
 	// Configure internal recurring jobs
@@ -442,10 +450,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 	epgSourceHandler := handlers.NewEpgSourceHandler(epgService)
 	epgSourceHandler.Register(server.API())
 
+	unifiedSourcesHandler := handlers.NewUnifiedSourcesHandler(sourceService, epgService)
+	unifiedSourcesHandler.Register(server.API())
+
 	proxyHandler := handlers.NewStreamProxyHandler(proxyService)
 	proxyHandler.Register(server.API())
 
-	expressionHandler := handlers.NewExpressionHandler()
+	expressionHandler := handlers.NewExpressionHandler(channelRepo, epgProgramRepo)
 	expressionHandler.Register(server.API())
 
 	filterHandler := handlers.NewFilterHandler(filterRepo)
@@ -469,7 +480,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	relayProfileHandler := handlers.NewRelayProfileHandler(relayService)
 	relayProfileHandler.Register(server.API())
 
-	relayStreamHandler := handlers.NewRelayStreamHandler(relayService).WithLogger(logger)
+	relayProfileMappingHandler := handlers.NewRelayProfileMappingHandler(relayProfileMappingService)
+	relayProfileMappingHandler.Register(server.API())
+
+	relayStreamHandler := handlers.NewRelayStreamHandler(relayService).
+		WithLogger(logger).
+		WithProfileMappingService(relayProfileMappingService)
 	relayStreamHandler.Register(server.API())
 	relayStreamHandler.RegisterChiRoutes(server.Router())
 

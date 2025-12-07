@@ -35,7 +35,7 @@ func TestStreamProxy_Validate(t *testing.T) {
 			proxy: StreamProxy{
 				Name:                  "Full Proxy",
 				Description:           "A test proxy with all fields",
-				ProxyMode:             StreamProxyModeProxy,
+				ProxyMode:             StreamProxyModeSmart,
 				IsActive:              true,
 				AutoRegenerate:        true,
 				StartingChannelNumber: 100,
@@ -91,9 +91,8 @@ func TestStreamProxyMode(t *testing.T) {
 		mode  StreamProxyMode
 		valid bool
 	}{
-		{"redirect", StreamProxyModeRedirect, true},
-		{"proxy", StreamProxyModeProxy, true},
-		{"relay", StreamProxyModeRelay, true},
+		{"direct", StreamProxyModeDirect, true},
+		{"smart", StreamProxyModeSmart, true},
 		{"invalid", StreamProxyMode("invalid"), false},
 	}
 
@@ -102,6 +101,26 @@ func TestStreamProxyMode(t *testing.T) {
 			if tt.valid {
 				assert.NotEmpty(t, string(tt.mode))
 			}
+		})
+	}
+}
+
+func TestIsValidProxyMode(t *testing.T) {
+	tests := []struct {
+		mode  StreamProxyMode
+		valid bool
+	}{
+		{StreamProxyModeDirect, true},
+		{StreamProxyModeSmart, true},
+		{StreamProxyMode("unknown"), false},
+		{StreamProxyMode("redirect"), false},
+		{StreamProxyMode("proxy"), false},
+		{StreamProxyMode("relay"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.mode), func(t *testing.T) {
+			assert.Equal(t, tt.valid, IsValidProxyMode(tt.mode))
 		})
 	}
 }

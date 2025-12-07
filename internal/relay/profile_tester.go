@@ -210,8 +210,12 @@ func (t *ProfileTester) buildTestCommand(profile *models.RelayProfile, inputURL 
 	builder.OutputArgs("-map", "0:a:0?")
 
 	// 7. VIDEO CODEC
-	if profile.VideoCodec != "" {
-		builder.VideoCodec(string(profile.VideoCodec))
+	if profile.VideoCodec != "" && profile.VideoCodec != models.VideoCodecNone {
+		// Convert abstract codec type to actual FFmpeg encoder name
+		videoEncoder := profile.VideoCodec.GetFFmpegEncoder(profile.HWAccel)
+		if videoEncoder != "" {
+			builder.VideoCodec(videoEncoder)
+		}
 
 		// Add hardware upload filter when transcoding with HW acceleration
 		if hwAccelType != "" && profile.VideoCodec != models.VideoCodecCopy {
@@ -233,15 +237,21 @@ func (t *ProfileTester) buildTestCommand(profile *models.RelayProfile, inputURL 
 	}
 
 	// 9. AUDIO CODEC AND SETTINGS
-	if profile.AudioCodec != "" {
-		builder.AudioCodec(string(profile.AudioCodec))
+	if profile.AudioCodec != "" && profile.AudioCodec != models.AudioCodecNone {
+		// Convert abstract codec type to actual FFmpeg encoder name
+		audioEncoder := profile.AudioCodec.GetFFmpegEncoder()
+		if audioEncoder != "" {
+			builder.AudioCodec(audioEncoder)
+		}
 	}
 	if profile.AudioBitrate > 0 {
 		builder.AudioBitrate(fmt.Sprintf("%dk", profile.AudioBitrate))
 	}
 
 	// 10. BITSTREAM FILTERS
-	videoCodecFamily := ffmpeg.GetCodecFamily(string(profile.VideoCodec))
+	// Use FFmpeg encoder names for codec family detection
+	videoEncoderForBSF := profile.VideoCodec.GetFFmpegEncoder(profile.HWAccel)
+	videoCodecFamily := ffmpeg.GetCodecFamily(videoEncoderForBSF)
 	isVideoCopy := profile.VideoCodec == models.VideoCodecCopy
 	bsfInfo := ffmpeg.GetVideoBitstreamFilter(videoCodecFamily, ffmpeg.FormatMPEGTS, isVideoCopy)
 	if bsfInfo.VideoBSF != "" {

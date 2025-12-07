@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef, forwardRef } from 'react';
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { AutocompletePopup } from '@/components/autocomplete-popup';
 import { cn } from '@/lib/utils';
 import { getBackendUrl } from '@/lib/config';
 import { Debug } from '@/utils/debug';
@@ -10,8 +11,19 @@ import {
   ExpressionValidationResponse,
   ExpressionValidationError,
   ExpressionField,
-  ApiResponse,
 } from '@/types/api';
+import {
+  ALL_OPERATORS,
+  type AutocompleteSuggestion,
+  type AutocompleteState,
+} from '@/lib/expression-constants';
+import {
+  getCursorPosition as getCursorPositionUtil,
+  getCurrentWord as getCurrentWordUtil,
+  findWordBoundaries,
+  createErrorHighlights,
+  type ErrorHighlight,
+} from '@/lib/expression-utils';
 
 export interface ExpressionEditorProps {
   value: string;
@@ -19,63 +31,18 @@ export interface ExpressionEditorProps {
   onValidationChange?: (validation: ExpressionValidationResponse | null) => void;
   onFieldsChange?: (fields: ExpressionField[]) => void;
   onValidationComplete?: () => void;
-  validationEndpoint: string;
+  validationEndpoint?: string;
   fieldsEndpoint: string;
-  sourceType: 'stream' | 'epg';
+  sourceType: 'stream' | 'epg' | 'client';
   placeholder?: string;
   className?: string;
   debounceMs?: number;
   disabled?: boolean;
+  enableAutocomplete?: boolean;
+  enableValidation?: boolean;
   onKeyDown?: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   onInput?: () => void;
-}
-
-interface ErrorHighlight {
-  start: number;
-  end: number;
-  error: ExpressionValidationError;
-}
-
-// Find word boundaries from a character position
-function findWordBoundaries(text: string, position: number): { start: number; end: number } {
-  // Word characters include letters, numbers, underscores
-  const isWordChar = (char: string) => /[a-zA-Z0-9_]/.test(char);
-
-  let start = position;
-  let end = position;
-
-  // Find start of word
-  while (start > 0 && isWordChar(text[start - 1])) {
-    start--;
-  }
-
-  // Find end of word
-  while (end < text.length && isWordChar(text[end])) {
-    end++;
-  }
-
-  return { start, end };
-}
-
-// Create error highlights from the new server response format
-function createErrorHighlights(
-  errors: ExpressionValidationError[],
-  expression: string
-): ErrorHighlight[] {
-  const highlights: ErrorHighlight[] = [];
-
-  errors.forEach((error) => {
-    if (error.position !== undefined && error.position >= 0 && error.position < expression.length) {
-      const { start, end } = findWordBoundaries(expression, error.position);
-      highlights.push({
-        start,
-        end,
-        error,
-      });
-    }
-  });
-
-  return highlights;
+  rows?: number;
 }
 
 // Component for rendering error highlight overlays with tooltips
@@ -235,8 +202,11 @@ export const ExpressionEditor = forwardRef<HTMLTextAreaElement, ExpressionEditor
       className,
       debounceMs = 500,
       disabled = false,
+      enableAutocomplete = true,
+      enableValidation = true,
       onKeyDown,
       onInput,
+      rows,
     },
     ref
   ) => {
@@ -244,16 +214,147 @@ export const ExpressionEditor = forwardRef<HTMLTextAreaElement, ExpressionEditor
     const [allFields, setAllFields] = useState<ExpressionField[]>([]);
     const [isValidating, setIsValidating] = useState(false);
     const [errorHighlights, setErrorHighlights] = useState<ErrorHighlight[]>([]);
+    const [autocompleteState, setAutocompleteState] = useState<AutocompleteState>({
+      isOpen: false,
+      suggestions: [],
+      selectedIndex: 0,
+      position: { x: 0, y: 0 },
+      loading: false,
+    });
 
     const internalRef = useRef<HTMLTextAreaElement>(null);
     const textareaRef = (ref as React.RefObject<HTMLTextAreaElement>) || internalRef;
     const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
     // Get filtered fields based on current source type
-    // For data mapping, the server already filters by source type, so we use all fields
-    const fields = fieldsEndpoint.includes('data-mapping')
+    // For data mapping or client detection, the server already filters by source type, so we use all fields
+    const fields = fieldsEndpoint.includes('data-mapping') || fieldsEndpoint.includes('client-detection')
       ? allFields
       : allFields.filter((field) => field.source_type === sourceType);
+
+    // Use shared cursor position calculation
+    const getCursorPosition = useCallback((textarea: HTMLTextAreaElement) => {
+      return getCursorPositionUtil(textarea);
+    }, []);
+
+    // Use shared current word detection
+    const getCurrentWord = useCallback((text: string, cursorPos: number) => {
+      return getCurrentWordUtil(text, cursorPos);
+    }, []);
+
+    // Generate suggestions based on current word
+    const generateSuggestions = useCallback((currentWord: string, fields: ExpressionField[]): AutocompleteSuggestion[] => {
+      if (!currentWord || currentWord.length < 1) return [];
+
+      const wordLower = currentWord.toLowerCase();
+      const suggestions: AutocompleteSuggestion[] = [];
+
+      // Add matching fields
+      fields.forEach(field => {
+        if (field.name.toLowerCase().startsWith(wordLower)) {
+          suggestions.push({
+            label: field.name,
+            value: field.name,
+            description: `${field.field_type} field`,
+            type: 'field',
+          });
+        }
+      });
+
+      // Add matching operators (comparison and logical)
+      ALL_OPERATORS.forEach(op => {
+        if (op.name.toLowerCase().startsWith(wordLower)) {
+          suggestions.push({
+            label: op.name,
+            value: op.name,
+            description: op.description,
+            type: 'operator',
+          });
+        }
+      });
+
+      return suggestions.slice(0, 10); // Limit to 10 suggestions
+    }, []);
+
+    // Update autocomplete when typing
+    const updateAutocomplete = useCallback(() => {
+      if (!enableAutocomplete) return;
+
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+
+      const { word } = getCurrentWord(textarea.value, textarea.selectionStart);
+      const suggestions = generateSuggestions(word, fields);
+
+      if (suggestions.length > 0) {
+        const position = getCursorPosition(textarea);
+        setAutocompleteState({
+          isOpen: true,
+          suggestions,
+          selectedIndex: 0,
+          position,
+          loading: false,
+        });
+      } else {
+        setAutocompleteState(prev => ({ ...prev, isOpen: false, suggestions: [] }));
+      }
+    }, [enableAutocomplete, textareaRef, getCurrentWord, generateSuggestions, getCursorPosition, fields]);
+
+    // Handle suggestion selection
+    const handleSuggestionClick = useCallback((suggestion: AutocompleteSuggestion) => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+
+      const { word, start } = getCurrentWord(textarea.value, textarea.selectionStart);
+      const before = textarea.value.substring(0, start);
+      const after = textarea.value.substring(start + word.length);
+      const newValue = before + suggestion.value + ' ' + after;
+
+      onChange(newValue);
+      setAutocompleteState(prev => ({ ...prev, isOpen: false, suggestions: [] }));
+
+      // Restore focus and cursor position
+      setTimeout(() => {
+        textarea.focus();
+        const newPos = start + suggestion.value.length + 1;
+        textarea.setSelectionRange(newPos, newPos);
+      }, 0);
+    }, [textareaRef, getCurrentWord, onChange]);
+
+    // Handle keyboard navigation in autocomplete
+    const handleAutocompleteKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (!autocompleteState.isOpen) return false;
+
+      switch (event.key) {
+        case 'ArrowDown':
+          event.preventDefault();
+          setAutocompleteState(prev => ({
+            ...prev,
+            selectedIndex: Math.min(prev.selectedIndex + 1, prev.suggestions.length - 1),
+          }));
+          return true;
+        case 'ArrowUp':
+          event.preventDefault();
+          setAutocompleteState(prev => ({
+            ...prev,
+            selectedIndex: Math.max(prev.selectedIndex - 1, 0),
+          }));
+          return true;
+        case 'Tab':
+        case 'Enter':
+          if (autocompleteState.suggestions[autocompleteState.selectedIndex]) {
+            event.preventDefault();
+            handleSuggestionClick(autocompleteState.suggestions[autocompleteState.selectedIndex]);
+            return true;
+          }
+          break;
+        case 'Escape':
+          event.preventDefault();
+          setAutocompleteState(prev => ({ ...prev, isOpen: false }));
+          return true;
+      }
+      return false;
+    }, [autocompleteState, handleSuggestionClick]);
 
     // Fetch all available fields once on mount
     useEffect(() => {
@@ -294,8 +395,8 @@ export const ExpressionEditor = forwardRef<HTMLTextAreaElement, ExpressionEditor
 
     // Update filtered fields when sourceType or allFields changes
     useEffect(() => {
-      // For data mapping, the server already filters by source type, so we use all fields
-      const filteredFields = fieldsEndpoint.includes('data-mapping')
+      // For data mapping or client detection, the server already filters by source type, so we use all fields
+      const filteredFields = fieldsEndpoint.includes('data-mapping') || fieldsEndpoint.includes('client-detection')
         ? allFields
         : allFields.filter((field) => field.source_type === sourceType);
       onFieldsChange?.(filteredFields);
@@ -428,8 +529,12 @@ export const ExpressionEditor = forwardRef<HTMLTextAreaElement, ExpressionEditor
       [validationEndpoint, sourceType, onValidationChange, onValidationComplete]
     );
 
-    // Handle value changes with debouncing
+    // Handle value changes with debouncing - only if validation is enabled
     useEffect(() => {
+      if (!enableValidation || !validationEndpoint) {
+        return;
+      }
+
       Debug.log('ExpressionEditor: Value changed, setting up debounced validation', {
         value: value.slice(0, 50) + '...',
         debounceMs,
@@ -448,12 +553,22 @@ export const ExpressionEditor = forwardRef<HTMLTextAreaElement, ExpressionEditor
           clearTimeout(debounceTimeoutRef.current);
         }
       };
-    }, [value, validateExpression, debounceMs]);
+    }, [value, validateExpression, debounceMs, enableValidation, validationEndpoint]);
 
     // Handle textarea input
     const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       onChange(e.target.value);
       onInput?.();
+      // Update autocomplete after value change
+      setTimeout(updateAutocomplete, 0);
+    };
+
+    // Combined keyDown handler
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      // First try autocomplete key handling
+      if (handleAutocompleteKeyDown(e)) return;
+      // Then call the external handler
+      onKeyDown?.(e);
     };
 
     return (
@@ -463,9 +578,10 @@ export const ExpressionEditor = forwardRef<HTMLTextAreaElement, ExpressionEditor
             ref={textareaRef}
             value={value}
             onChange={handleInputChange}
-            onKeyDown={onKeyDown}
+            onKeyDown={handleKeyDown}
             placeholder={placeholder}
             disabled={disabled}
+            rows={rows}
             className={cn(
               'font-mono min-h-[120px] relative',
               errorHighlights.length > 0 && 'border-orange-500',
@@ -489,6 +605,14 @@ export const ExpressionEditor = forwardRef<HTMLTextAreaElement, ExpressionEditor
             <div className="absolute top-2 right-2">
               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-orange-500" />
             </div>
+          )}
+
+          {/* Autocomplete popup */}
+          {enableAutocomplete && (
+            <AutocompletePopup
+              state={autocompleteState}
+              onSuggestionClick={handleSuggestionClick}
+            />
           )}
         </div>
       </div>

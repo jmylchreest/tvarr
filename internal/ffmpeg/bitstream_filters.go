@@ -18,6 +18,7 @@ const (
 	FormatHLS      OutputFormatType = "hls"
 	FormatFLV      OutputFormatType = "flv"
 	FormatMP4      OutputFormatType = "mp4"
+	FormatFMP4     OutputFormatType = "fmp4" // Fragmented MP4 (CMAF)
 	FormatMKV      OutputFormatType = "matroska"
 	FormatWebM     OutputFormatType = "webm"
 	FormatUnknown  OutputFormatType = ""
@@ -152,10 +153,10 @@ func GetVideoBitstreamFilter(codecFamily CodecFamily, outputFormat OutputFormatT
 				Reason: "MPEG-TS: no BSF needed for this codec",
 			}
 		}
-	case FormatFLV, FormatMP4:
-		// FLV and MP4 use AVCC format natively, no video BSF needed
+	case FormatFLV, FormatMP4, FormatFMP4:
+		// FLV, MP4, and fMP4 use AVCC format natively, no video BSF needed
 		return BitstreamFilterInfo{
-			Reason: "FLV/MP4 use AVCC format natively",
+			Reason: "FLV/MP4/fMP4 use AVCC format natively",
 		}
 	case FormatMKV, FormatWebM:
 		// Matroska handles both formats, no BSF typically needed
@@ -431,6 +432,8 @@ func ParseOutputFormat(format string) OutputFormatType {
 		return FormatFLV
 	case "mp4":
 		return FormatMP4
+	case "fmp4", "cmaf":
+		return FormatFMP4
 	case "matroska", "mkv":
 		return FormatMKV
 	case "webm":

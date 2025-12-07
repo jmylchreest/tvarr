@@ -17,6 +17,14 @@ import {
   DataMappingRule,
   DataMappingRuleListResponse,
   RelayProfile,
+  RelayProfileMapping,
+  RelayProfileMappingListResponse,
+  RelayProfileMappingStats,
+  CreateRelayProfileMappingRequest,
+  UpdateRelayProfileMappingRequest,
+  ReorderMappingRequest,
+  TestMappingExpressionRequest,
+  TestMappingExpressionResponse,
   RelayHealthApiResponse,
   RuntimeSettings,
   UpdateSettingsRequest,
@@ -47,6 +55,8 @@ function transformStreamSourceResponse(source: any): StreamSourceResponse {
     source_type: source.type || source.source_type,
     update_cron: source.cron_schedule || source.update_cron || '',
     max_concurrent_streams: source.max_concurrent_streams || 0,
+    enabled: source.enabled ?? true,
+    status: source.status || 'pending',
   };
 }
 
@@ -56,6 +66,8 @@ function transformEpgSourceResponse(source: any): EpgSourceResponse {
     ...source,
     source_type: source.type || source.source_type,
     update_cron: source.cron_schedule || source.update_cron || '',
+    enabled: source.enabled ?? true,
+    status: source.status || 'pending',
   };
 }
 
@@ -901,7 +913,7 @@ class ApiClient {
 
   async updateLogo(id: string, data: LogoAssetUpdateRequest): Promise<LogoAsset> {
     return this.request(`${API_CONFIG.endpoints.logos}/${id}`, {
-      method: 'PUT',
+      method: 'PATCH',
       body: JSON.stringify(data),
     });
   }
@@ -984,6 +996,86 @@ class ApiClient {
   // Relay health check
   async getRelayHealth(): Promise<RelayHealthApiResponse> {
     return this.request<RelayHealthApiResponse>('/api/v1/relay/health');
+  }
+
+  // Relay Profile Mappings API (Client Auto-Detection)
+  async getRelayProfileMappings(): Promise<RelayProfileMapping[]> {
+    const response = await this.request<RelayProfileMappingListResponse>(
+      '/api/v1/relay-profile-mappings'
+    );
+    return response.mappings || [];
+  }
+
+  async getRelayProfileMapping(id: string): Promise<RelayProfileMapping> {
+    return this.request<RelayProfileMapping>(`/api/v1/relay-profile-mappings/${id}`);
+  }
+
+  async createRelayProfileMapping(
+    mapping: CreateRelayProfileMappingRequest
+  ): Promise<RelayProfileMapping> {
+    return this.request<RelayProfileMapping>('/api/v1/relay-profile-mappings', {
+      method: 'POST',
+      body: JSON.stringify(mapping),
+    });
+  }
+
+  async updateRelayProfileMapping(
+    id: string,
+    mapping: UpdateRelayProfileMappingRequest
+  ): Promise<RelayProfileMapping> {
+    return this.request<RelayProfileMapping>(`/api/v1/relay-profile-mappings/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(mapping),
+    });
+  }
+
+  async deleteRelayProfileMapping(id: string): Promise<void> {
+    await this.request<void>(`/api/v1/relay-profile-mappings/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async reorderRelayProfileMappings(mappings: ReorderMappingRequest[]): Promise<void> {
+    await this.request<void>('/api/v1/relay-profile-mappings/reorder', {
+      method: 'POST',
+      body: JSON.stringify({ mappings }),
+    });
+  }
+
+  async testRelayProfileMappingExpression(
+    request: TestMappingExpressionRequest
+  ): Promise<TestMappingExpressionResponse> {
+    return this.request<TestMappingExpressionResponse>(
+      '/api/v1/relay-profile-mappings/test',
+      {
+        method: 'POST',
+        body: JSON.stringify(request),
+      }
+    );
+  }
+
+  async getRelayProfileMappingStats(): Promise<RelayProfileMappingStats> {
+    return this.request<RelayProfileMappingStats>('/api/v1/relay-profile-mappings/stats');
+  }
+
+  // Last Known Codec Cache API
+  async getLastKnownCodecsStats(): Promise<{
+    total_entries: number;
+    valid_entries: number;
+    expired_entries: number;
+    error_entries: number;
+    total_hits: number;
+  }> {
+    return this.request('/api/v1/relay/lastknowncodecs');
+  }
+
+  async clearLastKnownCodecs(): Promise<{
+    deleted_count: number;
+    message: string;
+  }> {
+    return this.request('/api/v1/relay/lastknowncodecs', {
+      method: 'DELETE',
+    });
   }
 }
 
