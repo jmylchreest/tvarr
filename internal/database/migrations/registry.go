@@ -70,6 +70,11 @@ func AllMigrations() []Migration {
 		// Multi-format streaming support (feature 008)
 		migration027MultiFormatStreaming(),
 
+		// CMAF + Smart Delivery Architecture (feature 009)
+		migration028ContainerFormat(),
+		migration029SmartDeliveryModes(),
+		migration030SimplifiedSystemProfiles(),
+
 		// Note: Logo caching (Phase 10) uses file-based storage with
 		// in-memory indexing, no database tables required.
 	}
@@ -875,6 +880,211 @@ func migration027MultiFormatStreaming() Migration {
 				}
 			}
 
+			return nil
+		},
+	}
+}
+
+// migration028ContainerFormat adds container_format column to relay_profiles
+// and migrates from output_format to container_format.
+func migration028ContainerFormat() Migration {
+	return Migration{
+		Version:     "028",
+		Description: "Add container_format to relay_profiles for CMAF support",
+		Up: func(tx *gorm.DB) error {
+			// AutoMigrate adds the container_format column
+			if err := tx.AutoMigrate(&models.RelayProfile{}); err != nil {
+				return err
+			}
+
+			// Migrate output_format values to container_format
+			// mpegts -> mpegts, hls/dash -> auto (let system decide based on codec)
+			if err := tx.Model(&models.RelayProfile{}).
+				Where("output_format = ?", "mpegts").
+				UpdateColumn("container_format", "mpegts").Error; err != nil {
+				return err
+			}
+
+			// HLS and DASH become auto (system will use fMP4 for modern delivery)
+			if err := tx.Model(&models.RelayProfile{}).
+				Where("output_format IN ?", []string{"hls", "dash"}).
+				UpdateColumn("container_format", "auto").Error; err != nil {
+				return err
+			}
+
+			// Any other formats (flv, matroska, mp4) become auto
+			if err := tx.Model(&models.RelayProfile{}).
+				Where("container_format = ? OR container_format IS NULL", "").
+				UpdateColumn("container_format", "auto").Error; err != nil {
+				return err
+			}
+
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			migrator := tx.Migrator()
+			if migrator.HasColumn(&models.RelayProfile{}, "container_format") {
+				if err := migrator.DropColumn(&models.RelayProfile{}, "container_format"); err != nil {
+					tx.Logger.Warn(tx.Statement.Context, "failed to drop container_format: %v", err)
+				}
+			}
+			return nil
+		},
+	}
+}
+
+// migration029SmartDeliveryModes converts proxy modes from the old 3-mode system
+// (redirect/proxy/relay) to the new 2-mode system (direct/smart).
+func migration029SmartDeliveryModes() Migration {
+	return Migration{
+		Version:     "029",
+		Description: "Convert proxy modes to direct/smart for smart delivery",
+		Up: func(tx *gorm.DB) error {
+			// redirect -> direct
+			if err := tx.Model(&models.StreamProxy{}).
+				Where("proxy_mode = ?", "redirect").
+				UpdateColumn("proxy_mode", "direct").Error; err != nil {
+				return err
+			}
+
+			// proxy -> smart (passthrough behavior preserved via profile=nil)
+			if err := tx.Model(&models.StreamProxy{}).
+				Where("proxy_mode = ?", "proxy").
+				UpdateColumn("proxy_mode", "smart").Error; err != nil {
+				return err
+			}
+
+			// relay -> smart (transcoding triggered by profile)
+			if err := tx.Model(&models.StreamProxy{}).
+				Where("proxy_mode = ?", "relay").
+				UpdateColumn("proxy_mode", "smart").Error; err != nil {
+				return err
+			}
+
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			// Note: Cannot perfectly reverse this migration because we don't know
+			// if "smart" was originally "proxy" or "relay".
+			// Best effort: smart without profile -> proxy, smart with profile -> relay
+
+			// smart -> proxy (for proxies without relay profile)
+			if err := tx.Model(&models.StreamProxy{}).
+				Where("proxy_mode = ? AND relay_profile_id IS NULL", "smart").
+				UpdateColumn("proxy_mode", "proxy").Error; err != nil {
+				return err
+			}
+
+			// smart -> relay (for proxies with relay profile)
+			if err := tx.Model(&models.StreamProxy{}).
+				Where("proxy_mode = ? AND relay_profile_id IS NOT NULL", "smart").
+				UpdateColumn("proxy_mode", "relay").Error; err != nil {
+				return err
+			}
+
+			// direct -> redirect
+			if err := tx.Model(&models.StreamProxy{}).
+				Where("proxy_mode = ?", "direct").
+				UpdateColumn("proxy_mode", "redirect").Error; err != nil {
+				return err
+			}
+
+			return nil
+		},
+	}
+}
+
+// migration030SimplifiedSystemProfiles replaces the existing system profiles
+// with 3 simplified profiles: Universal, Passthrough, Efficiency.
+func migration030SimplifiedSystemProfiles() Migration {
+	return Migration{
+		Version:     "030",
+		Description: "Replace system profiles with Universal, Passthrough, Efficiency",
+		Up: func(tx *gorm.DB) error {
+			// Delete old system profiles
+			oldProfileNames := []string{
+				"H.264 + AAC (Standard)",
+				"H.265 + AAC (Standard)",
+				"H.264 + AAC (High Quality)",
+				"H.264 + AAC (Low Bitrate)",
+				"H.265 + AAC (High Quality)",
+				"AV1 + AAC (Next-gen)",
+				"Copy Streams (No Transcoding)",
+			}
+			if err := tx.Where("name IN ? AND is_system = ?", oldProfileNames, true).
+				Delete(&models.RelayProfile{}).Error; err != nil {
+				return err
+			}
+
+			// Create new simplified profiles
+			newProfiles := []models.RelayProfile{
+				{
+					Name:            "Universal",
+					Description:     "Best compatibility - works on all devices (H.264/AAC)",
+					IsDefault:       true,
+					Enabled:         true,
+					IsSystem:        true,
+					VideoCodec:      models.VideoCodecH264,
+					VideoBitrate:    0, // Copy source bitrate
+					VideoPreset:     "fast",
+					VideoProfile:    "main",
+					AudioCodec:      models.AudioCodecAAC,
+					AudioBitrate:    0, // Copy source bitrate
+					ContainerFormat: models.ContainerFormatAuto,
+					HWAccel:         models.HWAccelAuto,
+					FallbackEnabled: true,
+					Timeout:         30,
+				},
+				{
+					Name:            "Passthrough",
+					Description:     "No transcoding - fastest performance, lowest CPU",
+					IsDefault:       false,
+					Enabled:         true,
+					IsSystem:        true,
+					VideoCodec:      models.VideoCodecCopy,
+					AudioCodec:      models.AudioCodecCopy,
+					ContainerFormat: models.ContainerFormatAuto,
+					FallbackEnabled: true,
+					Timeout:         30,
+				},
+				{
+					Name:            "Efficiency",
+					Description:     "HEVC encoding for smaller files (requires Apple 10+, Chrome, smart TVs 2018+)",
+					IsDefault:       false,
+					Enabled:         true,
+					IsSystem:        true,
+					VideoCodec:      models.VideoCodecH265,
+					VideoBitrate:    0, // Copy source bitrate
+					VideoPreset:     "medium",
+					VideoProfile:    "main",
+					AudioCodec:      models.AudioCodecAAC,
+					AudioBitrate:    0, // Copy source bitrate
+					ContainerFormat: models.ContainerFormatFMP4,
+					HWAccel:         models.HWAccelAuto,
+					FallbackEnabled: true,
+					Timeout:         30,
+				},
+			}
+
+			for _, profile := range newProfiles {
+				// Use Create to ensure ULID is generated
+				if err := tx.Create(&profile).Error; err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			// Delete new profiles
+			newProfileNames := []string{"Universal", "Passthrough", "Efficiency"}
+			if err := tx.Where("name IN ? AND is_system = ?", newProfileNames, true).
+				Delete(&models.RelayProfile{}).Error; err != nil {
+				return err
+			}
+
+			// Note: We don't restore old profiles in down migration.
+			// Users can re-run migration015DefaultRelayProfiles if needed.
 			return nil
 		},
 	}

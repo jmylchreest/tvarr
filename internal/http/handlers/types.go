@@ -467,7 +467,7 @@ func StreamProxyDetailFromModel(p *models.StreamProxy, baseURL string) StreamPro
 type CreateStreamProxyRequest struct {
 	Name                  string                 `json:"name" doc:"Unique name for the proxy" minLength:"1" maxLength:"255"`
 	Description           string                 `json:"description,omitempty" doc:"Optional description" maxLength:"1024"`
-	ProxyMode             models.StreamProxyMode `json:"proxy_mode,omitempty" doc:"How to serve streams: redirect, proxy, or relay" enum:"redirect,proxy,relay"`
+	ProxyMode             models.StreamProxyMode `json:"proxy_mode,omitempty" doc:"How to serve streams: direct (302 redirect) or smart (auto-optimize). Legacy values redirect/proxy/relay are accepted but deprecated." enum:"direct,smart,redirect,proxy,relay"`
 	IsActive              *bool                  `json:"is_active,omitempty" doc:"Whether the proxy is active (default: true)"`
 	AutoRegenerate        *bool                  `json:"auto_regenerate,omitempty" doc:"Auto-regenerate when sources change (default: false)"`
 	StartingChannelNumber *int                   `json:"starting_channel_number,omitempty" doc:"Base channel number (default: 1)"`
@@ -483,12 +483,18 @@ type CreateStreamProxyRequest struct {
 	FilterIDs             []models.ULID          `json:"filter_ids,omitempty" doc:"Filter IDs to include"`
 }
 
+// UsesDeprecatedProxyMode returns true if the request uses a deprecated proxy mode.
+func (r *CreateStreamProxyRequest) UsesDeprecatedProxyMode() bool {
+	return models.IsDeprecatedProxyMode(r.ProxyMode)
+}
+
 // ToModel converts the request to a model.
+// Returns the proxy and whether a deprecated mode was used.
 func (r *CreateStreamProxyRequest) ToModel() *models.StreamProxy {
 	proxy := &models.StreamProxy{
 		Name:                  r.Name,
 		Description:           r.Description,
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect, // New default
 		IsActive:              true,
 		AutoRegenerate:        false,
 		StartingChannelNumber: 1,
@@ -500,7 +506,9 @@ func (r *CreateStreamProxyRequest) ToModel() *models.StreamProxy {
 		OutputPath:            r.OutputPath,
 	}
 	if r.ProxyMode != "" {
-		proxy.ProxyMode = r.ProxyMode
+		// Normalize deprecated modes to new values
+		normalizedMode, _ := models.NormalizeProxyMode(r.ProxyMode)
+		proxy.ProxyMode = normalizedMode
 	}
 	if r.IsActive != nil {
 		proxy.IsActive = *r.IsActive
@@ -536,7 +544,7 @@ func (r *CreateStreamProxyRequest) ToModel() *models.StreamProxy {
 type UpdateStreamProxyRequest struct {
 	Name                  *string                 `json:"name,omitempty" doc:"Unique name for the proxy" maxLength:"255"`
 	Description           *string                 `json:"description,omitempty" doc:"Optional description" maxLength:"1024"`
-	ProxyMode             *models.StreamProxyMode `json:"proxy_mode,omitempty" doc:"How to serve streams" enum:"redirect,proxy,relay"`
+	ProxyMode             *models.StreamProxyMode `json:"proxy_mode,omitempty" doc:"How to serve streams: direct (302 redirect) or smart (auto-optimize). Legacy values redirect/proxy/relay are accepted but deprecated." enum:"direct,smart,redirect,proxy,relay"`
 	IsActive              *bool                   `json:"is_active,omitempty" doc:"Whether the proxy is active"`
 	AutoRegenerate        *bool                   `json:"auto_regenerate,omitempty" doc:"Auto-regenerate when sources change"`
 	StartingChannelNumber *int                    `json:"starting_channel_number,omitempty" doc:"Base channel number"`
@@ -552,7 +560,16 @@ type UpdateStreamProxyRequest struct {
 	FilterIDs             []models.ULID           `json:"filter_ids,omitempty" doc:"Filter IDs to include"`
 }
 
+// UsesDeprecatedProxyMode returns true if the request uses a deprecated proxy mode.
+func (r *UpdateStreamProxyRequest) UsesDeprecatedProxyMode() bool {
+	if r.ProxyMode == nil {
+		return false
+	}
+	return models.IsDeprecatedProxyMode(*r.ProxyMode)
+}
+
 // ApplyToModel applies the update request to an existing model.
+// Returns whether a deprecated proxy mode was used.
 func (r *UpdateStreamProxyRequest) ApplyToModel(p *models.StreamProxy) {
 	if r.Name != nil {
 		p.Name = *r.Name
@@ -561,7 +578,9 @@ func (r *UpdateStreamProxyRequest) ApplyToModel(p *models.StreamProxy) {
 		p.Description = *r.Description
 	}
 	if r.ProxyMode != nil {
-		p.ProxyMode = *r.ProxyMode
+		// Normalize deprecated modes to new values
+		normalizedMode, _ := models.NormalizeProxyMode(*r.ProxyMode)
+		p.ProxyMode = normalizedMode
 	}
 	if r.IsActive != nil {
 		p.IsActive = *r.IsActive

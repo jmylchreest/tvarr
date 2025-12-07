@@ -91,7 +91,11 @@ var (
 	ErrRelayProfileNotFound = errors.New("relay profile not found")
 
 	// ErrRelayProfileInvalidCodecFormat indicates an invalid codec/format combination.
+	// Deprecated: Use ErrRelayProfileCodecRequiresFMP4 instead.
 	ErrRelayProfileInvalidCodecFormat = errors.New("codec requires DASH output format")
+
+	// ErrRelayProfileCodecRequiresFMP4 indicates a codec requires fMP4 container but MPEG-TS was explicitly selected.
+	ErrRelayProfileCodecRequiresFMP4 = errors.New("selected codec (VP9/AV1/Opus) requires fMP4 container; MPEG-TS is not supported")
 
 	// ErrRelayProfileInvalidSegmentDuration indicates an invalid segment duration.
 	ErrRelayProfileInvalidSegmentDuration = errors.New("segment duration must be 2-10 seconds")

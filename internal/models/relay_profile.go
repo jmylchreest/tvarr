@@ -42,6 +42,7 @@ const (
 )
 
 // OutputFormat represents the output container format.
+// Deprecated: Use ContainerFormat instead. OutputFormat conflates container and manifest formats.
 type OutputFormat string
 
 const (
@@ -51,6 +52,25 @@ const (
 	OutputFormatFLV    OutputFormat = "flv"      // Flash Video
 	OutputFormatMKV    OutputFormat = "matroska" // Matroska container
 	OutputFormatMP4    OutputFormat = "mp4"      // MP4 container
+)
+
+// ContainerFormat represents the media container format for streaming.
+// This separates the container (TS/fMP4) from the manifest format (HLS/DASH).
+type ContainerFormat string
+
+const (
+	// ContainerFormatAuto lets the system choose the best container based on codec and client.
+	// - fMP4 for: DASH requests, HLS requests from modern browsers (Chrome, Firefox, Edge, Safari 10+)
+	// - MPEG-TS for: explicit ?format=mpegts, legacy User-Agents, Accept header requesting video/MP2T
+	ContainerFormatAuto ContainerFormat = "auto"
+
+	// ContainerFormatFMP4 forces fragmented MP4 (CMAF) container.
+	// Required for VP9, AV1, and Opus codecs. Supports HLS v7+ and DASH.
+	ContainerFormatFMP4 ContainerFormat = "fmp4"
+
+	// ContainerFormatMPEGTS forces MPEG Transport Stream container.
+	// Maximum compatibility with legacy devices. Limited to H.264/H.265/AAC/MP3/AC3/EAC3.
+	ContainerFormatMPEGTS ContainerFormat = "mpegts"
 )
 
 // HWAccelType represents hardware acceleration type.
@@ -113,9 +133,11 @@ type RelayProfile struct {
 	GpuIndex            int         `gorm:"default:-1" json:"gpu_index"`                      // -1 = auto, 0+ = specific GPU
 
 	// Output settings
-	OutputFormat    OutputFormat `gorm:"size:50;default:'mpegts'" json:"output_format"`
-	SegmentDuration int          `gorm:"default:6" json:"segment_duration,omitempty"` // HLS/DASH segment duration (seconds), 2-10
-	PlaylistSize    int          `gorm:"default:5" json:"playlist_size,omitempty"`    // HLS/DASH playlist entries, 3-20
+	// Deprecated: OutputFormat conflates container and manifest. Use ContainerFormat instead.
+	OutputFormat    OutputFormat    `gorm:"size:50;default:'mpegts'" json:"output_format,omitempty"`
+	ContainerFormat ContainerFormat `gorm:"size:20;default:'auto'" json:"container_format"`
+	SegmentDuration int             `gorm:"default:6" json:"segment_duration,omitempty"` // HLS/DASH segment duration (seconds), 2-10
+	PlaylistSize    int             `gorm:"default:5" json:"playlist_size,omitempty"`    // HLS/DASH playlist entries, 3-20
 
 	// Buffer and timeout settings
 	InputBufferSize  int `gorm:"default:8192" json:"input_buffer_size"`    // KB
@@ -216,33 +238,19 @@ func (p *RelayProfile) NeedsTranscode() bool {
 	return p.VideoCodec != VideoCodecCopy || p.AudioCodec != AudioCodecCopy
 }
 
-// ValidateCodecFormat validates that the selected codecs are compatible with the output format.
-// VP9, AV1, and Opus codecs require DASH output format (fMP4 containers).
+// ValidateCodecFormat validates that the selected codecs are compatible with the container format.
+// VP9, AV1, and Opus codecs require fMP4 container (not MPEG-TS).
 func (p *RelayProfile) ValidateCodecFormat() error {
-	// DASH-only video codecs
-	dashOnlyVideoCodecs := []VideoCodec{
-		VideoCodecVP9,
-		VideoCodecAV1,
-		VideoCodecAV1NVENC,
-		VideoCodecAV1QSV,
+	// If user explicitly requested MPEG-TS but codecs require fMP4, that's an error
+	if p.ContainerFormat == ContainerFormatMPEGTS && p.RequiresFMP4() {
+		return ErrRelayProfileCodecRequiresFMP4
 	}
 
-	// DASH-only audio codecs
-	dashOnlyAudioCodecs := []AudioCodec{
-		AudioCodecOpus,
-	}
-
-	// If not using DASH, check for incompatible codecs
-	if p.OutputFormat != OutputFormatDASH {
-		for _, codec := range dashOnlyVideoCodecs {
-			if p.VideoCodec == codec {
-				return ErrRelayProfileInvalidCodecFormat
-			}
-		}
-		for _, codec := range dashOnlyAudioCodecs {
-			if p.AudioCodec == codec {
-				return ErrRelayProfileInvalidCodecFormat
-			}
+	// Legacy validation for OutputFormat (deprecated field)
+	// If not using DASH and not using fMP4 container, check for incompatible codecs
+	if p.OutputFormat != OutputFormatDASH && p.ContainerFormat != ContainerFormatFMP4 && p.ContainerFormat != ContainerFormatAuto {
+		if p.RequiresFMP4() {
+			return ErrRelayProfileInvalidCodecFormat
 		}
 	}
 
@@ -262,7 +270,19 @@ func (p *RelayProfile) ValidateSegmentConfig() error {
 }
 
 // IsDASHOnlyVideoCodec returns true if the codec is only supported in DASH format.
+// Deprecated: Use IsFMP4OnlyVideoCodec instead - these codecs require fMP4 container, not DASH specifically.
 func IsDASHOnlyVideoCodec(codec VideoCodec) bool {
+	return IsFMP4OnlyVideoCodec(codec)
+}
+
+// IsDASHOnlyAudioCodec returns true if the codec is only supported in DASH format.
+// Deprecated: Use IsFMP4OnlyAudioCodec instead - these codecs require fMP4 container, not DASH specifically.
+func IsDASHOnlyAudioCodec(codec AudioCodec) bool {
+	return IsFMP4OnlyAudioCodec(codec)
+}
+
+// IsFMP4OnlyVideoCodec returns true if the codec requires fMP4 container (not compatible with MPEG-TS).
+func IsFMP4OnlyVideoCodec(codec VideoCodec) bool {
 	switch codec {
 	case VideoCodecVP9, VideoCodecAV1, VideoCodecAV1NVENC, VideoCodecAV1QSV:
 		return true
@@ -271,14 +291,52 @@ func IsDASHOnlyVideoCodec(codec VideoCodec) bool {
 	}
 }
 
-// IsDASHOnlyAudioCodec returns true if the codec is only supported in DASH format.
-func IsDASHOnlyAudioCodec(codec AudioCodec) bool {
+// IsFMP4OnlyAudioCodec returns true if the codec requires fMP4 container (not compatible with MPEG-TS).
+func IsFMP4OnlyAudioCodec(codec AudioCodec) bool {
 	switch codec {
 	case AudioCodecOpus:
 		return true
 	default:
 		return false
 	}
+}
+
+// RequiresFMP4 returns true if the profile's codecs require fMP4 container.
+// VP9, AV1, and Opus codecs are not supported in MPEG-TS containers.
+func (p *RelayProfile) RequiresFMP4() bool {
+	return IsFMP4OnlyVideoCodec(p.VideoCodec) || IsFMP4OnlyAudioCodec(p.AudioCodec)
+}
+
+// DetermineContainer returns the effective container format for this profile.
+// When ContainerFormat is "auto", it selects based on codec requirements:
+// - fMP4 if codecs require it (VP9/AV1/Opus)
+// - fMP4 as modern default for H.264/H.265 (better seeking, caching)
+// - MPEG-TS only when explicitly configured or codec is "copy"
+func (p *RelayProfile) DetermineContainer() ContainerFormat {
+	// Explicit container format takes precedence (unless it conflicts with codecs)
+	if p.ContainerFormat == ContainerFormatFMP4 {
+		return ContainerFormatFMP4
+	}
+	if p.ContainerFormat == ContainerFormatMPEGTS {
+		// Even if explicitly MPEG-TS, modern codecs force fMP4
+		if p.RequiresFMP4() {
+			return ContainerFormatFMP4
+		}
+		return ContainerFormatMPEGTS
+	}
+
+	// Auto mode: determine based on codecs
+	if p.RequiresFMP4() {
+		return ContainerFormatFMP4
+	}
+
+	// For passthrough (copy), prefer MPEG-TS for maximum compatibility
+	if p.VideoCodec == VideoCodecCopy && p.AudioCodec == AudioCodecCopy {
+		return ContainerFormatMPEGTS
+	}
+
+	// Default to fMP4 for modern codecs (better seeking, HLS v7 support)
+	return ContainerFormatFMP4
 }
 
 // Clone creates a copy of the profile suitable for customization.

@@ -22,13 +22,45 @@ const (
 type StreamProxyMode string
 
 const (
-	// StreamProxyModeRedirect redirects clients directly to the upstream URL.
+	// StreamProxyModeDirect sends HTTP 302 redirect to source URL (zero processing).
+	StreamProxyModeDirect StreamProxyMode = "direct"
+	// StreamProxyModeSmart automatically optimizes delivery based on source and client.
+	// When a profile is set, transcodes if needed. Otherwise, uses passthrough/repackage.
+	StreamProxyModeSmart StreamProxyMode = "smart"
+
+	// Deprecated: Use StreamProxyModeDirect instead.
 	StreamProxyModeRedirect StreamProxyMode = "redirect"
-	// StreamProxyModeProxy proxies the stream through tvarr.
+	// Deprecated: Use StreamProxyModeSmart instead.
 	StreamProxyModeProxy StreamProxyMode = "proxy"
-	// StreamProxyModeRelay relays the stream through FFmpeg for transcoding.
+	// Deprecated: Use StreamProxyModeSmart instead.
 	StreamProxyModeRelay StreamProxyMode = "relay"
 )
+
+// NormalizeProxyMode converts deprecated proxy modes to their new equivalents.
+// Returns the normalized mode and whether it was deprecated.
+func NormalizeProxyMode(mode StreamProxyMode) (StreamProxyMode, bool) {
+	switch mode {
+	case StreamProxyModeRedirect:
+		return StreamProxyModeDirect, true
+	case StreamProxyModeProxy, StreamProxyModeRelay:
+		return StreamProxyModeSmart, true
+	case StreamProxyModeDirect, StreamProxyModeSmart:
+		return mode, false
+	default:
+		// Unknown mode, return as-is (will fail validation elsewhere)
+		return mode, false
+	}
+}
+
+// IsDeprecatedProxyMode returns true if the mode is deprecated.
+func IsDeprecatedProxyMode(mode StreamProxyMode) bool {
+	switch mode {
+	case StreamProxyModeRedirect, StreamProxyModeProxy, StreamProxyModeRelay:
+		return true
+	default:
+		return false
+	}
+}
 
 // NumberingMode determines how channel numbers are assigned.
 type NumberingMode string
