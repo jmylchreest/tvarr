@@ -428,6 +428,14 @@ func (m *jobMockProxyRepo) GetByEpgSourceID(ctx context.Context, epgSourceID mod
 	return nil, nil
 }
 
+func (m *jobMockProxyRepo) CountByRelayProfileID(ctx context.Context, profileID models.ULID) (int64, error) {
+	return 0, nil
+}
+
+func (m *jobMockProxyRepo) GetByRelayProfileID(ctx context.Context, profileID models.ULID) ([]*models.StreamProxy, error) {
+	return nil, nil
+}
+
 // mockScheduler wraps the real scheduler for testing.
 type mockScheduler struct {
 	scheduleImmediateJob *models.Job

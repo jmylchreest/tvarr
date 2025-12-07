@@ -1377,15 +1377,15 @@ export function StreamSources() {
                             </div>
                           </TableCell>
                           <TableCell>
-                            {source.last_ingested_at ? (
+                            {source.last_ingestion_at ? (
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <div className="text-sm cursor-help">
-                                    {formatRelativeTime(source.last_ingested_at)}
+                                    {formatRelativeTime(source.last_ingestion_at)}
                                   </div>
                                 </TooltipTrigger>
                                 <TooltipContent>
-                                  <p className="text-sm">{formatDate(source.last_ingested_at)}</p>
+                                  <p className="text-sm">{formatDate(source.last_ingestion_at)}</p>
                                 </TooltipContent>
                               </Tooltip>
                             ) : (
@@ -1499,8 +1499,8 @@ export function StreamSources() {
                             <div className="flex justify-between">
                               <span>Last Updated:</span>
                               <span>
-                                {source.last_ingested_at
-                                  ? new Date(source.last_ingested_at).toLocaleDateString()
+                                {source.last_ingestion_at
+                                  ? new Date(source.last_ingestion_at).toLocaleDateString()
                                   : 'Never'}
                               </span>
                             </div>
@@ -1578,8 +1578,8 @@ export function StreamSources() {
                                 <span>Channels: {source.channel_count || 0}</span>
                                 <span>
                                   Last Updated:{' '}
-                                  {source.last_ingested_at
-                                    ? new Date(source.last_ingested_at).toLocaleDateString()
+                                  {source.last_ingestion_at
+                                    ? new Date(source.last_ingestion_at).toLocaleDateString()
                                     : 'Never'}
                                 </span>
                               </div>

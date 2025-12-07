@@ -125,11 +125,13 @@ func TestRelayProfile_Clone(t *testing.T) {
 	}
 	original.ID = NewULID()
 
-	clone := original.Clone("cloned")
+	clone := original.Clone()
+	clone.Name = "cloned"
+	clone.Description = "Cloned profile"
 
 	assert.NotEqual(t, original.ID, clone.ID)
 	assert.Equal(t, "cloned", clone.Name)
-	assert.Equal(t, original.Description, clone.Description)
+	assert.Equal(t, "Cloned profile", clone.Description) // Clone clears description, must be set by caller
 	assert.Equal(t, original.VideoCodec, clone.VideoCodec)
 	assert.Equal(t, original.AudioCodec, clone.AudioCodec)
 	assert.Equal(t, original.VideoBitrate, clone.VideoBitrate)

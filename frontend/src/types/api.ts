@@ -50,7 +50,7 @@ export interface StreamSource {
   updated_at: string;
   is_active: boolean;
   field_map?: string;
-  last_ingested_at?: string;
+  last_ingestion_at?: string;
   username?: string;
   password?: string;
   // (Optional future extension) manual_channels?: ManualChannelInput[];  // not included in current backend list response
@@ -76,7 +76,7 @@ export interface EpgSource {
   created_at: string;
   updated_at: string;
   is_active: boolean;
-  last_ingested_at?: string;
+  last_ingestion_at?: string;
   original_timezone?: string;
   username?: string;
   password?: string;
@@ -189,10 +189,32 @@ export interface RelayProfile {
   audio_sample_rate?: number;
   audio_channels?: number;
   hw_accel: HWAccelType;
+  hw_accel_device?: string;
+  hw_accel_output_format?: string;
+  hw_accel_decoder_codec?: string;
+  hw_accel_extra_options?: string;
+  gpu_index?: number;
   output_format: RelayOutputFormat;
+  input_options?: string;
+  output_options?: string;
+  filter_complex?: string;
+  custom_flags_validated?: boolean;
+  custom_flags_warnings?: string;
   is_default: boolean;
-  is_system?: boolean;  // Optional - set by backend, not API
+  is_system?: boolean;
   enabled: boolean;
+  fallback_enabled?: boolean;
+  fallback_error_threshold?: number;
+  fallback_recovery_interval?: number;
+  // Smart codec matching
+  force_video_transcode?: boolean;
+  force_audio_transcode?: boolean;
+  // Statistics
+  success_count?: number;
+  failure_count?: number;
+  last_used_at?: string;
+  last_error_at?: string;
+  last_error_msg?: string;
   created_at: string;
   updated_at: string;
 }
@@ -211,8 +233,21 @@ export interface CreateRelayProfileRequest {
   audio_sample_rate?: number;
   audio_channels?: number;
   hw_accel?: HWAccelType;
+  hw_accel_device?: string;
+  hw_accel_output_format?: string;
+  hw_accel_decoder_codec?: string;
+  hw_accel_extra_options?: string;
+  gpu_index?: number;
+  input_options?: string;
+  output_options?: string;
+  filter_complex?: string;
   output_format?: RelayOutputFormat;
   is_default?: boolean;
+  fallback_enabled?: boolean;
+  fallback_error_threshold?: number;
+  fallback_recovery_interval?: number;
+  force_video_transcode?: boolean;
+  force_audio_transcode?: boolean;
 }
 
 export interface UpdateRelayProfileRequest {
@@ -229,7 +264,110 @@ export interface UpdateRelayProfileRequest {
   audio_sample_rate?: number;
   audio_channels?: number;
   hw_accel?: HWAccelType;
+  hw_accel_device?: string;
+  hw_accel_output_format?: string;
+  hw_accel_decoder_codec?: string;
+  hw_accel_extra_options?: string;
+  gpu_index?: number;
+  input_options?: string;
+  output_options?: string;
+  filter_complex?: string;
   output_format?: RelayOutputFormat;
+  enabled?: boolean;
+  fallback_enabled?: boolean;
+  fallback_error_threshold?: number;
+  fallback_recovery_interval?: number;
+  force_video_transcode?: boolean;
+  force_audio_transcode?: boolean;
+}
+
+// Profile Test Types
+export interface TestStreamInfo {
+  input_url: string;
+  output_url: string;
+}
+
+export interface ProfileTestResult {
+  success: boolean;
+  duration_ms: number;
+  frames_processed: number;
+  fps: number;
+  video_codec_in?: string;
+  video_codec_out?: string;
+  audio_codec_in?: string;
+  audio_codec_out?: string;
+  resolution?: string;
+  hw_accel_active: boolean;
+  hw_accel_method?: string;
+  bitrate_kbps?: number;
+  errors?: string[];
+  warnings?: string[];
+  suggestions?: string[];
+  ffmpeg_output?: string;
+  ffmpeg_command?: string;
+  exit_code: number;
+  stream_info?: TestStreamInfo;
+}
+
+// Profile Test Request
+export interface ProfileTestRequest {
+  stream_url: string;
+  timeout_seconds?: number;
+}
+
+// Command Preview Types
+export interface CommandPreview {
+  command: string;
+  args: string[];
+  binary: string;
+  input_url: string;
+  output_url: string;
+  video_codec: string;
+  audio_codec: string;
+  hw_accel: string;
+  bitstream_filter: string;
+  notes: string[];
+}
+
+// Command Preview Request
+export interface CommandPreviewRequest {
+  input_url?: string;
+  output_url?: string;
+}
+
+// Flag Validation Types
+export interface FlagValidationResult {
+  valid: boolean;
+  flags: string[];
+  warnings?: string[];
+  errors?: string[];
+  suggestions?: string[];
+}
+
+// Flag Validation Request
+export interface FlagValidationRequest {
+  input_options?: string;
+  output_options?: string;
+  filter_complex?: string;
+}
+
+// Hardware Capability Types
+export interface HardwareCapability {
+  type: string;
+  name: string;
+  available: boolean;
+  device_name?: string;
+  device_path?: string;
+  gpu_index?: number;
+  supported_encoders?: string[];
+  supported_decoders?: string[];
+  detected_at: string;
+}
+
+export interface HardwareCapabilitiesResponse {
+  capabilities: HardwareCapability[];
+  detected_at: string;
+  recommended?: HardwareCapability;
 }
 
 export interface ConnectedClient {
@@ -527,6 +665,17 @@ export interface HealthData {
   };
 }
 
+// K8s-aligned probe responses matching backend LivezResponse and ReadyzResponse
+export interface LivezProbeResponse {
+  status: string; // "ok" when healthy
+}
+
+export interface ReadyzProbeResponse {
+  status: string; // "ok" when ready, "not_ready" otherwise
+  components?: Record<string, string>; // e.g., { database: "ok", scheduler: "ok" }
+}
+
+// Legacy alias for backward compatibility
 export interface KubernetesProbeResponse {
   success: boolean;
   timestamp: string;

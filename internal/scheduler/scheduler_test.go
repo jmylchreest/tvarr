@@ -371,6 +371,14 @@ func (m *mockProxyRepo) GetByEpgSourceID(ctx context.Context, epgSourceID models
 	return nil, nil
 }
 
+func (m *mockProxyRepo) CountByRelayProfileID(ctx context.Context, profileID models.ULID) (int64, error) {
+	return 0, nil
+}
+
+func (m *mockProxyRepo) GetByRelayProfileID(ctx context.Context, profileID models.ULID) ([]*models.StreamProxy, error) {
+	return nil, nil
+}
+
 func TestScheduler_ValidateCron(t *testing.T) {
 	jobRepo := newMockJobRepo()
 	scheduler := NewScheduler(jobRepo, &mockStreamSourceRepo{}, &mockEpgSourceRepo{}, &mockProxyRepo{})

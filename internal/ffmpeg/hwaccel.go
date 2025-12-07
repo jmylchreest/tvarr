@@ -337,16 +337,20 @@ func (d *HWAccelDetector) getAccelDecoders(ctx context.Context, accel string) []
 }
 
 // GetRecommendedHWAccel returns the best available hardware accelerator.
+// Priority order follows m3u-proxy's proven approach: vaapi → nvenc/cuda → qsv
 func GetRecommendedHWAccel(accels []HWAccelInfo) *HWAccelInfo {
-	// Priority order for hardware acceleration
+	// Priority order for hardware acceleration (matches m3u-proxy)
+	// vaapi is preferred on Linux due to broad GPU support
+	// cuda/nvenc for NVIDIA GPUs
+	// qsv for Intel iGPUs
 	priority := []HWAccelType{
-		HWAccelNVENC,      // NVIDIA - best compatibility
-		HWAccelQSV,        // Intel - good compatibility
+		HWAccelVAAPI,        // Linux VA-API - broad GPU support
+		HWAccelNVENC,        // NVIDIA CUDA/NVENC
+		HWAccelQSV,          // Intel Quick Sync
 		HWAccelVideoToolbox, // macOS - platform native
-		HWAccelVAAPI,      // Linux - good fallback
-		HWAccelD3D11VA,    // Windows
-		HWAccelDXVA2,      // Windows (older)
-		HWAccelVulkan,     // Cross-platform
+		HWAccelD3D11VA,      // Windows 8+
+		HWAccelDXVA2,        // Windows (older)
+		HWAccelVulkan,       // Cross-platform
 	}
 
 	for _, prio := range priority {
@@ -358,6 +362,16 @@ func GetRecommendedHWAccel(accels []HWAccelInfo) *HWAccelInfo {
 	}
 
 	return nil
+}
+
+// SelectBestHWAccel returns the hwaccel type string for the best available accelerator.
+// Returns empty string if no hardware acceleration is available.
+func SelectBestHWAccel(accels []HWAccelInfo) string {
+	recommended := GetRecommendedHWAccel(accels)
+	if recommended != nil {
+		return string(recommended.Type)
+	}
+	return ""
 }
 
 // HasHWAccel returns true if any hardware acceleration is available.

@@ -1,6 +1,8 @@
 package models
 
 import (
+	"time"
+
 	"gorm.io/gorm"
 )
 
@@ -8,29 +10,28 @@ import (
 type VideoCodec string
 
 const (
-	VideoCodecCopy    VideoCodec = "copy"     // Pass-through (no transcoding)
-	VideoCodecH264    VideoCodec = "libx264"  // Software H.264
-	VideoCodecH265    VideoCodec = "libx265"  // Software H.265/HEVC
-	VideoCodecVP9     VideoCodec = "libvpx-vp9"
-	VideoCodecAV1     VideoCodec = "libaom-av1"
-	VideoCodecNVENC   VideoCodec = "h264_nvenc"   // NVIDIA hardware
+	VideoCodecCopy    VideoCodec = "copy"         // Pass-through (no transcoding)
+	VideoCodecH264    VideoCodec = "libx264"      // Software H.264
+	VideoCodecH265    VideoCodec = "libx265"      // Software H.265/HEVC
+	VideoCodecNVENC   VideoCodec = "h264_nvenc"   // NVIDIA hardware H.264
 	VideoCodecNVENCH5 VideoCodec = "hevc_nvenc"   // NVIDIA hardware HEVC
-	VideoCodecQSV     VideoCodec = "h264_qsv"     // Intel QuickSync
+	VideoCodecQSV     VideoCodec = "h264_qsv"     // Intel QuickSync H.264
 	VideoCodecQSVH5   VideoCodec = "hevc_qsv"     // Intel QuickSync HEVC
-	VideoCodecVAAPI   VideoCodec = "h264_vaapi"   // Linux VA-API
+	VideoCodecVAAPI   VideoCodec = "h264_vaapi"   // Linux VA-API H.264
 	VideoCodecVAAPIH5 VideoCodec = "hevc_vaapi"   // Linux VA-API HEVC
+	// Note: VP9 (libvpx-vp9) and AV1 (libaom-av1) are not supported in MPEG-TS containers
 )
 
 // AudioCodec represents an audio codec for transcoding.
 type AudioCodec string
 
 const (
-	AudioCodecCopy AudioCodec = "copy"    // Pass-through (no transcoding)
-	AudioCodecAAC  AudioCodec = "aac"     // AAC
-	AudioCodecMP3  AudioCodec = "libmp3lame"
-	AudioCodecOpus AudioCodec = "libopus"
-	AudioCodecAC3  AudioCodec = "ac3"
-	AudioCodecEAC3 AudioCodec = "eac3"
+	AudioCodecCopy AudioCodec = "copy"       // Pass-through (no transcoding)
+	AudioCodecAAC  AudioCodec = "aac"        // AAC
+	AudioCodecMP3  AudioCodec = "libmp3lame" // MP3
+	AudioCodecAC3  AudioCodec = "ac3"        // Dolby Digital
+	AudioCodecEAC3 AudioCodec = "eac3"       // Dolby Digital Plus
+	// Note: Opus (libopus) is not supported in MPEG-TS containers
 )
 
 // OutputFormat represents the output container format.
@@ -48,10 +49,11 @@ const (
 type HWAccelType string
 
 const (
-	HWAccelNone  HWAccelType = "none"
-	HWAccelNVDEC HWAccelType = "cuda"    // NVIDIA NVDEC
-	HWAccelQSV   HWAccelType = "qsv"     // Intel QuickSync
-	HWAccelVAAPI HWAccelType = "vaapi"   // Linux VA-API
+	HWAccelAuto  HWAccelType = "auto"         // Auto-detect best available
+	HWAccelNone  HWAccelType = "none"         // Disabled (software only)
+	HWAccelNVDEC HWAccelType = "cuda"         // NVIDIA NVDEC
+	HWAccelQSV   HWAccelType = "qsv"          // Intel QuickSync
+	HWAccelVAAPI HWAccelType = "vaapi"        // Linux VA-API
 	HWAccelVT    HWAccelType = "videotoolbox" // macOS
 )
 
@@ -95,8 +97,12 @@ type RelayProfile struct {
 	AudioChannels   int        `gorm:"default:0" json:"audio_channels,omitempty"`      // 0 = keep original
 
 	// Hardware acceleration
-	HWAccel       HWAccelType `gorm:"size:50;default:'none'" json:"hw_accel"`
-	HWAccelDevice string      `gorm:"size:100" json:"hw_accel_device,omitempty"`      // /dev/dri/renderD128
+	HWAccel             HWAccelType `gorm:"size:50;default:'auto'" json:"hw_accel"`
+	HWAccelDevice       string      `gorm:"size:100" json:"hw_accel_device,omitempty"`        // /dev/dri/renderD128
+	HWAccelOutputFormat string      `gorm:"size:50" json:"hw_accel_output_format,omitempty"`  // cuda, qsv, vaapi
+	HWAccelDecoderCodec string      `gorm:"size:50" json:"hw_accel_decoder_codec,omitempty"`  // h264_cuvid, hevc_qsv
+	HWAccelExtraOptions string      `gorm:"size:500" json:"hw_accel_extra_options,omitempty"` // Additional hwaccel flags
+	GpuIndex            int         `gorm:"default:-1" json:"gpu_index"`                      // -1 = auto, 0+ = specific GPU
 
 	// Output settings
 	OutputFormat   OutputFormat `gorm:"size:50;default:'mpegts'" json:"output_format"`
@@ -123,6 +129,21 @@ type RelayProfile struct {
 	FallbackEnabled          bool `gorm:"default:true" json:"fallback_enabled"`            // Enable fallback stream on error
 	FallbackErrorThreshold   int  `gorm:"default:3" json:"fallback_error_threshold"`       // Errors before fallback (1-10)
 	FallbackRecoveryInterval int  `gorm:"default:30" json:"fallback_recovery_interval"`    // Seconds between recovery attempts (5-300)
+
+	// Smart codec matching - when false, use copy if source matches target codec family
+	ForceVideoTranscode bool `gorm:"default:false" json:"force_video_transcode"` // Force video transcoding even if source matches target codec
+	ForceAudioTranscode bool `gorm:"default:false" json:"force_audio_transcode"` // Force audio transcoding even if source matches target codec
+
+	// Custom flags validation tracking
+	CustomFlagsValidated bool   `gorm:"default:false" json:"custom_flags_validated"`
+	CustomFlagsWarnings  string `gorm:"size:2000" json:"custom_flags_warnings,omitempty"` // JSON array of warnings
+
+	// Profile usage statistics
+	SuccessCount int64     `gorm:"default:0" json:"success_count"`
+	FailureCount int64     `gorm:"default:0" json:"failure_count"`
+	LastUsedAt   time.Time `json:"last_used_at,omitempty"`
+	LastErrorAt  time.Time `json:"last_error_at,omitempty"`
+	LastErrorMsg string    `gorm:"size:500" json:"last_error_msg,omitempty"`
 }
 
 // TableName returns the table name for RelayProfile.
@@ -179,12 +200,22 @@ func (p *RelayProfile) NeedsTranscode() bool {
 	return p.VideoCodec != VideoCodecCopy || p.AudioCodec != AudioCodecCopy
 }
 
-// Clone creates a copy of the profile with a new name.
-func (p *RelayProfile) Clone(newName string) *RelayProfile {
+// Clone creates a copy of the profile suitable for customization.
+// The caller should set Name, Description, etc. on the returned clone.
+func (p *RelayProfile) Clone() *RelayProfile {
 	clone := *p
 	clone.ID = ULID{}
-	clone.Name = newName
+	clone.Name = "" // Must be set by caller
+	clone.Description = ""
 	clone.IsDefault = false
+	clone.IsSystem = false // Clone is always user-owned
+	clone.SuccessCount = 0
+	clone.FailureCount = 0
+	clone.LastUsedAt = time.Time{}
+	clone.LastErrorAt = time.Time{}
+	clone.LastErrorMsg = ""
+	clone.CustomFlagsValidated = false
+	clone.CustomFlagsWarnings = ""
 	clone.CreatedAt = Now()
 	clone.UpdatedAt = Now()
 	return &clone

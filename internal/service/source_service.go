@@ -343,9 +343,15 @@ func (s *SourceService) Ingest(ctx context.Context, id models.ULID) error {
 	)
 
 	// Perform ingestion within a transaction for atomicity.
-	// This ensures delete + all inserts are atomic - if any fails, everything is rolled back.
+	// Uses "mark and sweep" approach to preserve channel IDs:
+	// 1. Record start time
+	// 2. Upsert channels (updates existing, creates new - preserves IDs)
+	// 3. Delete channels not updated since start time (removed from source)
 	var channelCount int
 	const batchSize = 1000
+
+	// Record start time for stale channel cleanup
+	ingestionStartTime := time.Now()
 
 	// Stage updaters - declared outside transaction to maintain references
 	var connectStage, downloadStage, finalizeStage *progress.StageUpdater
@@ -357,10 +363,9 @@ func (s *SourceService) Ingest(ctx context.Context, id models.ULID) error {
 	}
 
 	err = s.channelRepo.Transaction(ctx, func(txRepo repository.ChannelRepository) error {
-		// Delete existing channels within the transaction
-		if err := txRepo.DeleteBySourceID(ctx, id); err != nil {
-			return fmt.Errorf("deleting existing channels: %w", err)
-		}
+		// Note: We no longer delete channels upfront. Instead, we use upsert to
+		// preserve existing channel IDs and clean up stale channels after.
+		// This ensures proxy URLs remain stable across re-ingestions.
 
 		// Stage 2: Download - complete connect, start download
 		if progressMgr != nil && connectStage != nil {
@@ -390,7 +395,7 @@ func (s *SourceService) Ingest(ctx context.Context, id models.ULID) error {
 			return fmt.Errorf("ingesting channels: %w", err)
 		}
 
-		// Stage 3: Finalize - flush remaining channels and complete
+		// Stage 3: Finalize - flush remaining channels and clean up stale ones
 		if progressMgr != nil && downloadStage != nil {
 			downloadStage.Complete()
 			finalizeStage = progressMgr.StartStage("finalize")
@@ -401,6 +406,19 @@ func (s *SourceService) Ingest(ctx context.Context, id models.ULID) error {
 			if err := txRepo.UpsertBatch(ctx, batchChannels); err != nil {
 				return fmt.Errorf("final batch insert: %w", err)
 			}
+		}
+
+		// Clean up stale channels (those not updated during this ingestion)
+		// This removes channels that are no longer in the source
+		staleCount, err := txRepo.DeleteStaleBySourceID(ctx, id, ingestionStartTime)
+		if err != nil {
+			return fmt.Errorf("cleaning up stale channels: %w", err)
+		}
+		if staleCount > 0 {
+			s.logger.Info("removed stale channels",
+				"source_id", id.String(),
+				"count", staleCount,
+			)
 		}
 
 		return nil
@@ -532,9 +550,15 @@ func (s *SourceService) performIngestion(ctx context.Context, source *models.Str
 	)
 
 	// Perform ingestion within a transaction for atomicity.
-	// This ensures delete + all inserts are atomic - if any fails, everything is rolled back.
+	// Uses "mark and sweep" approach to preserve channel IDs:
+	// 1. Record start time
+	// 2. Upsert channels (updates existing, creates new - preserves IDs)
+	// 3. Delete channels not updated since start time (removed from source)
 	var channelCount int
 	const batchSize = 1000
+
+	// Record start time for stale channel cleanup
+	ingestionStartTime := time.Now()
 
 	// Stage updaters - declared outside transaction to maintain references
 	var connectStage, downloadStage, finalizeStage *progress.StageUpdater
@@ -546,10 +570,9 @@ func (s *SourceService) performIngestion(ctx context.Context, source *models.Str
 	}
 
 	err = s.channelRepo.Transaction(ctx, func(txRepo repository.ChannelRepository) error {
-		// Delete existing channels within the transaction
-		if err := txRepo.DeleteBySourceID(ctx, id); err != nil {
-			return fmt.Errorf("deleting existing channels: %w", err)
-		}
+		// Note: We no longer delete channels upfront. Instead, we use upsert to
+		// preserve existing channel IDs and clean up stale channels after.
+		// This ensures proxy URLs remain stable across re-ingestions.
 
 		// Stage 2: Download - complete connect, start download
 		if progressMgr != nil && connectStage != nil {
@@ -585,7 +608,7 @@ func (s *SourceService) performIngestion(ctx context.Context, source *models.Str
 			return fmt.Errorf("ingesting channels: %w", err)
 		}
 
-		// Stage 3: Finalize - flush remaining channels and complete
+		// Stage 3: Finalize - flush remaining channels and clean up stale ones
 		if progressMgr != nil && downloadStage != nil {
 			downloadStage.Complete()
 			finalizeStage = progressMgr.StartStage("finalize")
@@ -596,6 +619,19 @@ func (s *SourceService) performIngestion(ctx context.Context, source *models.Str
 			if err := txRepo.UpsertBatch(ctx, batchChannels); err != nil {
 				return fmt.Errorf("final batch insert: %w", err)
 			}
+		}
+
+		// Clean up stale channels (those not updated during this ingestion)
+		// This removes channels that are no longer in the source
+		staleCount, err := txRepo.DeleteStaleBySourceID(ctx, id, ingestionStartTime)
+		if err != nil {
+			return fmt.Errorf("cleaning up stale channels: %w", err)
+		}
+		if staleCount > 0 {
+			s.logger.Info("removed stale channels",
+				"source_id", id.String(),
+				"count", staleCount,
+			)
 		}
 
 		return nil

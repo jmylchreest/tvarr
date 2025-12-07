@@ -27,9 +27,9 @@ tests/
 Go 1.25.x (latest stable): Follow standard conventions
 
 ## Recent Changes
+- 007-ffmpeg-profile-configuration: Added Go 1.25.x (latest stable) + Huma v2.34+ (Chi router), GORM v2, FFmpeg (external binary)
 - 006-config-settings-ui: Added Go 1.25.x (latest stable) + Huma v2.34+ (Chi router), GORM v2, Viper (config)
 - 005-ffmpeg-relay-transcoding: Added Go 1.25.x + Huma v2.34+ (Chi router), GORM v2, FFmpeg (external binary)
-- 005-ffmpeg-relay-transcoding: Added Go 1.25.x (latest stable) + Huma v2.34+ (Chi router), GORM v2, FFmpeg (external binary)
 
 
 <!-- MANUAL ADDITIONS START -->

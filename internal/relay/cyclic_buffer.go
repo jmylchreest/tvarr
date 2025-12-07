@@ -147,11 +147,15 @@ func (cb *CyclicBuffer) WriteChunk(data []byte) error {
 	// Track upstream bytes
 	cb.upstreamBytes.Add(uint64(len(data)))
 
-	// Create new chunk
+	// Create new chunk with a COPY of the data
+	// Critical: io.Copy reuses its internal buffer, so we must copy the data
+	// to avoid corruption when the buffer is refilled with new data.
 	seq := cb.sequence.Add(1)
+	dataCopy := make([]byte, len(data))
+	copy(dataCopy, data)
 	chunk := BufferChunk{
 		Sequence:  seq,
-		Data:      data,
+		Data:      dataCopy,
 		Timestamp: time.Now(),
 	}
 

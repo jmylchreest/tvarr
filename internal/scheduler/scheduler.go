@@ -579,6 +579,29 @@ func (s *Scheduler) GetEntryCount() int {
 	return len(s.entryMap)
 }
 
+// CalculateNextRun calculates the next run time for a cron expression.
+// This is a standalone helper function that doesn't require a Scheduler instance.
+// Returns nil if the expression is empty or invalid.
+func CalculateNextRun(cronExpr string) *time.Time {
+	if cronExpr == "" {
+		return nil
+	}
+
+	normalized, err := NormalizeCronExpression(cronExpr)
+	if err != nil {
+		return nil
+	}
+
+	parser := cron.NewParser(cron.Second | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
+	schedule, err := parser.Parse(normalized)
+	if err != nil {
+		return nil
+	}
+
+	nextRun := schedule.Next(time.Now())
+	return &nextRun
+}
+
 // GetNextRunTimes returns the next run times for all scheduled entries.
 func (s *Scheduler) GetNextRunTimes() map[string]time.Time {
 	s.mu.RLock()

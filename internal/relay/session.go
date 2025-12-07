@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -18,11 +19,14 @@ import (
 type RelaySession struct {
 	ID             uuid.UUID
 	ChannelID      uuid.UUID
+	ChannelName    string // Display name of the channel
 	StreamURL      string
 	Profile        *models.RelayProfile
 	Classification ClassificationResult
+	CachedCodecInfo *models.LastKnownCodec // Pre-probed codec info for faster startup
 	StartedAt      time.Time
 	LastActivity   time.Time
+	IdleSince      time.Time // When the session became idle (0 clients), zero if not idle
 
 	manager            *Manager
 	buffer             *CyclicBuffer
@@ -31,13 +35,13 @@ type RelaySession struct {
 	fallbackController *FallbackController
 	fallbackGenerator  *FallbackGenerator
 
-	mu           sync.RWMutex
-	ffmpegCmd    *ffmpeg.CommandBuilder
-	hlsCollapser *HLSCollapser
-	inputReader  io.ReadCloser
-	closed       bool
-	err          error
-	inFallback   bool
+	mu             sync.RWMutex
+	ffmpegCmd      *ffmpeg.Command // Running FFmpeg command for stats access
+	hlsCollapser   *HLSCollapser
+	inputReader    io.ReadCloser
+	closed         bool
+	err            error
+	inFallback     bool
 }
 
 // start begins the relay session.
@@ -233,32 +237,174 @@ func (s *RelaySession) runFFmpegPipeline() error {
 	}
 
 	// Build FFmpeg command with proper settings for live streaming
-	// Based on m3u-proxy's proven approach:
-	// 1. Use analyzeduration and probesize for proper stream analysis (finds SPS/PPS)
-	// 2. Do NOT use -re flag (causes timing issues and missing NAL units)
-	// 3. Use explicit stream mapping
-	// 4. Use proper MPEG-TS output settings
-	builder := ffmpeg.NewCommandBuilder(binInfo.FFmpegPath).
-		// Input analysis settings - give FFmpeg time to find stream parameters including SPS/PPS
-		InputArgs("-analyzeduration", "10000000"). // 10 seconds
-		InputArgs("-probesize", "10000000").       // 10MB
-		Input(inputURL)
+	// Following m3u-proxy's proven approach for flag order:
+	// 1. Global flags (banner, loglevel)
+	// 2. Hardware acceleration args (init_hw_device, hwaccel) - BEFORE input
+	// 3. Input analysis args (analyzeduration, probesize)
+	// 4. Custom input options
+	// 5. Input (-i)
+	// 6. Stream mapping
+	// 7. Video codec and hwaccel filters
+	// 8. Video settings
+	// 9. Audio codec and settings
+	// 10. Transport stream settings
+	// 11. Custom output options
+	// 12. Output
 
-	// Apply hardware acceleration before codec settings
-	if s.Profile != nil && s.Profile.HWAccel != models.HWAccelNone {
-		builder.HWAccel(string(s.Profile.HWAccel))
+	builder := ffmpeg.NewCommandBuilder(binInfo.FFmpegPath)
+
+	// GLOBAL FLAGS - Hide banner, set log level
+	builder.HideBanner().LogLevel("info") // Use 'info' to capture useful output
+
+	// HARDWARE ACCELERATION - Must be initialized BEFORE input
+	// Based on m3u-proxy's proven approach: init device, then hwaccel
+	hwAccelType := ""
+	if s.Profile != nil {
+		// Determine the effective hwaccel type
+		configuredHWAccel := s.Profile.HWAccel
+
+		if configuredHWAccel == models.HWAccelAuto {
+			// Auto-select best available hardware acceleration
+			// Priority order matches m3u-proxy: vaapi → nvenc/cuda → qsv
+			selectedAccel := ffmpeg.SelectBestHWAccel(binInfo.HWAccels)
+			if selectedAccel != "" {
+				hwAccelType = selectedAccel
+				slog.Info("Auto-selected hardware acceleration",
+					slog.String("type", hwAccelType),
+					slog.String("profile", s.Profile.Name))
+			} else {
+				slog.Debug("No hardware acceleration available, using software encoding",
+					slog.String("profile", s.Profile.Name))
+			}
+		} else if configuredHWAccel != models.HWAccelNone && configuredHWAccel != "" {
+			// Use explicitly configured hwaccel
+			hwAccelType = string(configuredHWAccel)
+
+			// Verify the configured hwaccel is still available
+			if !binInfo.HasHWAccel(ffmpeg.HWAccelType(hwAccelType)) {
+				slog.Warn("Configured hardware acceleration not available, falling back to software",
+					slog.String("configured", hwAccelType),
+					slog.String("profile", s.Profile.Name))
+				hwAccelType = ""
+			}
+		}
+
+		// EARLY DECISION: Determine if video copy will be used BEFORE applying hwaccel
+		// hwaccel is only useful for decoding/encoding, not for copy mode
+		videoCodec := string(s.Profile.VideoCodec)
+		willUseVideoCopy := s.Profile.VideoCodec == models.VideoCodecCopy
+		if !willUseVideoCopy && !s.Profile.ForceVideoTranscode && s.CachedCodecInfo != nil && s.CachedCodecInfo.VideoCodec != "" {
+			if ffmpeg.SourceMatchesTargetCodec(s.CachedCodecInfo.VideoCodec, videoCodec) {
+				slog.Info("Smart codec match: source video matches target, using copy instead of transcode",
+					slog.String("source_codec", s.CachedCodecInfo.VideoCodec),
+					slog.String("target_encoder", videoCodec),
+					slog.String("profile", s.Profile.Name))
+				willUseVideoCopy = true
+			}
+		}
+
+		// Apply hardware acceleration ONLY if we're actually going to transcode video
+		// hwaccel is for decoding - if we're copying, there's no decoding/encoding happening
+		if hwAccelType != "" && !willUseVideoCopy {
+			// Initialize hardware device first (critical for proper HW acceleration)
+			devicePath := s.Profile.HWAccelDevice
+			if devicePath == "" && s.Profile.GpuIndex >= 0 {
+				devicePath = fmt.Sprintf("%d", s.Profile.GpuIndex)
+			}
+			builder.InitHWDevice(hwAccelType, devicePath)
+
+			// Set hwaccel mode
+			builder.HWAccel(hwAccelType)
+			if devicePath != "" {
+				builder.HWAccelDevice(devicePath)
+			}
+			if s.Profile.HWAccelOutputFormat != "" {
+				builder.HWAccelOutputFormat(s.Profile.HWAccelOutputFormat)
+			}
+
+			// Apply decoder codec for hardware decoding (e.g., h264_cuvid, hevc_qsv)
+			if s.Profile.HWAccelDecoderCodec != "" {
+				builder.InputArgs("-c:v", s.Profile.HWAccelDecoderCodec)
+			}
+
+			// Apply any extra hardware acceleration options
+			if s.Profile.HWAccelExtraOptions != "" {
+				builder.ApplyCustomInputOptions(s.Profile.HWAccelExtraOptions)
+			}
+		} else if willUseVideoCopy {
+			slog.Debug("Skipping hwaccel for video copy mode",
+				slog.String("hwaccel", hwAccelType),
+				slog.String("profile", s.Profile.Name))
+		}
 	}
+
+	// INPUT FLAGS - Must come before -i
+	// When we have cached codec info, we can use reduced probesize/analyzeduration
+	// for faster startup since we already know the stream format
+	if s.CachedCodecInfo != nil && s.CachedCodecInfo.IsValid() {
+		// Minimal probing - we already know the codec from ffprobe cache
+		builder.InputArgs("-analyzeduration", "1000000"). // 1 second
+			InputArgs("-probesize", "1000000")            // 1MB
+		slog.Debug("Using reduced probe settings with cached codec info",
+			slog.String("video_codec", s.CachedCodecInfo.VideoCodec))
+	} else {
+		// Full probing - no cached info available
+		builder.InputArgs("-analyzeduration", "10000000"). // 10 seconds
+			InputArgs("-probesize", "10000000")            // 10MB
+	}
+	builder.Reconnect() // Enable auto-reconnect for network streams
+
+	// Apply custom input options (allows user overrides) - AFTER standard input flags
+	if s.Profile != nil && s.Profile.InputOptions != "" {
+		builder.ApplyCustomInputOptions(s.Profile.InputOptions)
+	}
+
+	// Set input
+	builder.Input(inputURL)
 
 	// Explicit stream mapping for first video and audio streams
 	builder.OutputArgs("-map", "0:v:0").
-		OutputArgs("-map", "0:a:0?") // ? makes audio optional (won't fail if no audio)
+		OutputArgs("-map", "0:a:0?") // ? makes audio optional
 
-	// Apply profile settings
+	// Apply video codec and family for BSF selection
+	// The copy decision was already made above, now apply it
+	var videoCodecFamily ffmpeg.CodecFamily
+	var isVideoCopy bool
+
 	if s.Profile != nil {
-		if s.Profile.VideoCodec == models.VideoCodecCopy {
+		// Use the pre-computed copy decision
+		videoCodec := string(s.Profile.VideoCodec)
+		willUseVideoCopy := s.Profile.VideoCodec == models.VideoCodecCopy
+		if !willUseVideoCopy && !s.Profile.ForceVideoTranscode && s.CachedCodecInfo != nil && s.CachedCodecInfo.VideoCodec != "" {
+			willUseVideoCopy = ffmpeg.SourceMatchesTargetCodec(s.CachedCodecInfo.VideoCodec, videoCodec)
+		}
+
+		if willUseVideoCopy {
 			builder.VideoCodec("copy")
+			isVideoCopy = true
+			// For copy mode, use cached codec info if available for accurate BSF selection
+			if s.CachedCodecInfo != nil && s.CachedCodecInfo.VideoCodec != "" {
+				videoCodecFamily = ffmpeg.MapFFprobeCodecToFamily(s.CachedCodecInfo.VideoCodec)
+				slog.Debug("Using cached codec for BSF selection",
+					slog.String("source_codec", s.CachedCodecInfo.VideoCodec),
+					slog.String("codec_family", string(videoCodecFamily)))
+			} else {
+				// Default to H.264 family since it's most common
+				videoCodecFamily = ffmpeg.CodecFamilyH264
+				slog.Debug("No cached codec info, defaulting to H.264 for BSF selection")
+			}
 		} else {
-			builder.VideoCodec(string(s.Profile.VideoCodec))
+			builder.VideoCodec(videoCodec)
+			isVideoCopy = false
+			videoCodecFamily = ffmpeg.GetCodecFamily(videoCodec)
+
+			// Add hardware upload filter ONLY when using a hardware encoder
+			// hwupload uploads frames to GPU memory which is only useful for HW encoding
+			// If using software encoder (libx264, etc.) with HW decoding, FFmpeg auto-handles it
+			if hwAccelType != "" && ffmpeg.IsHardwareEncoder(videoCodec) {
+				builder.HWUploadFilter(hwAccelType)
+			}
+
 			if s.Profile.VideoBitrate > 0 {
 				builder.VideoBitrate(fmt.Sprintf("%dk", s.Profile.VideoBitrate))
 			}
@@ -270,7 +416,19 @@ func (s *RelaySession) runFFmpegPipeline() error {
 			}
 		}
 
-		if s.Profile.AudioCodec == models.AudioCodecCopy {
+		// Smart codec matching for audio: if source matches target and ForceAudioTranscode is false, use copy
+		useAudioCopy := s.Profile.AudioCodec == models.AudioCodecCopy
+		if !useAudioCopy && !s.Profile.ForceAudioTranscode && s.CachedCodecInfo != nil && s.CachedCodecInfo.AudioCodec != "" {
+			if ffmpeg.SourceMatchesTargetCodec(s.CachedCodecInfo.AudioCodec, string(s.Profile.AudioCodec)) {
+				slog.Info("Smart codec match: source audio matches target, using copy instead of transcode",
+					slog.String("source_codec", s.CachedCodecInfo.AudioCodec),
+					slog.String("target_encoder", string(s.Profile.AudioCodec)),
+					slog.String("profile", s.Profile.Name))
+				useAudioCopy = true
+			}
+		}
+
+		if useAudioCopy {
 			builder.AudioCodec("copy")
 		} else {
 			builder.AudioCodec(string(s.Profile.AudioCodec))
@@ -286,20 +444,84 @@ func (s *RelaySession) runFFmpegPipeline() error {
 		}
 	}
 
-	// MPEG-TS output settings for proper timestamp handling
-	builder.OutputFormat(string(s.Profile.OutputFormat)).
-		OutputArgs("-mpegts_copyts", "1").          // Preserve timestamps
-		OutputArgs("-avoid_negative_ts", "disabled").
-		OutputArgs("-mpegts_start_pid", "256").     // Start PID for streams
-		OutputArgs("-mpegts_pmt_start_pid", "4096"). // Different PID for PMT
-		OutputArgs("-fflags", "+genpts").
-		OutputArgs("-y"). // Overwrite output
-		Output("pipe:1")
+	// Apply custom filter complex
+	if s.Profile != nil && s.Profile.FilterComplex != "" {
+		builder.ApplyFilterComplex(s.Profile.FilterComplex)
+	}
 
-	// Build and run FFmpeg, write to buffer
+	// Determine output format
+	outputFormat := ffmpeg.FormatMPEGTS
+	if s.Profile != nil {
+		outputFormat = ffmpeg.ParseOutputFormat(string(s.Profile.OutputFormat))
+	}
+
+	// CRITICAL: Apply appropriate bitstream filter based on codec, output format, and mode
+	// BSF is ONLY needed when COPYING video (not transcoding) to convert container formats
+	// When transcoding, the encoder outputs correct format and BSF would corrupt the stream
+	bsfInfo := ffmpeg.GetVideoBitstreamFilter(videoCodecFamily, outputFormat, isVideoCopy)
+	if bsfInfo.VideoBSF != "" {
+		builder.VideoBitstreamFilter(bsfInfo.VideoBSF)
+		slog.Debug("Applied video bitstream filter",
+			slog.String("bsf", bsfInfo.VideoBSF),
+			slog.String("codec_family", string(videoCodecFamily)),
+			slog.String("output_format", string(outputFormat)),
+			slog.Bool("is_copy", isVideoCopy),
+			slog.String("reason", bsfInfo.Reason))
+	} else {
+		slog.Debug("No bitstream filter needed",
+			slog.String("codec_family", string(videoCodecFamily)),
+			slog.String("output_format", string(outputFormat)),
+			slog.Bool("is_copy", isVideoCopy),
+			slog.String("reason", bsfInfo.Reason))
+	}
+
+	// MPEG-TS output settings - use proven m3u-proxy configuration
+	// This sets proper timestamp handling, PID allocation, and format flags
+	if outputFormat == ffmpeg.FormatMPEGTS || outputFormat == ffmpeg.FormatHLS {
+		builder.MpegtsArgs().     // Proper MPEG-TS flags (copyts, PIDs, etc.)
+			FlushPackets().       // -flush_packets 1 - immediate output
+			MuxDelay("0").        // -muxdelay 0 - zero muxing delay
+			PatPeriod("0.1")      // -pat_period 0.1 - frequent PAT/PMT for mid-stream joins
+	} else {
+		// For non-MPEG-TS formats, just set the output format
+		builder.OutputFormat(string(s.Profile.OutputFormat))
+	}
+
+	// Apply custom output options (allows user overrides)
+	if s.Profile != nil && s.Profile.OutputOptions != "" {
+		builder.ApplyCustomOutputOptions(s.Profile.OutputOptions)
+	}
+
+	// Set output destination
+	builder.Output("pipe:1")
+
+	// Build command and log it for debugging
 	cmd := builder.Build()
+	slog.Info("Starting FFmpeg relay",
+		slog.String("profile", s.Profile.Name),
+		slog.String("stream_url", inputURL),
+		slog.String("video_codec", string(s.Profile.VideoCodec)),
+		slog.String("audio_codec", string(s.Profile.AudioCodec)))
+	slog.Debug("FFmpeg command details",
+		slog.String("command", cmd.String()),
+		slog.Any("args", cmd.Args))
+
+	// Store command for stats access
+	s.mu.Lock()
+	s.ffmpegCmd = cmd
+	s.mu.Unlock()
+
+	// Run FFmpeg with retry logic for startup failures
 	writer := NewStreamWriter(s.buffer)
-	return cmd.StreamToWriter(s.ctx, writer)
+	retryCfg := ffmpeg.DefaultRetryConfig()
+	err = cmd.StreamToWriterWithRetry(s.ctx, writer, retryCfg)
+
+	// Clear command reference when done
+	s.mu.Lock()
+	s.ffmpegCmd = nil
+	s.mu.Unlock()
+
+	return err
 }
 
 // runHLSCollapsePipeline runs the HLS collapsing pipeline.
@@ -415,6 +637,7 @@ func (s *RelaySession) AddClient(userAgent, remoteAddr string) (*BufferClient, *
 
 	s.mu.Lock()
 	s.LastActivity = time.Now()
+	s.IdleSince = time.Time{} // Clear idle state when a client connects
 	s.mu.Unlock()
 
 	return client, reader, nil
@@ -422,7 +645,16 @@ func (s *RelaySession) AddClient(userAgent, remoteAddr string) (*BufferClient, *
 
 // RemoveClient removes a client from the session.
 func (s *RelaySession) RemoveClient(clientID uuid.UUID) bool {
-	return s.buffer.RemoveClient(clientID)
+	removed := s.buffer.RemoveClient(clientID)
+	if removed {
+		// Check if session is now idle (no clients)
+		if s.buffer.ClientCount() == 0 {
+			s.mu.Lock()
+			s.IdleSince = time.Now()
+			s.mu.Unlock()
+		}
+	}
+	return removed
 }
 
 // Close closes the session and releases resources.
@@ -460,18 +692,29 @@ func (s *RelaySession) Stats() SessionStats {
 		errStr = s.err.Error()
 	}
 
+	// Get profile name if available
+	profileName := "passthrough"
+	if s.Profile != nil {
+		profileName = s.Profile.Name
+	}
+
 	stats := SessionStats{
-		ID:             s.ID.String(),
-		ChannelID:      s.ChannelID.String(),
-		StreamURL:      s.StreamURL,
-		Classification: s.Classification.Mode.String(),
-		StartedAt:      s.StartedAt,
-		LastActivity:   s.LastActivity,
-		ClientCount:    bufferStats.ClientCount,
-		BytesWritten:   bufferStats.TotalBytesWritten,
-		Closed:         s.closed,
-		Error:          errStr,
-		InFallback:     s.inFallback,
+		ID:                s.ID.String(),
+		ChannelID:         s.ChannelID.String(),
+		ChannelName:       s.ChannelName,
+		ProfileName:       profileName,
+		StreamURL:         s.StreamURL,
+		Classification:    s.Classification.Mode.String(),
+		StartedAt:         s.StartedAt,
+		LastActivity:      s.LastActivity,
+		IdleSince:         s.IdleSince,
+		ClientCount:       bufferStats.ClientCount,
+		BytesWritten:      bufferStats.TotalBytesWritten,
+		BytesFromUpstream: bufferStats.BytesFromUpstream,
+		Closed:            s.closed,
+		Error:             errStr,
+		InFallback:        s.inFallback,
+		Clients:           bufferStats.Clients,
 	}
 
 	// Include fallback controller stats if available
@@ -482,6 +725,21 @@ func (s *RelaySession) Stats() SessionStats {
 		stats.FallbackRecoveryAttempts = ctrlStats.RecoveryAttempts
 	}
 
+	// Include FFmpeg process stats if running
+	if s.ffmpegCmd != nil {
+		if procStats := s.ffmpegCmd.ProcessStats(); procStats != nil {
+			stats.FFmpegStats = &FFmpegProcessStats{
+				PID:           procStats.PID,
+				CPUPercent:    procStats.CPUPercent,
+				MemoryRSSMB:   procStats.MemoryRSSMB,
+				MemoryPercent: procStats.MemoryPercent,
+				BytesWritten:  procStats.BytesWritten,
+				WriteRateMbps: procStats.WriteRateMbps,
+				DurationSecs:  procStats.Duration.Seconds(),
+			}
+		}
+	}
+
 	return stats
 }
 
@@ -489,17 +747,36 @@ func (s *RelaySession) Stats() SessionStats {
 type SessionStats struct {
 	ID             string    `json:"id"`
 	ChannelID      string    `json:"channel_id"`
+	ChannelName    string    `json:"channel_name,omitempty"`
+	ProfileName    string    `json:"profile_name,omitempty"`
 	StreamURL      string    `json:"stream_url"`
 	Classification string    `json:"classification"`
 	StartedAt      time.Time `json:"started_at"`
 	LastActivity   time.Time `json:"last_activity"`
+	IdleSince      time.Time `json:"idle_since,omitempty"`
 	ClientCount    int       `json:"client_count"`
 	BytesWritten   uint64    `json:"bytes_written"`
+	BytesFromUpstream uint64 `json:"bytes_from_upstream"`
 	Closed         bool      `json:"closed"`
 	Error          string    `json:"error,omitempty"`
 	// Fallback information
-	InFallback              bool `json:"in_fallback"`
-	FallbackEnabled         bool `json:"fallback_enabled"`
-	FallbackErrorCount      int  `json:"fallback_error_count,omitempty"`
-	FallbackRecoveryAttempts int `json:"fallback_recovery_attempts,omitempty"`
+	InFallback               bool `json:"in_fallback"`
+	FallbackEnabled          bool `json:"fallback_enabled"`
+	FallbackErrorCount       int  `json:"fallback_error_count,omitempty"`
+	FallbackRecoveryAttempts int  `json:"fallback_recovery_attempts,omitempty"`
+	// FFmpeg process stats (only present when FFmpeg is running)
+	FFmpegStats *FFmpegProcessStats `json:"ffmpeg_stats,omitempty"`
+	// Connected client details
+	Clients []ClientStats `json:"clients,omitempty"`
+}
+
+// FFmpegProcessStats contains resource usage for the FFmpeg process.
+type FFmpegProcessStats struct {
+	PID            int     `json:"pid"`
+	CPUPercent     float64 `json:"cpu_percent"`
+	MemoryRSSMB    float64 `json:"memory_rss_mb"`
+	MemoryPercent  float64 `json:"memory_percent"`
+	BytesWritten   uint64  `json:"bytes_written"`
+	WriteRateMbps  float64 `json:"write_rate_mbps"`
+	DurationSecs   float64 `json:"duration_secs"`
 }

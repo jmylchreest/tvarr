@@ -220,7 +220,10 @@ func TestCommandBuilder_MpegtsArgs(t *testing.T) {
 
 	cmdStr := cmd.String()
 	assert.Contains(t, cmdStr, "-f mpegts")
-	assert.Contains(t, cmdStr, "-mpegts_flags resend_headers")
+	assert.Contains(t, cmdStr, "-mpegts_copyts 1")
+	assert.Contains(t, cmdStr, "-avoid_negative_ts disabled")
+	assert.Contains(t, cmdStr, "-mpegts_start_pid 256")
+	assert.Contains(t, cmdStr, "-mpegts_pmt_start_pid 4096")
 }
 
 func TestCommandBuilder_HLSArgs(t *testing.T) {
@@ -562,4 +565,124 @@ func TestIntegration_Prober_ProbeSimple(t *testing.T) {
 
 	// Clean up
 	exec.Command("rm", "-f", testFile).Run()
+}
+
+func TestDefaultRetryConfig(t *testing.T) {
+	cfg := DefaultRetryConfig()
+
+	assert.Equal(t, 3, cfg.MaxAttempts)
+	assert.Equal(t, 500*time.Millisecond, cfg.InitialDelay)
+	assert.Equal(t, 5*time.Second, cfg.MaxDelay)
+	assert.Equal(t, 2.0, cfg.BackoffFactor)
+	assert.Equal(t, 5*time.Second, cfg.MinRunTime)
+	assert.False(t, cfg.RetryOnAnyError)
+}
+
+func TestCommand_CloneForRetry(t *testing.T) {
+	original := NewCommandBuilder("/usr/bin/ffmpeg").
+		Input("input.mp4").
+		VideoCodec("libx264").
+		AudioCodec("aac").
+		StderrLogPath("/tmp/test.log").
+		Output("output.mp4").
+		Build()
+
+	clone := original.cloneForRetry()
+
+	// Verify clone has same settings
+	assert.Equal(t, original.Binary, clone.Binary)
+	assert.Equal(t, original.Args, clone.Args)
+	assert.Equal(t, original.Input, clone.Input)
+	assert.Equal(t, original.Output, clone.Output)
+	assert.Equal(t, original.LogLevel, clone.LogLevel)
+	assert.Equal(t, original.Overwrite, clone.Overwrite)
+	assert.Equal(t, original.stderrLogPath, clone.stderrLogPath)
+
+	// Verify clone has independent slices (modifying one doesn't affect the other)
+	originalArgs := original.Args
+	original.Args = append(original.Args, "-extra")
+	assert.NotEqual(t, len(originalArgs)+1, len(clone.Args))
+
+	// Verify clone has fresh channel
+	assert.NotNil(t, clone.doneCh)
+}
+
+func TestCommandBuilder_InitHWDevice(t *testing.T) {
+	tests := []struct {
+		name     string
+		hwType   string
+		device   string
+		expected string
+	}{
+		{"vaapi with device", "vaapi", "/dev/dri/renderD128", "-init_hw_device vaapi=hw:/dev/dri/renderD128"},
+		{"vaapi without device", "vaapi", "", "-init_hw_device vaapi=hw"},
+		{"cuda with device", "cuda", "0", "-init_hw_device cuda=hw:0"},
+		{"qsv without device", "qsv", "", "-init_hw_device qsv=hw"},
+		{"none type", "none", "", ""},
+		{"empty type", "", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := NewCommandBuilder("/usr/bin/ffmpeg").
+				InitHWDevice(tt.hwType, tt.device).
+				Input("input.mp4").
+				Output("output.mp4").
+				Build()
+
+			cmdStr := cmd.String()
+			if tt.expected != "" {
+				assert.Contains(t, cmdStr, tt.expected)
+			} else {
+				assert.NotContains(t, cmdStr, "-init_hw_device")
+			}
+		})
+	}
+}
+
+func TestCommandBuilder_HWUploadFilter(t *testing.T) {
+	tests := []struct {
+		name     string
+		hwType   string
+		expected string
+	}{
+		{"vaapi", "vaapi", "format=nv12,hwupload"},
+		{"cuda", "cuda", "format=nv12,hwupload_cuda"},
+		{"nvenc", "nvenc", "format=nv12,hwupload_cuda"},
+		{"qsv", "qsv", "format=nv12,hwupload=extra_hw_frames=64"},
+		{"videotoolbox", "videotoolbox", "format=nv12,hwupload"},
+		{"unknown", "unknown", "format=nv12,hwupload"},
+		{"none type", "none", ""},
+		{"empty type", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := NewCommandBuilder("/usr/bin/ffmpeg").
+				Input("input.mp4").
+				HWUploadFilter(tt.hwType).
+				Output("output.mp4").
+				Build()
+
+			cmdStr := cmd.String()
+			if tt.expected != "" {
+				assert.Contains(t, cmdStr, "-vf "+tt.expected)
+			} else {
+				assert.NotContains(t, cmdStr, "-vf")
+			}
+		})
+	}
+}
+
+func TestCommandBuilder_Reconnect(t *testing.T) {
+	cmd := NewCommandBuilder("/usr/bin/ffmpeg").
+		Reconnect().
+		Input("http://example.com/stream").
+		Output("output.mp4").
+		Build()
+
+	cmdStr := cmd.String()
+	assert.Contains(t, cmdStr, "-reconnect 1")
+	assert.Contains(t, cmdStr, "-reconnect_streamed 1")
+	assert.Contains(t, cmdStr, "-reconnect_delay_max 5")
 }

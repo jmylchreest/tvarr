@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jmylchreest/tvarr/internal/models"
+	"github.com/jmylchreest/tvarr/internal/scheduler"
 )
 
 // Common response types
@@ -34,41 +35,43 @@ type PaginationMeta struct {
 
 // StreamSourceResponse represents a stream source in API responses.
 type StreamSourceResponse struct {
-	ID              models.ULID         `json:"id"`
-	CreatedAt       time.Time           `json:"created_at"`
-	UpdatedAt       time.Time           `json:"updated_at"`
-	Name            string              `json:"name"`
-	Type            models.SourceType   `json:"type"`
-	URL             string              `json:"url"`
-	Username        string              `json:"username,omitempty"`
-	UserAgent       string              `json:"user_agent,omitempty"`
-	Enabled         bool                `json:"enabled"`
-	Priority        int                 `json:"priority"`
-	Status          models.SourceStatus `json:"status"`
-	LastIngestionAt *time.Time          `json:"last_ingestion_at,omitempty"`
-	LastError       string              `json:"last_error,omitempty"`
-	ChannelCount    int                 `json:"channel_count"`
-	CronSchedule    string              `json:"cron_schedule,omitempty"`
+	ID                  models.ULID         `json:"id"`
+	CreatedAt           time.Time           `json:"created_at"`
+	UpdatedAt           time.Time           `json:"updated_at"`
+	Name                string              `json:"name"`
+	Type                models.SourceType   `json:"type"`
+	URL                 string              `json:"url"`
+	Username            string              `json:"username,omitempty"`
+	UserAgent           string              `json:"user_agent,omitempty"`
+	Enabled             bool                `json:"enabled"`
+	Priority            int                 `json:"priority"`
+	Status              models.SourceStatus `json:"status"`
+	LastIngestionAt     *time.Time          `json:"last_ingestion_at,omitempty"`
+	LastError           string              `json:"last_error,omitempty"`
+	ChannelCount        int                 `json:"channel_count"`
+	CronSchedule        string              `json:"cron_schedule,omitempty"`
+	NextScheduledUpdate *time.Time          `json:"next_scheduled_update,omitempty"`
 }
 
 // StreamSourceFromModel converts a model to a response.
 func StreamSourceFromModel(s *models.StreamSource) StreamSourceResponse {
 	return StreamSourceResponse{
-		ID:              s.ID,
-		CreatedAt:       s.CreatedAt,
-		UpdatedAt:       s.UpdatedAt,
-		Name:            s.Name,
-		Type:            s.Type,
-		URL:             s.URL,
-		Username:        s.Username,
-		UserAgent:       s.UserAgent,
-		Enabled:         s.Enabled,
-		Priority:        s.Priority,
-		Status:          s.Status,
-		LastIngestionAt: s.LastIngestionAt,
-		LastError:       s.LastError,
-		ChannelCount:    s.ChannelCount,
-		CronSchedule:    s.CronSchedule,
+		ID:                  s.ID,
+		CreatedAt:           s.CreatedAt,
+		UpdatedAt:           s.UpdatedAt,
+		Name:                s.Name,
+		Type:                s.Type,
+		URL:                 s.URL,
+		Username:            s.Username,
+		UserAgent:           s.UserAgent,
+		Enabled:             s.Enabled,
+		Priority:            s.Priority,
+		Status:              s.Status,
+		LastIngestionAt:     s.LastIngestionAt,
+		LastError:           s.LastError,
+		ChannelCount:        s.ChannelCount,
+		CronSchedule:        s.CronSchedule,
+		NextScheduledUpdate: scheduler.CalculateNextRun(s.CronSchedule),
 	}
 }
 
@@ -155,49 +158,51 @@ func (r *UpdateStreamSourceRequest) ApplyToModel(s *models.StreamSource) {
 
 // EpgSourceResponse represents an EPG source in API responses.
 type EpgSourceResponse struct {
-	ID               models.ULID             `json:"id"`
-	CreatedAt        time.Time               `json:"created_at"`
-	UpdatedAt        time.Time               `json:"updated_at"`
-	Name             string                  `json:"name"`
-	Type             models.EpgSourceType    `json:"type"`
-	URL              string                  `json:"url"`
-	Username         string                  `json:"username,omitempty"`
-	ApiMethod        models.XtreamApiMethod  `json:"api_method,omitempty"`
-	UserAgent        string                  `json:"user_agent,omitempty"`
-	OriginalTimezone string                  `json:"original_timezone,omitempty"`
-	TimeOffset       string                  `json:"time_offset,omitempty"`
-	Enabled          bool                    `json:"enabled"`
-	Priority         int                     `json:"priority"`
-	Status           models.EpgSourceStatus  `json:"status"`
-	LastIngestionAt  *time.Time              `json:"last_ingestion_at,omitempty"`
-	LastError        string                  `json:"last_error,omitempty"`
-	ProgramCount     int                     `json:"program_count"`
-	CronSchedule     string                  `json:"cron_schedule,omitempty"`
-	RetentionDays    int                     `json:"retention_days"`
+	ID                  models.ULID            `json:"id"`
+	CreatedAt           time.Time              `json:"created_at"`
+	UpdatedAt           time.Time              `json:"updated_at"`
+	Name                string                 `json:"name"`
+	Type                models.EpgSourceType   `json:"type"`
+	URL                 string                 `json:"url"`
+	Username            string                 `json:"username,omitempty"`
+	ApiMethod           models.XtreamApiMethod `json:"api_method,omitempty"`
+	UserAgent           string                 `json:"user_agent,omitempty"`
+	OriginalTimezone    string                 `json:"original_timezone,omitempty"`
+	TimeOffset          string                 `json:"time_offset,omitempty"`
+	Enabled             bool                   `json:"enabled"`
+	Priority            int                    `json:"priority"`
+	Status              models.EpgSourceStatus `json:"status"`
+	LastIngestionAt     *time.Time             `json:"last_ingestion_at,omitempty"`
+	LastError           string                 `json:"last_error,omitempty"`
+	ProgramCount        int                    `json:"program_count"`
+	CronSchedule        string                 `json:"cron_schedule,omitempty"`
+	RetentionDays       int                    `json:"retention_days"`
+	NextScheduledUpdate *time.Time             `json:"next_scheduled_update,omitempty"`
 }
 
 // EpgSourceFromModel converts a model to a response.
 func EpgSourceFromModel(s *models.EpgSource) EpgSourceResponse {
 	return EpgSourceResponse{
-		ID:               s.ID,
-		CreatedAt:        s.CreatedAt,
-		UpdatedAt:        s.UpdatedAt,
-		Name:             s.Name,
-		Type:             s.Type,
-		URL:              s.URL,
-		Username:         s.Username,
-		ApiMethod:        s.ApiMethod,
-		UserAgent:        s.UserAgent,
-		OriginalTimezone: s.OriginalTimezone,
-		TimeOffset:       s.TimeOffset,
-		Enabled:          s.Enabled,
-		Priority:         s.Priority,
-		Status:           s.Status,
-		LastIngestionAt:  s.LastIngestionAt,
-		LastError:        s.LastError,
-		ProgramCount:     s.ProgramCount,
-		CronSchedule:     s.CronSchedule,
-		RetentionDays:    s.RetentionDays,
+		ID:                  s.ID,
+		CreatedAt:           s.CreatedAt,
+		UpdatedAt:           s.UpdatedAt,
+		Name:                s.Name,
+		Type:                s.Type,
+		URL:                 s.URL,
+		Username:            s.Username,
+		ApiMethod:           s.ApiMethod,
+		UserAgent:           s.UserAgent,
+		OriginalTimezone:    s.OriginalTimezone,
+		TimeOffset:          s.TimeOffset,
+		Enabled:             s.Enabled,
+		Priority:            s.Priority,
+		Status:              s.Status,
+		LastIngestionAt:     s.LastIngestionAt,
+		LastError:           s.LastError,
+		ProgramCount:        s.ProgramCount,
+		CronSchedule:        s.CronSchedule,
+		RetentionDays:       s.RetentionDays,
+		NextScheduledUpdate: scheduler.CalculateNextRun(s.CronSchedule),
 	}
 }
 

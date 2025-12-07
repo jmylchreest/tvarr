@@ -55,6 +55,18 @@ func AllMigrations() []Migration {
 		// Add hls_collapse column to stream_proxies table
 		migration022StreamProxyHLSCollapse(),
 
+		// FFmpeg profile configuration extensions (feature 007)
+		migration023RelayProfileExtensions(),
+
+		// Update system profiles with hwaccel and fallback enabled
+		migration024SystemProfileHWAccel(),
+
+		// Codec caching for ffprobe pre-detection
+		migration025LastKnownCodecs(),
+
+		// Smart codec matching flags for relay profiles
+		migration026ForceTranscodeFlags(),
+
 		// Note: Logo caching (Phase 10) uses file-based storage with
 		// in-memory indexing, no database tables required.
 	}
@@ -411,22 +423,7 @@ func migration015DefaultRelayProfiles() Migration {
 					OutputFormat:    models.OutputFormatMPEGTS,
 					Timeout:         30,
 				},
-				{
-					Name:            "AV1 + AAC (Next-gen)",
-					Description:     "Next-generation AV1 codec for best compression efficiency",
-					IsDefault:       false,
-					Enabled:         true,
-					IsSystem:        true,
-					VideoCodec:      models.VideoCodecAV1,
-					VideoBitrate:    2500,
-					VideoPreset:     "medium",
-					AudioCodec:      models.AudioCodecAAC,
-					AudioBitrate:    128,
-					AudioSampleRate: 48000,
-					AudioChannels:   2,
-					OutputFormat:    models.OutputFormatMPEGTS,
-					Timeout:         30,
-				},
+				// Note: AV1 profile removed - AV1 is not supported in MPEG-TS containers
 				{
 					Name:         "Copy Streams (No Transcoding)",
 					Description:  "Pass-through profile that copies streams without transcoding",
@@ -456,7 +453,6 @@ func migration015DefaultRelayProfiles() Migration {
 				"H.264 + AAC (High Quality)",
 				"H.264 + AAC (Low Bitrate)",
 				"H.265 + AAC (High Quality)",
-				"AV1 + AAC (Next-gen)",
 				"Copy Streams (No Transcoding)",
 			}).Delete(&models.RelayProfile{}).Error
 		},
@@ -702,6 +698,125 @@ func migration022StreamProxyHLSCollapse() Migration {
 			if migrator.HasColumn(&models.StreamProxy{}, "hls_collapse") {
 				if err := migrator.DropColumn(&models.StreamProxy{}, "hls_collapse"); err != nil {
 					return err
+				}
+			}
+			return nil
+		},
+	}
+}
+
+// migration023RelayProfileExtensions adds new columns to relay_profiles for
+// FFmpeg profile configuration feature (hardware accel extensions, custom flags validation,
+// and profile usage statistics).
+func migration023RelayProfileExtensions() Migration {
+	return Migration{
+		Version:     "023",
+		Description: "Add FFmpeg profile configuration extensions to relay_profiles",
+		Up: func(tx *gorm.DB) error {
+			// AutoMigrate will add the new columns to the existing table:
+			// - hw_accel_output_format
+			// - hw_accel_decoder_codec
+			// - hw_accel_extra_options
+			// - gpu_index
+			// - custom_flags_validated
+			// - custom_flags_warnings
+			// - success_count
+			// - failure_count
+			// - last_used_at
+			// - last_error_at
+			// - last_error_msg
+			return tx.AutoMigrate(&models.RelayProfile{})
+		},
+		Down: func(tx *gorm.DB) error {
+			migrator := tx.Migrator()
+			columns := []string{
+				"hw_accel_output_format",
+				"hw_accel_decoder_codec",
+				"hw_accel_extra_options",
+				"gpu_index",
+				"custom_flags_validated",
+				"custom_flags_warnings",
+				"success_count",
+				"failure_count",
+				"last_used_at",
+				"last_error_at",
+				"last_error_msg",
+			}
+			for _, col := range columns {
+				if migrator.HasColumn(&models.RelayProfile{}, col) {
+					if err := migrator.DropColumn(&models.RelayProfile{}, col); err != nil {
+						// Log but continue - SQLite doesn't support DROP COLUMN well
+						tx.Logger.Warn(tx.Statement.Context, "failed to drop column %s: %v", col, err)
+					}
+				}
+			}
+			return nil
+		},
+	}
+}
+
+// migration024SystemProfileHWAccel updates system profiles with hardware acceleration
+// enabled (auto mode) and fallback enabled for better out-of-box experience.
+func migration024SystemProfileHWAccel() Migration {
+	return Migration{
+		Version:     "024",
+		Description: "Enable hwaccel (auto) and fallback for system relay profiles",
+		Up: func(tx *gorm.DB) error {
+			// Update all system profiles to have hwaccel=auto and fallback_enabled=true
+			// Use UpdateColumns to skip hooks since we're doing a partial update
+			return tx.Model(&models.RelayProfile{}).
+				Where("is_system = ?", true).
+				UpdateColumns(map[string]interface{}{
+					"hw_accel":         string(models.HWAccelAuto),
+					"fallback_enabled": true,
+				}).Error
+		},
+		Down: func(tx *gorm.DB) error {
+			// Revert to no hwaccel and fallback disabled
+			// Use UpdateColumns to skip hooks since we're doing a partial update
+			return tx.Model(&models.RelayProfile{}).
+				Where("is_system = ?", true).
+				UpdateColumns(map[string]interface{}{
+					"hw_accel":         "",
+					"fallback_enabled": false,
+				}).Error
+		},
+	}
+}
+
+// migration025LastKnownCodecs creates the last_known_codecs table for caching
+// stream codec information discovered via ffprobe.
+func migration025LastKnownCodecs() Migration {
+	return Migration{
+		Version:     "025",
+		Description: "Create last_known_codecs table for codec caching",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.LastKnownCodec{})
+		},
+		Down: func(tx *gorm.DB) error {
+			return tx.Migrator().DropTable("last_known_codecs")
+		},
+	}
+}
+
+// migration026ForceTranscodeFlags adds force_video_transcode and force_audio_transcode
+// columns to relay_profiles for smart codec matching (copy when source matches target).
+func migration026ForceTranscodeFlags() Migration {
+	return Migration{
+		Version:     "026",
+		Description: "Add force_video_transcode and force_audio_transcode to relay_profiles",
+		Up: func(tx *gorm.DB) error {
+			// AutoMigrate will add the new columns (default: false)
+			return tx.AutoMigrate(&models.RelayProfile{})
+		},
+		Down: func(tx *gorm.DB) error {
+			migrator := tx.Migrator()
+			columns := []string{"force_video_transcode", "force_audio_transcode"}
+			for _, col := range columns {
+				if migrator.HasColumn(&models.RelayProfile{}, col) {
+					if err := migrator.DropColumn(&models.RelayProfile{}, col); err != nil {
+						tx.Logger.Warn(tx.Statement.Context, "failed to drop column %s: %v", col, err)
+					}
 				}
 			}
 			return nil
