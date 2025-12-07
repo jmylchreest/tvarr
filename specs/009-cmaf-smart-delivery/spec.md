@@ -58,7 +58,9 @@ Enable CMAF (Common Media Application Format) for:
 **Acceptance Criteria:**
 - "Universal" profile ships as default (H.264/AAC)
 - Works on all devices (iOS, Android, browsers, TVs)
-- Auto-selects best container format per client
+- Container auto-selection logic:
+  - fMP4 for: DASH requests, HLS requests from modern browsers (Chrome, Firefox, Edge, Safari 10+)
+  - MPEG-TS for: explicit `?format=mpegts`, legacy User-Agents, or when client Accept header requests `video/MP2T`
 
 ### US4: CMAF for Efficient Delivery
 **As a** server operator
@@ -81,13 +83,18 @@ Profile.ContainerFormat = "auto" (default)
     ├─ Codec requires fMP4? (VP9/AV1/Opus)
     │   └─ Yes → fMP4
     │
-    ├─ Client prefers?
-    │   ├─ HLS v7+ capable → fMP4
-    │   ├─ DASH → fMP4
-    │   └─ Legacy HLS/TS player → MPEG-TS
+    ├─ Client explicitly requests MPEG-TS? (?format=mpegts)
+    │   └─ Yes → MPEG-TS
+    │
+    ├─ Client format preference?
+    │   ├─ DASH request → fMP4
+    │   ├─ HLS request → fMP4 (modern default, EXT-X-VERSION:7)
+    │   └─ Raw TS request → MPEG-TS
     │
     └─ Default → fMP4 (modern default)
 ```
+
+**Note**: HLS v7+ capability is not reliably detectable via HTTP headers. The system defaults to fMP4 for all HLS requests (modern players handle this). Users with legacy-only devices should explicitly request `?format=mpegts`.
 
 ### Smart Delivery Decision Tree
 
@@ -101,20 +108,24 @@ Smart Mode Request
     │   └─ No: Smart passthrough
     │
     └─ Smart Passthrough:
-        ├─ Source HLS, Client HLS → Passthrough
-        ├─ Source DASH, Client DASH → Passthrough
-        ├─ Source TS, Client HLS → Repackage to HLS
-        ├─ Source TS, Client DASH → Repackage to DASH
-        └─ Source TS, Client TS → Passthrough
+        ├─ Source HLS, Client HLS → Passthrough (proxy segments)
+        ├─ Source DASH, Client DASH → Passthrough (proxy segments)
+        ├─ Source HLS, Client DASH → Repackage (same segments, different manifest)
+        ├─ Source DASH, Client HLS → Repackage (same segments, different manifest)
+        ├─ Source TS, Client HLS → FFmpeg pipeline (no segments to reuse)
+        ├─ Source TS, Client DASH → FFmpeg pipeline (no segments to reuse)
+        └─ Source TS, Client TS → Passthrough (direct proxy)
 ```
+
+**Note**: "Repackage" only works when source already has segments (HLS/DASH). Raw TS streams require FFmpeg to create segments, even with `copy` codecs.
 
 ### System Profiles
 
 | Profile | Video | Audio | Container | Use Case |
 |---------|-------|-------|-----------|----------|
-| Universal | H.264 | AAC | auto | Default, all devices |
+| Universal | H.264 (libx264) | AAC | auto | Default, all devices |
 | Passthrough | copy | copy | auto | Zero CPU, source unchanged |
-| Efficiency | HEVC | AAC | fMP4 | Modern devices, smaller files |
+| Efficiency | HEVC (libx265) | AAC | fMP4 | Modern devices (Apple 10+, Chrome, smart TVs 2018+), smaller files |
 
 ## API Changes
 

@@ -239,9 +239,10 @@ Single segment storage, multiple manifest views.
   container_format: "auto"
 
 # Profile 3: Efficiency (optional, for power users)
+# Uses HEVC (libx265) - NOT adaptive. AV1 requires custom profile.
 - name: "Efficiency"
-  description: "Modern codecs for smaller files (requires compatible devices)"
-  video_codec: "libx265"    # Or av1 if hardware available
+  description: "HEVC encoding for smaller files (requires Apple 10+, Chrome, smart TVs 2018+)"
+  video_codec: "libx265"
   audio_codec: "aac"
   container_format: "fmp4"
   video_bitrate: 0
@@ -285,13 +286,14 @@ Single segment storage, multiple manifest views.
 
 ### 4.1 Output Format Selection
 
+Update `runFFmpegPipeline()` in session.go to use container format:
+
 ```go
-func (s *RelaySession) buildFFmpegCommand() *ffmpeg.CommandBuilder {
-    builder := ffmpeg.NewCommandBuilder(binInfo.FFmpegPath)
+// In RelaySession.runFFmpegPipeline() - update output format section
+func (s *RelaySession) runFFmpegPipeline() error {
+    // ... existing input configuration ...
 
-    // ... input configuration ...
-
-    // Determine container format
+    // Determine container format (NEW)
     container := s.Profile.DetermineContainer()
 
     switch container {
@@ -302,13 +304,13 @@ func (s *RelaySession) buildFFmpegCommand() *ffmpeg.CommandBuilder {
             OutputArgs("-frag_duration", "2000000")  // 2 second fragments
 
     case ContainerFormatMPEGTS:
-        // MPEG-TS output (legacy)
+        // MPEG-TS output (existing behavior)
         builder.MpegtsArgs().
             FlushPackets().
             MuxDelay("0")
     }
 
-    return builder
+    // ... rest of existing pipeline ...
 }
 ```
 

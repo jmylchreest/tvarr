@@ -14,18 +14,20 @@
 
 **Purpose**: Update models for new proxy modes and container format
 
+**TDD Note**: Test tasks (A12) run in parallel with implementation per Constitution III.
+
 - [ ] A01 Add ContainerFormat type and constants to internal/models/relay_profile.go
 - [ ] A02 Add ContainerFormat field to RelayProfile struct
 - [ ] A03 [P] Add RequiresFMP4() method to RelayProfile for codec validation
 - [ ] A04 [P] Add DetermineContainer() method to RelayProfile for runtime selection
-- [ ] A05 Update RelayProfile BeforeSave hook to validate codec↔container
-- [ ] A06 Add StreamProxyModeDirect and StreamProxyModeSmart constants to internal/models/stream_proxy.go
-- [ ] A07 [P] Deprecate old proxy mode constants (redirect/proxy/relay)
-- [ ] A08 Create database migration for ContainerFormat column
-- [ ] A09 Create database migration for proxy_mode value conversion
-- [ ] A10 [P] Add API endpoint backward compatibility mapping
-- [ ] A11 Update system profile seed data (3 profiles: Universal, Passthrough, Efficiency)
-- [ ] A12 [P] Unit tests for ContainerFormat validation
+- [ ] A05 [P] Unit tests for ContainerFormat validation (TDD: write with A03/A04)
+- [ ] A06 Update RelayProfile BeforeSave hook to validate codec↔container
+- [ ] A07 Add StreamProxyModeDirect and StreamProxyModeSmart constants to internal/models/stream_proxy.go
+- [ ] A08 [P] Deprecate old proxy mode constants (redirect/proxy/relay)
+- [ ] A09 Create database migration for ContainerFormat column
+- [ ] A10 Create database migration for proxy_mode value conversion
+- [ ] A11 [P] Add API endpoint backward compatibility mapping with deprecation warning logging
+- [ ] A12 Update system profile seed data (3 profiles: Universal, Passthrough, Efficiency)
 
 **Checkpoint A**: Models updated, migrations created, validation working
 
@@ -35,18 +37,22 @@
 
 **Purpose**: Implement unified smart delivery dispatch
 
+**TDD Note**: Test tasks (B12) run in parallel with implementation per Constitution III.
+
+**Clarification**: "Repackage" (canRepackage) means serving existing segments with different manifest format. True TS→HLS/DASH conversion without pre-existing segments requires FFmpeg pipeline (DeliveryTranscode), not repackage.
+
 - [ ] B01 Create DeliveryDecision type in internal/relay/delivery.go
 - [ ] B02 Create SelectDelivery function with decision logic
 - [ ] B03 [P] Create sourceMatchesClient helper function
-- [ ] B04 [P] Create canRepackage helper function
-- [ ] B05 Create handleSmartDelivery in internal/http/handlers/relay_stream.go
-- [ ] B06 Update handleRawStream dispatch to use direct/smart modes
-- [ ] B07 Integrate SelectDelivery into handleSmartDelivery
-- [ ] B08 Remove handleRawProxyMode (logic merged into smart)
-- [ ] B09 Remove handleRawRelayMode (logic merged into smart)
-- [ ] B10 Update RelaySession.runNormalPipeline for smart delivery
-- [ ] B11 [P] Add X-Stream-Decision header values for observability
-- [ ] B12 [P] Unit tests for SelectDelivery decision logic
+- [ ] B04 [P] Create canRepackage helper function (true only if source has segments, not raw TS)
+- [ ] B05 [P] Unit tests for SelectDelivery decision logic (TDD: write with B01-B04)
+- [ ] B06 Create handleSmartDelivery in internal/http/handlers/relay_stream.go
+- [ ] B07 Update handleRawStream dispatch to use direct/smart modes
+- [ ] B08 Integrate SelectDelivery into handleSmartDelivery
+- [ ] B09 Remove handleRawProxyMode (logic merged into smart)
+- [ ] B10 Remove handleRawRelayMode (logic merged into smart)
+- [ ] B11 Update RelaySession.runNormalPipeline for smart delivery
+- [ ] B12 [P] Add X-Stream-Decision header values for observability (passthrough/repackage/transcode)
 
 **Checkpoint B**: Smart delivery working, old modes removed
 
@@ -58,19 +64,25 @@
 
 ### C.1 fMP4 Muxer
 
+**TDD Note**: Test tasks (C05) run in parallel with implementation per Constitution III.
+
 - [ ] C01 Create CMAFMuxer struct in internal/relay/cmaf_muxer.go
 - [ ] C02 Implement fMP4 fragment parsing (moof+mdat detection)
 - [ ] C03 Implement segment boundary detection (keyframe-aligned)
 - [ ] C04 Add initialization segment (ftyp+moov) extraction
-- [ ] C05 [P] Unit tests for fMP4 parsing
+- [ ] C05 [P] Unit tests for fMP4 parsing (TDD: write with C01-C04)
 
 ### C.2 Buffer Integration
 
+**TDD Note**: Test tasks (C10) run in parallel with implementation per Constitution III.
+
+**Clarification**: C08 extends existing internal/relay/segment.go (from 008) with fMP4-specific fields (InitSegment, MediaSegments with moof+mdat boundaries), not a replacement.
+
 - [ ] C06 Add containerFormat field to UnifiedBuffer
 - [ ] C07 Update UnifiedBuffer.WriteChunk for fMP4 mode
-- [ ] C08 Create Segment type for fMP4 segments (init + media)
+- [ ] C08 Extend Segment type in segment.go for fMP4 (add InitSegment []byte, IsFragmented bool)
 - [ ] C09 Implement fMP4 segment storage in UnifiedBuffer
-- [ ] C10 [P] Unit tests for UnifiedBuffer fMP4 mode
+- [ ] C10 [P] Unit tests for UnifiedBuffer fMP4 mode (TDD: write with C06-C09)
 
 ### C.3 FFmpeg Output
 
@@ -140,10 +152,12 @@
 
 ### E.2 Migration Testing
 
-- [ ] E09 Test migration: redirect → direct
-- [ ] E10 Test migration: proxy → smart
-- [ ] E11 Test migration: relay → smart
-- [ ] E12 [P] Test: old API mode values accepted
+**Test Type**: Unit tests using GORM with in-memory SQLite database.
+
+- [ ] E09 Unit test migration: redirect → direct (verify DB state after migration)
+- [ ] E10 Unit test migration: proxy → smart (verify DB state after migration)
+- [ ] E11 Unit test migration: relay → smart (verify DB state after migration)
+- [ ] E12 [P] Unit test: old API mode values accepted and logged as deprecated
 
 ### E.3 Documentation
 
@@ -170,23 +184,32 @@ Phase D (Frontend) can start after A completes ──────────►
                                 └─► Phase E (Testing) ───►
 ```
 
-### Parallel Opportunities
+### Parallel Opportunities (TDD-Compliant)
 
 **Within Phase A:**
 ```
-A01-A02 sequential, then A03+A04+A07+A10+A12 parallel
+A01-A02 sequential
+A03+A04+A05 parallel (implementation + tests together)
+A06 after A05
+A07+A08+A11 parallel
+A09-A10 sequential (migrations)
+A12 after A10
 ```
 
 **Within Phase B:**
 ```
-B01-B02 sequential, then B03+B04+B11+B12 parallel
+B01-B02 sequential
+B03+B04+B05 parallel (implementation + tests together)
+B06-B11 sequential
+B12 parallel with B06+
 ```
 
 **Within Phase C:**
 ```
-C.1 (Muxer) can run in parallel with C.3 (FFmpeg)
-C.2 (Buffer) depends on C.1
-C.4 (Handlers) depends on C.2
+C.1 (Muxer + tests): C01-C04+C05 parallel group
+C.2 (Buffer + tests): C06-C09+C10 parallel group, depends on C.1
+C.3 (FFmpeg): C11-C14 can start after C.1
+C.4 (Handlers): C15-C20 depends on C.2
 ```
 
 **Phase D:**
