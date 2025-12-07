@@ -5,6 +5,14 @@
 **Status**: Draft
 **Input**: User description: "Investigate (and potentially implement) other streaming formats in relay mode (and proxy mode where possible) other than mpegts. HLS is the obvious additional format, please be comprehensive"
 
+## Clarifications
+
+### Session 2025-12-07
+
+- Q: How do clients differentiate/request specific output formats? → A: Query parameter (`?format=hls`, `?format=dash`, `?format=mpegts`) matching existing proxy mode pattern. This is relay-only; m3u URLs remain unchanged. Default is MPEG-TS for backwards compatibility.
+- Q: How should segment URLs be structured for HLS/DASH, and how does this relate to proxy mode? → A: Query-param driven throughout. Same base URL serves any format; segments referenced via `?format=hls&seg=N`. This enables dynamic reconfiguration without m3u regeneration, per-client format selection, and runtime config changes without breaking existing clients.
+- Q: How should auto-format selection work? → A: Optional via proxy configuration with default of "auto". Proxy config defines the preferred format; clients can override via query parameter. Auto-detection uses User-Agent/Accept headers to serve optimal format per client.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - HLS Output for Device Compatibility (Priority: P1)
@@ -136,8 +144,12 @@ A user wants to serve streams via WebRTC for scenarios requiring ultra-low laten
 
 - **FR-040**: Relay profiles MUST allow output format selection (MPEG-TS, HLS, DASH)
 - **FR-041**: HLS/DASH profiles MUST allow configuration of segment duration and retention count
-- **FR-042**: System MUST expose format-specific endpoints (e.g., /stream.m3u8, /stream.mpd, /stream.ts)
-- **FR-043**: System MAY support automatic format selection based on client User-Agent or Accept headers
+- **FR-042**: System MUST support `?format=` query parameter on relay endpoints to select output format (hls, dash, mpegts, auto), matching existing proxy mode pattern
+- **FR-043**: System MUST default to MPEG-TS format when no format parameter is specified (backwards compatibility)
+- **FR-044**: For HLS/DASH formats, playlists/manifests MUST reference segments using query parameters on the same base URL (e.g., `?format=hls&seg=0`)
+- **FR-045**: System MUST allow dynamic reconfiguration (relay profile changes, format availability) without requiring m3u regeneration
+- **FR-046**: Proxy configuration SHOULD support a default format setting (auto, hls, dash, mpegts) that applies when clients don't specify a format
+- **FR-047**: When format is "auto", system SHOULD detect optimal format based on User-Agent and Accept headers (Safari/iOS → HLS, DASH-preference → DASH, fallback → MPEG-TS)
 
 #### Error Handling
 
@@ -150,8 +162,8 @@ A user wants to serve streams via WebRTC for scenarios requiring ultra-low laten
 - **Segment**: A discrete chunk of media content with sequence number, timestamp, duration, and binary data
 - **Playlist/Manifest**: A text document describing available segments, their order, and stream metadata (HLS: .m3u8, DASH: .mpd)
 - **SegmentBuffer**: An in-memory ring buffer holding recent segments for multi-client access, with configurable capacity
-- **StreamSession**: An active relay or proxy session that manages segment generation and client delivery
-- **FormatEndpoint**: A URL path pattern that serves a specific format (e.g., .m3u8 for HLS, .mpd for DASH)
+- **StreamSession**: An active relay session that manages segment generation and client delivery based on requested format
+- **FormatParameter**: The `?format=` query parameter value (hls, dash, mpegts, auto) that determines output format for a relay session; "auto" triggers client detection logic
 
 ## Success Criteria *(mandatory)*
 
@@ -175,6 +187,7 @@ A user wants to serve streams via WebRTC for scenarios requiring ultra-low laten
 - HLS Low-Latency (LL-HLS) and DASH Low-Latency (LL-DASH) are out of scope for initial implementation
 - Adaptive bitrate (ABR) with multiple quality levels is out of scope; focus is on single-quality live streaming
 - Segment storage is memory-only; disk-based persistence is not required
+- DASH with fMP4 segments may enable additional codecs (VP9, AV1, Opus) not supported in MPEG-TS containers; codec expansion is a planning-phase consideration
 
 ## Out of Scope
 
