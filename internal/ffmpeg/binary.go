@@ -123,19 +123,20 @@ func (d *BinaryDetector) Clear() {
 func (d *BinaryDetector) detect(ctx context.Context) (*BinaryInfo, error) {
 	info := &BinaryInfo{}
 
-	// Find ffmpeg binary
+	// Find ffmpeg binary (required)
 	ffmpegPath, err := d.findBinary(ctx, "ffmpeg")
 	if err != nil {
 		return nil, fmt.Errorf("ffmpeg not found: %w", err)
 	}
 	info.FFmpegPath = ffmpegPath
 
-	// Find ffprobe binary
+	// Find ffprobe binary (optional - used for codec pre-detection)
+	// If not found, relay will still work but without codec caching optimization
 	ffprobePath, err := d.findBinary(ctx, "ffprobe")
-	if err != nil {
-		return nil, fmt.Errorf("ffprobe not found: %w", err)
+	if err == nil {
+		info.FFprobePath = ffprobePath
 	}
-	info.FFprobePath = ffprobePath
+	// ffprobePath will be empty if not found - this is handled gracefully downstream
 
 	// Get version information
 	version, err := d.getVersion(ctx, ffmpegPath)

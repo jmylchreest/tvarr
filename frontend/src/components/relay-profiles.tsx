@@ -32,6 +32,9 @@ import {
   List,
   Table as TableIcon,
   Lock,
+  Play,
+  Eye,
+  Copy,
 } from 'lucide-react';
 import {
   RelayProfile,
@@ -42,6 +45,8 @@ import {
 } from '@/types/api';
 import { getBackendUrl } from '@/lib/config';
 import { RelayProfileForm } from '@/components/relay-profile-form';
+import { ProfileTestDialog } from '@/components/profile-test-dialog';
+import { CommandPreviewModal } from '@/components/command-preview-modal';
 
 function formatBitrate(bitrate?: number): string {
   if (!bitrate) return 'Auto';
@@ -58,12 +63,9 @@ function formatCodec(codec: string): string {
 function getProfileSummaryLabels(profile: RelayProfile): string[] {
   const labels = [];
 
+  // Hardware acceleration badge first if enabled
   if (profile.hw_accel && profile.hw_accel !== 'none') {
-    labels.push(`HW Accel (${profile.hw_accel.toUpperCase()})`);
-  }
-
-  if (profile.is_default) {
-    labels.push('Default');
+    labels.push(`hwaccel: ${profile.hw_accel}`);
   }
 
   labels.push(`${formatCodec(profile.video_codec)} + ${formatCodec(profile.audio_codec)}`);
@@ -312,9 +314,7 @@ export function RelayProfiles() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{profiles.length}</div>
-            <p className="text-xs text-muted-foreground">
-              {profiles.filter((p) => p.is_default).length} default profiles
-            </p>
+            <p className="text-xs text-muted-foreground">Available configurations</p>
           </CardContent>
         </Card>
 
@@ -328,7 +328,9 @@ export function RelayProfiles() {
               {healthData?.unhealthy_processes === 0 ? 'Healthy' : 'Issues'}
             </div>
             <p className="text-xs text-muted-foreground">
-              {healthData?.unhealthy_processes || 0} unhealthy processes
+              {healthData?.unhealthy_processes === 0
+                ? 'All systems operational'
+                : `${healthData?.unhealthy_processes} process${healthData?.unhealthy_processes === 1 ? '' : 'es'} need attention`}
             </p>
           </CardContent>
         </Card>
@@ -422,6 +424,12 @@ export function RelayProfiles() {
                       </div>
 
                       <div className="flex items-center gap-1">
+                        {/* Test Profile */}
+                        <ProfileTestDialog profile={profile} />
+
+                        {/* Command Preview */}
+                        <CommandPreviewModal profile={profile} />
+
                         <Sheet
                           open={editProfile?.id === profile.id}
                           onOpenChange={(open) => setEditProfile(open ? profile : null)}
@@ -592,6 +600,26 @@ export function RelayProfiles() {
                           {profile.output_format === 'mpegts' ? 'Transport Stream' : profile.output_format.toUpperCase()}
                         </div>
                         <div className="flex items-center gap-1">
+                          {/* Test Profile */}
+                          <ProfileTestDialog
+                            profile={profile}
+                            trigger={
+                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0" title="Test profile">
+                                <Play className="h-4 w-4" />
+                              </Button>
+                            }
+                          />
+
+                          {/* Command Preview */}
+                          <CommandPreviewModal
+                            profile={profile}
+                            trigger={
+                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0" title="Preview command">
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                            }
+                          />
+
                           <Sheet
                             open={editProfile?.id === profile.id}
                             onOpenChange={(open) => setEditProfile(open ? profile : null)}
@@ -699,7 +727,7 @@ export function RelayProfiles() {
                               {profile.hw_accel && profile.hw_accel !== 'none' && (
                                 <Badge variant="outline" className="text-xs">
                                   <Cpu className="h-3 w-3 mr-1" />
-                                  HW Accel
+                                  hwaccel: {profile.hw_accel}
                                 </Badge>
                               )}
                               <Badge variant="outline" className="text-xs">
@@ -714,6 +742,26 @@ export function RelayProfiles() {
                       </div>
                       <div className="flex items-center gap-2 ml-4">
                         <div className="flex items-center gap-1">
+                          {/* Test Profile */}
+                          <ProfileTestDialog
+                            profile={profile}
+                            trigger={
+                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0" title="Test profile">
+                                <Play className="h-4 w-4" />
+                              </Button>
+                            }
+                          />
+
+                          {/* Command Preview */}
+                          <CommandPreviewModal
+                            profile={profile}
+                            trigger={
+                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0" title="Preview command">
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                            }
+                          />
+
                           <Sheet
                             open={editProfile?.id === profile.id}
                             onOpenChange={(open) => setEditProfile(open ? profile : null)}

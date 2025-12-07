@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jmylchreest/tvarr/internal/ffmpeg"
 	"github.com/jmylchreest/tvarr/internal/models"
+	"github.com/jmylchreest/tvarr/internal/repository"
 )
 
 // ErrSessionNotFound is returned when a relay session is not found.
@@ -29,6 +30,9 @@ type ManagerConfig struct {
 	MaxSessions int
 	// SessionTimeout is how long a session can run without clients.
 	SessionTimeout time.Duration
+	// IdleGracePeriod is how long to wait after all clients disconnect before closing a session.
+	// This is a shorter timeout than SessionTimeout, specifically for idle sessions.
+	IdleGracePeriod time.Duration
 	// CleanupInterval is how often to clean up stale sessions.
 	CleanupInterval time.Duration
 	// CircuitBreakerConfig for upstream failure handling.
@@ -41,6 +45,10 @@ type ManagerConfig struct {
 	FallbackConfig FallbackConfig
 	// HTTPClient for upstream requests.
 	HTTPClient *http.Client
+	// CodecRepo for caching stream codec information.
+	CodecRepo repository.LastKnownCodecRepository
+	// CodecCacheTTL is how long to cache codec information.
+	CodecCacheTTL time.Duration
 }
 
 // DefaultManagerConfig returns sensible defaults for the relay manager.
@@ -48,7 +56,8 @@ func DefaultManagerConfig() ManagerConfig {
 	return ManagerConfig{
 		MaxSessions:          100,
 		SessionTimeout:       5 * time.Minute,
-		CleanupInterval:      30 * time.Second,
+		IdleGracePeriod:      5 * time.Second,
+		CleanupInterval:      1 * time.Second, // Check frequently for idle sessions
 		CircuitBreakerConfig: DefaultCircuitBreakerConfig(),
 		ConnectionPoolConfig: DefaultConnectionPoolConfig(),
 		CyclicBufferConfig:   DefaultCyclicBufferConfig(),
@@ -56,6 +65,7 @@ func DefaultManagerConfig() ManagerConfig {
 		HTTPClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		CodecCacheTTL: 24 * time.Hour, // Cache codec info for 24 hours
 	}
 }
 
@@ -63,6 +73,7 @@ func DefaultManagerConfig() ManagerConfig {
 type Manager struct {
 	config     ManagerConfig
 	ffmpegBin  *ffmpeg.BinaryDetector
+	prober     *ffmpeg.Prober
 	classifier *StreamClassifier
 	logger     *slog.Logger
 
@@ -86,9 +97,18 @@ func NewManager(config ManagerConfig) *Manager {
 
 	logger := slog.Default().With(slog.String("component", "relay"))
 
+	ffmpegBin := ffmpeg.NewBinaryDetector()
+
+	// Initialize prober with detected ffprobe path
+	var prober *ffmpeg.Prober
+	if binInfo, err := ffmpegBin.Detect(ctx); err == nil && binInfo.FFprobePath != "" {
+		prober = ffmpeg.NewProber(binInfo.FFprobePath).WithTimeout(10 * time.Second)
+	}
+
 	m := &Manager{
 		config:            config,
-		ffmpegBin:         ffmpeg.NewBinaryDetector(),
+		ffmpegBin:         ffmpegBin,
+		prober:            prober,
 		classifier:        NewStreamClassifier(config.HTTPClient),
 		logger:            logger,
 		sessions:          make(map[uuid.UUID]*RelaySession),
@@ -118,7 +138,7 @@ func (m *Manager) FallbackGenerator() *FallbackGenerator {
 }
 
 // GetOrCreateSession gets an existing session for the channel or creates a new one.
-func (m *Manager) GetOrCreateSession(ctx context.Context, channelID uuid.UUID, streamURL string, profile *models.RelayProfile) (*RelaySession, error) {
+func (m *Manager) GetOrCreateSession(ctx context.Context, channelID uuid.UUID, channelName string, streamURL string, profile *models.RelayProfile) (*RelaySession, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -143,7 +163,7 @@ func (m *Manager) GetOrCreateSession(ctx context.Context, channelID uuid.UUID, s
 	}
 
 	// Create new session
-	session, err := m.createSession(ctx, channelID, streamURL, profile)
+	session, err := m.createSession(ctx, channelID, channelName, streamURL, profile)
 	if err != nil {
 		return nil, err
 	}
@@ -221,8 +241,107 @@ func (m *Manager) HTTPClient() *http.Client {
 	return http.DefaultClient
 }
 
+// GetOrProbeCodecInfo retrieves cached codec info or probes the stream.
+// Returns nil if probing is not available or fails (non-fatal).
+func (m *Manager) GetOrProbeCodecInfo(ctx context.Context, streamURL string) *models.LastKnownCodec {
+	// If no prober available, skip
+	if m.prober == nil {
+		return nil
+	}
+
+	// Try to get from cache first
+	if m.config.CodecRepo != nil {
+		cached, err := m.config.CodecRepo.GetByStreamURL(ctx, streamURL)
+		if err == nil && cached != nil && !cached.IsExpired() && cached.IsValid() {
+			// Update hit count in background
+			go func() {
+				if touchErr := m.config.CodecRepo.Touch(context.Background(), streamURL); touchErr != nil {
+					m.logger.Debug("Failed to touch codec cache", slog.String("error", touchErr.Error()))
+				}
+			}()
+			m.logger.Debug("Using cached codec info",
+				slog.String("stream_url", streamURL),
+				slog.String("video_codec", cached.VideoCodec),
+				slog.String("audio_codec", cached.AudioCodec))
+			return cached
+		}
+	}
+
+	// Probe the stream using QuickProbe for fast detection
+	start := time.Now()
+	streamInfo, err := m.prober.QuickProbe(ctx, streamURL)
+	probeMs := time.Since(start).Milliseconds()
+
+	if err != nil {
+		m.logger.Debug("Failed to probe stream codec",
+			slog.String("stream_url", streamURL),
+			slog.String("error", err.Error()),
+			slog.Int64("probe_ms", probeMs))
+
+		// Store the error in cache to avoid repeated failed probes
+		if m.config.CodecRepo != nil {
+			errorCodec := &models.LastKnownCodec{
+				StreamURL:  streamURL,
+				ProbedAt:   models.Now(),
+				ProbeError: err.Error(),
+				ProbeMs:    probeMs,
+			}
+			// Set short expiry for errors (retry in 5 minutes)
+			errorCodec.SetExpiry(5 * time.Minute)
+			if upsertErr := m.config.CodecRepo.Upsert(context.Background(), errorCodec); upsertErr != nil {
+				m.logger.Debug("Failed to cache probe error", slog.String("error", upsertErr.Error()))
+			}
+		}
+		return nil
+	}
+
+	// Create codec info from probe result
+	codecInfo := &models.LastKnownCodec{
+		StreamURL:       streamURL,
+		VideoCodec:      streamInfo.VideoCodec,
+		VideoProfile:    streamInfo.VideoProfile,
+		VideoLevel:      streamInfo.VideoLevel,
+		VideoWidth:      streamInfo.VideoWidth,
+		VideoHeight:     streamInfo.VideoHeight,
+		VideoFramerate:  streamInfo.VideoFramerate,
+		VideoBitrate:    streamInfo.VideoBitrate,
+		VideoPixFmt:     streamInfo.VideoPixFmt,
+		AudioCodec:      streamInfo.AudioCodec,
+		AudioSampleRate: streamInfo.AudioSampleRate,
+		AudioChannels:   streamInfo.AudioChannels,
+		AudioBitrate:    streamInfo.AudioBitrate,
+		ContainerFormat: streamInfo.ContainerFormat,
+		Duration:        streamInfo.Duration,
+		IsLiveStream:    streamInfo.IsLiveStream,
+		HasSubtitles:    streamInfo.HasSubtitles,
+		StreamCount:     streamInfo.StreamCount,
+		Title:           streamInfo.Title,
+		ProbedAt:        models.Now(),
+		ProbeMs:         probeMs,
+	}
+
+	// Set cache expiry
+	codecInfo.SetExpiry(m.config.CodecCacheTTL)
+
+	m.logger.Info("Probed stream codec",
+		slog.String("stream_url", streamURL),
+		slog.String("video_codec", codecInfo.VideoCodec),
+		slog.String("audio_codec", codecInfo.AudioCodec),
+		slog.String("resolution", fmt.Sprintf("%dx%d", codecInfo.VideoWidth, codecInfo.VideoHeight)),
+		slog.Int64("probe_ms", probeMs))
+
+	// Cache in database
+	if m.config.CodecRepo != nil {
+		if upsertErr := m.config.CodecRepo.Upsert(context.Background(), codecInfo); upsertErr != nil {
+			m.logger.Debug("Failed to cache codec info", slog.String("error", upsertErr.Error()))
+		}
+	}
+
+	return codecInfo
+}
+
 // createSession creates a new relay session.
-func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, streamURL string, profile *models.RelayProfile) (*RelaySession, error) {
+func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, channelName string, streamURL string, profile *models.RelayProfile) (*RelaySession, error) {
 	// Check circuit breaker
 	cb := m.circuitBreakers.Get(streamURL)
 	if !cb.Allow() {
@@ -232,20 +351,32 @@ func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, stream
 	// Classify stream
 	classification := m.classifier.Classify(ctx, streamURL)
 
+	// Determine the actual input URL (HLS may use a media playlist)
+	probeURL := streamURL
+	if classification.SelectedMediaPlaylist != "" {
+		probeURL = classification.SelectedMediaPlaylist
+	}
+
+	// Pre-probe codec info for faster FFmpeg startup
+	// This is non-blocking - if probe fails, we continue without cached info
+	codecInfo := m.GetOrProbeCodecInfo(ctx, probeURL)
+
 	sessionCtx, sessionCancel := context.WithCancel(m.ctx)
 
 	session := &RelaySession{
-		ID:             uuid.New(),
-		ChannelID:      channelID,
-		StreamURL:      streamURL,
-		Profile:        profile,
-		Classification: classification,
-		StartedAt:      time.Now(),
-		LastActivity:   time.Now(),
-		manager:        m,
-		buffer:         NewCyclicBuffer(m.config.CyclicBufferConfig),
-		ctx:            sessionCtx,
-		cancel:         sessionCancel,
+		ID:              uuid.New(),
+		ChannelID:       channelID,
+		ChannelName:     channelName,
+		StreamURL:       streamURL,
+		Profile:         profile,
+		Classification:  classification,
+		CachedCodecInfo: codecInfo,
+		StartedAt:       time.Now(),
+		LastActivity:    time.Now(),
+		manager:         m,
+		buffer:          NewCyclicBuffer(m.config.CyclicBufferConfig),
+		ctx:             sessionCtx,
+		cancel:          sessionCancel,
 	}
 
 	// Initialize fallback controller if enabled in profile
@@ -298,10 +429,29 @@ func (m *Manager) cleanupStaleSessions() {
 		session.mu.RLock()
 		clientCount := session.buffer.ClientCount()
 		lastActivity := session.LastActivity
+		idleSince := session.IdleSince
 		closed := session.closed
 		session.mu.RUnlock()
 
-		if closed || (clientCount == 0 && time.Since(lastActivity) > m.config.SessionTimeout) {
+		shouldRemove := false
+
+		if closed {
+			shouldRemove = true
+		} else if clientCount == 0 {
+			// Session has no clients - check idle grace period
+			if !idleSince.IsZero() && time.Since(idleSince) > m.config.IdleGracePeriod {
+				// Session has been idle longer than the grace period
+				m.logger.Info("Closing idle session after grace period",
+					slog.String("session_id", id.String()),
+					slog.Duration("idle_duration", time.Since(idleSince)))
+				shouldRemove = true
+			} else if idleSince.IsZero() && time.Since(lastActivity) > m.config.SessionTimeout {
+				// Fallback: no idleSince set but inactive for too long
+				shouldRemove = true
+			}
+		}
+
+		if shouldRemove {
 			toRemove = append(toRemove, id)
 		}
 	}

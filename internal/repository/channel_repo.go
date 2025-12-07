@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jmylchreest/tvarr/internal/models"
 	"gorm.io/gorm"
@@ -164,6 +165,20 @@ func (r *channelRepo) DeleteBySourceID(ctx context.Context, sourceID models.ULID
 		return fmt.Errorf("deleting channels by source ID: %w", err)
 	}
 	return nil
+}
+
+// DeleteStaleBySourceID deletes channels for a source that haven't been updated since the given time.
+// This is used for "mark and sweep" cleanup: upsert updates the updated_at timestamp, so channels
+// not present in the new data will have an older updated_at and will be deleted.
+// Returns the number of channels deleted.
+func (r *channelRepo) DeleteStaleBySourceID(ctx context.Context, sourceID models.ULID, olderThan time.Time) (int64, error) {
+	result := r.db.WithContext(ctx).Unscoped().
+		Where("source_id = ? AND updated_at < ?", sourceID, olderThan).
+		Delete(&models.Channel{})
+	if result.Error != nil {
+		return 0, fmt.Errorf("deleting stale channels: %w", result.Error)
+	}
+	return result.RowsAffected, nil
 }
 
 // CountBySourceID returns the number of channels for a source.

@@ -627,9 +627,12 @@ export function Debug() {
         if (liveResponse.ok) {
           const liveData: LivezProbeResponse = await liveResponse.json();
           setLiveProbe(liveData);
+        } else {
+          setLiveProbe({ status: 'error' });
         }
       } catch (err) {
         console.warn('Livez probe endpoint not available');
+        setLiveProbe({ status: 'unreachable' });
       }
 
       try {
@@ -637,9 +640,12 @@ export function Debug() {
         if (readyResponse.ok) {
           const readyData: ReadyzProbeResponse = await readyResponse.json();
           setReadyProbe(readyData);
+        } else {
+          setReadyProbe({ status: 'error' });
         }
       } catch (err) {
         console.warn('Readyz probe endpoint not available');
+        setReadyProbe({ status: 'unreachable' });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error occurred');
@@ -873,15 +879,21 @@ export function Debug() {
               <div className="space-y-1">
                 <div className="flex items-center gap-1 text-xs">
                   <div
-                    className={`h-2 w-2 rounded-full ${liveProbe?.status === 'ok' ? 'bg-green-500' : 'bg-red-500'}`}
+                    className={`h-2 w-2 rounded-full ${
+                      liveProbe === null ? 'bg-gray-400' :
+                      liveProbe?.status === 'ok' ? 'bg-green-500' : 'bg-red-500'
+                    }`}
                   />
-                  <span>Live: {liveProbe?.status === 'ok' ? 'OK' : 'Fail'}</span>
+                  <span>Live: {liveProbe === null ? 'Checking...' : liveProbe?.status === 'ok' ? 'OK' : 'Fail'}</span>
                 </div>
                 <div className="flex items-center gap-1 text-xs">
                   <div
-                    className={`h-2 w-2 rounded-full ${readyProbe?.status === 'ok' ? 'bg-green-500' : 'bg-red-500'}`}
+                    className={`h-2 w-2 rounded-full ${
+                      readyProbe === null ? 'bg-gray-400' :
+                      readyProbe?.status === 'ok' ? 'bg-green-500' : 'bg-red-500'
+                    }`}
                   />
-                  <span>Ready: {readyProbe?.status === 'ok' ? 'OK' : 'Fail'}</span>
+                  <span>Ready: {readyProbe === null ? 'Checking...' : readyProbe?.status === 'ok' ? 'OK' : 'Fail'}</span>
                 </div>
               </div>
             </CardContent>

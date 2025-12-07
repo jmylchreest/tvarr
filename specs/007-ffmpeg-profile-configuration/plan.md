@@ -1,45 +1,32 @@
 # Implementation Plan: FFmpeg Profile Configuration
 
-**Branch**: `007-ffmpeg-profile-configuration` | **Date**: 2025-12-06 | **Spec**: [spec.md](spec.md)
+**Branch**: `007-ffmpeg-profile-configuration` | **Date**: 2025-12-06 | **Spec**: [spec.md](./spec.md)
 **Input**: Feature specification from `/specs/007-ffmpeg-profile-configuration/spec.md`
 
 ## Summary
 
-Enhance FFmpeg relay profiles with custom flag support, hardware acceleration configuration, profile management (CRUD + clone), profile testing capability, and command preview. The goal is to reduce relay errors and improve feed quality by giving administrators fine-grained control over FFmpeg parameters.
+This feature addresses critical H.264 stream corruption in relay mode (P0) and adds comprehensive FFmpeg profile configuration including custom flags, hardware acceleration parameters, and profile management. The primary issue is missing bitstream filters (`h264_mp4toannexb`) and misplaced FFmpeg flags causing SPS/PPS errors and corrupt MPEG-TS output.
 
 ## Technical Context
 
 **Language/Version**: Go 1.25.x (latest stable)
 **Primary Dependencies**: Huma v2.34+ (Chi router), GORM v2, FFmpeg (external binary)
 **Storage**: SQLite/PostgreSQL/MySQL (configurable via GORM)
-**Testing**: testify + gomock, table-driven tests
+**Testing**: Go test with integration tests
 **Target Platform**: Linux server (primary), macOS, Windows
 **Project Type**: Web application (Go backend + Next.js frontend)
-**Performance Goals**: Profile test feedback within 30 seconds, hardware detection within 10 seconds
-**Constraints**: Custom flags must not introduce command injection vulnerabilities
-**Scale/Scope**: Support 100+ relay profiles, multiple hardware acceleration types
+**Performance Goals**: Zero stream corruption errors, <100ms latency for profile operations
+**Constraints**: Must maintain backward compatibility with existing profiles
+**Scale/Scope**: Existing relay profile system extension
 
 ## Constitution Check
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| I. Memory-First Design | PASS | Profile management operates on single entities, not bulk collections |
-| II. Modular Pipeline Architecture | PASS | FFmpeg command building is already modular via CommandBuilder |
-| III. Test-First Development | PASS | Tests required for profile validation, command building, API handlers |
-| IV. Clean Architecture (SOLID) | PASS | Repository pattern for profiles, service layer for validation/testing |
-| V. Idiomatic Go | PASS | Using existing patterns from codebase |
-| VI. Observable and Debuggable | PASS | Command preview enables debugging, structured logging for errors |
-| VII. Security by Default | PASS | Input validation for custom flags to prevent injection |
-| VIII. No Magic Strings | PASS | Use constants for flag patterns, error messages |
-| IX. Resilient HTTP Clients | N/A | No new external HTTP calls required |
-| X. Human-Readable Duration | PASS | Existing profile timeouts use duration format |
-| XI. Human-Readable Byte Size | N/A | No new byte size configs |
-| XII. Production-Grade CI/CD | PASS | Existing pipeline handles new code |
-| XIII. Test Data Standards | PASS | Use fictional channel names in tests |
-
-**Gate Status**: PASS - All applicable principles satisfied
+- [x] No new external dependencies required (using existing FFmpeg binary)
+- [x] Extends existing models rather than creating parallel structures
+- [x] API endpoints follow existing patterns in `internal/http/handlers/`
+- [x] Frontend components follow existing patterns in `frontend/src/components/`
 
 ## Project Structure
 
@@ -48,117 +35,279 @@ Enhance FFmpeg relay profiles with custom flag support, hardware acceleration co
 ```text
 specs/007-ffmpeg-profile-configuration/
 ├── plan.md              # This file
-├── research.md          # Phase 0 output
-├── data-model.md        # Phase 1 output
-├── quickstart.md        # Phase 1 output
-├── contracts/           # Phase 1 output
-│   └── openapi.yaml     # API contract additions
+├── research.md          # Phase 0 output - completed
+├── data-model.md        # Phase 1 output - completed
+├── quickstart.md        # Phase 1 output - completed
+├── contracts/           # Phase 1 output - completed
+│   └── openapi.yaml
 └── tasks.md             # Phase 2 output (/speckit.tasks command)
 ```
 
 ### Source Code (repository root)
 
 ```text
-# Backend
 internal/
 ├── models/
-│   └── relay_profile.go    # EXISTING - extend with new fields
-├── repository/
-│   └── relay_profile_repo.go  # EXISTING - add profile testing queries
-├── service/
-│   └── relay_profile_service.go  # NEW - profile validation, testing service
+│   └── relay_profile.go     # Extended with new fields
 ├── ffmpeg/
-│   ├── wrapper.go          # EXISTING - extend command builder
-│   ├── hwaccel.go          # EXISTING - hardware detection
-│   └── profile_builder.go  # NEW - profile-to-command translation
+│   ├── wrapper.go           # Extended command builder
+│   ├── bitstream_filters.go # NEW: Codec-to-BSF mapping
+│   └── validator.go         # NEW: Custom flag validation
+├── relay/
+│   └── session.go           # Fixed FFmpeg command generation
 ├── http/handlers/
-│   └── relay_profile.go    # EXISTING - extend with test/preview endpoints
+│   └── relay_profile.go     # Extended with new endpoints
+└── services/
+    └── hardware_detector.go # NEW: Hardware capability detection
 
-# Frontend
 frontend/src/
 ├── components/
-│   └── relay-profiles/     # NEW - profile management components
-│       ├── ProfileForm.tsx
-│       ├── ProfileTestDialog.tsx
-│       ├── CommandPreview.tsx
-│       └── HardwareAccelConfig.tsx
-├── app/
-│   └── relay-profiles/     # NEW - profile management page
-│       └── page.tsx
-└── types/
-    └── relay-profile.ts    # EXISTING - extend types
+│   └── relay-profiles/
+│       ├── profile-form.tsx     # Extended with new fields
+│       ├── profile-test.tsx     # NEW: Test dialog
+│       └── command-preview.tsx  # NEW: Preview modal
+├── types/
+│   └── relay-profile.ts     # Extended types
+└── pages/settings/
+    └── relay-profiles.tsx   # Extended UI
 ```
 
-**Structure Decision**: Web application pattern - extends existing backend and frontend structure
+**Structure Decision**: Web application structure - extending existing backend and frontend directories.
 
-## Key Design Decisions
+## Implementation Phases
 
-### D1: Custom Flags Field Structure
+### Phase 1: P0 CRITICAL - Fix Stream Corruption (FR-100 to FR-152)
 
-The RelayProfile model already has `InputOptions`, `OutputOptions`, and `FilterComplex` string fields. These will be:
-- **InputOptions**: Raw FFmpeg input flags (whitespace-separated)
-- **OutputOptions**: Raw FFmpeg output flags (whitespace-separated)
-- **FilterComplex**: Complex filter graph string (-filter_complex)
+This is the highest priority work and MUST be completed first.
 
-These are NOT currently wired into the FFmpeg command builder. This feature will connect them.
+#### 1.1 Create Bitstream Filter Service
 
-### D2: Flag Validation Strategy
+**File**: `internal/ffmpeg/bitstream_filters.go`
 
-Custom flags will be validated for:
-1. Balanced quotes (no unclosed quotes)
-2. No shell metacharacters that could enable injection (`;`, `|`, `&`, `$()`, backticks)
-3. Valid FFmpeg flag patterns (starts with `-` or `--`)
+Create a service that maps codec + output format combinations to required bitstream filters:
 
-Invalid flags generate warnings but allow saving (for advanced users with edge cases).
+| Source Codec | Output Format | Video BSF | Notes |
+|--------------|---------------|-----------|-------|
+| H.264 | MPEG-TS/HLS | `h264_mp4toannexb` | Converts AVCC to Annex B |
+| H.265/HEVC | MPEG-TS/HLS | `hevc_mp4toannexb` | Converts HVCC to Annex B |
+| VP9 | MPEG-TS | `vp9_superframe` | Conditional for some sources |
+| AV1 | MPEG-TS | - | OBUs, no conversion needed |
 
-### D3: Hardware Acceleration Configuration
+Hardware encoders map to their codec family:
+- `h264_nvenc`, `h264_qsv`, `h264_vaapi` → `h264_mp4toannexb`
+- `hevc_nvenc`, `hevc_qsv`, `hevc_vaapi` → `hevc_mp4toannexb`
 
-Extend existing `HWAccel` and `HWAccelDevice` fields with additional decoder-specific options:
-- `hwaccel_decoder_options` - decoder-specific flags (e.g., `-c:v h264_cuvid`)
-- `hwaccel_output_format` - output format for hwaccel (e.g., `cuda`, `vaapi`)
+#### 1.2 Fix FFmpeg Command Builder in session.go
 
-### D4: Profile Testing Architecture
+**File**: `internal/relay/session.go` - `runFFmpegPipeline()`
 
-Profile testing will:
-1. Run a short FFmpeg test (30s timeout) against a sample stream
-2. Capture FFmpeg stderr for error detection
-3. Verify hardware acceleration is active (check for GPU device in output)
-4. Return structured test results with suggestions for common fixes
+Current (broken):
+```go
+builder.OutputFormat(string(s.Profile.OutputFormat)).
+    OutputArgs("-mpegts_copyts", "1").
+    OutputArgs("-avoid_negative_ts", "disabled").
+    OutputArgs("-fflags", "+genpts").  // WRONG: on output
+```
 
-### D5: Command Preview Implementation
+Fixed:
+```go
+// INPUT flags (before -i)
+builder.InputArgs("-fflags", "+genpts+discardcorrupt").
+    InputArgs("-analyzeduration", "10000000").
+    InputArgs("-probesize", "10000000").
+    Input(inputURL)
 
-Command preview will use the existing `CommandBuilder.Build().String()` method to generate the full command line, allowing users to copy and test manually.
+// ... codec settings ...
+
+// Determine BSF based on output codec and format
+bsf := GetBitstreamFilter(videoCodec, outputFormat)
+if bsf != "" {
+    builder.OutputArgs("-bsf:v", bsf)
+}
+
+// OUTPUT flags
+builder.OutputFormat(string(s.Profile.OutputFormat)).
+    OutputArgs("-flush_packets", "1").
+    OutputArgs("-muxdelay", "0").
+    OutputArgs("-avoid_negative_ts", "make_zero").
+    OutputArgs("-pat_period", "0.1").
+    Output("pipe:1")
+```
+
+#### 1.3 Add Codec Detection for Copy Mode
+
+When profile uses `copy` mode, probe the source stream to detect the actual codec and apply the appropriate BSF:
+
+```go
+func (s *Session) detectSourceCodec(inputURL string) (string, error) {
+    // Use ffprobe to detect source codec
+    // Return codec name for BSF selection
+}
+```
+
+### Phase 2: Wire Existing Custom Flag Fields (FR-001 to FR-005)
+
+The `InputOptions`, `OutputOptions`, and `FilterComplex` fields exist in the model but are NOT connected to the FFmpeg command builder.
+
+#### 2.1 Extend CommandBuilder
+
+**File**: `internal/ffmpeg/wrapper.go`
+
+Add methods to apply custom options:
+```go
+func (b *CommandBuilder) ApplyInputOptions(opts string) *CommandBuilder
+func (b *CommandBuilder) ApplyOutputOptions(opts string) *CommandBuilder
+func (b *CommandBuilder) ApplyFilterComplex(filter string) *CommandBuilder
+```
+
+#### 2.2 Create Flag Validator
+
+**File**: `internal/ffmpeg/validator.go`
+
+Implement validation with dangerous pattern detection:
+- Shell injection patterns: `;`, `|`, `&&`, `$()`
+- Blocked flags: `-i`, `-y`, `-filter_script`
+- Quote balancing
+
+Warning-only mode allows saving with warnings for advanced users.
+
+#### 2.3 Update session.go to Apply Custom Options
+
+Wire the custom options into the command builder in proper order:
+1. Structured input settings
+2. Custom input options (override)
+3. Input URL
+4. Codec settings
+5. Filter complex
+6. Structured output settings
+7. Custom output options (override)
+
+### Phase 3: Hardware Acceleration Extensions (FR-006 to FR-010)
+
+#### 3.1 Add New Model Fields
+
+**File**: `internal/models/relay_profile.go`
+
+Add fields (as documented in data-model.md):
+- `HWAccelOutputFormat`
+- `HWAccelDecoderCodec`
+- `HWAccelExtraOptions`
+- `GpuIndex`
+
+#### 3.2 Create Hardware Detector Service
+
+**File**: `internal/services/hardware_detector.go`
+
+Detect available hardware at startup:
+- Parse `ffmpeg -hwaccels` output
+- Parse `ffmpeg -encoders` for hardware encoders
+- Detect GPU devices and paths
+- Cache results in memory
+
+#### 3.3 Wire Hardware Settings to Command Builder
+
+Apply hardware acceleration flags in proper order:
+```go
+// Decoder settings (before input)
+if profile.HWAccel != "none" {
+    builder.InputArgs("-hwaccel", profile.HWAccel)
+    if profile.HWAccelDevice != "" {
+        builder.InputArgs("-hwaccel_device", profile.HWAccelDevice)
+    }
+    if profile.HWAccelOutputFormat != "" {
+        builder.InputArgs("-hwaccel_output_format", profile.HWAccelOutputFormat)
+    }
+}
+```
+
+### Phase 4: Profile Management API (FR-011 to FR-015)
+
+#### 4.1 Extend Handler with New Endpoints
+
+**File**: `internal/http/handlers/relay_profile.go`
+
+Add endpoints:
+- `POST /api/v1/relay-profiles/{id}/clone` - Clone profile
+- `POST /api/v1/relay-profiles/{id}/test` - Test profile
+- `GET /api/v1/relay-profiles/{id}/preview` - Preview command
+- `POST /api/v1/relay-profiles/validate-flags` - Validate flags
+- `GET /api/v1/hardware-capabilities` - Get capabilities
+- `POST /api/v1/hardware-capabilities/refresh` - Refresh detection
+
+#### 4.2 Implement Profile Cloning
+
+Clone any profile (system or custom) to create an editable copy.
+
+#### 4.3 Implement Profile Testing
+
+Run a short FFmpeg test (5-30 seconds) against a provided stream URL:
+- Capture stderr for diagnostics
+- Parse frame count, FPS, codec detection
+- Verify hardware acceleration is active
+- Return structured results with suggestions
+
+### Phase 5: Frontend UI (P2-P3)
+
+#### 5.1 Extend Profile Form
+
+Add form fields for:
+- Custom Input Flags (textarea)
+- Custom Output Flags (textarea)
+- Filter Complex (textarea)
+- Hardware Acceleration Device
+- HW Accel Output Format
+- GPU Index
+
+Real-time validation with warning display.
+
+#### 5.2 Profile Test Dialog
+
+Modal dialog for testing profiles:
+- Stream URL input
+- Duration selector
+- Progress indicator
+- Results display with suggestions
+
+#### 5.3 Command Preview Modal
+
+Display generated FFmpeg command:
+- Syntax-highlighted command
+- Copy to clipboard button
+- Warning display
+
+### Phase 6: Database Migration
+
+**File**: `internal/database/migrations/NNNN_ffmpeg_profile_extensions.go`
+
+Add migration for new fields as documented in data-model.md.
 
 ## Complexity Tracking
 
-No constitution violations requiring justification.
-
-## Phases Overview
-
-| Phase | Focus | Artifacts |
-|-------|-------|-----------|
-| 0 | Research | research.md |
-| 1 | Design | data-model.md, contracts/openapi.yaml, quickstart.md |
-| 2 | Tasks | tasks.md (via /speckit.tasks) |
+No constitution violations identified. All changes extend existing patterns without introducing new architectural complexity.
 
 ## Dependencies
 
-### External Dependencies (no changes)
-- FFmpeg binary (external)
-- GORM v2
-- Huma v2.34+
-
-### Internal Dependencies
-- `internal/ffmpeg` package - extend CommandBuilder
-- `internal/models.RelayProfile` - extend fields
-- `internal/repository.RelayProfileRepository` - existing
-- `pkg/httpclient` - for stream testing
+| Phase | Depends On | Reason |
+|-------|------------|--------|
+| Phase 2 | Phase 1 | Custom flags build on fixed command builder |
+| Phase 3 | Phase 1 | HW accel uses fixed command structure |
+| Phase 4 | Phase 1-3 | API exposes all functionality |
+| Phase 5 | Phase 4 | Frontend calls new API endpoints |
+| Phase 6 | Phase 3 | Migration adds new fields |
 
 ## Risk Assessment
 
-| Risk | Likelihood | Impact | Mitigation |
-|------|------------|--------|------------|
-| Command injection via custom flags | Medium | High | Strict input validation, no shell execution |
-| Hardware acceleration detection timeout | Low | Medium | Timeout with fallback to software |
-| Profile test hangs indefinitely | Medium | Medium | 30s hard timeout on FFmpeg process |
-| Invalid custom flags crash FFmpeg | Medium | Low | Validate syntax, graceful error handling |
+| Risk | Mitigation |
+|------|------------|
+| Breaking existing profiles | Phase 1 changes are additive, existing profiles continue working |
+| FFmpeg version differences | Log applied flags, validate syntax only (not runtime behavior) |
+| Hardware detection fails | Graceful fallback to software, logged warning |
+| Custom flags cause crashes | Capture FFmpeg stderr, report suggestions |
+
+## Success Metrics
+
+- **SC-000**: Zero "non-existing PPS" or "Packet corrupt" errors (P0 CRITICAL)
+- **SC-001**: Custom flags appear in generated command within 1 minute
+- **SC-002**: GPU utilization >10% with hardware acceleration
+- **SC-003**: Profile testing completes within 30 seconds
+- **SC-008**: Mid-stream clients decode within 2 GOP intervals

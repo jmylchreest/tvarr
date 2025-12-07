@@ -261,7 +261,7 @@ export function Dashboard() {
         setRelayHistoricalData((prev) => {
           const updated = { ...prev };
 
-          health.processes.forEach((process) => {
+          health.processes?.forEach((process) => {
             const processId = process.config_id;
             const currentBytesReceived = parseStringNumber(process.bytes_received_upstream);
             const currentBytesDelivered = parseStringNumber(process.bytes_delivered_downstream);
@@ -460,7 +460,7 @@ export function Dashboard() {
           <CardContent>
             <div className="text-2xl font-bold">
               {relayHealth
-                ? relayHealth.processes.reduce((acc, p) => acc + p.connected_clients.length, 0)
+                ? relayHealth.processes?.reduce((acc, p) => acc + (p.connected_clients?.length ?? 0), 0) ?? 0
                 : '–'}
             </div>
             <p className="text-xs text-muted-foreground">Across all relay processes</p>
@@ -496,10 +496,10 @@ export function Dashboard() {
                 <span>
                   {relayHealth
                     ? formatBytes(
-                        relayHealth.processes.reduce(
+                        relayHealth.processes?.reduce(
                           (acc, p) => acc + parseStringNumber(p.bytes_received_upstream),
                           0
-                        )
+                        ) ?? 0
                       )
                     : '–'}
                 </span>
@@ -509,10 +509,10 @@ export function Dashboard() {
                 <span>
                   {relayHealth
                     ? formatBytes(
-                        relayHealth.processes.reduce(
+                        relayHealth.processes?.reduce(
                           (acc, p) => acc + parseStringNumber(p.bytes_delivered_downstream),
                           0
-                        )
+                        ) ?? 0
                       )
                     : '–'}
                 </span>
@@ -609,7 +609,7 @@ export function Dashboard() {
               {/* Individual Relay Process Cards */}
               <div className="space-y-4">
                 <h3 className="text-lg font-medium">Active Relay Processes</h3>
-                {relayHealth.processes.length === 0 ? (
+                {!relayHealth.processes?.length ? (
                   <Card>
                     <CardContent className="text-center py-8">
                       <Server className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
@@ -618,7 +618,7 @@ export function Dashboard() {
                   </Card>
                 ) : (
                   <div className="grid gap-4">
-                    {relayHealth.processes.map((process) => (
+                    {relayHealth.processes?.map((process) => (
                       <Card key={process.config_id} className="w-full">
                         <CardHeader>
                           <div className="flex items-center justify-between">
@@ -644,7 +644,7 @@ export function Dashboard() {
                                 {process.status}
                               </Badge>
                               <Badge variant="outline">
-                                {process.connected_clients.length} clients
+                                {process.connected_clients?.length ?? 0} clients
                               </Badge>
                             </div>
                           </div>
@@ -907,12 +907,12 @@ export function Dashboard() {
                                 <Globe className="h-4 w-4 text-muted-foreground" />
                                 <span className="text-sm font-medium">Connected Clients</span>
                                 <span className="text-xs text-muted-foreground ml-auto">
-                                  {process.connected_clients.length} connected
+                                  {process.connected_clients?.length ?? 0} connected
                                 </span>
                               </div>
                               <ScrollArea className="h-[320px]">
                                 <div className="space-y-2 pr-2">
-                                  {process.connected_clients.length === 0 ? (
+                                  {!process.connected_clients?.length ? (
                                     <div className="h-[320px] flex items-center justify-center">
                                       <span className="text-sm text-muted-foreground">
                                         No clients connected

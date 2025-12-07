@@ -12,6 +12,7 @@ import (
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/relay"
 	"github.com/jmylchreest/tvarr/internal/repository"
+	"github.com/jmylchreest/tvarr/internal/services"
 )
 
 // ErrRelayProfileNotFound is returned when a relay profile is not found.
@@ -31,6 +32,7 @@ type RelayService struct {
 	streamProxyRepo    repository.StreamProxyRepository
 	relayManager       *relay.Manager
 	ffmpegDetector     *ffmpeg.BinaryDetector
+	hardwareDetector   *services.HardwareDetector
 	prober             *ffmpeg.Prober
 	logger             *slog.Logger
 }
@@ -43,6 +45,15 @@ func NewRelayService(
 	streamProxyRepo repository.StreamProxyRepository,
 ) *RelayService {
 	config := relay.DefaultManagerConfig()
+	// Pass codec repo for pre-probing and caching
+	config.CodecRepo = lastKnownCodecRepo
+	ffmpegDetector := ffmpeg.NewBinaryDetector()
+
+	// Initialize hardware detector with detected FFmpeg path
+	var hardwareDetector *services.HardwareDetector
+	if binInfo, err := ffmpegDetector.Detect(context.Background()); err == nil {
+		hardwareDetector = services.NewHardwareDetector(binInfo.FFmpegPath)
+	}
 
 	return &RelayService{
 		relayProfileRepo:   relayProfileRepo,
@@ -50,7 +61,8 @@ func NewRelayService(
 		channelRepo:        channelRepo,
 		streamProxyRepo:    streamProxyRepo,
 		relayManager:       relay.NewManager(config),
-		ffmpegDetector:     ffmpeg.NewBinaryDetector(),
+		ffmpegDetector:     ffmpegDetector,
+		hardwareDetector:   hardwareDetector,
 		logger:             slog.Default(),
 	}
 }
@@ -66,6 +78,7 @@ func (s *RelayService) WithHTTPClient(client *http.Client) *RelayService {
 	// Recreate manager with custom config
 	config := relay.DefaultManagerConfig()
 	config.HTTPClient = client
+	config.CodecRepo = s.lastKnownCodecRepo
 	s.relayManager.Close()
 	s.relayManager = relay.NewManager(config)
 	return s
@@ -270,7 +283,7 @@ func (s *RelayService) StartRelay(ctx context.Context, channelID models.ULID, pr
 	channelUUID := uuid.UUID(channelID)
 
 	// Start the relay session
-	session, err := s.relayManager.GetOrCreateSession(ctx, channelUUID, channel.StreamURL, profile)
+	session, err := s.relayManager.GetOrCreateSession(ctx, channelUUID, channel.ChannelName, channel.StreamURL, profile)
 	if err != nil {
 		return nil, fmt.Errorf("starting relay session: %w", err)
 	}
@@ -421,4 +434,66 @@ func (s *RelayService) GetChannel(ctx context.Context, id models.ULID) (*models.
 		return nil, ErrChannelNotFound
 	}
 	return channel, nil
+}
+
+// GetHardwareCapabilities returns the cached hardware capabilities, detecting if not already cached.
+func (s *RelayService) GetHardwareCapabilities(ctx context.Context) (*services.HardwareCapabilities, error) {
+	if s.hardwareDetector == nil {
+		// Try to initialize hardware detector if not already done
+		binInfo, err := s.ffmpegDetector.Detect(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("FFmpeg not detected: %w", err)
+		}
+		s.hardwareDetector = services.NewHardwareDetector(binInfo.FFmpegPath)
+	}
+
+	// Return cached capabilities if available
+	caps := s.hardwareDetector.GetCapabilities()
+	if caps != nil {
+		return caps, nil
+	}
+
+	// Otherwise detect and cache
+	return s.hardwareDetector.Detect(ctx)
+}
+
+// RefreshHardwareCapabilities re-detects hardware capabilities.
+func (s *RelayService) RefreshHardwareCapabilities(ctx context.Context) (*services.HardwareCapabilities, error) {
+	if s.hardwareDetector == nil {
+		// Try to initialize hardware detector if not already done
+		binInfo, err := s.ffmpegDetector.Detect(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("FFmpeg not detected: %w", err)
+		}
+		s.hardwareDetector = services.NewHardwareDetector(binInfo.FFmpegPath)
+	}
+
+	return s.hardwareDetector.Refresh(ctx)
+}
+
+// ProfileUsageInfo contains information about how a profile is being used.
+type ProfileUsageInfo struct {
+	ProxyCount int64
+	Proxies    []*models.StreamProxy
+}
+
+// GetProfileUsage returns information about proxies using a given profile.
+func (s *RelayService) GetProfileUsage(ctx context.Context, profileID models.ULID) (*ProfileUsageInfo, error) {
+	count, err := s.streamProxyRepo.CountByRelayProfileID(ctx, profileID)
+	if err != nil {
+		return nil, fmt.Errorf("counting profile usage: %w", err)
+	}
+
+	var proxies []*models.StreamProxy
+	if count > 0 {
+		proxies, err = s.streamProxyRepo.GetByRelayProfileID(ctx, profileID)
+		if err != nil {
+			return nil, fmt.Errorf("getting proxies using profile: %w", err)
+		}
+	}
+
+	return &ProfileUsageInfo{
+		ProxyCount: count,
+		Proxies:    proxies,
+	}, nil
 }

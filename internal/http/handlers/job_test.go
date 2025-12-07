@@ -383,6 +383,14 @@ func (m *mockProxyRepoForJob) SetFilters(ctx context.Context, proxyID models.ULI
 	return nil
 }
 
+func (m *mockProxyRepoForJob) CountByRelayProfileID(ctx context.Context, profileID models.ULID) (int64, error) {
+	return 0, nil
+}
+
+func (m *mockProxyRepoForJob) GetByRelayProfileID(ctx context.Context, profileID models.ULID) ([]*models.StreamProxy, error) {
+	return nil, nil
+}
+
 func createTestJobService(jobRepo repository.JobRepository, streamRepo repository.StreamSourceRepository, epgRepo repository.EpgSourceRepository, proxyRepo repository.StreamProxyRepository) *service.JobService {
 	svc := service.NewJobService(jobRepo, streamRepo, epgRepo, proxyRepo)
 	sched := scheduler.NewScheduler(jobRepo, streamRepo, epgRepo, proxyRepo)

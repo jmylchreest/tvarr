@@ -55,6 +55,15 @@ func AllMigrations() []Migration {
 		// Add hls_collapse column to stream_proxies table
 		migration022StreamProxyHLSCollapse(),
 
+		// FFmpeg profile configuration extensions (feature 007)
+		migration023RelayProfileExtensions(),
+
+		// Update system profiles with hwaccel and fallback enabled
+		migration024SystemProfileHWAccel(),
+
+		// Codec caching for ffprobe pre-detection
+		migration025LastKnownCodecs(),
+
 		// Note: Logo caching (Phase 10) uses file-based storage with
 		// in-memory indexing, no database tables required.
 	}
@@ -705,6 +714,100 @@ func migration022StreamProxyHLSCollapse() Migration {
 				}
 			}
 			return nil
+		},
+	}
+}
+
+// migration023RelayProfileExtensions adds new columns to relay_profiles for
+// FFmpeg profile configuration feature (hardware accel extensions, custom flags validation,
+// and profile usage statistics).
+func migration023RelayProfileExtensions() Migration {
+	return Migration{
+		Version:     "023",
+		Description: "Add FFmpeg profile configuration extensions to relay_profiles",
+		Up: func(tx *gorm.DB) error {
+			// AutoMigrate will add the new columns to the existing table:
+			// - hw_accel_output_format
+			// - hw_accel_decoder_codec
+			// - hw_accel_extra_options
+			// - gpu_index
+			// - custom_flags_validated
+			// - custom_flags_warnings
+			// - success_count
+			// - failure_count
+			// - last_used_at
+			// - last_error_at
+			// - last_error_msg
+			return tx.AutoMigrate(&models.RelayProfile{})
+		},
+		Down: func(tx *gorm.DB) error {
+			migrator := tx.Migrator()
+			columns := []string{
+				"hw_accel_output_format",
+				"hw_accel_decoder_codec",
+				"hw_accel_extra_options",
+				"gpu_index",
+				"custom_flags_validated",
+				"custom_flags_warnings",
+				"success_count",
+				"failure_count",
+				"last_used_at",
+				"last_error_at",
+				"last_error_msg",
+			}
+			for _, col := range columns {
+				if migrator.HasColumn(&models.RelayProfile{}, col) {
+					if err := migrator.DropColumn(&models.RelayProfile{}, col); err != nil {
+						// Log but continue - SQLite doesn't support DROP COLUMN well
+						tx.Logger.Warn(tx.Statement.Context, "failed to drop column %s: %v", col, err)
+					}
+				}
+			}
+			return nil
+		},
+	}
+}
+
+// migration024SystemProfileHWAccel updates system profiles with hardware acceleration
+// enabled (auto mode) and fallback enabled for better out-of-box experience.
+func migration024SystemProfileHWAccel() Migration {
+	return Migration{
+		Version:     "024",
+		Description: "Enable hwaccel (auto) and fallback for system relay profiles",
+		Up: func(tx *gorm.DB) error {
+			// Update all system profiles to have hwaccel=auto and fallback_enabled=true
+			// Use UpdateColumns to skip hooks since we're doing a partial update
+			return tx.Model(&models.RelayProfile{}).
+				Where("is_system = ?", true).
+				UpdateColumns(map[string]interface{}{
+					"hw_accel":         string(models.HWAccelAuto),
+					"fallback_enabled": true,
+				}).Error
+		},
+		Down: func(tx *gorm.DB) error {
+			// Revert to no hwaccel and fallback disabled
+			// Use UpdateColumns to skip hooks since we're doing a partial update
+			return tx.Model(&models.RelayProfile{}).
+				Where("is_system = ?", true).
+				UpdateColumns(map[string]interface{}{
+					"hw_accel":         "",
+					"fallback_enabled": false,
+				}).Error
+		},
+	}
+}
+
+// migration025LastKnownCodecs creates the last_known_codecs table for caching
+// stream codec information discovered via ffprobe.
+func migration025LastKnownCodecs() Migration {
+	return Migration{
+		Version:     "025",
+		Description: "Create last_known_codecs table for codec caching",
+		Up: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&models.LastKnownCodec{})
+		},
+		Down: func(tx *gorm.DB) error {
+			return tx.Migrator().DropTable("last_known_codecs")
 		},
 	}
 }

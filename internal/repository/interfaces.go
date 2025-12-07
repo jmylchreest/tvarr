@@ -51,6 +51,9 @@ type ChannelRepository interface {
 	Delete(ctx context.Context, id models.ULID) error
 	// DeleteBySourceID deletes all channels for a source.
 	DeleteBySourceID(ctx context.Context, sourceID models.ULID) error
+	// DeleteStaleBySourceID deletes channels for a source that haven't been updated since the given time.
+	// Used for "mark and sweep" cleanup after upsert to remove channels no longer in the source.
+	DeleteStaleBySourceID(ctx context.Context, sourceID models.ULID, olderThan time.Time) (int64, error)
 	// CountBySourceID returns the number of channels for a source.
 	CountBySourceID(ctx context.Context, sourceID models.ULID) (int64, error)
 	// GetByExtID retrieves a channel by source ID and external ID.
@@ -173,6 +176,10 @@ type StreamProxyRepository interface {
 	// GetByEpgSourceID retrieves all proxies that use a specific EPG source.
 	// Used for auto-regeneration when an EPG source is updated.
 	GetByEpgSourceID(ctx context.Context, epgSourceID models.ULID) ([]*models.StreamProxy, error)
+	// CountByRelayProfileID returns the count of stream proxies using a given relay profile.
+	CountByRelayProfileID(ctx context.Context, profileID models.ULID) (int64, error)
+	// GetByRelayProfileID returns stream proxies using a given relay profile.
+	GetByRelayProfileID(ctx context.Context, profileID models.ULID) ([]*models.StreamProxy, error)
 }
 
 // FilterRepository defines operations for filter persistence.

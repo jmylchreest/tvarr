@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/jmylchreest/tvarr/internal/ingestor"
 	"github.com/jmylchreest/tvarr/internal/models"
@@ -206,6 +207,17 @@ func (r *mockChannelRepo) DeleteBySourceID(ctx context.Context, sourceID models.
 		}
 	}
 	return nil
+}
+
+func (r *mockChannelRepo) DeleteStaleBySourceID(ctx context.Context, sourceID models.ULID, olderThan time.Time) (int64, error) {
+	var deleted int64
+	for id, ch := range r.channels {
+		if ch.SourceID == sourceID && ch.UpdatedAt.Before(olderThan) {
+			delete(r.channels, id)
+			deleted++
+		}
+	}
+	return deleted, nil
 }
 
 func (r *mockChannelRepo) CountBySourceID(ctx context.Context, sourceID models.ULID) (int64, error) {

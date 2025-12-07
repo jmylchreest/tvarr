@@ -32,6 +32,14 @@ type Command struct {
 	progressCh chan Progress
 	errorCh    chan error
 	doneCh     chan struct{}
+
+	// Process monitoring
+	monitor *ProcessMonitor
+
+	// Stderr logging
+	stderrLogPath string       // Path to write stderr log (empty = no file logging)
+	stderrLines   []string     // Recent stderr lines for debugging
+	stderrMu      sync.RWMutex // Protects stderrLines
 }
 
 // Progress represents FFmpeg progress information.
@@ -46,17 +54,40 @@ type Progress struct {
 	DropFrames  int64         `json:"drop_frames"`
 }
 
+// RetryConfig configures retry behavior for FFmpeg process startup.
+type RetryConfig struct {
+	MaxAttempts     int           // Maximum number of retry attempts (default: 3)
+	InitialDelay    time.Duration // Initial delay before first retry (default: 500ms)
+	MaxDelay        time.Duration // Maximum delay between retries (default: 5s)
+	BackoffFactor   float64       // Multiplier for exponential backoff (default: 2.0)
+	MinRunTime      time.Duration // Minimum run time to consider success (default: 5s)
+	RetryOnAnyError bool          // Retry on any error, not just startup failures
+}
+
+// DefaultRetryConfig returns sensible defaults for FFmpeg retry.
+func DefaultRetryConfig() RetryConfig {
+	return RetryConfig{
+		MaxAttempts:     3,
+		InitialDelay:    500 * time.Millisecond,
+		MaxDelay:        5 * time.Second,
+		BackoffFactor:   2.0,
+		MinRunTime:      5 * time.Second,
+		RetryOnAnyError: false,
+	}
+}
+
 // CommandBuilder builds FFmpeg commands with a fluent API.
 type CommandBuilder struct {
-	binary      string
-	globalArgs  []string
-	inputArgs   []string
-	input       string
-	filterArgs  []string
-	outputArgs  []string
-	output      string
-	logLevel    string
-	overwrite   bool
+	binary        string
+	globalArgs    []string
+	inputArgs     []string
+	input         string
+	filterArgs    []string
+	outputArgs    []string
+	output        string
+	logLevel      string
+	overwrite     bool
+	stderrLogPath string
 }
 
 // NewCommandBuilder creates a new FFmpeg command builder.
@@ -97,6 +128,21 @@ func (b *CommandBuilder) Progress(target string) *CommandBuilder {
 	return b
 }
 
+// InitHWDevice initializes a hardware device for acceleration.
+// This should be called before HWAccel for proper device setup.
+// Example: InitHWDevice("vaapi", "/dev/dri/renderD128")
+func (b *CommandBuilder) InitHWDevice(hwType string, device string) *CommandBuilder {
+	if hwType == "" || hwType == "none" {
+		return b
+	}
+	if device != "" {
+		b.globalArgs = append(b.globalArgs, "-init_hw_device", fmt.Sprintf("%s=hw:%s", hwType, device))
+	} else {
+		b.globalArgs = append(b.globalArgs, "-init_hw_device", fmt.Sprintf("%s=hw", hwType))
+	}
+	return b
+}
+
 // HWAccel sets the hardware acceleration method.
 func (b *CommandBuilder) HWAccel(accel string) *CommandBuilder {
 	if accel != "" && accel != "none" {
@@ -118,6 +164,31 @@ func (b *CommandBuilder) HWAccelOutputFormat(format string) *CommandBuilder {
 	if format != "" {
 		b.inputArgs = append(b.inputArgs, "-hwaccel_output_format", format)
 	}
+	return b
+}
+
+// HWUploadFilter adds the appropriate hardware upload filter for the given hwaccel type.
+// This is needed when transcoding with hardware acceleration to upload frames to GPU.
+func (b *CommandBuilder) HWUploadFilter(hwType string) *CommandBuilder {
+	if hwType == "" || hwType == "none" {
+		return b
+	}
+
+	var filter string
+	switch hwType {
+	case "vaapi":
+		filter = "format=nv12,hwupload"
+	case "cuda", "nvenc":
+		filter = "format=nv12,hwupload_cuda"
+	case "qsv":
+		filter = "format=nv12,hwupload=extra_hw_frames=64"
+	case "videotoolbox":
+		filter = "format=nv12,hwupload"
+	default:
+		filter = "format=nv12,hwupload"
+	}
+
+	b.filterArgs = append(b.filterArgs, filter)
 	return b
 }
 
@@ -259,11 +330,172 @@ func (b *CommandBuilder) OutputArgs(args ...string) *CommandBuilder {
 }
 
 // MpegtsArgs adds common MPEG-TS output arguments.
+// Based on m3u-proxy's proven configuration for reliable streaming.
 func (b *CommandBuilder) MpegtsArgs() *CommandBuilder {
 	b.outputArgs = append(b.outputArgs,
 		"-f", "mpegts",
-		"-mpegts_flags", "resend_headers")
+		"-mpegts_copyts", "1",            // Preserve original timestamps
+		"-avoid_negative_ts", "disabled", // Don't shift timestamps (critical!)
+		"-mpegts_start_pid", "256",       // Standard program start PID
+		"-mpegts_pmt_start_pid", "4096",  // Program Map Table PID
+	)
 	return b
+}
+
+// StderrLogPath sets a file path to write FFmpeg stderr output for debugging.
+func (b *CommandBuilder) StderrLogPath(path string) *CommandBuilder {
+	b.stderrLogPath = path
+	return b
+}
+
+// ApplyCustomInputOptions parses and applies custom input options string.
+// Options are inserted after existing input args but before the -i input.
+func (b *CommandBuilder) ApplyCustomInputOptions(opts string) *CommandBuilder {
+	if opts == "" {
+		return b
+	}
+	flags := parseOptionsString(opts)
+	b.inputArgs = append(b.inputArgs, flags...)
+	return b
+}
+
+// ApplyCustomOutputOptions parses and applies custom output options string.
+// Options are appended after existing output args.
+func (b *CommandBuilder) ApplyCustomOutputOptions(opts string) *CommandBuilder {
+	if opts == "" {
+		return b
+	}
+	flags := parseOptionsString(opts)
+	b.outputArgs = append(b.outputArgs, flags...)
+	return b
+}
+
+// ApplyFilterComplex applies a custom filter complex string.
+func (b *CommandBuilder) ApplyFilterComplex(filterComplex string) *CommandBuilder {
+	if filterComplex == "" {
+		return b
+	}
+	// Filter complex replaces any existing -vf filters
+	b.filterArgs = nil
+	b.outputArgs = append(b.outputArgs, "-filter_complex", filterComplex)
+	return b
+}
+
+// VideoBitstreamFilter sets the video bitstream filter.
+func (b *CommandBuilder) VideoBitstreamFilter(bsf string) *CommandBuilder {
+	if bsf != "" {
+		b.outputArgs = append(b.outputArgs, "-bsf:v", bsf)
+	}
+	return b
+}
+
+// AudioBitstreamFilter sets the audio bitstream filter.
+func (b *CommandBuilder) AudioBitstreamFilter(bsf string) *CommandBuilder {
+	if bsf != "" {
+		b.outputArgs = append(b.outputArgs, "-bsf:a", bsf)
+	}
+	return b
+}
+
+// FlushPackets enables immediate packet flushing for low latency.
+func (b *CommandBuilder) FlushPackets() *CommandBuilder {
+	b.outputArgs = append(b.outputArgs, "-flush_packets", "1")
+	return b
+}
+
+// MuxDelay sets the muxer delay for live streaming.
+func (b *CommandBuilder) MuxDelay(delay string) *CommandBuilder {
+	b.outputArgs = append(b.outputArgs, "-muxdelay", delay)
+	return b
+}
+
+// AvoidNegativeTS sets the avoid_negative_ts mode.
+func (b *CommandBuilder) AvoidNegativeTS(mode string) *CommandBuilder {
+	b.outputArgs = append(b.outputArgs, "-avoid_negative_ts", mode)
+	return b
+}
+
+// PatPeriod sets the PAT/PMT insertion period for MPEG-TS.
+func (b *CommandBuilder) PatPeriod(period string) *CommandBuilder {
+	b.outputArgs = append(b.outputArgs, "-pat_period", period)
+	return b
+}
+
+// FFlags sets FFmpeg format flags (typically on input).
+func (b *CommandBuilder) FFlags(flags string) *CommandBuilder {
+	b.inputArgs = append(b.inputArgs, "-fflags", flags)
+	return b
+}
+
+// parseOptionsString splits an options string respecting quotes.
+func parseOptionsString(s string) []string {
+	var result []string
+	var current strings.Builder
+	inQuote := false
+	quoteChar := rune(0)
+	escaped := false
+
+	for _, r := range s {
+		if escaped {
+			current.WriteRune(r)
+			escaped = false
+			continue
+		}
+
+		if r == '\\' {
+			escaped = true
+			continue
+		}
+
+		if r == '"' || r == '\'' {
+			if !inQuote {
+				inQuote = true
+				quoteChar = r
+			} else if r == quoteChar {
+				inQuote = false
+			} else {
+				current.WriteRune(r)
+			}
+			continue
+		}
+
+		if r == ' ' && !inQuote {
+			if current.Len() > 0 {
+				result = append(result, current.String())
+				current.Reset()
+			}
+			continue
+		}
+
+		current.WriteRune(r)
+	}
+
+	if current.Len() > 0 {
+		result = append(result, current.String())
+	}
+
+	return result
+}
+
+// GetArgs returns a copy of all arguments that will be passed to FFmpeg.
+// Useful for preview/debugging.
+func (b *CommandBuilder) GetArgs() []string {
+	cmd := b.Build()
+	return cmd.Args
+}
+
+// GetInputArgs returns a copy of the input arguments.
+func (b *CommandBuilder) GetInputArgs() []string {
+	result := make([]string, len(b.inputArgs))
+	copy(result, b.inputArgs)
+	return result
+}
+
+// GetOutputArgs returns a copy of the output arguments.
+func (b *CommandBuilder) GetOutputArgs() []string {
+	result := make([]string, len(b.outputArgs))
+	copy(result, b.outputArgs)
+	return result
 }
 
 // HLSArgs adds common HLS output arguments.
@@ -311,13 +543,15 @@ func (b *CommandBuilder) Build() *Command {
 	args = append(args, b.output)
 
 	return &Command{
-		Binary:    b.binary,
-		Args:      args,
-		Input:     b.input,
-		Output:    b.output,
-		LogLevel:  b.logLevel,
-		Overwrite: b.overwrite,
-		doneCh:    make(chan struct{}),
+		Binary:        b.binary,
+		Args:          args,
+		Input:         b.input,
+		Output:        b.output,
+		LogLevel:      b.logLevel,
+		Overwrite:     b.overwrite,
+		doneCh:        make(chan struct{}),
+		stderrLogPath: b.stderrLogPath,
+		stderrLines:   make([]string, 0, 100), // Pre-allocate for recent lines
 	}
 }
 
@@ -524,14 +758,277 @@ func (c *Command) parseProgress(r io.Reader, progressCh chan<- Progress) {
 }
 
 // StreamToWriter runs FFmpeg and writes output to a writer.
+// It monitors process resource usage (CPU, memory) and tracks bytes written.
+// Stderr is captured for logging and debugging.
 func (c *Command) StreamToWriter(ctx context.Context, w io.Writer) error {
 	c.mu.Lock()
 	c.cmd = exec.CommandContext(ctx, c.Binary, c.Args...)
-	c.cmd.Stdout = w
 	c.started = time.Now()
+
+	// Get stdout pipe before starting (required by exec.Cmd)
+	stdout, err := c.cmd.StdoutPipe()
+	if err != nil {
+		c.mu.Unlock()
+		return fmt.Errorf("getting stdout pipe: %w", err)
+	}
+
+	// Get stderr pipe for logging
+	stderr, err := c.cmd.StderrPipe()
+	if err != nil {
+		c.mu.Unlock()
+		return fmt.Errorf("getting stderr pipe: %w", err)
+	}
 	c.mu.Unlock()
 
-	return c.cmd.Run()
+	if err := c.cmd.Start(); err != nil {
+		return fmt.Errorf("starting ffmpeg: %w", err)
+	}
+
+	// Start process monitoring after we have a PID
+	c.mu.Lock()
+	c.monitor = NewProcessMonitor(c.cmd.Process.Pid)
+	c.monitor.Start()
+	stderrLogPath := c.stderrLogPath
+	c.mu.Unlock()
+
+	// Start stderr capture goroutine
+	stderrDone := make(chan struct{})
+	go c.captureStderr(stderr, stderrLogPath, stderrDone)
+
+	// Create counting writer to track bandwidth
+	countingWriter := NewCountingWriter(w, c.monitor)
+
+	// Copy in a goroutine so we can wait for process
+	copyDone := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(countingWriter, stdout)
+		copyDone <- err
+	}()
+
+	// Wait for process to complete
+	waitErr := c.cmd.Wait()
+
+	// Wait for stderr capture to finish
+	<-stderrDone
+
+	// Stop monitoring
+	c.stopMonitor()
+
+	// Check copy error
+	select {
+	case copyErr := <-copyDone:
+		if copyErr != nil && waitErr == nil {
+			return fmt.Errorf("copying output: %w", copyErr)
+		}
+	default:
+	}
+
+	return waitErr
+}
+
+// StreamToWriterWithRetry runs FFmpeg with automatic retry on startup failures.
+// It will retry up to MaxAttempts times if FFmpeg fails quickly (within MinRunTime).
+// This is useful for handling transient network issues or temporary resource exhaustion.
+func (c *Command) StreamToWriterWithRetry(ctx context.Context, w io.Writer, cfg RetryConfig) error {
+	// Apply defaults for zero values
+	if cfg.MaxAttempts <= 0 {
+		cfg.MaxAttempts = 3
+	}
+	if cfg.InitialDelay <= 0 {
+		cfg.InitialDelay = 500 * time.Millisecond
+	}
+	if cfg.MaxDelay <= 0 {
+		cfg.MaxDelay = 5 * time.Second
+	}
+	if cfg.BackoffFactor <= 0 {
+		cfg.BackoffFactor = 2.0
+	}
+	if cfg.MinRunTime <= 0 {
+		cfg.MinRunTime = 5 * time.Second
+	}
+
+	var lastErr error
+	delay := cfg.InitialDelay
+
+	for attempt := 1; attempt <= cfg.MaxAttempts; attempt++ {
+		startTime := time.Now()
+
+		// For the first attempt, use the original command so the caller can access
+		// the monitor for stats while FFmpeg is running. Only clone for retries
+		// since exec.Cmd can only be started once.
+		var attemptCmd *Command
+		if attempt == 1 {
+			attemptCmd = c
+		} else {
+			attemptCmd = c.cloneForRetry()
+		}
+
+		// Run the attempt
+		err := attemptCmd.StreamToWriter(ctx, w)
+		runDuration := time.Since(startTime)
+
+		// Check if context was cancelled
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		// Success case: no error
+		if err == nil {
+			return nil
+		}
+
+		lastErr = err
+
+		// Determine if we should retry
+		shouldRetry := false
+		if cfg.RetryOnAnyError {
+			shouldRetry = true
+		} else {
+			// Only retry if FFmpeg failed quickly (startup failure)
+			shouldRetry = runDuration < cfg.MinRunTime
+		}
+
+		if !shouldRetry {
+			// Process ran for a while before failing - not a startup issue
+			return err
+		}
+
+		// Don't retry on last attempt
+		if attempt >= cfg.MaxAttempts {
+			break
+		}
+
+		// Log retry attempt
+		stderrLines := attemptCmd.GetStderrLines()
+		lastStderr := ""
+		if len(stderrLines) > 0 {
+			lastStderr = stderrLines[len(stderrLines)-1]
+		}
+
+		fmt.Fprintf(os.Stderr, "FFmpeg attempt %d/%d failed after %v: %v (last stderr: %s), retrying in %v\n",
+			attempt, cfg.MaxAttempts, runDuration.Round(time.Millisecond), err, lastStderr, delay)
+
+		// Wait before retry (with context awareness)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+
+		// Increase delay with exponential backoff
+		delay = time.Duration(float64(delay) * cfg.BackoffFactor)
+		if delay > cfg.MaxDelay {
+			delay = cfg.MaxDelay
+		}
+	}
+
+	return fmt.Errorf("ffmpeg failed after %d attempts: %w", cfg.MaxAttempts, lastErr)
+}
+
+// cloneForRetry creates a new Command with the same configuration for retry.
+// This is necessary because exec.Cmd can only be started once.
+func (c *Command) cloneForRetry() *Command {
+	return &Command{
+		Binary:        c.Binary,
+		Args:          append([]string{}, c.Args...), // Copy slice
+		Input:         c.Input,
+		Output:        c.Output,
+		LogLevel:      c.LogLevel,
+		Overwrite:     c.Overwrite,
+		doneCh:        make(chan struct{}),
+		stderrLogPath: c.stderrLogPath,
+		stderrLines:   make([]string, 0, 100),
+	}
+}
+
+// captureStderr reads FFmpeg stderr and optionally writes to a log file.
+// It also stores recent lines for debugging.
+func (c *Command) captureStderr(stderr io.ReadCloser, logPath string, done chan struct{}) {
+	defer close(done)
+
+	// Open log file if path is provided
+	var logFile *os.File
+	if logPath != "" {
+		var err error
+		logFile, err = os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			// Log error but continue - we'll still capture to memory
+			fmt.Fprintf(os.Stderr, "failed to open ffmpeg log file %s: %v\n", logPath, err)
+		} else {
+			defer logFile.Close()
+			// Write header with timestamp and command
+			fmt.Fprintf(logFile, "\n=== FFmpeg session started at %s ===\n", time.Now().Format(time.RFC3339))
+			fmt.Fprintf(logFile, "Command: %s\n\n", c.String())
+		}
+	}
+
+	scanner := bufio.NewScanner(stderr)
+	const maxLines = 100 // Keep last 100 lines in memory
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Store in memory (ring buffer behavior)
+		c.stderrMu.Lock()
+		if len(c.stderrLines) >= maxLines {
+			c.stderrLines = c.stderrLines[1:] // Remove oldest
+		}
+		c.stderrLines = append(c.stderrLines, line)
+		c.stderrMu.Unlock()
+
+		// Write to log file if open
+		if logFile != nil {
+			fmt.Fprintln(logFile, line)
+		}
+	}
+
+	// Write footer on completion
+	if logFile != nil {
+		fmt.Fprintf(logFile, "\n=== FFmpeg session ended at %s ===\n", time.Now().Format(time.RFC3339))
+	}
+}
+
+// GetStderrLines returns the recent stderr lines captured from FFmpeg.
+func (c *Command) GetStderrLines() []string {
+	c.stderrMu.RLock()
+	defer c.stderrMu.RUnlock()
+
+	// Return a copy to avoid race conditions
+	lines := make([]string, len(c.stderrLines))
+	copy(lines, c.stderrLines)
+	return lines
+}
+
+// stopMonitor stops the process monitor if running.
+func (c *Command) stopMonitor() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.monitor != nil {
+		c.monitor.Stop()
+	}
+}
+
+// ProcessStats returns the current process statistics.
+// Returns nil if the process is not running or monitoring is not active.
+func (c *Command) ProcessStats() *ProcessStats {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.monitor == nil {
+		return nil
+	}
+
+	stats := c.monitor.Stats()
+	return &stats
+}
+
+// Monitor returns the process monitor for direct access.
+// Returns nil if monitoring is not active.
+func (c *Command) Monitor() *ProcessMonitor {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.monitor
 }
 
 // PipeToWriter runs FFmpeg and pipes output to a writer with buffer.
