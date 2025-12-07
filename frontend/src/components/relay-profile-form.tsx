@@ -34,20 +34,18 @@ interface RelayProfileFormProps {
 }
 
 // Backend uses FFmpeg codec names
+// Note: Only codecs compatible with MPEG-TS container are listed
 const VIDEO_CODECS = [
   { value: 'libx264', label: 'H.264' },
   { value: 'libx265', label: 'H.265/HEVC' },
-  { value: 'libaom-av1', label: 'AV1' },
-  { value: 'libvpx-vp9', label: 'VP9' },
   { value: 'copy', label: 'Copy (No transcode)' },
 ];
 
 const AUDIO_CODECS = [
   { value: 'aac', label: 'AAC' },
   { value: 'libmp3lame', label: 'MP3' },
-  { value: 'ac3', label: 'AC3' },
-  { value: 'eac3', label: 'EAC3' },
-  { value: 'libopus', label: 'Opus' },
+  { value: 'ac3', label: 'AC3 (Dolby Digital)' },
+  { value: 'eac3', label: 'E-AC3 (Dolby Digital+)' },
   { value: 'copy', label: 'Copy (No transcode)' },
 ];
 
@@ -76,8 +74,6 @@ const CODEC_PRESETS: Record<string, { value: string; label: string }[]> = {
     { value: 'slower', label: 'Slower' },
     { value: 'veryslow', label: 'Very Slow' },
   ],
-  // VP9 and AV1 use different speed controls (cpu-used) - not presets
-  // Users can set these via custom flags if needed
 };
 
 // Helper to get presets for a codec

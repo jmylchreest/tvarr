@@ -423,22 +423,7 @@ func migration015DefaultRelayProfiles() Migration {
 					OutputFormat:    models.OutputFormatMPEGTS,
 					Timeout:         30,
 				},
-				{
-					Name:            "AV1 + AAC (Next-gen)",
-					Description:     "Next-generation AV1 codec for best compression efficiency",
-					IsDefault:       false,
-					Enabled:         true,
-					IsSystem:        true,
-					VideoCodec:      models.VideoCodecAV1,
-					VideoBitrate:    2500,
-					VideoPreset:     "medium",
-					AudioCodec:      models.AudioCodecAAC,
-					AudioBitrate:    128,
-					AudioSampleRate: 48000,
-					AudioChannels:   2,
-					OutputFormat:    models.OutputFormatMPEGTS,
-					Timeout:         30,
-				},
+				// Note: AV1 profile removed - AV1 is not supported in MPEG-TS containers
 				{
 					Name:         "Copy Streams (No Transcoding)",
 					Description:  "Pass-through profile that copies streams without transcoding",
@@ -468,7 +453,6 @@ func migration015DefaultRelayProfiles() Migration {
 				"H.264 + AAC (High Quality)",
 				"H.264 + AAC (Low Bitrate)",
 				"H.265 + AAC (High Quality)",
-				"AV1 + AAC (Next-gen)",
 				"Copy Streams (No Transcoding)",
 			}).Delete(&models.RelayProfile{}).Error
 		},

@@ -10,29 +10,28 @@ import (
 type VideoCodec string
 
 const (
-	VideoCodecCopy    VideoCodec = "copy"     // Pass-through (no transcoding)
-	VideoCodecH264    VideoCodec = "libx264"  // Software H.264
-	VideoCodecH265    VideoCodec = "libx265"  // Software H.265/HEVC
-	VideoCodecVP9     VideoCodec = "libvpx-vp9"
-	VideoCodecAV1     VideoCodec = "libaom-av1"
-	VideoCodecNVENC   VideoCodec = "h264_nvenc"   // NVIDIA hardware
+	VideoCodecCopy    VideoCodec = "copy"         // Pass-through (no transcoding)
+	VideoCodecH264    VideoCodec = "libx264"      // Software H.264
+	VideoCodecH265    VideoCodec = "libx265"      // Software H.265/HEVC
+	VideoCodecNVENC   VideoCodec = "h264_nvenc"   // NVIDIA hardware H.264
 	VideoCodecNVENCH5 VideoCodec = "hevc_nvenc"   // NVIDIA hardware HEVC
-	VideoCodecQSV     VideoCodec = "h264_qsv"     // Intel QuickSync
+	VideoCodecQSV     VideoCodec = "h264_qsv"     // Intel QuickSync H.264
 	VideoCodecQSVH5   VideoCodec = "hevc_qsv"     // Intel QuickSync HEVC
-	VideoCodecVAAPI   VideoCodec = "h264_vaapi"   // Linux VA-API
+	VideoCodecVAAPI   VideoCodec = "h264_vaapi"   // Linux VA-API H.264
 	VideoCodecVAAPIH5 VideoCodec = "hevc_vaapi"   // Linux VA-API HEVC
+	// Note: VP9 (libvpx-vp9) and AV1 (libaom-av1) are not supported in MPEG-TS containers
 )
 
 // AudioCodec represents an audio codec for transcoding.
 type AudioCodec string
 
 const (
-	AudioCodecCopy AudioCodec = "copy"    // Pass-through (no transcoding)
-	AudioCodecAAC  AudioCodec = "aac"     // AAC
-	AudioCodecMP3  AudioCodec = "libmp3lame"
-	AudioCodecOpus AudioCodec = "libopus"
-	AudioCodecAC3  AudioCodec = "ac3"
-	AudioCodecEAC3 AudioCodec = "eac3"
+	AudioCodecCopy AudioCodec = "copy"       // Pass-through (no transcoding)
+	AudioCodecAAC  AudioCodec = "aac"        // AAC
+	AudioCodecMP3  AudioCodec = "libmp3lame" // MP3
+	AudioCodecAC3  AudioCodec = "ac3"        // Dolby Digital
+	AudioCodecEAC3 AudioCodec = "eac3"       // Dolby Digital Plus
+	// Note: Opus (libopus) is not supported in MPEG-TS containers
 )
 
 // OutputFormat represents the output container format.
