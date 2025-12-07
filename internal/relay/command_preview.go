@@ -117,9 +117,13 @@ func GenerateCommandPreview(profile *models.RelayProfile, inputURL, outputURL st
 	builder.OutputArgs("-map", "0:a:0?") // ? makes audio optional
 
 	// 7. VIDEO CODEC
-	if profile.VideoCodec != "" {
-		builder.VideoCodec(string(profile.VideoCodec))
-		preview.VideoCodec = string(profile.VideoCodec)
+	if profile.VideoCodec != "" && profile.VideoCodec != models.VideoCodecNone {
+		// Convert abstract codec type to actual FFmpeg encoder name
+		videoEncoder := profile.VideoCodec.GetFFmpegEncoder(profile.HWAccel)
+		if videoEncoder != "" {
+			builder.VideoCodec(videoEncoder)
+			preview.VideoCodec = videoEncoder
+		}
 
 		// Add hardware upload filter when transcoding with HW acceleration
 		if isHWAccelTranscode && hwAccelType != "" {
@@ -149,9 +153,13 @@ func GenerateCommandPreview(profile *models.RelayProfile, inputURL, outputURL st
 	}
 
 	// 9. AUDIO CODEC AND SETTINGS
-	if profile.AudioCodec != "" {
-		builder.AudioCodec(string(profile.AudioCodec))
-		preview.AudioCodec = string(profile.AudioCodec)
+	if profile.AudioCodec != "" && profile.AudioCodec != models.AudioCodecNone {
+		// Convert abstract codec type to actual FFmpeg encoder name
+		audioEncoder := profile.AudioCodec.GetFFmpegEncoder()
+		if audioEncoder != "" {
+			builder.AudioCodec(audioEncoder)
+			preview.AudioCodec = audioEncoder
+		}
 	}
 	if profile.AudioBitrate > 0 {
 		builder.AudioBitrate(fmt.Sprintf("%dk", profile.AudioBitrate))
@@ -164,17 +172,24 @@ func GenerateCommandPreview(profile *models.RelayProfile, inputURL, outputURL st
 	}
 
 	// 10. BITSTREAM FILTERS AND TRANSPORT STREAM SETTINGS
-	// Determine output format
-	outputFormat := ffmpeg.FormatMPEGTS
-	if profile.OutputFormat != "" {
-		outputFormat = ffmpeg.ParseOutputFormat(string(profile.OutputFormat))
+	// Determine container format using DetermineContainer() for smart auto-selection
+	containerFormat := ffmpeg.FormatMPEGTS
+	container := profile.DetermineContainer()
+	switch container {
+	case models.ContainerFormatFMP4:
+		containerFormat = ffmpeg.FormatFMP4
+	case models.ContainerFormatMPEGTS:
+		containerFormat = ffmpeg.FormatMPEGTS
 	}
 
 	// BSF is only needed when copying video, not when transcoding
-	videoCodecFamily := ffmpeg.GetCodecFamily(string(profile.VideoCodec))
-	audioCodecFamily := ffmpeg.GetCodecFamily(string(profile.AudioCodec))
+	// Use FFmpeg encoder names for codec family detection
+	videoEncoder := profile.VideoCodec.GetFFmpegEncoder(profile.HWAccel)
+	audioEncoder := profile.AudioCodec.GetFFmpegEncoder()
+	videoCodecFamily := ffmpeg.GetCodecFamily(videoEncoder)
+	audioCodecFamily := ffmpeg.GetCodecFamily(audioEncoder)
 	isVideoCopy := profile.VideoCodec == models.VideoCodecCopy
-	bsfInfo := ffmpeg.GetBitstreamFilters(videoCodecFamily, audioCodecFamily, outputFormat, isVideoCopy)
+	bsfInfo := ffmpeg.GetBitstreamFilters(videoCodecFamily, audioCodecFamily, containerFormat, isVideoCopy)
 	if bsfInfo.VideoBSF != "" {
 		builder.VideoBitstreamFilter(bsfInfo.VideoBSF)
 		preview.BitstreamFilter = bsfInfo.VideoBSF
@@ -184,14 +199,22 @@ func GenerateCommandPreview(profile *models.RelayProfile, inputURL, outputURL st
 		builder.AudioBitstreamFilter(bsfInfo.AudioBSF)
 	}
 
-	// MPEG-TS output settings
-	if outputFormat == ffmpeg.FormatMPEGTS || outputFormat == ffmpeg.FormatHLS {
+	// Configure output format based on container
+	switch containerFormat {
+	case ffmpeg.FormatFMP4:
+		// fMP4/CMAF output
+		fragDuration := float64(DefaultSegmentDuration)
+		if profile.SegmentDuration > 0 {
+			fragDuration = float64(profile.SegmentDuration)
+		}
+		builder.FMP4Args(fragDuration).FlushPackets()
+	case ffmpeg.FormatMPEGTS, ffmpeg.FormatHLS:
 		builder.MpegtsArgs().     // Proper MPEG-TS flags (copyts, PIDs, etc.)
 			FlushPackets().       // -flush_packets 1 - immediate output
 			MuxDelay("0").        // -muxdelay 0 - zero muxing delay
 			PatPeriod("0.1")      // -pat_period 0.1 - frequent PAT/PMT
-	} else {
-		builder.OutputFormat(string(profile.OutputFormat))
+	default:
+		builder.MpegtsArgs().FlushPackets().MuxDelay("0").PatPeriod("0.1")
 	}
 
 	// 11. CUSTOM OUTPUT OPTIONS (at the end, before output)

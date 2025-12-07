@@ -393,7 +393,17 @@ func TestGetRecommendedHWAccel(t *testing.T) {
 
 	recommended := GetRecommendedHWAccel(accels)
 	require.NotNil(t, recommended)
-	assert.Equal(t, HWAccelNVENC, recommended.Type) // NVIDIA is preferred
+	// VAAPI is preferred on Linux due to broad GPU support
+	assert.Equal(t, HWAccelVAAPI, recommended.Type)
+
+	// NVENC is returned when VAAPI is not available
+	nvencOnlyAccels := []HWAccelInfo{
+		{Type: HWAccelNVENC, Name: "cuda", Available: true},
+		{Type: HWAccelQSV, Name: "qsv", Available: false},
+	}
+	nvencRecommended := GetRecommendedHWAccel(nvencOnlyAccels)
+	require.NotNil(t, nvencRecommended)
+	assert.Equal(t, HWAccelNVENC, nvencRecommended.Type)
 
 	// No available accels
 	noAccels := []HWAccelInfo{
@@ -685,4 +695,129 @@ func TestCommandBuilder_Reconnect(t *testing.T) {
 	assert.Contains(t, cmdStr, "-reconnect 1")
 	assert.Contains(t, cmdStr, "-reconnect_streamed 1")
 	assert.Contains(t, cmdStr, "-reconnect_delay_max 5")
+}
+
+func TestCommandBuilder_FMP4Args(t *testing.T) {
+	tests := []struct {
+		name         string
+		fragDuration float64
+		expected     []string
+		notExpected  []string
+	}{
+		{
+			name:         "with fragment duration",
+			fragDuration: 6.0,
+			expected: []string{
+				"-f mp4",
+				"-movflags frag_keyframe+empty_moov+default_base_moof+skip_trailer+cmaf",
+				"-frag_duration 6000000",
+			},
+		},
+		{
+			name:         "without fragment duration",
+			fragDuration: 0,
+			expected: []string{
+				"-f mp4",
+				"-movflags frag_keyframe+empty_moov+default_base_moof+skip_trailer+cmaf",
+			},
+			notExpected: []string{
+				"-frag_duration",
+			},
+		},
+		{
+			name:         "short fragment duration",
+			fragDuration: 2.0,
+			expected: []string{
+				"-f mp4",
+				"-frag_duration 2000000",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := NewCommandBuilder("/usr/bin/ffmpeg").
+				Input("input.mp4").
+				VideoCodec("libx264").
+				FMP4Args(tt.fragDuration).
+				Output("pipe:1").
+				Build()
+
+			cmdStr := cmd.String()
+			for _, exp := range tt.expected {
+				assert.Contains(t, cmdStr, exp)
+			}
+			for _, notExp := range tt.notExpected {
+				assert.NotContains(t, cmdStr, notExp)
+			}
+		})
+	}
+}
+
+func TestCommandBuilder_FMP4ArgsWithMinFrag(t *testing.T) {
+	cmd := NewCommandBuilder("/usr/bin/ffmpeg").
+		Input("input.mp4").
+		VideoCodec("libx264").
+		FMP4ArgsWithMinFrag(6.0, 2.0).
+		Output("pipe:1").
+		Build()
+
+	cmdStr := cmd.String()
+	assert.Contains(t, cmdStr, "-f mp4")
+	assert.Contains(t, cmdStr, "-movflags frag_keyframe+empty_moov+default_base_moof+skip_trailer+cmaf")
+	assert.Contains(t, cmdStr, "-frag_duration 6000000")
+	assert.Contains(t, cmdStr, "-min_frag_duration 2000000")
+}
+
+func TestIntegration_FFmpegFMP4Output(t *testing.T) {
+	ffmpegPath := skipIfNoFFmpeg(t)
+	ffprobePath := skipIfNoFFprobe(t)
+
+	ctx := context.Background()
+	testFile := "/tmp/tvarr_test_fmp4.mp4"
+
+	// Generate a short fMP4 test video using the FMP4Args builder
+	// Note: We use exec.CommandContext directly since CommandBuilder doesn't
+	// support multiple inputs naturally. This tests the output args generation.
+	cmd := exec.CommandContext(ctx, ffmpegPath,
+		"-y",
+		"-f", "lavfi", "-i", "testsrc=duration=2:size=320x240:rate=30",
+		"-f", "lavfi", "-i", "sine=duration=2:frequency=440:sample_rate=48000",
+		"-map", "0:v:0",
+		"-map", "1:a:0",
+		"-c:v", "libx264", "-preset", "ultrafast",
+		"-c:a", "aac",
+		"-f", "mp4",
+		"-movflags", "frag_keyframe+empty_moov+default_base_moof+skip_trailer+cmaf",
+		"-frag_duration", "1000000",
+		testFile)
+
+	t.Logf("Running FFmpeg command: %s", cmd.String())
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Logf("FFmpeg output: %s", string(output))
+	}
+	require.NoError(t, err, "FFmpeg fMP4 generation failed")
+
+	// Verify the output file exists and has content
+	prober := NewProber(ffprobePath)
+	result, err := prober.Probe(ctx, testFile)
+	require.NoError(t, err, "Failed to probe fMP4 output")
+
+	// Verify video stream
+	videoStream := result.GetVideoStream()
+	require.NotNil(t, videoStream)
+	assert.Equal(t, "h264", videoStream.CodecName)
+
+	// Verify audio stream
+	audioStream := result.GetAudioStream()
+	require.NotNil(t, audioStream)
+	assert.Equal(t, "aac", audioStream.CodecName)
+
+	// Verify it's an MP4 container (fMP4 uses mp4 muxer)
+	assert.Contains(t, result.Format.FormatName, "mp4")
+
+	// Clean up
+	exec.Command("rm", "-f", testFile).Run()
 }

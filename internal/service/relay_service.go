@@ -166,28 +166,34 @@ func (s *RelayService) SetDefaultProfile(ctx context.Context, id models.ULID) er
 // validateProfile validates relay profile settings against available FFmpeg capabilities.
 func (s *RelayService) validateProfile(ctx context.Context, profile *models.RelayProfile) error {
 	// Basic validation is done in model hooks
-	// Additional validation could check FFmpeg capabilities
+	// Additional validation checks FFmpeg encoder availability
 
-	if profile.VideoCodec != models.VideoCodecCopy {
+	// Skip validation for copy/none codecs
+	if profile.VideoCodec != models.VideoCodecCopy && profile.VideoCodec != models.VideoCodecNone {
 		binInfo, err := s.ffmpegDetector.Detect(ctx)
 		if err != nil {
 			s.logger.Warn("Could not detect FFmpeg for encoder validation", "error", err)
 			return nil // Allow creation but warn
 		}
 
-		if !binInfo.HasEncoder(string(profile.VideoCodec)) {
-			return fmt.Errorf("video encoder %s not available in FFmpeg", profile.VideoCodec)
+		// Get the actual FFmpeg encoder name based on codec + hwaccel
+		videoEncoder := profile.VideoCodec.GetFFmpegEncoder(profile.HWAccel)
+		if videoEncoder != "" && !binInfo.HasEncoder(videoEncoder) {
+			return fmt.Errorf("video encoder %s not available in FFmpeg", videoEncoder)
 		}
 	}
 
-	if profile.AudioCodec != models.AudioCodecCopy {
+	// Skip validation for copy/none codecs
+	if profile.AudioCodec != models.AudioCodecCopy && profile.AudioCodec != models.AudioCodecNone {
 		binInfo, err := s.ffmpegDetector.Detect(ctx)
 		if err != nil {
 			return nil // Already warned above
 		}
 
-		if !binInfo.HasEncoder(string(profile.AudioCodec)) {
-			return fmt.Errorf("audio encoder %s not available in FFmpeg", profile.AudioCodec)
+		// Get the actual FFmpeg encoder name
+		audioEncoder := profile.AudioCodec.GetFFmpegEncoder()
+		if audioEncoder != "" && !binInfo.HasEncoder(audioEncoder) {
+			return fmt.Errorf("audio encoder %s not available in FFmpeg", audioEncoder)
 		}
 	}
 
@@ -394,8 +400,10 @@ func (s *RelayService) GetStreamInfo(ctx context.Context, proxyID, channelID mod
 		Channel: channel,
 	}
 
-	// If relay mode and a profile is specified, load it
-	if proxy.ProxyMode == models.StreamProxyModeRelay && proxy.RelayProfileID != nil {
+	// Load profile for smart mode which needs it to determine if transcoding is required
+	needsProfile := proxy.ProxyMode == models.StreamProxyModeSmart
+
+	if needsProfile && proxy.RelayProfileID != nil {
 		profile, err := s.relayProfileRepo.GetByID(ctx, *proxy.RelayProfileID)
 		if err != nil {
 			// Log but don't fail - will use default profile

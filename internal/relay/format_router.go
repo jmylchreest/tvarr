@@ -76,7 +76,7 @@ type DASHPassthrough interface {
 
 // FormatRouter routes requests to appropriate output handlers.
 type FormatRouter struct {
-	defaultFormat models.OutputFormat
+	defaultFormat models.ContainerFormat
 	handlers      map[string]OutputHandler
 
 	// Passthrough handlers for HLS/DASH sources
@@ -88,12 +88,12 @@ type FormatRouter struct {
 }
 
 // NewFormatRouter creates a new format router with a default no-op logger.
-func NewFormatRouter(defaultFormat models.OutputFormat) *FormatRouter {
+func NewFormatRouter(defaultFormat models.ContainerFormat) *FormatRouter {
 	return NewFormatRouterWithLogger(defaultFormat, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 // NewFormatRouterWithLogger creates a new format router with a custom logger.
-func NewFormatRouterWithLogger(defaultFormat models.OutputFormat, logger *slog.Logger) *FormatRouter {
+func NewFormatRouterWithLogger(defaultFormat models.ContainerFormat, logger *slog.Logger) *FormatRouter {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
@@ -279,12 +279,12 @@ func isAppleDevice(ua string) bool {
 }
 
 // DefaultFormat returns the configured default format.
-func (r *FormatRouter) DefaultFormat() models.OutputFormat {
+func (r *FormatRouter) DefaultFormat() models.ContainerFormat {
 	return r.defaultFormat
 }
 
 // SetDefaultFormat sets the default format.
-func (r *FormatRouter) SetDefaultFormat(format models.OutputFormat) {
+func (r *FormatRouter) SetDefaultFormat(format models.ContainerFormat) {
 	r.defaultFormat = format
 }
 

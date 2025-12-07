@@ -60,6 +60,32 @@ function formatCodec(codec: string): string {
   return codec.toUpperCase().replace('_', ' ');
 }
 
+function formatContainerFormat(format: string): string {
+  switch (format) {
+    case 'mpegts':
+      return 'Transport Stream';
+    case 'fmp4':
+      return 'Fragmented MP4';
+    case 'auto':
+      return 'Auto';
+    default:
+      return format.toUpperCase();
+  }
+}
+
+function formatContainerFormatShort(format: string): string {
+  switch (format) {
+    case 'mpegts':
+      return 'TS';
+    case 'fmp4':
+      return 'fMP4';
+    case 'auto':
+      return 'Auto';
+    default:
+      return format.toUpperCase();
+  }
+}
+
 function getProfileSummaryLabels(profile: RelayProfile): string[] {
   const labels = [];
 
@@ -69,7 +95,7 @@ function getProfileSummaryLabels(profile: RelayProfile): string[] {
   }
 
   labels.push(`${formatCodec(profile.video_codec)} + ${formatCodec(profile.audio_codec)}`);
-  labels.push(profile.output_format === 'mpegts' ? 'TS' : profile.output_format.toUpperCase());
+  labels.push(formatContainerFormatShort(profile.container_format));
 
   if (profile.video_bitrate) {
     labels.push(`Video: ${formatBitrate(profile.video_bitrate)}`);
@@ -189,12 +215,8 @@ export function RelayProfiles() {
       );
     }
 
-    // Sort: custom profiles first, then defaults (by name)
-    return filtered.sort((a, b) => {
-      if (a.is_default && !b.is_default) return 1;
-      if (!a.is_default && b.is_default) return -1;
-      return a.name.localeCompare(b.name); // Secondary sort by name
-    });
+    // Sort alphabetically by name
+    return filtered.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   }, [profiles, searchTerm]);
 
   useEffect(() => {
@@ -530,7 +552,7 @@ export function RelayProfiles() {
                         <div className="flex items-center gap-2">
                           <HardDrive className="h-3 w-3 text-muted-foreground" />
                           <span className="text-muted-foreground">Output:</span>
-                          <span>Transport Stream</span>
+                          <span>{formatContainerFormat(profile.container_format)}</span>
                         </div>
                       </div>
                     </div>
@@ -597,7 +619,7 @@ export function RelayProfiles() {
 
                       <div className="flex items-center justify-between pt-2 border-t">
                         <div className="text-xs text-muted-foreground">
-                          {profile.output_format === 'mpegts' ? 'Transport Stream' : profile.output_format.toUpperCase()}
+                          {formatContainerFormat(profile.container_format)}
                         </div>
                         <div className="flex items-center gap-1">
                           {/* Test Profile */}
@@ -709,7 +731,7 @@ export function RelayProfiles() {
                                 {profile.description && profile.description.length > 60
                                   ? `${profile.description.substring(0, 60)}...`
                                   : profile.description ||
-                                    `${formatCodec(profile.video_codec)} + ${formatCodec(profile.audio_codec)} to ${profile.output_format === 'mpegts' ? 'TS' : profile.output_format.toUpperCase()}`}
+                                    `${formatCodec(profile.video_codec)} + ${formatCodec(profile.audio_codec)} to ${formatContainerFormatShort(profile.container_format)}`}
                               </p>
                             </div>
                             <div className="flex items-center gap-2">

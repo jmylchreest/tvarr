@@ -627,3 +627,294 @@ func TestDefaultUnifiedBufferConfig(t *testing.T) {
 		t.Errorf("MaxSegments = %d, want %d", config.MaxSegments, DefaultPlaylistSize)
 	}
 }
+
+// Tests for fMP4/CMAF mode
+
+func TestUnifiedBuffer_FMP4Mode_Initialization(t *testing.T) {
+	config := DefaultUnifiedBufferConfig()
+	config.ContainerFormat = "fmp4"
+
+	buf := NewUnifiedBuffer(config)
+	defer buf.Close()
+
+	if !buf.IsFMP4Mode() {
+		t.Error("Buffer should be in fMP4 mode")
+	}
+	if buf.ContainerFormat() != "fmp4" {
+		t.Errorf("ContainerFormat() = %s, want fmp4", buf.ContainerFormat())
+	}
+	if buf.HasInitSegment() {
+		t.Error("Should not have init segment before any writes")
+	}
+}
+
+func TestUnifiedBuffer_FMP4Mode_InitSegmentCapture(t *testing.T) {
+	config := DefaultUnifiedBufferConfig()
+	config.ContainerFormat = "fmp4"
+
+	buf := NewUnifiedBuffer(config)
+	defer buf.Close()
+
+	// Create and write init segment (ftyp + moov)
+	ftyp := makeFtypBox()
+	moov := makeMoovBox(90000, true, true)
+	initData := append(ftyp, moov...)
+
+	err := buf.WriteChunk(initData)
+	if err != nil {
+		t.Fatalf("WriteChunk() error = %v", err)
+	}
+
+	// Verify init segment was captured
+	if !buf.HasInitSegment() {
+		t.Error("Should have init segment after writing ftyp+moov")
+	}
+
+	init := buf.GetInitSegment()
+	if init == nil {
+		t.Fatal("GetInitSegment() returned nil")
+	}
+	if !init.HasVideo {
+		t.Error("Init segment should have video")
+	}
+	if !init.HasAudio {
+		t.Error("Init segment should have audio")
+	}
+	if init.Timescale != 90000 {
+		t.Errorf("Timescale = %d, want 90000", init.Timescale)
+	}
+}
+
+func TestUnifiedBuffer_FMP4Mode_FragmentSegmentation(t *testing.T) {
+	config := DefaultUnifiedBufferConfig()
+	config.ContainerFormat = "fmp4"
+	config.MaxSegments = 5
+
+	buf := NewUnifiedBuffer(config)
+	defer buf.Close()
+
+	// Write init segment
+	ftyp := makeFtypBox()
+	moov := makeMoovBox(90000, true, false)
+	err := buf.WriteChunk(append(ftyp, moov...))
+	if err != nil {
+		t.Fatalf("WriteChunk(init) error = %v", err)
+	}
+
+	// Write fragments
+	for i := uint32(1); i <= 3; i++ {
+		moof := makeMoofBox(i, uint64(i)*90000, 30)
+		mdat := makeMdatBox([]byte("video frame data"))
+		fragData := append(moof, mdat...)
+
+		err := buf.WriteChunk(fragData)
+		if err != nil {
+			t.Fatalf("WriteChunk(frag %d) error = %v", i, err)
+		}
+	}
+
+	// Verify segments were created
+	segments := buf.GetSegments()
+	if len(segments) != 3 {
+		t.Errorf("len(segments) = %d, want 3", len(segments))
+	}
+
+	// Check segment properties
+	for i, seg := range segments {
+		if seg.Sequence != uint64(i+1) {
+			t.Errorf("seg[%d].Sequence = %d, want %d", i, seg.Sequence, i+1)
+		}
+		if seg.ByteSize == 0 {
+			t.Errorf("seg[%d].ByteSize = 0, should be > 0", i)
+		}
+	}
+}
+
+func TestUnifiedBuffer_FMP4Mode_GetFMP4Segment(t *testing.T) {
+	config := DefaultUnifiedBufferConfig()
+	config.ContainerFormat = "fmp4"
+
+	buf := NewUnifiedBuffer(config)
+	defer buf.Close()
+
+	// Write init + fragment
+	ftyp := makeFtypBox()
+	moov := makeMoovBox(90000, true, false)
+	buf.WriteChunk(append(ftyp, moov...))
+
+	moof := makeMoofBox(1, 0, 30)
+	mdat := makeMdatBox([]byte("segment data"))
+	buf.WriteChunk(append(moof, mdat...))
+
+	// Get segment
+	seg, err := buf.GetFMP4Segment(1)
+	if err != nil {
+		t.Fatalf("GetFMP4Segment() error = %v", err)
+	}
+	if seg == nil {
+		t.Fatal("GetFMP4Segment() returned nil")
+	}
+
+	if !seg.IsFragmented {
+		t.Error("Segment should be flagged as fragmented")
+	}
+	if seg.ContainerFormat != "fmp4" {
+		t.Errorf("ContainerFormat = %s, want fmp4", seg.ContainerFormat)
+	}
+}
+
+func TestUnifiedBuffer_FMP4Mode_SegmentLimit(t *testing.T) {
+	config := DefaultUnifiedBufferConfig()
+	config.ContainerFormat = "fmp4"
+	config.MaxSegments = 3
+
+	buf := NewUnifiedBuffer(config)
+	defer buf.Close()
+
+	// Write init
+	ftyp := makeFtypBox()
+	moov := makeMoovBox(90000, true, false)
+	buf.WriteChunk(append(ftyp, moov...))
+
+	// Write more fragments than the limit
+	for i := uint32(1); i <= 10; i++ {
+		moof := makeMoofBox(i, uint64(i)*3000, 30)
+		mdat := makeMdatBox([]byte("frame"))
+		buf.WriteChunk(append(moof, mdat...))
+	}
+
+	// Should only have last 3 segments
+	segments := buf.GetSegments()
+	if len(segments) != 3 {
+		t.Errorf("len(segments) = %d, want 3", len(segments))
+	}
+}
+
+func TestUnifiedBuffer_NotFMP4Mode(t *testing.T) {
+	config := DefaultUnifiedBufferConfig()
+	// No ContainerFormat set - default to MPEG-TS mode
+
+	buf := NewUnifiedBuffer(config)
+	defer buf.Close()
+
+	if buf.IsFMP4Mode() {
+		t.Error("Buffer should not be in fMP4 mode by default")
+	}
+	if buf.HasInitSegment() {
+		t.Error("Should not have init segment in MPEG-TS mode")
+	}
+	if buf.GetInitSegment() != nil {
+		t.Error("GetInitSegment() should return nil in MPEG-TS mode")
+	}
+}
+
+// Helper functions to create fMP4 boxes for testing
+
+func makeFtypBox() []byte {
+	content := []byte("isom\x00\x00\x00\x00")
+	return makeMP4Box("ftyp", content)
+}
+
+func makeMoovBox(timescale uint32, hasVideo, hasAudio bool) []byte {
+	mvhd := makeMvhdBox(timescale)
+	content := mvhd
+
+	if hasVideo {
+		content = append(content, makeTrakBox("vide")...)
+	}
+	if hasAudio {
+		content = append(content, makeTrakBox("soun")...)
+	}
+
+	return makeMP4Box("moov", content)
+}
+
+func makeMvhdBox(timescale uint32) []byte {
+	content := make([]byte, 100)
+	// version(1) + flags(3) + create_time(4) + mod_time(4) + timescale(4)
+	content[0] = 0 // version 0
+	content[12] = byte(timescale >> 24)
+	content[13] = byte(timescale >> 16)
+	content[14] = byte(timescale >> 8)
+	content[15] = byte(timescale)
+	return makeMP4Box("mvhd", content)
+}
+
+func makeTrakBox(handlerType string) []byte {
+	mdia := makeMdiaBox(handlerType)
+	return makeMP4Box("trak", mdia)
+}
+
+func makeMdiaBox(handlerType string) []byte {
+	hdlr := makeHdlrBox(handlerType)
+	return makeMP4Box("mdia", hdlr)
+}
+
+func makeHdlrBox(handlerType string) []byte {
+	content := make([]byte, 24)
+	// version(1) + flags(3) + pre_defined(4) + handler_type(4) + reserved(12)
+	copy(content[8:12], handlerType)
+	return makeMP4Box("hdlr", content)
+}
+
+func makeMoofBox(seqNum uint32, decodeTime uint64, sampleCount uint32) []byte {
+	mfhd := makeMfhdBox(seqNum)
+	traf := makeTrafBox(decodeTime, sampleCount)
+	content := append(mfhd, traf...)
+	return makeMP4Box("moof", content)
+}
+
+func makeMfhdBox(seqNum uint32) []byte {
+	content := make([]byte, 8) // version(1) + flags(3) + sequence_number(4)
+	content[4] = byte(seqNum >> 24)
+	content[5] = byte(seqNum >> 16)
+	content[6] = byte(seqNum >> 8)
+	content[7] = byte(seqNum)
+	return makeMP4Box("mfhd", content)
+}
+
+func makeTrafBox(decodeTime uint64, sampleCount uint32) []byte {
+	tfdt := makeTfdtBox(decodeTime)
+	trun := makeTrunBox(sampleCount)
+	content := append(tfdt, trun...)
+	return makeMP4Box("traf", content)
+}
+
+func makeTfdtBox(decodeTime uint64) []byte {
+	content := make([]byte, 12) // version(1=64bit) + flags(3) + decode_time(8)
+	content[0] = 1              // version 1 for 64-bit time
+	content[4] = byte(decodeTime >> 56)
+	content[5] = byte(decodeTime >> 48)
+	content[6] = byte(decodeTime >> 40)
+	content[7] = byte(decodeTime >> 32)
+	content[8] = byte(decodeTime >> 24)
+	content[9] = byte(decodeTime >> 16)
+	content[10] = byte(decodeTime >> 8)
+	content[11] = byte(decodeTime)
+	return makeMP4Box("tfdt", content)
+}
+
+func makeTrunBox(sampleCount uint32) []byte {
+	content := make([]byte, 8) // version(1) + flags(3) + sample_count(4)
+	content[4] = byte(sampleCount >> 24)
+	content[5] = byte(sampleCount >> 16)
+	content[6] = byte(sampleCount >> 8)
+	content[7] = byte(sampleCount)
+	return makeMP4Box("trun", content)
+}
+
+func makeMdatBox(data []byte) []byte {
+	return makeMP4Box("mdat", data)
+}
+
+func makeMP4Box(boxType string, content []byte) []byte {
+	size := uint32(8 + len(content))
+	box := make([]byte, size)
+	box[0] = byte(size >> 24)
+	box[1] = byte(size >> 16)
+	box[2] = byte(size >> 8)
+	box[3] = byte(size)
+	copy(box[4:8], boxType)
+	copy(box[8:], content)
+	return box
+}

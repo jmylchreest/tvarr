@@ -20,6 +20,14 @@ const (
 
 	// ContentTypeMPEGTS is the MIME type for MPEG-TS streams.
 	ContentTypeMPEGTS = "video/MP2T"
+
+	// ContentTypeFMP4Segment is the MIME type for fMP4/CMAF media segments (.m4s).
+	// Used for both HLS v7+ and DASH with CMAF.
+	ContentTypeFMP4Segment = "video/mp4"
+
+	// ContentTypeFMP4Init is the MIME type for fMP4/CMAF initialization segments.
+	// Same as ContentTypeDASHInit but explicitly for CMAF.
+	ContentTypeFMP4Init = "video/mp4"
 )
 
 // Query parameter names for format selection.

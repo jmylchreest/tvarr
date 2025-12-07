@@ -28,6 +28,9 @@ type RelaySession struct {
 	LastActivity   time.Time
 	IdleSince      time.Time // When the session became idle (0 clients), zero if not idle
 
+	// Smart delivery context (set when using smart mode)
+	DeliveryContext *DeliveryContext
+
 	manager            *Manager
 	buffer             *CyclicBuffer    // Legacy buffer for MPEG-TS streaming (deprecated, use unifiedBuffer)
 	unifiedBuffer      *UnifiedBuffer   // Unified buffer for all streaming formats
@@ -37,8 +40,8 @@ type RelaySession struct {
 	fallbackGenerator  *FallbackGenerator
 
 	// Multi-format streaming support
-	formatRouter     *FormatRouter     // Routes requests to appropriate output handler
-	outputFormat     models.OutputFormat // Current output format
+	formatRouter     *FormatRouter           // Routes requests to appropriate output handler
+	containerFormat  models.ContainerFormat  // Current container format
 
 	// Passthrough handlers for HLS/DASH sources
 	hlsPassthrough  *HLSPassthroughHandler
@@ -125,8 +128,30 @@ func (s *RelaySession) runPipeline() {
 }
 
 // runNormalPipeline runs the normal (non-fallback) pipeline based on profile/classification.
+// If a DeliveryContext is set (smart mode), it uses the pre-computed decision.
+// Otherwise, it falls back to the legacy logic for backward compatibility.
 func (s *RelaySession) runNormalPipeline() error {
-	// Determine pipeline based on profile and classification
+	// If smart delivery context is set, use its decision
+	if s.DeliveryContext != nil {
+		switch s.DeliveryContext.Decision {
+		case DeliveryTranscode:
+			return s.runFFmpegPipeline()
+		case DeliveryRepackage:
+			// Repackage means changing manifest format without re-encoding
+			// This is handled at the handler level, but if we're in a relay session,
+			// we need to serve the source with appropriate handlers
+			// For now, treat as passthrough and let handlers do the manifest conversion
+			slog.Info("Smart delivery: repackage mode (serving source with manifest conversion)",
+				slog.String("session_id", s.ID.String()),
+				slog.String("source_format", string(s.DeliveryContext.Source.SourceFormat)),
+				slog.String("client_format", string(s.DeliveryContext.ClientFormat)))
+			return s.runPassthroughBySourceFormat()
+		case DeliveryPassthrough:
+			return s.runPassthroughBySourceFormat()
+		}
+	}
+
+	// Legacy logic: Determine pipeline based on profile and classification
 	needsTranscoding := s.Profile != nil &&
 		(s.Profile.VideoCodec != models.VideoCodecCopy ||
 			s.Profile.AudioCodec != models.AudioCodecCopy)
@@ -135,6 +160,11 @@ func (s *RelaySession) runNormalPipeline() error {
 		return s.runFFmpegPipeline()
 	}
 
+	return s.runPassthroughBySourceFormat()
+}
+
+// runPassthroughBySourceFormat runs the appropriate passthrough pipeline based on source format.
+func (s *RelaySession) runPassthroughBySourceFormat() error {
 	// Handle passthrough based on source format classification
 	switch s.Classification.Mode {
 	case StreamModeCollapsedHLS:
@@ -393,9 +423,9 @@ func (s *RelaySession) runFFmpegPipeline() error {
 	var isVideoCopy bool
 
 	if s.Profile != nil {
-		// Use the pre-computed copy decision
-		videoCodec := string(s.Profile.VideoCodec)
-		willUseVideoCopy := s.Profile.VideoCodec == models.VideoCodecCopy
+		// Convert abstract codec type to actual FFmpeg encoder name
+		videoCodec := s.Profile.VideoCodec.GetFFmpegEncoder(s.Profile.HWAccel)
+		willUseVideoCopy := s.Profile.VideoCodec == models.VideoCodecCopy || s.Profile.VideoCodec == models.VideoCodecNone
 		if !willUseVideoCopy && !s.Profile.ForceVideoTranscode && s.CachedCodecInfo != nil && s.CachedCodecInfo.VideoCodec != "" {
 			willUseVideoCopy = ffmpeg.SourceMatchesTargetCodec(s.CachedCodecInfo.VideoCodec, videoCodec)
 		}
@@ -452,7 +482,10 @@ func (s *RelaySession) runFFmpegPipeline() error {
 		if useAudioCopy {
 			builder.AudioCodec("copy")
 		} else {
-			builder.AudioCodec(string(s.Profile.AudioCodec))
+			audioEncoder := s.Profile.AudioCodec.GetFFmpegEncoder()
+			if audioEncoder != "" {
+				builder.AudioCodec(audioEncoder)
+			}
 			if s.Profile.AudioBitrate > 0 {
 				builder.AudioBitrate(fmt.Sprintf("%dk", s.Profile.AudioBitrate))
 			}
@@ -470,42 +503,70 @@ func (s *RelaySession) runFFmpegPipeline() error {
 		builder.ApplyFilterComplex(s.Profile.FilterComplex)
 	}
 
-	// Determine output format
-	outputFormat := ffmpeg.FormatMPEGTS
+	// Determine container format (new) vs output format (legacy)
+	// ContainerFormat is preferred as it separates container from manifest format
+	containerFormat := ffmpeg.FormatMPEGTS
 	if s.Profile != nil {
-		outputFormat = ffmpeg.ParseOutputFormat(string(s.Profile.OutputFormat))
+		// Use DetermineContainer() which handles auto-selection based on codecs
+		container := s.Profile.DetermineContainer()
+		switch container {
+		case models.ContainerFormatFMP4:
+			containerFormat = ffmpeg.FormatFMP4
+		case models.ContainerFormatMPEGTS:
+			containerFormat = ffmpeg.FormatMPEGTS
+		default:
+			// Default to MPEG-TS for maximum compatibility
+			containerFormat = ffmpeg.FormatMPEGTS
+		}
 	}
 
 	// CRITICAL: Apply appropriate bitstream filter based on codec, output format, and mode
 	// BSF is ONLY needed when COPYING video (not transcoding) to convert container formats
 	// When transcoding, the encoder outputs correct format and BSF would corrupt the stream
-	bsfInfo := ffmpeg.GetVideoBitstreamFilter(videoCodecFamily, outputFormat, isVideoCopy)
+	bsfInfo := ffmpeg.GetVideoBitstreamFilter(videoCodecFamily, containerFormat, isVideoCopy)
 	if bsfInfo.VideoBSF != "" {
 		builder.VideoBitstreamFilter(bsfInfo.VideoBSF)
 		slog.Debug("Applied video bitstream filter",
 			slog.String("bsf", bsfInfo.VideoBSF),
 			slog.String("codec_family", string(videoCodecFamily)),
-			slog.String("output_format", string(outputFormat)),
+			slog.String("container_format", string(containerFormat)),
 			slog.Bool("is_copy", isVideoCopy),
 			slog.String("reason", bsfInfo.Reason))
 	} else {
 		slog.Debug("No bitstream filter needed",
 			slog.String("codec_family", string(videoCodecFamily)),
-			slog.String("output_format", string(outputFormat)),
+			slog.String("container_format", string(containerFormat)),
 			slog.Bool("is_copy", isVideoCopy),
 			slog.String("reason", bsfInfo.Reason))
 	}
 
-	// MPEG-TS output settings - use proven m3u-proxy configuration
-	// This sets proper timestamp handling, PID allocation, and format flags
-	if outputFormat == ffmpeg.FormatMPEGTS || outputFormat == ffmpeg.FormatHLS {
+	// Configure output format based on container
+	switch containerFormat {
+	case ffmpeg.FormatFMP4:
+		// fMP4/CMAF output for HLS v7+ and DASH compatibility
+		// Use segment duration from profile, default to 6 seconds
+		fragDuration := float64(DefaultSegmentDuration)
+		if s.Profile != nil && s.Profile.SegmentDuration > 0 {
+			fragDuration = float64(s.Profile.SegmentDuration)
+		}
+		builder.FMP4Args(fragDuration).
+			FlushPackets() // Immediate output for live streaming
+		slog.Info("Configured fMP4/CMAF output",
+			slog.Float64("frag_duration", fragDuration),
+			slog.String("profile", s.Profile.Name))
+	case ffmpeg.FormatMPEGTS, ffmpeg.FormatHLS:
+		// MPEG-TS output settings - use proven m3u-proxy configuration
+		// This sets proper timestamp handling, PID allocation, and format flags
 		builder.MpegtsArgs().     // Proper MPEG-TS flags (copyts, PIDs, etc.)
 			FlushPackets().       // -flush_packets 1 - immediate output
 			MuxDelay("0").        // -muxdelay 0 - zero muxing delay
 			PatPeriod("0.1")      // -pat_period 0.1 - frequent PAT/PMT for mid-stream joins
-	} else {
-		// For non-MPEG-TS formats, just set the output format
-		builder.OutputFormat(string(s.Profile.OutputFormat))
+	default:
+		// Default case - use MPEG-TS args for compatibility
+		builder.MpegtsArgs().
+			FlushPackets().
+			MuxDelay("0").
+			PatPeriod("0.1")
 	}
 
 	// Apply custom output options (allows user overrides)
@@ -811,6 +872,13 @@ func (s *RelaySession) Stats() SessionStats {
 		Clients:           bufferStats.Clients,
 	}
 
+	// Include smart delivery context if available
+	if s.DeliveryContext != nil {
+		stats.DeliveryDecision = s.DeliveryContext.Decision.String()
+		stats.ClientFormat = string(s.DeliveryContext.ClientFormat)
+		stats.SourceFormat = string(s.DeliveryContext.Source.SourceFormat)
+	}
+
 	// Include fallback controller stats if available
 	if s.fallbackController != nil {
 		ctrlStats := s.fallbackController.Stats()
@@ -871,6 +939,10 @@ type SessionStats struct {
 	BytesFromUpstream uint64 `json:"bytes_from_upstream"`
 	Closed         bool      `json:"closed"`
 	Error          string    `json:"error,omitempty"`
+	// Smart delivery information (only present when using smart mode)
+	DeliveryDecision string `json:"delivery_decision,omitempty"` // passthrough, repackage, or transcode
+	ClientFormat     string `json:"client_format,omitempty"`     // requested output format
+	SourceFormat     string `json:"source_format,omitempty"`     // detected source format
 	// Fallback information
 	InFallback               bool `json:"in_fallback"`
 	FallbackEnabled          bool `json:"fallback_enabled"`
@@ -927,16 +999,21 @@ func (s *RelaySession) InitMultiFormatOutput() {
 		if s.Profile.PlaylistSize > 0 {
 			config.MaxSegments = s.Profile.PlaylistSize
 		}
-		s.outputFormat = s.Profile.OutputFormat
+
+		// Set container format for fMP4 mode
+		// Use DetermineContainer() for smart auto-selection
+		container := s.Profile.DetermineContainer()
+		config.ContainerFormat = string(container)
+		s.containerFormat = container
 	}
 
 	// Create unified buffer (replaces both CyclicBuffer and SegmentBuffer)
 	s.unifiedBuffer = NewUnifiedBuffer(config)
 
-	// Create format router with default format
-	defaultFormat := models.OutputFormatMPEGTS
-	if s.Profile != nil && s.Profile.OutputFormat != "" {
-		defaultFormat = s.Profile.OutputFormat
+	// Create format router with default format from profile
+	defaultFormat := models.ContainerFormatMPEGTS
+	if s.Profile != nil {
+		defaultFormat = s.Profile.DetermineContainer()
 	}
 	s.formatRouter = NewFormatRouter(defaultFormat)
 
@@ -968,11 +1045,11 @@ func (s *RelaySession) GetFormatRouter() *FormatRouter {
 	return s.formatRouter
 }
 
-// GetOutputFormat returns the current output format.
-func (s *RelaySession) GetOutputFormat() models.OutputFormat {
+// GetContainerFormat returns the current container format.
+func (s *RelaySession) GetContainerFormat() models.ContainerFormat {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.outputFormat
+	return s.containerFormat
 }
 
 // SupportsFormat returns true if the session can serve content in the requested format.

@@ -7,7 +7,7 @@ import (
 )
 
 func TestFormatRouter_ResolveFormat(t *testing.T) {
-	router := NewFormatRouter(models.OutputFormatMPEGTS)
+	router := NewFormatRouter(models.ContainerFormatMPEGTS)
 
 	tests := []struct {
 		name     string
@@ -177,7 +177,7 @@ func TestFormatRouter_DetectOptimalFormat(t *testing.T) {
 		},
 	}
 
-	router := NewFormatRouter(models.OutputFormatMPEGTS)
+	router := NewFormatRouter(models.ContainerFormatMPEGTS)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -191,7 +191,7 @@ func TestFormatRouter_DetectOptimalFormat(t *testing.T) {
 }
 
 func TestFormatRouter_RegisterHandler(t *testing.T) {
-	router := NewFormatRouter(models.OutputFormatMPEGTS)
+	router := NewFormatRouter(models.ContainerFormatMPEGTS)
 
 	// Create a mock handler using an anonymous struct
 	mockProvider := &mockSegmentProvider{}
@@ -222,7 +222,7 @@ func TestFormatRouter_RegisterHandler(t *testing.T) {
 }
 
 func TestFormatRouter_GetHandler_NotFound(t *testing.T) {
-	router := NewFormatRouter(models.OutputFormatMPEGTS)
+	router := NewFormatRouter(models.ContainerFormatMPEGTS)
 
 	req := OutputRequest{Format: FormatValueHLS}
 	_, err := router.GetHandler(req)
@@ -232,7 +232,7 @@ func TestFormatRouter_GetHandler_NotFound(t *testing.T) {
 }
 
 func TestFormatRouter_SupportedFormats(t *testing.T) {
-	router := NewFormatRouter(models.OutputFormatMPEGTS)
+	router := NewFormatRouter(models.ContainerFormatMPEGTS)
 
 	// Initially empty
 	formats := router.SupportedFormats()
@@ -271,16 +271,16 @@ func TestFormatRouter_SupportedFormats(t *testing.T) {
 }
 
 func TestFormatRouter_DefaultFormat(t *testing.T) {
-	// Test with HLS default
-	router := NewFormatRouter(models.OutputFormatHLS)
-	if router.DefaultFormat() != models.OutputFormatHLS {
-		t.Errorf("expected default format HLS, got %s", router.DefaultFormat())
+	// Test with MPEG-TS default
+	router := NewFormatRouter(models.ContainerFormatMPEGTS)
+	if router.DefaultFormat() != models.ContainerFormatMPEGTS {
+		t.Errorf("expected default format mpegts, got %s", router.DefaultFormat())
 	}
 
-	// Test changing default
-	router.SetDefaultFormat(models.OutputFormatDASH)
-	if router.DefaultFormat() != models.OutputFormatDASH {
-		t.Errorf("expected default format DASH, got %s", router.DefaultFormat())
+	// Test changing default to fMP4
+	router.SetDefaultFormat(models.ContainerFormatFMP4)
+	if router.DefaultFormat() != models.ContainerFormatFMP4 {
+		t.Errorf("expected default format fmp4, got %s", router.DefaultFormat())
 	}
 }
 

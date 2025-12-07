@@ -20,6 +20,22 @@ type SegmentProvider interface {
 	TargetDuration() int
 }
 
+// FMP4SegmentProvider extends SegmentProvider with fMP4-specific methods.
+// This interface is implemented by UnifiedBuffer when in fMP4 mode.
+type FMP4SegmentProvider interface {
+	SegmentProvider
+
+	// IsFMP4Mode returns true if the provider is in fMP4/CMAF mode.
+	IsFMP4Mode() bool
+
+	// GetInitSegment returns the initialization segment (ftyp+moov) for fMP4 streams.
+	// Returns nil if no init segment is available or not in fMP4 mode.
+	GetInitSegment() *InitSegment
+
+	// HasInitSegment returns true if an initialization segment is available.
+	HasInitSegment() bool
+}
+
 // SegmentInfo contains segment metadata for playlist generation.
 // This is a lightweight view without the actual segment data.
 type SegmentInfo struct {
@@ -28,6 +44,7 @@ type SegmentInfo struct {
 	IsKeyframe    bool
 	Timestamp     time.Time
 	Discontinuity bool // True if this segment marks a discontinuity (stream restart, format change)
+	IsFMP4        bool // True if this is an fMP4/CMAF segment (.m4s)
 }
 
 // OutputHandler handles output for a specific format.

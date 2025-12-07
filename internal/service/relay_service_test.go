@@ -54,7 +54,7 @@ func TestRelayService_CreateProfile(t *testing.T) {
 			VideoCodec:   models.VideoCodecCopy,
 			AudioCodec:   models.AudioCodecCopy,
 			HWAccel:      models.HWAccelNone,
-			OutputFormat: models.OutputFormatMPEGTS,
+			ContainerFormat: models.ContainerFormatMPEGTS,
 		}
 
 		err := svc.CreateProfile(ctx, profile)
@@ -86,7 +86,7 @@ func TestRelayService_GetProfile(t *testing.T) {
 		VideoCodec:   models.VideoCodecCopy,
 		AudioCodec:   models.AudioCodecCopy,
 		HWAccel:      models.HWAccelNone,
-		OutputFormat: models.OutputFormatMPEGTS,
+		ContainerFormat: models.ContainerFormatMPEGTS,
 	}
 	require.NoError(t, svc.CreateProfile(ctx, profile))
 
@@ -126,7 +126,7 @@ func TestRelayService_UpdateProfile(t *testing.T) {
 		VideoCodec:   models.VideoCodecCopy,
 		AudioCodec:   models.AudioCodecCopy,
 		HWAccel:      models.HWAccelNone,
-		OutputFormat: models.OutputFormatMPEGTS,
+		ContainerFormat: models.ContainerFormatMPEGTS,
 	}
 	require.NoError(t, svc.CreateProfile(ctx, profile))
 
@@ -156,7 +156,7 @@ func TestRelayService_DeleteProfile(t *testing.T) {
 		VideoCodec:   models.VideoCodecCopy,
 		AudioCodec:   models.AudioCodecCopy,
 		HWAccel:      models.HWAccelNone,
-		OutputFormat: models.OutputFormatMPEGTS,
+		ContainerFormat: models.ContainerFormatMPEGTS,
 	}
 	require.NoError(t, svc.CreateProfile(ctx, profile))
 
@@ -182,7 +182,7 @@ func TestRelayService_GetAllProfiles(t *testing.T) {
 			VideoCodec:   models.VideoCodecCopy,
 			AudioCodec:   models.AudioCodecCopy,
 			HWAccel:      models.HWAccelNone,
-			OutputFormat: models.OutputFormatMPEGTS,
+			ContainerFormat: models.ContainerFormatMPEGTS,
 		}
 		require.NoError(t, svc.CreateProfile(ctx, profile))
 	}
@@ -206,7 +206,7 @@ func TestRelayService_DefaultProfile(t *testing.T) {
 		VideoCodec:   models.VideoCodecCopy,
 		AudioCodec:   models.AudioCodecCopy,
 		HWAccel:      models.HWAccelNone,
-		OutputFormat: models.OutputFormatMPEGTS,
+		ContainerFormat: models.ContainerFormatMPEGTS,
 	}
 	require.NoError(t, svc.CreateProfile(ctx, profile1))
 
@@ -215,7 +215,7 @@ func TestRelayService_DefaultProfile(t *testing.T) {
 		VideoCodec:   models.VideoCodecCopy,
 		AudioCodec:   models.AudioCodecCopy,
 		HWAccel:      models.HWAccelNone,
-		OutputFormat: models.OutputFormatMPEGTS,
+		ContainerFormat: models.ContainerFormatMPEGTS,
 	}
 	require.NoError(t, svc.CreateProfile(ctx, profile2))
 

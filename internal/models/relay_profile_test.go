@@ -139,27 +139,84 @@ func TestRelayProfile_Clone(t *testing.T) {
 }
 
 func TestVideoCodec_Constants(t *testing.T) {
-	// Verify codec strings match FFmpeg codec names
+	// Verify codec strings are abstract types (not FFmpeg encoder names)
 	assert.Equal(t, "copy", string(VideoCodecCopy))
-	assert.Equal(t, "libx264", string(VideoCodecH264))
-	assert.Equal(t, "libx265", string(VideoCodecH265))
-	assert.Equal(t, "h264_nvenc", string(VideoCodecNVENC))
-	assert.Equal(t, "h264_qsv", string(VideoCodecQSV))
-	assert.Equal(t, "h264_vaapi", string(VideoCodecVAAPI))
+	assert.Equal(t, "none", string(VideoCodecNone))
+	assert.Equal(t, "h264", string(VideoCodecH264))
+	assert.Equal(t, "h265", string(VideoCodecH265))
+	assert.Equal(t, "vp9", string(VideoCodecVP9))
+	assert.Equal(t, "av1", string(VideoCodecAV1))
 }
 
 func TestAudioCodec_Constants(t *testing.T) {
-	// Verify codec strings match FFmpeg codec names
+	// Verify codec strings are abstract types
 	assert.Equal(t, "copy", string(AudioCodecCopy))
+	assert.Equal(t, "none", string(AudioCodecNone))
 	assert.Equal(t, "aac", string(AudioCodecAAC))
-	assert.Equal(t, "libmp3lame", string(AudioCodecMP3))
-	assert.Equal(t, "libopus", string(AudioCodecOpus))
+	assert.Equal(t, "mp3", string(AudioCodecMP3))
+	assert.Equal(t, "opus", string(AudioCodecOpus))
 }
 
-func TestOutputFormat_Constants(t *testing.T) {
-	assert.Equal(t, "mpegts", string(OutputFormatMPEGTS))
-	assert.Equal(t, "hls", string(OutputFormatHLS))
-	assert.Equal(t, "flv", string(OutputFormatFLV))
+func TestVideoCodec_GetFFmpegEncoder(t *testing.T) {
+	tests := []struct {
+		codec    VideoCodec
+		hwaccel  HWAccelType
+		expected string
+	}{
+		// Copy always returns copy
+		{VideoCodecCopy, HWAccelNone, "copy"},
+		{VideoCodecCopy, HWAccelNVDEC, "copy"},
+		// None returns empty (user specifies via flags)
+		{VideoCodecNone, HWAccelNone, ""},
+		// H.264 with different hwaccel
+		{VideoCodecH264, HWAccelNone, "libx264"},
+		{VideoCodecH264, HWAccelAuto, "libx264"},
+		{VideoCodecH264, HWAccelNVDEC, "h264_nvenc"},
+		{VideoCodecH264, HWAccelQSV, "h264_qsv"},
+		{VideoCodecH264, HWAccelVAAPI, "h264_vaapi"},
+		{VideoCodecH264, HWAccelVT, "h264_videotoolbox"},
+		// H.265 with different hwaccel
+		{VideoCodecH265, HWAccelNone, "libx265"},
+		{VideoCodecH265, HWAccelNVDEC, "hevc_nvenc"},
+		{VideoCodecH265, HWAccelQSV, "hevc_qsv"},
+		{VideoCodecH265, HWAccelVAAPI, "hevc_vaapi"},
+		// VP9
+		{VideoCodecVP9, HWAccelNone, "libvpx-vp9"},
+		{VideoCodecVP9, HWAccelQSV, "vp9_qsv"},
+		{VideoCodecVP9, HWAccelVAAPI, "vp9_vaapi"},
+		// AV1
+		{VideoCodecAV1, HWAccelNone, "libaom-av1"},
+		{VideoCodecAV1, HWAccelNVDEC, "av1_nvenc"},
+		{VideoCodecAV1, HWAccelQSV, "av1_qsv"},
+		{VideoCodecAV1, HWAccelVAAPI, "av1_vaapi"},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.codec)+"_"+string(tt.hwaccel), func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.codec.GetFFmpegEncoder(tt.hwaccel))
+		})
+	}
+}
+
+func TestAudioCodec_GetFFmpegEncoder(t *testing.T) {
+	tests := []struct {
+		codec    AudioCodec
+		expected string
+	}{
+		{AudioCodecCopy, "copy"},
+		{AudioCodecNone, ""},
+		{AudioCodecAAC, "aac"},
+		{AudioCodecMP3, "libmp3lame"},
+		{AudioCodecAC3, "ac3"},
+		{AudioCodecEAC3, "eac3"},
+		{AudioCodecOpus, "libopus"},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.codec), func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.codec.GetFFmpegEncoder())
+		})
+	}
 }
 
 func TestContainerFormat_Constants(t *testing.T) {
@@ -174,19 +231,12 @@ func TestIsFMP4OnlyVideoCodec(t *testing.T) {
 		expected bool
 	}{
 		{VideoCodecCopy, false},
+		{VideoCodecNone, false},
 		{VideoCodecH264, false},
 		{VideoCodecH265, false},
-		{VideoCodecNVENC, false},
-		{VideoCodecNVENCH5, false},
-		{VideoCodecQSV, false},
-		{VideoCodecQSVH5, false},
-		{VideoCodecVAAPI, false},
-		{VideoCodecVAAPIH5, false},
 		// fMP4-only codecs
 		{VideoCodecVP9, true},
 		{VideoCodecAV1, true},
-		{VideoCodecAV1NVENC, true},
-		{VideoCodecAV1QSV, true},
 	}
 
 	for _, tt := range tests {
@@ -202,6 +252,7 @@ func TestIsFMP4OnlyAudioCodec(t *testing.T) {
 		expected bool
 	}{
 		{AudioCodecCopy, false},
+		{AudioCodecNone, false},
 		{AudioCodecAAC, false},
 		{AudioCodecMP3, false},
 		{AudioCodecAC3, false},
@@ -229,8 +280,6 @@ func TestRelayProfile_RequiresFMP4(t *testing.T) {
 		{"h265/aac - no requirement", VideoCodecH265, AudioCodecAAC, false},
 		{"vp9/aac - requires fMP4 (video)", VideoCodecVP9, AudioCodecAAC, true},
 		{"av1/aac - requires fMP4 (video)", VideoCodecAV1, AudioCodecAAC, true},
-		{"av1_nvenc/aac - requires fMP4 (video)", VideoCodecAV1NVENC, AudioCodecAAC, true},
-		{"av1_qsv/aac - requires fMP4 (video)", VideoCodecAV1QSV, AudioCodecAAC, true},
 		{"h264/opus - requires fMP4 (audio)", VideoCodecH264, AudioCodecOpus, true},
 		{"vp9/opus - requires fMP4 (both)", VideoCodecVP9, AudioCodecOpus, true},
 	}
@@ -262,8 +311,6 @@ func TestRelayProfile_ValidateCodecFormat(t *testing.T) {
 		// Invalid combinations
 		{"mpegts with VP9", ContainerFormatMPEGTS, VideoCodecVP9, AudioCodecAAC, ErrRelayProfileCodecRequiresFMP4},
 		{"mpegts with AV1", ContainerFormatMPEGTS, VideoCodecAV1, AudioCodecAAC, ErrRelayProfileCodecRequiresFMP4},
-		{"mpegts with AV1 NVENC", ContainerFormatMPEGTS, VideoCodecAV1NVENC, AudioCodecAAC, ErrRelayProfileCodecRequiresFMP4},
-		{"mpegts with AV1 QSV", ContainerFormatMPEGTS, VideoCodecAV1QSV, AudioCodecAAC, ErrRelayProfileCodecRequiresFMP4},
 		{"mpegts with Opus", ContainerFormatMPEGTS, VideoCodecH264, AudioCodecOpus, ErrRelayProfileCodecRequiresFMP4},
 	}
 

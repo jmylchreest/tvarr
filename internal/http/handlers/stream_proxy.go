@@ -198,15 +198,6 @@ type CreateStreamProxyOutput struct {
 
 // Create creates a new stream proxy.
 func (h *StreamProxyHandler) Create(ctx context.Context, input *CreateStreamProxyInput) (*CreateStreamProxyOutput, error) {
-	// Log deprecation warning if using old proxy modes
-	if input.Body.UsesDeprecatedProxyMode() {
-		h.logger.Warn("deprecated proxy_mode value used",
-			"mode", input.Body.ProxyMode,
-			"suggestion", "use 'direct' or 'smart' instead",
-			"proxy_name", input.Body.Name,
-		)
-	}
-
 	proxy := input.Body.ToModel()
 
 	if err := h.proxyService.Create(ctx, proxy); err != nil {
@@ -255,15 +246,6 @@ type UpdateStreamProxyOutput struct {
 
 // Update updates an existing stream proxy.
 func (h *StreamProxyHandler) Update(ctx context.Context, input *UpdateStreamProxyInput) (*UpdateStreamProxyOutput, error) {
-	// Log deprecation warning if using old proxy modes
-	if input.Body.UsesDeprecatedProxyMode() {
-		h.logger.Warn("deprecated proxy_mode value used",
-			"mode", *input.Body.ProxyMode,
-			"suggestion", "use 'direct' or 'smart' instead",
-			"proxy_id", input.ID,
-		)
-	}
-
 	id, err := models.ParseULID(input.ID)
 	if err != nil {
 		return nil, huma.Error400BadRequest("invalid ID format", err)

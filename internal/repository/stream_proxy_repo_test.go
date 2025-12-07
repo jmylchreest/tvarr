@@ -66,7 +66,7 @@ func TestStreamProxyRepo_Create(t *testing.T) {
 
 	proxy := &models.StreamProxy{
 		Name:                  "Test Proxy",
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
 	}
 
@@ -87,14 +87,14 @@ func TestStreamProxyRepo_Create_DuplicateName(t *testing.T) {
 
 	proxy1 := &models.StreamProxy{
 		Name:                  "Duplicate",
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
 	}
 	require.NoError(t, repo.Create(ctx, proxy1))
 
 	proxy2 := &models.StreamProxy{
 		Name:                  "Duplicate",
-		ProxyMode:             models.StreamProxyModeProxy,
+		ProxyMode:             models.StreamProxyModeSmart,
 		StartingChannelNumber: 1,
 	}
 	err := repo.Create(ctx, proxy2)
@@ -108,7 +108,7 @@ func TestStreamProxyRepo_GetByID(t *testing.T) {
 
 	proxy := &models.StreamProxy{
 		Name:                  "Find Me",
-		ProxyMode:             models.StreamProxyModeProxy,
+		ProxyMode:             models.StreamProxyModeSmart,
 		StartingChannelNumber: 100,
 		Description:           "A test proxy",
 	}
@@ -118,7 +118,7 @@ func TestStreamProxyRepo_GetByID(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	assert.Equal(t, "Find Me", found.Name)
-	assert.Equal(t, models.StreamProxyModeProxy, found.ProxyMode)
+	assert.Equal(t, models.StreamProxyModeSmart, found.ProxyMode)
 	assert.Equal(t, 100, found.StartingChannelNumber)
 }
 
@@ -146,7 +146,7 @@ func TestStreamProxyRepo_GetByIDWithRelations(t *testing.T) {
 	// Create proxy
 	proxy := &models.StreamProxy{
 		Name:                  "With Relations",
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
 	}
 	require.NoError(t, repo.Create(ctx, proxy))
@@ -174,7 +174,7 @@ func TestStreamProxyRepo_GetAll(t *testing.T) {
 	for _, name := range []string{"Zebra", "Alpha", "Beta"} {
 		proxy := &models.StreamProxy{
 			Name:                  name,
-			ProxyMode:             models.StreamProxyModeRedirect,
+			ProxyMode:             models.StreamProxyModeDirect,
 			StartingChannelNumber: 1,
 		}
 		require.NoError(t, repo.Create(ctx, proxy))
@@ -198,7 +198,7 @@ func TestStreamProxyRepo_GetActive(t *testing.T) {
 	// Create active proxy
 	active := &models.StreamProxy{
 		Name:                  "Active",
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
 		IsActive:              true,
 	}
@@ -208,7 +208,7 @@ func TestStreamProxyRepo_GetActive(t *testing.T) {
 	// ignores false values when there's a default:true tag
 	inactive := &models.StreamProxy{
 		Name:                  "Inactive",
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
 	}
 	require.NoError(t, repo.Create(ctx, inactive))
@@ -228,14 +228,14 @@ func TestStreamProxyRepo_Update(t *testing.T) {
 
 	proxy := &models.StreamProxy{
 		Name:                  "Original",
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
 	}
 	require.NoError(t, repo.Create(ctx, proxy))
 
 	// Update
 	proxy.Name = "Updated"
-	proxy.ProxyMode = models.StreamProxyModeRelay
+	proxy.ProxyMode = models.StreamProxyModeSmart
 	proxy.StartingChannelNumber = 500
 
 	err := repo.Update(ctx, proxy)
@@ -245,7 +245,7 @@ func TestStreamProxyRepo_Update(t *testing.T) {
 	found, err := repo.GetByID(ctx, proxy.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "Updated", found.Name)
-	assert.Equal(t, models.StreamProxyModeRelay, found.ProxyMode)
+	assert.Equal(t, models.StreamProxyModeSmart, found.ProxyMode)
 	assert.Equal(t, 500, found.StartingChannelNumber)
 }
 
@@ -260,7 +260,7 @@ func TestStreamProxyRepo_Delete(t *testing.T) {
 
 	proxy := &models.StreamProxy{
 		Name:                  "To Delete",
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
 	}
 	require.NoError(t, repo.Create(ctx, proxy))
@@ -296,7 +296,7 @@ func TestStreamProxyRepo_GetByName(t *testing.T) {
 
 	proxy := &models.StreamProxy{
 		Name:                  "Named Proxy",
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
 	}
 	require.NoError(t, repo.Create(ctx, proxy))
@@ -318,7 +318,7 @@ func TestStreamProxyRepo_UpdateStatus(t *testing.T) {
 
 	proxy := &models.StreamProxy{
 		Name:                  "Status Test",
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
 		Status:                models.StreamProxyStatusPending,
 	}
@@ -347,7 +347,7 @@ func TestStreamProxyRepo_UpdateLastGeneration(t *testing.T) {
 
 	proxy := &models.StreamProxy{
 		Name:                  "Generation Test",
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
 		Status:                models.StreamProxyStatusGenerating,
 	}
@@ -375,7 +375,7 @@ func TestStreamProxyRepo_SetSources(t *testing.T) {
 
 	proxy := &models.StreamProxy{
 		Name:                  "Sources Test",
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
 	}
 	require.NoError(t, repo.Create(ctx, proxy))
@@ -412,7 +412,7 @@ func TestStreamProxyRepo_SetEpgSources(t *testing.T) {
 
 	proxy := &models.StreamProxy{
 		Name:                  "EPG Sources Test",
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
 	}
 	require.NoError(t, repo.Create(ctx, proxy))
@@ -444,7 +444,7 @@ func TestStreamProxyRepo_GetSources_Priority(t *testing.T) {
 
 	proxy := &models.StreamProxy{
 		Name:                  "Priority Test",
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
 	}
 	require.NoError(t, repo.Create(ctx, proxy))

@@ -10,6 +10,7 @@ import (
 
 // HLSHandler handles HLS output.
 // Implements the OutputHandler interface for serving HLS playlists and segments.
+// Supports both HLS v3 (MPEG-TS) and HLS v7 (fMP4/CMAF) formats.
 type HLSHandler struct {
 	OutputHandlerBase
 }
@@ -32,7 +33,14 @@ func (h *HLSHandler) ContentType() string {
 }
 
 // SegmentContentType returns the Content-Type for HLS segments.
+// Returns video/mp4 for fMP4 segments, video/MP2T for MPEG-TS.
 func (h *HLSHandler) SegmentContentType() string {
+	// Check if provider supports fMP4 mode
+	if fmp4Provider, ok := h.provider.(FMP4SegmentProvider); ok {
+		if fmp4Provider.IsFMP4Mode() {
+			return ContentTypeFMP4Segment
+		}
+	}
 	return ContentTypeHLSSegment
 }
 
@@ -55,7 +63,7 @@ func (h *HLSHandler) ServePlaylist(w http.ResponseWriter, baseURL string) error 
 	return err
 }
 
-// ServeSegment serves a .ts segment.
+// ServeSegment serves a segment (.ts for MPEG-TS, .m4s for fMP4).
 func (h *HLSHandler) ServeSegment(w http.ResponseWriter, sequence uint64) error {
 	seg, err := h.provider.GetSegment(sequence)
 	if err != nil {
@@ -67,12 +75,42 @@ func (h *HLSHandler) ServeSegment(w http.ResponseWriter, sequence uint64) error 
 		return err
 	}
 
-	w.Header().Set("Content-Type", ContentTypeHLSSegment)
+	// Determine content type based on segment type
+	contentType := ContentTypeHLSSegment
+	if seg.IsFMP4() {
+		contentType = ContentTypeFMP4Segment
+	}
+
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(seg.Data)))
 	w.Header().Set("Cache-Control", "max-age=86400") // Segments can be cached
 	w.WriteHeader(http.StatusOK)
 
 	_, err = w.Write(seg.Data)
+	return err
+}
+
+// ServeInitSegment serves the fMP4 initialization segment.
+// This is called when a client requests the init segment referenced by EXT-X-MAP.
+func (h *HLSHandler) ServeInitSegment(w http.ResponseWriter) error {
+	fmp4Provider, ok := h.provider.(FMP4SegmentProvider)
+	if !ok || !fmp4Provider.IsFMP4Mode() {
+		http.Error(w, "init segment not available", http.StatusNotFound)
+		return ErrUnsupportedOperation
+	}
+
+	initSeg := fmp4Provider.GetInitSegment()
+	if initSeg == nil || initSeg.IsEmpty() {
+		http.Error(w, "init segment not ready", http.StatusServiceUnavailable)
+		return ErrSegmentNotFound
+	}
+
+	w.Header().Set("Content-Type", ContentTypeFMP4Init)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(initSeg.Data)))
+	w.Header().Set("Cache-Control", "max-age=86400") // Init segment can be cached
+	w.WriteHeader(http.StatusOK)
+
+	_, err := w.Write(initSeg.Data)
 	return err
 }
 
@@ -82,12 +120,21 @@ func (h *HLSHandler) ServeStream(ctx context.Context, w http.ResponseWriter) err
 }
 
 // GeneratePlaylist creates an HLS playlist from current segments.
-// Implements EXT-X-VERSION 3+ with proper tags per FR-010 through FR-015.
+// For MPEG-TS segments: Generates HLS v3 playlist with .ts segment URLs.
+// For fMP4 segments: Generates HLS v7 playlist with #EXT-X-MAP and .m4s segment URLs.
 func (h *HLSHandler) GeneratePlaylist(baseURL string) string {
 	segments := h.provider.GetSegmentInfos()
 	if len(segments) == 0 {
 		// Return minimal valid playlist when no segments available
 		return h.generateEmptyPlaylist()
+	}
+
+	// Determine if we're in fMP4 mode
+	isFMP4Mode := false
+	hasInitSegment := false
+	if fmp4Provider, ok := h.provider.(FMP4SegmentProvider); ok {
+		isFMP4Mode = fmp4Provider.IsFMP4Mode()
+		hasInitSegment = fmp4Provider.HasInitSegment()
 	}
 
 	// Calculate target duration (max segment duration, rounded up)
@@ -103,14 +150,28 @@ func (h *HLSHandler) GeneratePlaylist(baseURL string) string {
 
 	var sb strings.Builder
 
-	// HLS header
+	// HLS header - use version 7 for fMP4, version 3 for MPEG-TS
 	sb.WriteString("#EXTM3U\n")
-	sb.WriteString("#EXT-X-VERSION:3\n")
+	if isFMP4Mode {
+		sb.WriteString("#EXT-X-VERSION:7\n")
+	} else {
+		sb.WriteString("#EXT-X-VERSION:3\n")
+	}
 	sb.WriteString(fmt.Sprintf("#EXT-X-TARGETDURATION:%d\n", targetDuration))
 	sb.WriteString(fmt.Sprintf("#EXT-X-MEDIA-SEQUENCE:%d\n", mediaSequence))
 
 	// Ensure baseURL doesn't have trailing slash
 	baseURL = strings.TrimSuffix(baseURL, "/")
+
+	// For fMP4 mode, add EXT-X-MAP pointing to the initialization segment
+	// This tells players where to get the ftyp+moov boxes before any media segments
+	if isFMP4Mode && hasInitSegment {
+		sb.WriteString(fmt.Sprintf("#EXT-X-MAP:URI=\"%s?%s=%s&%s=1\"\n",
+			baseURL,
+			QueryParamFormat, FormatValueHLS,
+			QueryParamInit,
+		))
+	}
 
 	// Add segment entries
 	for i, seg := range segments {
@@ -139,6 +200,21 @@ func (h *HLSHandler) GeneratePlaylist(baseURL string) string {
 
 // generateEmptyPlaylist returns a minimal valid HLS playlist.
 func (h *HLSHandler) generateEmptyPlaylist() string {
-	return fmt.Sprintf("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:%d\n#EXT-X-MEDIA-SEQUENCE:0\n",
-		h.provider.TargetDuration())
+	// Check if we're in fMP4 mode
+	version := 3
+	if fmp4Provider, ok := h.provider.(FMP4SegmentProvider); ok {
+		if fmp4Provider.IsFMP4Mode() {
+			version = 7
+		}
+	}
+	return fmt.Sprintf("#EXTM3U\n#EXT-X-VERSION:%d\n#EXT-X-TARGETDURATION:%d\n#EXT-X-MEDIA-SEQUENCE:0\n",
+		version, h.provider.TargetDuration())
+}
+
+// IsFMP4Mode returns true if the handler is serving fMP4/CMAF segments.
+func (h *HLSHandler) IsFMP4Mode() bool {
+	if fmp4Provider, ok := h.provider.(FMP4SegmentProvider); ok {
+		return fmp4Provider.IsFMP4Mode()
+	}
+	return false
 }

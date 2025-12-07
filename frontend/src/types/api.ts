@@ -94,7 +94,7 @@ export interface EpgSourceResponse extends EpgSource {
 export interface StreamProxy {
   id: string;
   name: string;
-  proxy_mode: string;
+  proxy_mode: ProxyMode;
   starting_channel_number: number;
   is_active: boolean;
   auto_regenerate: boolean;
@@ -171,8 +171,11 @@ export interface FilterWithMeta {
 // Backend uses FFmpeg codec names like 'libx264', 'libx265', 'copy', 'aac', etc.
 export type VideoCodec = string;
 export type AudioCodec = string;
-export type RelayOutputFormat = string;
+export type ContainerFormat = 'auto' | 'fmp4' | 'mpegts';
 export type HWAccelType = string;
+
+// Proxy mode: 'direct' = 302 redirect, 'smart' = intelligent delivery
+export type ProxyMode = 'direct' | 'smart';
 
 export interface RelayProfile {
   id: string;
@@ -194,7 +197,7 @@ export interface RelayProfile {
   hw_accel_decoder_codec?: string;
   hw_accel_extra_options?: string;
   gpu_index?: number;
-  output_format: RelayOutputFormat;
+  container_format: ContainerFormat;
   input_options?: string;
   output_options?: string;
   filter_complex?: string;
@@ -241,7 +244,7 @@ export interface CreateRelayProfileRequest {
   input_options?: string;
   output_options?: string;
   filter_complex?: string;
-  output_format?: RelayOutputFormat;
+  container_format?: ContainerFormat;
   is_default?: boolean;
   fallback_enabled?: boolean;
   fallback_error_threshold?: number;
@@ -272,7 +275,7 @@ export interface UpdateRelayProfileRequest {
   input_options?: string;
   output_options?: string;
   filter_complex?: string;
-  output_format?: RelayOutputFormat;
+  container_format?: ContainerFormat;
   enabled?: boolean;
   fallback_enabled?: boolean;
   fallback_error_threshold?: number;
@@ -726,7 +729,7 @@ export interface CreateEpgSourceRequest {
 
 export interface CreateStreamProxyRequest {
   name: string;
-  proxy_mode: string;
+  proxy_mode: ProxyMode;
   starting_channel_number: number;
   stream_sources: ProxySourceRequest[];
   epg_sources: ProxyEpgSourceRequest[];
@@ -743,7 +746,7 @@ export interface CreateStreamProxyRequest {
 
 export interface UpdateStreamProxyRequest {
   name: string;
-  proxy_mode: string;
+  proxy_mode: ProxyMode;
   starting_channel_number: number;
   stream_sources: ProxySourceRequest[];
   epg_sources: ProxyEpgSourceRequest[];

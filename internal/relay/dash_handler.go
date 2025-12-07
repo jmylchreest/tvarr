@@ -109,7 +109,13 @@ func (d *DASHHandler) ServeSegment(w http.ResponseWriter, sequence uint64) error
 		return err
 	}
 
-	w.Header().Set("Content-Type", ContentTypeDASHSegment)
+	// Use appropriate content type based on segment format
+	contentType := ContentTypeDASHSegment
+	if seg.IsFMP4() {
+		contentType = ContentTypeFMP4Segment // video/mp4 for CMAF
+	}
+
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(seg.Data)))
 	w.Header().Set("Cache-Control", "max-age=86400") // Segments can be cached
 	w.WriteHeader(http.StatusOK)
@@ -120,7 +126,26 @@ func (d *DASHHandler) ServeSegment(w http.ResponseWriter, sequence uint64) error
 
 // ServeInitSegment serves the initialization segment.
 // streamType should be "v" for video or "a" for audio.
+// For CMAF streams with unified init segment, streamType can be empty or "cmaf".
 func (d *DASHHandler) ServeInitSegment(w http.ResponseWriter, streamType string) error {
+	// First, try to get init segment from FMP4SegmentProvider (CMAF mode)
+	// In CMAF mode, video and audio share a single init segment
+	if fmp4Provider, ok := d.provider.(FMP4SegmentProvider); ok {
+		if fmp4Provider.IsFMP4Mode() && fmp4Provider.HasInitSegment() {
+			initSeg := fmp4Provider.GetInitSegment()
+			if initSeg != nil && !initSeg.IsEmpty() {
+				w.Header().Set("Content-Type", ContentTypeFMP4Init)
+				w.Header().Set("Content-Length", fmt.Sprintf("%d", len(initSeg.Data)))
+				w.Header().Set("Cache-Control", "max-age=86400")
+				w.WriteHeader(http.StatusOK)
+
+				_, err := w.Write(initSeg.Data)
+				return err
+			}
+		}
+	}
+
+	// Fall back to legacy per-stream init segments
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
@@ -130,6 +155,13 @@ func (d *DASHHandler) ServeInitSegment(w http.ResponseWriter, streamType string)
 		data = d.initVideoSeg
 	case "a", "audio":
 		data = d.initAudioSeg
+	case "", "cmaf":
+		// For CMAF, try video first (which typically contains both tracks)
+		if len(d.initVideoSeg) > 0 {
+			data = d.initVideoSeg
+		} else {
+			data = d.initAudioSeg
+		}
 	default:
 		http.Error(w, "invalid stream type", http.StatusBadRequest)
 		return fmt.Errorf("invalid stream type: %s", streamType)

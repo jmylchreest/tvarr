@@ -30,6 +30,10 @@ type UnifiedBufferConfig struct {
 
 	// CleanupInterval is how often to run cleanup.
 	CleanupInterval time.Duration
+
+	// ContainerFormat specifies the container format for segments.
+	// When set to "fmp4", the buffer uses the CMAF muxer for segment detection.
+	ContainerFormat string
 }
 
 // DefaultUnifiedBufferConfig returns sensible defaults.
@@ -102,6 +106,10 @@ type UnifiedBuffer struct {
 
 	// Logging
 	logger *slog.Logger
+
+	// fMP4/CMAF support
+	cmafMuxer   *CMAFMuxer   // Muxer for fMP4 parsing
+	initSegment *InitSegment // Cached init segment for fMP4
 }
 
 // NewUnifiedBuffer creates a new unified buffer.
@@ -139,6 +147,15 @@ func NewUnifiedBufferWithLogger(config UnifiedBufferConfig, logger *slog.Logger)
 		logger:   logger.With(slog.String("component", "unified_buffer")),
 	}
 
+	// Initialize CMAF muxer for fMP4 mode
+	if config.ContainerFormat == "fmp4" {
+		cmafConfig := DefaultCMAFMuxerConfig()
+		cmafConfig.MaxFragments = config.MaxSegments
+		ub.cmafMuxer = NewCMAFMuxer(cmafConfig)
+		ub.logger.Info("initialized CMAF muxer for fMP4 mode",
+			slog.Int("max_fragments", cmafConfig.MaxFragments))
+	}
+
 	// Start cleanup goroutine
 	ub.wg.Add(1)
 	go ub.cleanupLoop()
@@ -148,9 +165,15 @@ func NewUnifiedBufferWithLogger(config UnifiedBufferConfig, logger *slog.Logger)
 
 // WriteChunk writes a chunk of data to the buffer.
 // This is the primary write path - all stream data comes through here.
+// For fMP4 mode, data is passed to the CMAF muxer for parsing.
 func (ub *UnifiedBuffer) WriteChunk(data []byte) error {
 	if len(data) == 0 {
 		return nil
+	}
+
+	// For fMP4 mode, route through CMAF muxer
+	if ub.cmafMuxer != nil {
+		return ub.writeFMP4Chunk(data)
 	}
 
 	ub.chunkMu.Lock()
@@ -184,6 +207,119 @@ func (ub *UnifiedBuffer) WriteChunk(data []byte) error {
 	ub.notifyClients()
 
 	return nil
+}
+
+// writeFMP4Chunk writes data to the CMAF muxer and creates segments from fragments.
+func (ub *UnifiedBuffer) writeFMP4Chunk(data []byte) error {
+	ub.chunkMu.Lock()
+	if ub.closed {
+		ub.chunkMu.Unlock()
+		return ErrBufferClosed
+	}
+	ub.chunkMu.Unlock()
+
+	// Track fragment count before write
+	fragCountBefore := ub.cmafMuxer.FragmentCount()
+
+	// Write to CMAF muxer
+	n, err := ub.cmafMuxer.Write(data)
+	if err != nil {
+		return err
+	}
+
+	ub.totalBytesWritten.Add(uint64(n))
+
+	// Check if init segment is now available
+	if ub.initSegment == nil && ub.cmafMuxer.HasInitSegment() {
+		cmafInit := ub.cmafMuxer.GetInitSegment()
+		if cmafInit != nil {
+			ub.initSegment = &InitSegment{
+				Data:      cmafInit.Data,
+				Timestamp: time.Now(),
+				HasVideo:  cmafInit.HasVideo,
+				HasAudio:  cmafInit.HasAudio,
+				Timescale: cmafInit.Timescale,
+			}
+			ub.logger.Info("fMP4 init segment captured",
+				slog.Int("size", len(cmafInit.Data)),
+				slog.Bool("has_video", cmafInit.HasVideo),
+				slog.Bool("has_audio", cmafInit.HasAudio),
+				slog.Uint64("timescale", uint64(cmafInit.Timescale)))
+		}
+	}
+
+	// Check for new fragments and create segments
+	fragCountAfter := ub.cmafMuxer.FragmentCount()
+	if fragCountAfter > fragCountBefore {
+		// New fragment(s) available - create segment markers
+		fragments := ub.cmafMuxer.GetFragments()
+		for i := fragCountBefore; i < fragCountAfter && i < len(fragments); i++ {
+			frag := fragments[i]
+			ub.createFMP4Segment(frag)
+		}
+	}
+
+	// Notify waiting clients
+	ub.notifyClients()
+
+	return nil
+}
+
+// createFMP4Segment creates a segment marker from an fMP4 fragment.
+func (ub *UnifiedBuffer) createFMP4Segment(frag *FMP4Fragment) {
+	// Store fragment data as a chunk
+	ub.chunkMu.Lock()
+	seq := ub.chunkSequence.Add(1)
+	chunk := Chunk{
+		Sequence:  seq,
+		Data:      make([]byte, len(frag.Data)),
+		Timestamp: time.Now(),
+	}
+	copy(chunk.Data, frag.Data)
+	ub.chunks = append(ub.chunks, chunk)
+	ub.totalChunksWritten.Add(1)
+	ub.enforceChunkLimits()
+	ub.chunkMu.Unlock()
+
+	// Calculate duration from fragment
+	var duration float64
+	if ub.initSegment != nil && ub.initSegment.Timescale > 0 {
+		duration = float64(frag.Duration) / float64(ub.initSegment.Timescale)
+	} else {
+		duration = float64(ub.config.TargetSegmentDuration)
+	}
+
+	// Create segment marker
+	marker := SegmentMarker{
+		Sequence:      ub.segmentSequence.Add(1),
+		StartChunk:    seq,
+		EndChunk:      seq, // fMP4 segment is a single chunk
+		Duration:      duration,
+		Timestamp:     time.Now(),
+		IsKeyframe:    frag.IsKeyframe,
+		ByteSize:      len(frag.Data),
+		Discontinuity: ub.nextDiscontinuity,
+	}
+
+	ub.segmentMu.Lock()
+	ub.segments = append(ub.segments, marker)
+
+	// Enforce segment limit
+	for len(ub.segments) > ub.config.MaxSegments {
+		ub.segments = ub.segments[1:]
+	}
+	ub.segmentMu.Unlock()
+
+	ub.accumMu.Lock()
+	ub.nextDiscontinuity = false
+	ub.accumMu.Unlock()
+
+	ub.logger.Debug("fMP4 segment created",
+		slog.Uint64("sequence", marker.Sequence),
+		slog.Uint64("frag_sequence", uint64(frag.SequenceNumber)),
+		slog.Float64("duration", duration),
+		slog.Int("bytes", len(frag.Data)),
+		slog.Bool("keyframe", frag.IsKeyframe))
 }
 
 // WriteChunkWithKeyframe writes a chunk and marks it as containing a keyframe.
@@ -482,6 +618,9 @@ func (ub *UnifiedBuffer) GetSegmentInfos() []SegmentInfo {
 		return nil
 	}
 
+	// Check if we're in fMP4 mode
+	isFMP4 := ub.IsFMP4Mode()
+
 	result := make([]SegmentInfo, len(ub.segments))
 	for i, marker := range ub.segments {
 		result[i] = SegmentInfo{
@@ -490,6 +629,7 @@ func (ub *UnifiedBuffer) GetSegmentInfos() []SegmentInfo {
 			IsKeyframe:    marker.IsKeyframe,
 			Timestamp:     marker.Timestamp,
 			Discontinuity: marker.Discontinuity,
+			IsFMP4:        isFMP4,
 		}
 	}
 	return result
@@ -861,4 +1001,46 @@ func (c *UnifiedClient) IsStale(timeout time.Duration) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return time.Since(c.lastRead) > timeout
+}
+
+// fMP4/CMAF support methods for UnifiedBuffer
+
+// IsFMP4Mode returns true if the buffer is in fMP4/CMAF mode.
+func (ub *UnifiedBuffer) IsFMP4Mode() bool {
+	return ub.cmafMuxer != nil
+}
+
+// GetInitSegment returns the initialization segment for fMP4 streams.
+// Returns nil if the init segment is not yet available or buffer is in MPEG-TS mode.
+func (ub *UnifiedBuffer) GetInitSegment() *InitSegment {
+	if ub.initSegment == nil {
+		return nil
+	}
+	return ub.initSegment.Clone()
+}
+
+// HasInitSegment returns true if the initialization segment is available.
+func (ub *UnifiedBuffer) HasInitSegment() bool {
+	return ub.initSegment != nil && len(ub.initSegment.Data) > 0
+}
+
+// GetFMP4Segment returns a segment for fMP4 streams including container info.
+func (ub *UnifiedBuffer) GetFMP4Segment(segmentSeq uint64) (*Segment, error) {
+	seg, err := ub.GetSegment(segmentSeq)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add fMP4-specific fields
+	if ub.IsFMP4Mode() {
+		seg.IsFragmented = true
+		seg.ContainerFormat = "fmp4"
+	}
+
+	return seg, nil
+}
+
+// ContainerFormat returns the container format of the buffer.
+func (ub *UnifiedBuffer) ContainerFormat() string {
+	return ub.config.ContainerFormat
 }

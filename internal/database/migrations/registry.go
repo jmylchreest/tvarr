@@ -74,6 +74,8 @@ func AllMigrations() []Migration {
 		migration028ContainerFormat(),
 		migration029SmartDeliveryModes(),
 		migration030SimplifiedSystemProfiles(),
+		migration031SimplifyCodecs(),
+		migration032CleanupLegacyProfiles(),
 
 		// Note: Logo caching (Phase 10) uses file-based storage with
 		// in-memory indexing, no database tables required.
@@ -360,7 +362,7 @@ func migration015DefaultRelayProfiles() Migration {
 					AudioBitrate:    128,
 					AudioSampleRate: 48000,
 					AudioChannels:   2,
-					OutputFormat:    models.OutputFormatMPEGTS,
+					ContainerFormat: models.ContainerFormatMPEGTS,
 					Timeout:         30,
 				},
 				{
@@ -377,7 +379,7 @@ func migration015DefaultRelayProfiles() Migration {
 					AudioBitrate:    128,
 					AudioSampleRate: 48000,
 					AudioChannels:   2,
-					OutputFormat:    models.OutputFormatMPEGTS,
+					ContainerFormat: models.ContainerFormatMPEGTS,
 					Timeout:         30,
 				},
 				{
@@ -394,7 +396,7 @@ func migration015DefaultRelayProfiles() Migration {
 					AudioBitrate:    192,
 					AudioSampleRate: 48000,
 					AudioChannels:   2,
-					OutputFormat:    models.OutputFormatMPEGTS,
+					ContainerFormat: models.ContainerFormatMPEGTS,
 					Timeout:         30,
 				},
 				{
@@ -411,7 +413,7 @@ func migration015DefaultRelayProfiles() Migration {
 					AudioBitrate:    96,
 					AudioSampleRate: 48000,
 					AudioChannels:   2,
-					OutputFormat:    models.OutputFormatMPEGTS,
+					ContainerFormat: models.ContainerFormatMPEGTS,
 					Timeout:         30,
 				},
 				{
@@ -428,20 +430,20 @@ func migration015DefaultRelayProfiles() Migration {
 					AudioBitrate:    192,
 					AudioSampleRate: 48000,
 					AudioChannels:   2,
-					OutputFormat:    models.OutputFormatMPEGTS,
+					ContainerFormat: models.ContainerFormatMPEGTS,
 					Timeout:         30,
 				},
 				// Note: AV1 profile removed - AV1 is not supported in MPEG-TS containers
 				{
-					Name:         "Copy Streams (No Transcoding)",
-					Description:  "Pass-through profile that copies streams without transcoding",
-					IsDefault:    false,
-					Enabled:      true,
-					IsSystem:     true,
-					VideoCodec:   models.VideoCodecCopy,
-					AudioCodec:   models.AudioCodecCopy,
-					OutputFormat: models.OutputFormatMPEGTS,
-					Timeout:      30,
+					Name:            "Copy Streams (No Transcoding)",
+					Description:     "Pass-through profile that copies streams without transcoding",
+					IsDefault:       false,
+					Enabled:         true,
+					IsSystem:        true,
+					VideoCodec:      models.VideoCodecCopy,
+					AudioCodec:      models.AudioCodecCopy,
+					ContainerFormat: models.ContainerFormatMPEGTS,
+					Timeout:         30,
 				},
 			}
 
@@ -886,33 +888,39 @@ func migration027MultiFormatStreaming() Migration {
 }
 
 // migration028ContainerFormat adds container_format column to relay_profiles
-// and migrates from output_format to container_format.
+// and migrates from output_format to container_format (if output_format exists).
 func migration028ContainerFormat() Migration {
 	return Migration{
 		Version:     "028",
 		Description: "Add container_format to relay_profiles for CMAF support",
 		Up: func(tx *gorm.DB) error {
+			migrator := tx.Migrator()
+
 			// AutoMigrate adds the container_format column
 			if err := tx.AutoMigrate(&models.RelayProfile{}); err != nil {
 				return err
 			}
 
-			// Migrate output_format values to container_format
-			// mpegts -> mpegts, hls/dash -> auto (let system decide based on codec)
-			if err := tx.Model(&models.RelayProfile{}).
-				Where("output_format = ?", "mpegts").
-				UpdateColumn("container_format", "mpegts").Error; err != nil {
-				return err
+			// Only migrate from output_format if that column exists (legacy databases)
+			// Fresh databases won't have output_format since it was removed from the model
+			if migrator.HasColumn(&models.RelayProfile{}, "output_format") {
+				// Migrate output_format values to container_format
+				// mpegts -> mpegts, hls/dash -> auto (let system decide based on codec)
+				if err := tx.Model(&models.RelayProfile{}).
+					Where("output_format = ?", "mpegts").
+					UpdateColumn("container_format", "mpegts").Error; err != nil {
+					return err
+				}
+
+				// HLS and DASH become auto (system will use fMP4 for modern delivery)
+				if err := tx.Model(&models.RelayProfile{}).
+					Where("output_format IN ?", []string{"hls", "dash"}).
+					UpdateColumn("container_format", "auto").Error; err != nil {
+					return err
+				}
 			}
 
-			// HLS and DASH become auto (system will use fMP4 for modern delivery)
-			if err := tx.Model(&models.RelayProfile{}).
-				Where("output_format IN ?", []string{"hls", "dash"}).
-				UpdateColumn("container_format", "auto").Error; err != nil {
-				return err
-			}
-
-			// Any other formats (flv, matroska, mp4) become auto
+			// Ensure any profiles with empty/null container_format get a default
 			if err := tx.Model(&models.RelayProfile{}).
 				Where("container_format = ? OR container_format IS NULL", "").
 				UpdateColumn("container_format", "auto").Error; err != nil {
@@ -1085,6 +1093,154 @@ func migration030SimplifiedSystemProfiles() Migration {
 
 			// Note: We don't restore old profiles in down migration.
 			// Users can re-run migration015DefaultRelayProfiles if needed.
+			return nil
+		},
+	}
+}
+
+// migration031SimplifyCodecs converts encoder-specific codec values to abstract codec types.
+// This allows the codec dropdown to be simpler (h264, h265, vp9, av1) while the
+// actual FFmpeg encoder is derived from codec + hwaccel setting at runtime.
+func migration031SimplifyCodecs() Migration {
+	return Migration{
+		Version:     "031",
+		Description: "Simplify codec values to abstract types (h264, h265, vp9, av1)",
+		Up: func(tx *gorm.DB) error {
+			// Map old encoder-specific values to new abstract codec types
+			videoCodecMappings := map[string]string{
+				// H.264 encoders -> h264
+				"libx264":            "h264",
+				"h264_nvenc":         "h264",
+				"h264_qsv":           "h264",
+				"h264_vaapi":         "h264",
+				"h264_videotoolbox":  "h264",
+				// H.265 encoders -> h265
+				"libx265":            "h265",
+				"hevc_nvenc":         "h265",
+				"hevc_qsv":           "h265",
+				"hevc_vaapi":         "h265",
+				"hevc_videotoolbox":  "h265",
+				// VP9 encoders -> vp9
+				"libvpx-vp9":         "vp9",
+				"vp9_qsv":            "vp9",
+				"vp9_vaapi":          "vp9",
+				// AV1 encoders -> av1
+				"libaom-av1":         "av1",
+				"av1_nvenc":          "av1",
+				"av1_qsv":            "av1",
+				"av1_vaapi":          "av1",
+			}
+
+			// Update video codecs (use UpdateColumn to bypass hooks/validations)
+			for oldValue, newValue := range videoCodecMappings {
+				if err := tx.Model(&models.RelayProfile{}).
+					Where("video_codec = ?", oldValue).
+					UpdateColumn("video_codec", newValue).Error; err != nil {
+					return err
+				}
+			}
+
+			// Map old audio codec values to new abstract types
+			audioCodecMappings := map[string]string{
+				"libmp3lame": "mp3",
+				"libopus":    "opus",
+			}
+
+			for oldValue, newValue := range audioCodecMappings {
+				if err := tx.Model(&models.RelayProfile{}).
+					Where("audio_codec = ?", oldValue).
+					UpdateColumn("audio_codec", newValue).Error; err != nil {
+					return err
+				}
+			}
+
+			// Clean up any test profiles that may have been created by earlier versions
+			profileNames := []string{
+				"Next-Gen (AV1 + Opus)",
+				"VP9 + Opus",
+				"AV1 NVENC (RTX 40+)",
+				"AV1 QSV (Intel Arc/12th+)",
+			}
+			return tx.Where("name IN ? AND is_system = ?", profileNames, true).
+				Delete(&models.RelayProfile{}).Error
+		},
+		Down: func(tx *gorm.DB) error {
+			// Reverse the mappings - convert back to encoder-specific values
+			// Note: This uses software encoders as the default since we don't know
+			// what hwaccel was originally intended
+			videoCodecMappings := map[string]string{
+				"h264": "libx264",
+				"h265": "libx265",
+				"vp9":  "libvpx-vp9",
+				"av1":  "libaom-av1",
+			}
+
+			for newValue, oldValue := range videoCodecMappings {
+				if err := tx.Model(&models.RelayProfile{}).
+					Where("video_codec = ?", newValue).
+					UpdateColumn("video_codec", oldValue).Error; err != nil {
+					return err
+				}
+			}
+
+			audioCodecMappings := map[string]string{
+				"mp3":  "libmp3lame",
+				"opus": "libopus",
+			}
+
+			for newValue, oldValue := range audioCodecMappings {
+				if err := tx.Model(&models.RelayProfile{}).
+					Where("audio_codec = ?", newValue).
+					UpdateColumn("audio_codec", oldValue).Error; err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+	}
+}
+
+// migration032CleanupLegacyProfiles removes legacy hardware-specific codec profiles
+// that were created by earlier versions of migration031, and ensures a default profile exists.
+func migration032CleanupLegacyProfiles() Migration {
+	return Migration{
+		Version:     "032",
+		Description: "Remove legacy hardware-specific profiles and ensure default exists",
+		Up: func(tx *gorm.DB) error {
+			// Delete any leftover hardware-specific profiles from earlier migration031 versions
+			legacyProfileNames := []string{
+				"Next-Gen (AV1 + Opus)",
+				"VP9 + Opus",
+				"AV1 NVENC (RTX 40+)",
+				"AV1 QSV (Intel Arc/12th+)",
+			}
+			if err := tx.Where("name IN ?", legacyProfileNames).
+				Delete(&models.RelayProfile{}).Error; err != nil {
+				return err
+			}
+
+			// Check if there's a default profile
+			var defaultCount int64
+			if err := tx.Model(&models.RelayProfile{}).
+				Where("is_default = ?", true).
+				Count(&defaultCount).Error; err != nil {
+				return err
+			}
+
+			// If no default, set Universal as default (if it exists)
+			if defaultCount == 0 {
+				if err := tx.Model(&models.RelayProfile{}).
+					Where("name = ?", "Universal").
+					UpdateColumn("is_default", true).Error; err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			// No-op - we don't restore deleted profiles
 			return nil
 		},
 	}

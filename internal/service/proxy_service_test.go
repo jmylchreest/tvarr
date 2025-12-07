@@ -231,7 +231,7 @@ func TestProxyService_Create(t *testing.T) {
 
 	proxy := &models.StreamProxy{
 		Name:                  "Test Proxy",
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
 	}
 
@@ -252,7 +252,7 @@ func TestProxyService_Create_ValidationError(t *testing.T) {
 
 	proxy := &models.StreamProxy{
 		Name:                  "", // Invalid - empty name
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
 	}
 
@@ -269,14 +269,14 @@ func TestProxyService_Update(t *testing.T) {
 	// Create first
 	proxy := &models.StreamProxy{
 		Name:                  "Original",
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
 	}
 	require.NoError(t, svc.Create(ctx, proxy))
 
 	// Update
 	proxy.Name = "Updated"
-	proxy.ProxyMode = models.StreamProxyModeProxy
+	proxy.ProxyMode = models.StreamProxyModeSmart
 
 	err := svc.Update(ctx, proxy)
 	require.NoError(t, err)
@@ -284,7 +284,7 @@ func TestProxyService_Update(t *testing.T) {
 	// Verify
 	stored, _ := svc.GetByID(ctx, proxy.ID)
 	assert.Equal(t, "Updated", stored.Name)
-	assert.Equal(t, models.StreamProxyModeProxy, stored.ProxyMode)
+	assert.Equal(t, models.StreamProxyModeSmart, stored.ProxyMode)
 }
 
 func TestProxyService_Delete(t *testing.T) {
@@ -294,7 +294,7 @@ func TestProxyService_Delete(t *testing.T) {
 
 	proxy := &models.StreamProxy{
 		Name:                  "To Delete",
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
 	}
 	require.NoError(t, svc.Create(ctx, proxy))
@@ -316,7 +316,7 @@ func TestProxyService_GetAll(t *testing.T) {
 	for i := 1; i <= 3; i++ {
 		proxy := &models.StreamProxy{
 			Name:                  "Proxy",
-			ProxyMode:             models.StreamProxyModeRedirect,
+			ProxyMode:             models.StreamProxyModeDirect,
 			StartingChannelNumber: i,
 		}
 		require.NoError(t, svc.Create(ctx, proxy))
@@ -335,7 +335,7 @@ func TestProxyService_GetActive(t *testing.T) {
 	// Create active proxy
 	active := &models.StreamProxy{
 		Name:                  "Active",
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
 		IsActive:              true,
 	}
@@ -344,7 +344,7 @@ func TestProxyService_GetActive(t *testing.T) {
 	// Create inactive proxy
 	inactive := &models.StreamProxy{
 		Name:                  "Inactive",
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
 		IsActive:              false,
 	}
@@ -363,7 +363,7 @@ func TestProxyService_GetByName(t *testing.T) {
 
 	proxy := &models.StreamProxy{
 		Name:                  "FindMe",
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
 	}
 	require.NoError(t, svc.Create(ctx, proxy))
@@ -385,7 +385,7 @@ func TestProxyService_SetSources(t *testing.T) {
 
 	proxy := &models.StreamProxy{
 		Name:                  "WithSources",
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
 	}
 	require.NoError(t, svc.Create(ctx, proxy))
@@ -406,7 +406,7 @@ func TestProxyService_SetEpgSources(t *testing.T) {
 
 	proxy := &models.StreamProxy{
 		Name:                  "WithEpgSources",
-		ProxyMode:             models.StreamProxyModeRedirect,
+		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
 	}
 	require.NoError(t, svc.Create(ctx, proxy))

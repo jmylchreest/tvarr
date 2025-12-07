@@ -27,35 +27,17 @@ const (
 	// StreamProxyModeSmart automatically optimizes delivery based on source and client.
 	// When a profile is set, transcodes if needed. Otherwise, uses passthrough/repackage.
 	StreamProxyModeSmart StreamProxyMode = "smart"
-
-	// Deprecated: Use StreamProxyModeDirect instead.
-	StreamProxyModeRedirect StreamProxyMode = "redirect"
-	// Deprecated: Use StreamProxyModeSmart instead.
-	StreamProxyModeProxy StreamProxyMode = "proxy"
-	// Deprecated: Use StreamProxyModeSmart instead.
-	StreamProxyModeRelay StreamProxyMode = "relay"
 )
 
-// NormalizeProxyMode converts deprecated proxy modes to their new equivalents.
-// Returns the normalized mode and whether it was deprecated.
-func NormalizeProxyMode(mode StreamProxyMode) (StreamProxyMode, bool) {
-	switch mode {
-	case StreamProxyModeRedirect:
-		return StreamProxyModeDirect, true
-	case StreamProxyModeProxy, StreamProxyModeRelay:
-		return StreamProxyModeSmart, true
-	case StreamProxyModeDirect, StreamProxyModeSmart:
-		return mode, false
-	default:
-		// Unknown mode, return as-is (will fail validation elsewhere)
-		return mode, false
-	}
+// ValidProxyModes returns the list of valid proxy modes.
+func ValidProxyModes() []StreamProxyMode {
+	return []StreamProxyMode{StreamProxyModeDirect, StreamProxyModeSmart}
 }
 
-// IsDeprecatedProxyMode returns true if the mode is deprecated.
-func IsDeprecatedProxyMode(mode StreamProxyMode) bool {
+// IsValidProxyMode returns true if the mode is a valid proxy mode.
+func IsValidProxyMode(mode StreamProxyMode) bool {
 	switch mode {
-	case StreamProxyModeRedirect, StreamProxyModeProxy, StreamProxyModeRelay:
+	case StreamProxyModeDirect, StreamProxyModeSmart:
 		return true
 	default:
 		return false
@@ -86,7 +68,7 @@ type StreamProxy struct {
 	Description string `gorm:"size:1024" json:"description,omitempty"`
 
 	// ProxyMode determines how streams are served to clients.
-	ProxyMode StreamProxyMode `gorm:"not null;default:'redirect';size:20" json:"proxy_mode"`
+	ProxyMode StreamProxyMode `gorm:"not null;default:'direct';size:20" json:"proxy_mode"`
 
 	// IsActive indicates whether this proxy is active and should be served.
 	IsActive bool `gorm:"default:true" json:"is_active"`

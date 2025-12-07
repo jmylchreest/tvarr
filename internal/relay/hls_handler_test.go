@@ -260,3 +260,168 @@ func TestHLSHandler_TrailingSlashHandling(t *testing.T) {
 		t.Error("playlist contains malformed URL with trailing slash")
 	}
 }
+
+// Tests for HLS v7 (fMP4/CMAF) mode
+
+func TestHLSHandler_FMP4Mode_GeneratePlaylist(t *testing.T) {
+	// Create a unified buffer in fMP4 mode
+	config := DefaultUnifiedBufferConfig()
+	config.ContainerFormat = "fmp4"
+	buf := NewUnifiedBuffer(config)
+
+	// Simulate init segment being set
+	buf.initSegment = &InitSegment{
+		Data:      []byte{0x00, 0x00, 0x00, 0x20, 'f', 't', 'y', 'p'},
+		HasVideo:  true,
+		HasAudio:  true,
+		Timescale: 90000,
+	}
+
+	// Add a segment marker for testing
+	buf.segmentMu.Lock()
+	buf.segments = append(buf.segments, SegmentMarker{
+		Sequence:   1,
+		Duration:   6.0,
+		StartChunk: 0,
+		EndChunk:   0,
+		IsKeyframe: true,
+	})
+	buf.segmentMu.Unlock()
+
+	handler := NewHLSHandler(buf)
+	playlist := handler.GeneratePlaylist("http://example.com/stream")
+
+	// Should be HLS v7
+	if !strings.Contains(playlist, "#EXT-X-VERSION:7") {
+		t.Errorf("expected #EXT-X-VERSION:7 for fMP4 mode, got playlist:\n%s", playlist)
+	}
+
+	// Should have EXT-X-MAP for init segment
+	if !strings.Contains(playlist, "#EXT-X-MAP:URI=") {
+		t.Errorf("expected #EXT-X-MAP for fMP4 mode, got playlist:\n%s", playlist)
+	}
+
+	// EXT-X-MAP should reference init parameter
+	if !strings.Contains(playlist, "init=1") {
+		t.Errorf("expected init=1 in EXT-X-MAP URI, got playlist:\n%s", playlist)
+	}
+}
+
+func TestHLSHandler_FMP4Mode_EmptyPlaylist(t *testing.T) {
+	// Create a unified buffer in fMP4 mode
+	config := DefaultUnifiedBufferConfig()
+	config.ContainerFormat = "fmp4"
+	buf := NewUnifiedBuffer(config)
+
+	handler := NewHLSHandler(buf)
+	playlist := handler.GeneratePlaylist("http://example.com/stream")
+
+	// Empty playlist in fMP4 mode should still have version 7
+	if !strings.Contains(playlist, "#EXT-X-VERSION:7") {
+		t.Errorf("expected #EXT-X-VERSION:7 for empty fMP4 playlist, got playlist:\n%s", playlist)
+	}
+}
+
+func TestHLSHandler_FMP4Mode_SegmentContentType(t *testing.T) {
+	// Create a unified buffer in fMP4 mode
+	config := DefaultUnifiedBufferConfig()
+	config.ContainerFormat = "fmp4"
+	buf := NewUnifiedBuffer(config)
+
+	handler := NewHLSHandler(buf)
+
+	// Should return fMP4 content type
+	if handler.SegmentContentType() != ContentTypeFMP4Segment {
+		t.Errorf("SegmentContentType() = %s, want %s", handler.SegmentContentType(), ContentTypeFMP4Segment)
+	}
+}
+
+func TestHLSHandler_FMP4Mode_IsFMP4Mode(t *testing.T) {
+	// Test with fMP4 mode buffer
+	config := DefaultUnifiedBufferConfig()
+	config.ContainerFormat = "fmp4"
+	fmp4Buf := NewUnifiedBuffer(config)
+	fmp4Handler := NewHLSHandler(fmp4Buf)
+
+	if !fmp4Handler.IsFMP4Mode() {
+		t.Error("expected IsFMP4Mode() to return true for fMP4 buffer")
+	}
+
+	// Test with non-fMP4 buffer
+	regularBuf := NewSegmentBuffer(DefaultSegmentBufferConfig())
+	regularHandler := NewHLSHandler(regularBuf)
+
+	if regularHandler.IsFMP4Mode() {
+		t.Error("expected IsFMP4Mode() to return false for regular buffer")
+	}
+}
+
+func TestHLSHandler_FMP4Mode_ServeInitSegment(t *testing.T) {
+	// Create a unified buffer in fMP4 mode
+	config := DefaultUnifiedBufferConfig()
+	config.ContainerFormat = "fmp4"
+	buf := NewUnifiedBuffer(config)
+
+	// Set init segment
+	buf.initSegment = &InitSegment{
+		Data:      []byte{0x00, 0x00, 0x00, 0x20, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm'},
+		HasVideo:  true,
+		HasAudio:  true,
+		Timescale: 90000,
+	}
+
+	handler := NewHLSHandler(buf)
+
+	w := httptest.NewRecorder()
+	err := handler.ServeInitSegment(w)
+
+	if err != nil {
+		t.Fatalf("ServeInitSegment failed: %v", err)
+	}
+
+	// Check response
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if w.Header().Get("Content-Type") != ContentTypeFMP4Init {
+		t.Errorf("Content-Type = %s, want %s", w.Header().Get("Content-Type"), ContentTypeFMP4Init)
+	}
+	if w.Body.Len() != 12 {
+		t.Errorf("body length = %d, want 12", w.Body.Len())
+	}
+}
+
+func TestHLSHandler_FMP4Mode_ServeInitSegment_NotAvailable(t *testing.T) {
+	// Create a unified buffer in fMP4 mode but without init segment
+	config := DefaultUnifiedBufferConfig()
+	config.ContainerFormat = "fmp4"
+	buf := NewUnifiedBuffer(config)
+
+	handler := NewHLSHandler(buf)
+
+	w := httptest.NewRecorder()
+	err := handler.ServeInitSegment(w)
+
+	if err == nil {
+		t.Error("expected error for missing init segment")
+	}
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestHLSHandler_NonFMP4Mode_ServeInitSegment(t *testing.T) {
+	// Create a regular segment buffer (not fMP4)
+	buf := NewSegmentBuffer(DefaultSegmentBufferConfig())
+	handler := NewHLSHandler(buf)
+
+	w := httptest.NewRecorder()
+	err := handler.ServeInitSegment(w)
+
+	if err != ErrUnsupportedOperation {
+		t.Errorf("expected ErrUnsupportedOperation, got %v", err)
+	}
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
+	}
+}

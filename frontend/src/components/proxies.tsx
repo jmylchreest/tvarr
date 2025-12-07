@@ -205,7 +205,8 @@ export function Proxies() {
       });
     }
 
-    return filtered;
+    // Sort alphabetically by name
+    return filtered.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   }, [allProxies, searchTerm, filterStatus]);
 
   // Health check is handled by parent component, no need for redundant calls
@@ -697,7 +698,7 @@ export function Proxies() {
                             </div>
                           </TableCell>
                           <TableCell>
-                            {proxy.proxy_mode === 'relay' && proxy.relay_profile_id ? (
+                            {proxy.proxy_mode === 'smart' && proxy.relay_profile_id ? (
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <Badge variant="outline" className="cursor-help">
@@ -708,7 +709,10 @@ export function Proxies() {
                                   <div className="space-y-1">
                                     <p className="font-medium text-sm">Relay Profile</p>
                                     <p className="text-xs text-muted-foreground">
-                                      {getRelayProfileName(proxy.relay_profile_id)}
+                                      Name: {getRelayProfileName(proxy.relay_profile_id)}
+                                    </p>
+                                    <p className="text-xs text-muted-foreground font-mono">
+                                      ULID: {proxy.relay_profile_id}
                                     </p>
                                   </div>
                                 </TooltipContent>
@@ -899,7 +903,7 @@ export function Proxies() {
                         <CardContent>
                           <div className="space-y-4">
                             <div className="flex flex-wrap gap-2">
-                              {proxy.proxy_mode === 'relay' && proxy.relay_profile_id ? (
+                              {proxy.proxy_mode === 'smart' && proxy.relay_profile_id ? (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <Badge variant="outline" className="cursor-help">
@@ -910,7 +914,10 @@ export function Proxies() {
                                     <div className="space-y-1">
                                       <p className="font-medium text-sm">Relay Profile</p>
                                       <p className="text-xs text-muted-foreground">
-                                        {getRelayProfileName(proxy.relay_profile_id)}
+                                        Name: {getRelayProfileName(proxy.relay_profile_id)}
+                                      </p>
+                                      <p className="text-xs text-muted-foreground font-mono">
+                                        ULID: {proxy.relay_profile_id}
                                       </p>
                                     </div>
                                   </TooltipContent>
@@ -1083,7 +1090,7 @@ export function Proxies() {
                                     )}
                                   </div>
                                   <div className="flex items-center gap-2">
-                                    {proxy.proxy_mode === 'relay' && proxy.relay_profile_id ? (
+                                    {proxy.proxy_mode === 'smart' && proxy.relay_profile_id ? (
                                       <Tooltip>
                                         <TooltipTrigger asChild>
                                           <Badge variant="outline" className="cursor-help text-xs">
@@ -1094,7 +1101,10 @@ export function Proxies() {
                                           <div className="space-y-1">
                                             <p className="font-medium text-sm">Relay Profile</p>
                                             <p className="text-xs text-muted-foreground">
-                                              {getRelayProfileName(proxy.relay_profile_id)}
+                                              Name: {getRelayProfileName(proxy.relay_profile_id)}
+                                            </p>
+                                            <p className="text-xs text-muted-foreground font-mono">
+                                              ULID: {proxy.relay_profile_id}
                                             </p>
                                           </div>
                                         </TooltipContent>

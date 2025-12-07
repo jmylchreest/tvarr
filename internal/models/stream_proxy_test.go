@@ -35,7 +35,7 @@ func TestStreamProxy_Validate(t *testing.T) {
 			proxy: StreamProxy{
 				Name:                  "Full Proxy",
 				Description:           "A test proxy with all fields",
-				ProxyMode:             StreamProxyModeProxy,
+				ProxyMode:             StreamProxyModeSmart,
 				IsActive:              true,
 				AutoRegenerate:        true,
 				StartingChannelNumber: 100,
@@ -91,14 +91,8 @@ func TestStreamProxyMode(t *testing.T) {
 		mode  StreamProxyMode
 		valid bool
 	}{
-		// New modes
 		{"direct", StreamProxyModeDirect, true},
 		{"smart", StreamProxyModeSmart, true},
-		// Deprecated modes (still valid strings)
-		{"redirect", StreamProxyModeRedirect, true},
-		{"proxy", StreamProxyModeProxy, true},
-		{"relay", StreamProxyModeRelay, true},
-		// Invalid
 		{"invalid", StreamProxyMode("invalid"), false},
 	}
 
@@ -111,48 +105,22 @@ func TestStreamProxyMode(t *testing.T) {
 	}
 }
 
-func TestNormalizeProxyMode(t *testing.T) {
+func TestIsValidProxyMode(t *testing.T) {
 	tests := []struct {
-		input          StreamProxyMode
-		expectedOutput StreamProxyMode
-		wasDeprecated  bool
+		mode  StreamProxyMode
+		valid bool
 	}{
-		// New modes pass through unchanged
-		{StreamProxyModeDirect, StreamProxyModeDirect, false},
-		{StreamProxyModeSmart, StreamProxyModeSmart, false},
-		// Deprecated modes get converted
-		{StreamProxyModeRedirect, StreamProxyModeDirect, true},
-		{StreamProxyModeProxy, StreamProxyModeSmart, true},
-		{StreamProxyModeRelay, StreamProxyModeSmart, true},
-		// Unknown mode passes through (for validation elsewhere)
-		{StreamProxyMode("unknown"), StreamProxyMode("unknown"), false},
-	}
-
-	for _, tt := range tests {
-		t.Run(string(tt.input), func(t *testing.T) {
-			output, deprecated := NormalizeProxyMode(tt.input)
-			assert.Equal(t, tt.expectedOutput, output)
-			assert.Equal(t, tt.wasDeprecated, deprecated)
-		})
-	}
-}
-
-func TestIsDeprecatedProxyMode(t *testing.T) {
-	tests := []struct {
-		mode       StreamProxyMode
-		deprecated bool
-	}{
-		{StreamProxyModeDirect, false},
-		{StreamProxyModeSmart, false},
-		{StreamProxyModeRedirect, true},
-		{StreamProxyModeProxy, true},
-		{StreamProxyModeRelay, true},
+		{StreamProxyModeDirect, true},
+		{StreamProxyModeSmart, true},
 		{StreamProxyMode("unknown"), false},
+		{StreamProxyMode("redirect"), false},
+		{StreamProxyMode("proxy"), false},
+		{StreamProxyMode("relay"), false},
 	}
 
 	for _, tt := range tests {
 		t.Run(string(tt.mode), func(t *testing.T) {
-			assert.Equal(t, tt.deprecated, IsDeprecatedProxyMode(tt.mode))
+			assert.Equal(t, tt.valid, IsValidProxyMode(tt.mode))
 		})
 	}
 }

@@ -376,7 +376,7 @@ func testFormatRouterIntegration(t *testing.T, buf *UnifiedBuffer) {
 	t.Helper()
 
 	// Create format router with MPEG-TS as default
-	router := NewFormatRouter(models.OutputFormatMPEGTS)
+	router := NewFormatRouter(models.ContainerFormatMPEGTS)
 
 	// Register HLS handler
 	hlsHandler := NewHLSHandler(buf)

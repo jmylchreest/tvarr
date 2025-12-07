@@ -849,7 +849,8 @@ export function StreamSources() {
       });
     }
 
-    return filtered;
+    // Sort alphabetically by name
+    return filtered.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   }, [allSources, searchTerm, filterType, filterStatus]);
 
   // Health check is handled by parent component, no need for redundant calls
