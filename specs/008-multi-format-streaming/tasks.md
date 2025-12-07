@@ -271,7 +271,7 @@ This delivers HLS streaming to maximize device compatibility (iOS, Safari, smart
 
 - [P] tasks = different files, no dependencies
 - [Story] label maps task to specific user story for traceability
-- WebRTC (User Story 5) is deferred to future phase per spec
+- WebRTC is out of scope (requires STUN/TURN infrastructure)
 - All tests use fictional channel/proxy IDs per constitution XIII
 - Commit after each task or logical group
 - Stop at any checkpoint to validate story independently

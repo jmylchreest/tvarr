@@ -81,22 +81,6 @@ A user wants the system to automatically serve the optimal format based on the r
 
 ---
 
-### User Story 5 - WebRTC Output for Ultra-Low Latency (Priority: P4)
-
-A user wants to serve streams via WebRTC for scenarios requiring ultra-low latency (sub-second), such as live sports commentary, auctions, or interactive broadcasts.
-
-**Why this priority**: While HLS/DASH typically have 10-30 second latency, WebRTC can achieve sub-second latency. This enables use cases where real-time interaction is critical. Lower priority due to implementation complexity.
-
-**Independent Test**: Can be tested by configuring a relay profile with WebRTC output, connecting via a WebRTC-compatible player, and measuring end-to-end latency.
-
-**Acceptance Scenarios**:
-
-1. **Given** a relay profile configured with WebRTC output, **When** a client initiates a WebRTC session, **Then** the system establishes a peer connection and begins streaming
-2. **Given** an active WebRTC stream, **When** latency is measured end-to-end, **Then** latency is under 1 second
-3. **Given** network conditions fluctuate, **When** packet loss occurs, **Then** the stream adapts gracefully without extended freezing
-
----
-
 ### Edge Cases
 
 - What happens when the source stream format is incompatible with the requested output format? System should provide clear error or attempt automatic format conversion
@@ -117,7 +101,6 @@ A user wants to serve streams via WebRTC for scenarios requiring ultra-low laten
 - **FR-001**: System MUST support HLS output with live playlist generation (.m3u8) and segment serving (.ts)
 - **FR-002**: System MUST support DASH output with live manifest generation (MPD) and segment serving (m4s/mp4)
 - **FR-003**: System MUST continue to support MPEG-TS output as the default format for maximum compatibility
-- **FR-004**: System SHOULD support WebRTC output for low-latency use cases (may be deferred due to complexity)
 
 #### HLS Specific Requirements
 
@@ -195,7 +178,6 @@ A user wants to serve streams via WebRTC for scenarios requiring ultra-low laten
 - FFmpeg 5.0+ is available with HLS and DASH muxer support
 - Clients have sufficient bandwidth for the selected quality/bitrate
 - Source streams provide stable, continuous media (standard IPTV behavior)
-- WebRTC implementation, if pursued, will require additional infrastructure (STUN/TURN servers) which is out of scope
 - HLS Low-Latency (LL-HLS) and DASH Low-Latency (LL-DASH) are out of scope for initial implementation
 - Adaptive bitrate (ABR) with multiple quality levels is out of scope; focus is on single-quality live streaming
 - Segment storage is memory-only; disk-based persistence is not required
@@ -209,4 +191,4 @@ A user wants to serve streams via WebRTC for scenarios requiring ultra-low laten
 - HLS Low-Latency (LL-HLS) extensions
 - CMAF (Common Media Application Format) output
 - Recording/archival to persistent storage
-- WebRTC signaling server implementation (would require separate infrastructure)
+- WebRTC output (requires STUN/TURN infrastructure)
