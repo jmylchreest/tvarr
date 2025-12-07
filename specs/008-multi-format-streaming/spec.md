@@ -1,8 +1,13 @@
 # Feature Specification: Multi-Format Streaming Support
 
+> **SUPERSEDED**: This feature has been superseded by `009-cmaf-smart-delivery`.
+> Phases 1-6 were completed and merged. Remaining tasks (T028, T050-T054, T060)
+> are now part of the 009 specification which adds CMAF support, simplified
+> proxy modes (direct/smart), and profile refactoring.
+
 **Feature Branch**: `008-multi-format-streaming`
 **Created**: 2025-12-07
-**Status**: Draft
+**Status**: Superseded by 009
 **Input**: User description: "Investigate (and potentially implement) other streaming formats in relay mode (and proxy mode where possible) other than mpegts. HLS is the obvious additional format, please be comprehensive"
 
 ## Clarifications
