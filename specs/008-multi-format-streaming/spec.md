@@ -12,6 +12,7 @@
 - Q: How do clients differentiate/request specific output formats? → A: Query parameter (`?format=hls`, `?format=dash`, `?format=mpegts`) matching existing proxy mode pattern. This is relay-only; m3u URLs remain unchanged. Default is MPEG-TS for backwards compatibility.
 - Q: How should segment URLs be structured for HLS/DASH, and how does this relate to proxy mode? → A: Query-param driven throughout. Same base URL serves any format; segments referenced via `?format=hls&seg=N`. This enables dynamic reconfiguration without m3u regeneration, per-client format selection, and runtime config changes without breaking existing clients.
 - Q: How should auto-format selection work? → A: Optional via proxy configuration with default of "auto". Proxy config defines the preferred format; clients can override via query parameter. Auto-detection uses User-Agent/Accept headers to serve optimal format per client.
+- Q: Should codec availability depend on output format? → A: Yes. UI dropdowns should be container-aware. VP9, AV1, and Opus are only available when DASH is selected (fMP4 segments support these codecs). MPEG-TS and HLS (.ts segments) are limited to H.264/H.265 video and AAC/MP3/AC3/EAC3 audio.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -104,6 +105,8 @@ A user wants to serve streams via WebRTC for scenarios requiring ultra-low laten
 - How does the system handle HLS variant playlists when source provides multiple quality levels? Pass through as-is in proxy mode; relay mode focuses on single quality
 - What happens during stream discontinuities (ad breaks, encoder restarts)? Handle EXT-X-DISCONTINUITY tags correctly, maintain sequence continuity
 - What happens when switching from one format endpoint to another mid-session? Each format maintains independent state; clients must reconnect for format changes
+- What happens when a user selects VP9/AV1/Opus codec with MPEG-TS or HLS format? UI prevents selection; validation blocks save with clear error message
+- What happens when output format changes and current codec becomes incompatible? UI warns user and suggests compatible alternatives; does not auto-change codec
 
 ## Requirements *(mandatory)*
 
@@ -131,6 +134,15 @@ A user wants to serve streams via WebRTC for scenarios requiring ultra-low laten
 - **FR-021**: DASH output MUST support live profile with segment timeline or segment template
 - **FR-022**: DASH output MUST support configurable segment duration matching HLS for consistency
 - **FR-023**: DASH manifest MUST update with minimumUpdatePeriod for live streams
+
+#### Container-Aware Codec Selection
+
+- **FR-024**: UI MUST display codec options based on the selected output format (container-aware dropdowns)
+- **FR-025**: MPEG-TS and HLS output formats MUST limit video codecs to: copy, H.264 (libx264, h264_nvenc, h264_qsv, h264_vaapi), H.265 (libx265, hevc_nvenc, hevc_qsv, hevc_vaapi)
+- **FR-026**: MPEG-TS and HLS output formats MUST limit audio codecs to: copy, AAC, MP3, AC3, EAC3
+- **FR-027**: DASH output format MUST support all codecs from FR-025/FR-026 plus: VP9 (libvpx-vp9), AV1 (libaom-av1, av1_nvenc, av1_qsv), Opus (libopus)
+- **FR-028**: System MUST validate codec/format compatibility and prevent invalid combinations at profile save time
+- **FR-029**: When output format changes, UI SHOULD warn if currently selected codec becomes unavailable
 
 #### Passthrough/Proxy Mode
 
@@ -187,7 +199,7 @@ A user wants to serve streams via WebRTC for scenarios requiring ultra-low laten
 - HLS Low-Latency (LL-HLS) and DASH Low-Latency (LL-DASH) are out of scope for initial implementation
 - Adaptive bitrate (ABR) with multiple quality levels is out of scope; focus is on single-quality live streaming
 - Segment storage is memory-only; disk-based persistence is not required
-- DASH with fMP4 segments may enable additional codecs (VP9, AV1, Opus) not supported in MPEG-TS containers; codec expansion is a planning-phase consideration
+- DASH output uses fMP4 segments which support VP9, AV1, and Opus codecs not available in MPEG-TS/HLS containers
 
 ## Out of Scope
 
