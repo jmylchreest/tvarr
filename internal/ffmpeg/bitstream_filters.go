@@ -132,11 +132,25 @@ func GetVideoBitstreamFilter(codecFamily CodecFamily, outputFormat OutputFormatT
 
 	switch outputFormat {
 	case FormatMPEGTS, FormatHLS:
-		// Following m3u-proxy's approach: no bitstream filters for MPEG-TS.
-		// FFmpeg's muxer handles the format conversion internally.
-		// The -mpegts_copyts and -avoid_negative_ts flags handle timestamp preservation.
-		return BitstreamFilterInfo{
-			Reason: "MPEG-TS: no BSF needed (m3u-proxy proven approach)",
+		// For H.264/HEVC copy mode to MPEG-TS, use dump_extra to ensure SPS/PPS are included
+		// This is critical for live streams where the player may join mid-stream and miss
+		// the parameter sets that were sent earlier with a keyframe.
+		// dump_extra=freq=keyframe outputs SPS/PPS with every keyframe for robust playback.
+		switch codecFamily {
+		case CodecFamilyH264:
+			return BitstreamFilterInfo{
+				VideoBSF: "dump_extra=freq=keyframe",
+				Reason:   "H.264 copy to MPEG-TS: ensure SPS/PPS included for mid-stream joins",
+			}
+		case CodecFamilyHEVC:
+			return BitstreamFilterInfo{
+				VideoBSF: "dump_extra=freq=keyframe",
+				Reason:   "HEVC copy to MPEG-TS: ensure VPS/SPS/PPS included for mid-stream joins",
+			}
+		default:
+			return BitstreamFilterInfo{
+				Reason: "MPEG-TS: no BSF needed for this codec",
+			}
 		}
 	case FormatFLV, FormatMP4:
 		// FLV and MP4 use AVCC format natively, no video BSF needed
@@ -261,7 +275,7 @@ func (d *CodecDetector) DetectSourceCodecs(ctx context.Context, streamURL string
 		switch key {
 		case "codec_name":
 			info.VideoCodec = value
-			info.VideoFamily = mapFFprobeCodecToFamily(value)
+			info.VideoFamily = MapFFprobeCodecToFamily(value)
 		case "width":
 			info.Resolution = value
 		case "height":
@@ -299,7 +313,7 @@ func (d *CodecDetector) DetectSourceCodecs(ctx context.Context, streamURL string
 			parts := strings.SplitN(line, "=", 2)
 			if len(parts) == 2 && strings.TrimSpace(parts[0]) == "codec_name" {
 				info.AudioCodec = strings.TrimSpace(parts[1])
-				info.AudioFamily = mapFFprobeCodecToFamily(info.AudioCodec)
+				info.AudioFamily = MapFFprobeCodecToFamily(info.AudioCodec)
 				break
 			}
 		}
@@ -319,8 +333,10 @@ func (d *CodecDetector) DetectSourceCodecs(ctx context.Context, streamURL string
 	return info, nil
 }
 
-// mapFFprobeCodecToFamily maps ffprobe codec names to codec families
-func mapFFprobeCodecToFamily(codecName string) CodecFamily {
+// MapFFprobeCodecToFamily maps ffprobe codec names to codec families.
+// Use this when you have a codec name from ffprobe output (e.g., "h264", "aac")
+// and need to compare it with an encoder-based codec family.
+func MapFFprobeCodecToFamily(codecName string) CodecFamily {
 	codecName = strings.ToLower(codecName)
 
 	// Direct mappings
@@ -354,6 +370,26 @@ func mapFFprobeCodecToFamily(codecName string) CodecFamily {
 	}
 
 	return CodecFamilyUnknown
+}
+
+// SourceMatchesTargetCodec checks if the source codec (from ffprobe) matches the target encoder.
+// This is useful for determining if we can use copy mode instead of re-encoding.
+// For example, if source is "h264" and target is "libx264" or "h264_nvenc", they match (same family).
+func SourceMatchesTargetCodec(sourceCodec, targetEncoder string) bool {
+	// If target is copy, obviously no encoding needed
+	if targetEncoder == "copy" || targetEncoder == "" {
+		return true
+	}
+
+	sourceFamily := MapFFprobeCodecToFamily(sourceCodec)
+	targetFamily := GetCodecFamily(targetEncoder)
+
+	// If either is unknown, can't determine match - default to transcoding
+	if sourceFamily == CodecFamilyUnknown || targetFamily == CodecFamilyUnknown {
+		return false
+	}
+
+	return sourceFamily == targetFamily
 }
 
 // ApplyBitstreamFilters adds the appropriate bitstream filter arguments to a CommandBuilder

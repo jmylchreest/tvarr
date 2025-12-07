@@ -206,6 +206,9 @@ export interface RelayProfile {
   fallback_enabled?: boolean;
   fallback_error_threshold?: number;
   fallback_recovery_interval?: number;
+  // Smart codec matching
+  force_video_transcode?: boolean;
+  force_audio_transcode?: boolean;
   // Statistics
   success_count?: number;
   failure_count?: number;
@@ -243,6 +246,8 @@ export interface CreateRelayProfileRequest {
   fallback_enabled?: boolean;
   fallback_error_threshold?: number;
   fallback_recovery_interval?: number;
+  force_video_transcode?: boolean;
+  force_audio_transcode?: boolean;
 }
 
 export interface UpdateRelayProfileRequest {
@@ -272,6 +277,8 @@ export interface UpdateRelayProfileRequest {
   fallback_enabled?: boolean;
   fallback_error_threshold?: number;
   fallback_recovery_interval?: number;
+  force_video_transcode?: boolean;
+  force_audio_transcode?: boolean;
 }
 
 // Profile Test Types

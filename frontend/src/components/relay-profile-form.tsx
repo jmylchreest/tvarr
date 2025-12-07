@@ -13,6 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { AutoHideSelectField } from '@/components/ui/auto-hide-select';
 import {
   Collapsible,
   CollapsibleContent,
@@ -50,24 +51,45 @@ const AUDIO_CODECS = [
   { value: 'copy', label: 'Copy (No transcode)' },
 ];
 
-const VIDEO_PRESETS = [
-  { value: 'ultrafast', label: 'Ultra Fast' },
-  { value: 'superfast', label: 'Super Fast' },
-  { value: 'veryfast', label: 'Very Fast' },
-  { value: 'faster', label: 'Faster' },
-  { value: 'fast', label: 'Fast' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'slow', label: 'Slow' },
-  { value: 'slower', label: 'Slower' },
-  { value: 'veryslow', label: 'Very Slow' },
-];
+// Codec-specific presets - only some encoders support presets
+const CODEC_PRESETS: Record<string, { value: string; label: string }[]> = {
+  // x264/x265 software encoders use the standard preset names
+  libx264: [
+    { value: 'ultrafast', label: 'Ultra Fast' },
+    { value: 'superfast', label: 'Super Fast' },
+    { value: 'veryfast', label: 'Very Fast' },
+    { value: 'faster', label: 'Faster' },
+    { value: 'fast', label: 'Fast' },
+    { value: 'medium', label: 'Medium' },
+    { value: 'slow', label: 'Slow' },
+    { value: 'slower', label: 'Slower' },
+    { value: 'veryslow', label: 'Very Slow' },
+  ],
+  libx265: [
+    { value: 'ultrafast', label: 'Ultra Fast' },
+    { value: 'superfast', label: 'Super Fast' },
+    { value: 'veryfast', label: 'Very Fast' },
+    { value: 'faster', label: 'Faster' },
+    { value: 'fast', label: 'Fast' },
+    { value: 'medium', label: 'Medium' },
+    { value: 'slow', label: 'Slow' },
+    { value: 'slower', label: 'Slower' },
+    { value: 'veryslow', label: 'Very Slow' },
+  ],
+  // VP9 and AV1 use different speed controls (cpu-used) - not presets
+  // Users can set these via custom flags if needed
+};
 
+// Helper to get presets for a codec
+function getPresetsForCodec(codec: string): { value: string; label: string }[] {
+  return CODEC_PRESETS[codec] || [];
+}
+
+// Note: Only MPEG-TS is suitable for live streaming via HTTP chunked transfer.
+// HLS requires file-based segments, MP4/MKV need seekable output, FLV requires RTMP.
+// The AutoHideSelectField will hide this when there's only one option.
 const OUTPUT_FORMATS = [
   { value: 'mpegts', label: 'MPEG-TS' },
-  { value: 'hls', label: 'HLS' },
-  { value: 'flv', label: 'FLV' },
-  { value: 'matroska', label: 'Matroska (MKV)' },
-  { value: 'mp4', label: 'MP4' },
 ];
 
 const HWACCEL_OPTIONS = [
@@ -113,19 +135,16 @@ export function RelayProfileForm({
     fallback_enabled: profile?.fallback_enabled ?? true,  // GORM default: true
     fallback_error_threshold: profile?.fallback_error_threshold?.toString() || '3',
     fallback_recovery_interval: profile?.fallback_recovery_interval?.toString() || '30',  // GORM default: 30
+    // Smart codec matching - when false, use copy if source matches target
+    force_video_transcode: profile?.force_video_transcode ?? false,  // GORM default: false
+    force_audio_transcode: profile?.force_audio_transcode ?? false,  // GORM default: false
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showAdvancedVideo, setShowAdvancedVideo] = useState(
-    !!(profile?.video_maxrate || profile?.video_width || profile?.video_height)
-  );
-  const [showHwAccelAdvanced, setShowHwAccelAdvanced] = useState(
-    !!(profile?.hw_accel_device || profile?.hw_accel_output_format || profile?.hw_accel_decoder_codec)
-  );
-  const [showCustomFlags, setShowCustomFlags] = useState(
-    !!(profile?.input_options || profile?.output_options || profile?.filter_complex)
-  );
-  const [showFallback, setShowFallback] = useState(profile?.fallback_enabled ?? true);
+  // All collapsible sections default to collapsed
+  const [showAdvancedVideo, setShowAdvancedVideo] = useState(false);
+  const [showHwAccelAdvanced, setShowHwAccelAdvanced] = useState(false);
+  const [showCustomFlags, setShowCustomFlags] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -171,6 +190,8 @@ export function RelayProfileForm({
         fallback_recovery_interval: formData.fallback_recovery_interval
           ? parseInt(formData.fallback_recovery_interval)
           : undefined,
+        force_video_transcode: formData.force_video_transcode,
+        force_audio_transcode: formData.force_audio_transcode,
       };
 
       await onSubmit(data);
@@ -253,28 +274,16 @@ export function RelayProfileForm({
           )}
         </div>
 
-        {isVideoTranscode && (
-          <div className="space-y-2">
-            <Label htmlFor="video_preset" className="italic">
-              Video Preset
-            </Label>
-            <Select
-              value={formData.video_preset}
-              onValueChange={(value) => setFormData({ ...formData, video_preset: value })}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select preset" />
-              </SelectTrigger>
-              <SelectContent>
-                {VIDEO_PRESETS.map((preset) => (
-                  <SelectItem key={preset.value} value={preset.value}>
-                    {preset.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
+        {/* Video Preset - only shown for codecs that support presets (x264/x265) */}
+        <AutoHideSelectField
+          id="video_preset"
+          label="Video Preset"
+          labelClassName="italic"
+          options={getPresetsForCodec(formData.video_codec)}
+          value={formData.video_preset}
+          onValueChange={(value) => setFormData({ ...formData, video_preset: value })}
+          placeholder="Select preset"
+        />
 
         {/* Advanced Video Settings */}
         {isVideoTranscode && (
@@ -509,25 +518,14 @@ export function RelayProfileForm({
         )}
       </div>
 
-      {/* Output Format */}
-      <div className="space-y-2">
-        <Label htmlFor="output_format">Output Format</Label>
-        <Select
-          value={formData.output_format}
-          onValueChange={(value) => setFormData({ ...formData, output_format: value })}
-        >
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {OUTPUT_FORMATS.map((format) => (
-              <SelectItem key={format.value} value={format.value}>
-                {format.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      {/* Output Format - Auto-hides when only one option available */}
+      <AutoHideSelectField
+        id="output_format"
+        label="Output Format"
+        options={OUTPUT_FORMATS}
+        value={formData.output_format}
+        onValueChange={(value) => setFormData({ ...formData, output_format: value })}
+      />
 
       {/* Custom FFmpeg Flags */}
       <Collapsible open={showCustomFlags} onOpenChange={setShowCustomFlags}>
@@ -590,16 +588,53 @@ export function RelayProfileForm({
         </CollapsibleContent>
       </Collapsible>
 
-      {/* Fallback Settings */}
-      <Collapsible open={showFallback} onOpenChange={setShowFallback}>
-        <CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
-          {showFallback ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-          Fallback Settings
-        </CollapsibleTrigger>
-        <CollapsibleContent className="space-y-4 pt-4">
+      {/* Encoding Behavior - shows when any transcoding is configured */}
+      {(isVideoTranscode || isAudioTranscode) && (
+        <div className="space-y-4 border rounded-lg p-4 bg-muted/30">
+          <div className="space-y-1">
+            <h4 className="text-sm font-medium">Encoding Behavior</h4>
+            <p className="text-xs text-muted-foreground">
+              Smart codec matching automatically copies streams instead of re-encoding when source matches target codec family.
+            </p>
+          </div>
+
+          {/* Force transcode options */}
+          {isVideoTranscode && (
+            <div className="flex items-center justify-between">
+              <div>
+                <Label htmlFor="force_video_transcode">Always Transcode Video</Label>
+                <p className="text-xs text-muted-foreground">
+                  Force video transcoding even when source codec matches target
+                </p>
+              </div>
+              <Switch
+                id="force_video_transcode"
+                checked={formData.force_video_transcode}
+                onCheckedChange={(checked) => setFormData({ ...formData, force_video_transcode: checked })}
+              />
+            </div>
+          )}
+
+          {isAudioTranscode && (
+            <div className="flex items-center justify-between">
+              <div>
+                <Label htmlFor="force_audio_transcode">Always Transcode Audio</Label>
+                <p className="text-xs text-muted-foreground">
+                  Force audio transcoding even when source codec matches target
+                </p>
+              </div>
+              <Switch
+                id="force_audio_transcode"
+                checked={formData.force_audio_transcode}
+                onCheckedChange={(checked) => setFormData({ ...formData, force_audio_transcode: checked })}
+              />
+            </div>
+          )}
+
+          {/* Fallback to software/copy on error */}
           <div className="flex items-center justify-between">
             <div>
-              <Label htmlFor="fallback_enabled">Enable Fallback to Copy Mode</Label>
+              <Label htmlFor="fallback_enabled">Fallback on Error</Label>
               <p className="text-xs text-muted-foreground">
                 Automatically fallback to copy mode if transcoding fails repeatedly
               </p>
@@ -610,10 +645,12 @@ export function RelayProfileForm({
               onCheckedChange={(checked) => setFormData({ ...formData, fallback_enabled: checked })}
             />
           </div>
+
+          {/* Fallback thresholds - only shown when fallback is enabled */}
           {formData.fallback_enabled && (
-            <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
+            <div className="grid gap-4 grid-cols-1 md:grid-cols-2 pl-4 border-l-2 border-muted">
               <div className="space-y-2">
-                <Label htmlFor="fallback_error_threshold" className="italic">
+                <Label htmlFor="fallback_error_threshold" className="italic text-sm">
                   Error Threshold
                 </Label>
                 <Input
@@ -621,31 +658,33 @@ export function RelayProfileForm({
                   type="number"
                   value={formData.fallback_error_threshold}
                   onChange={(e) => setFormData({ ...formData, fallback_error_threshold: e.target.value })}
-                  placeholder="e.g., 3"
+                  placeholder="3"
+                  className="h-8"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Number of errors before falling back
+                  Errors before fallback
                 </p>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="fallback_recovery_interval" className="italic">
-                  Recovery Interval (seconds)
+                <Label htmlFor="fallback_recovery_interval" className="italic text-sm">
+                  Recovery Interval (sec)
                 </Label>
                 <Input
                   id="fallback_recovery_interval"
                   type="number"
                   value={formData.fallback_recovery_interval}
                   onChange={(e) => setFormData({ ...formData, fallback_recovery_interval: e.target.value })}
-                  placeholder="e.g., 300"
+                  placeholder="30"
+                  className="h-8"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Seconds to wait before retrying transcoding
+                  Wait before retrying
                 </p>
               </div>
             </div>
           )}
-        </CollapsibleContent>
-      </Collapsible>
+        </div>
+      )}
     </form>
   );
 }

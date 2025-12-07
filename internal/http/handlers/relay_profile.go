@@ -206,6 +206,8 @@ type RelayProfileResponse struct {
 	FallbackEnabled          bool   `json:"fallback_enabled"`
 	FallbackErrorThreshold   int    `json:"fallback_error_threshold"`
 	FallbackRecoveryInterval int    `json:"fallback_recovery_interval"`
+	ForceVideoTranscode      bool   `json:"force_video_transcode"`
+	ForceAudioTranscode      bool   `json:"force_audio_transcode"`
 	// Statistics
 	SuccessCount int64  `json:"success_count"`
 	FailureCount int64  `json:"failure_count"`
@@ -250,6 +252,8 @@ func RelayProfileFromModel(p *models.RelayProfile) RelayProfileResponse {
 		FallbackEnabled:          p.FallbackEnabled,
 		FallbackErrorThreshold:   p.FallbackErrorThreshold,
 		FallbackRecoveryInterval: p.FallbackRecoveryInterval,
+		ForceVideoTranscode:      p.ForceVideoTranscode,
+		ForceAudioTranscode:      p.ForceAudioTranscode,
 		SuccessCount:             p.SuccessCount,
 		FailureCount:             p.FailureCount,
 		LastErrorMsg:             p.LastErrorMsg,
@@ -371,8 +375,13 @@ type CreateRelayProfileInput struct {
 		OutputFormat        string `json:"output_format,omitempty" doc:"Output format (mpegts, hls, flv, mp4)"`
 		InputOptions        string `json:"input_options,omitempty" doc:"Custom FFmpeg input options"`
 		OutputOptions       string `json:"output_options,omitempty" doc:"Custom FFmpeg output options"`
-		FilterComplex       string `json:"filter_complex,omitempty" doc:"Custom filter complex string"`
-		IsDefault           bool   `json:"is_default,omitempty" doc:"Set as default profile"`
+		FilterComplex            string `json:"filter_complex,omitempty" doc:"Custom filter complex string"`
+		IsDefault                bool   `json:"is_default,omitempty" doc:"Set as default profile"`
+		FallbackEnabled          *bool  `json:"fallback_enabled,omitempty" doc:"Enable fallback to copy mode on error"`
+		FallbackErrorThreshold   int    `json:"fallback_error_threshold,omitempty" doc:"Number of errors before fallback (1-10)"`
+		FallbackRecoveryInterval int    `json:"fallback_recovery_interval,omitempty" doc:"Seconds between recovery attempts (5-300)"`
+		ForceVideoTranscode      bool   `json:"force_video_transcode,omitempty" doc:"Force video transcoding even when source matches target codec"`
+		ForceAudioTranscode      bool   `json:"force_audio_transcode,omitempty" doc:"Force audio transcoding even when source matches target codec"`
 	}
 }
 
@@ -420,9 +429,20 @@ func (h *RelayProfileHandler) Create(ctx context.Context, input *CreateRelayProf
 		InputOptions:         input.Body.InputOptions,
 		OutputOptions:        input.Body.OutputOptions,
 		FilterComplex:        input.Body.FilterComplex,
-		CustomFlagsValidated: flagsValidated,
-		CustomFlagsWarnings:  flagsWarnings,
-		IsDefault:            input.Body.IsDefault,
+		CustomFlagsValidated:    flagsValidated,
+		CustomFlagsWarnings:     flagsWarnings,
+		IsDefault:               input.Body.IsDefault,
+		FallbackErrorThreshold:  input.Body.FallbackErrorThreshold,
+		FallbackRecoveryInterval: input.Body.FallbackRecoveryInterval,
+		ForceVideoTranscode:     input.Body.ForceVideoTranscode,
+		ForceAudioTranscode:     input.Body.ForceAudioTranscode,
+	}
+
+	// Handle fallback_enabled (defaults to true if not specified)
+	if input.Body.FallbackEnabled != nil {
+		profile.FallbackEnabled = *input.Body.FallbackEnabled
+	} else {
+		profile.FallbackEnabled = true // Default to enabled
 	}
 
 	// Set defaults if not provided
@@ -476,9 +496,14 @@ type UpdateRelayProfileInput struct {
 		GpuIndex            *int    `json:"gpu_index,omitempty" doc:"GPU device index (-1 for auto)"`
 		OutputFormat        string  `json:"output_format,omitempty" doc:"Output format"`
 		InputOptions        *string `json:"input_options,omitempty" doc:"Custom FFmpeg input options"`
-		OutputOptions       *string `json:"output_options,omitempty" doc:"Custom FFmpeg output options"`
-		FilterComplex       *string `json:"filter_complex,omitempty" doc:"Custom filter complex string"`
-		Enabled             *bool   `json:"enabled,omitempty" doc:"Whether the profile is enabled"`
+		OutputOptions            *string `json:"output_options,omitempty" doc:"Custom FFmpeg output options"`
+		FilterComplex            *string `json:"filter_complex,omitempty" doc:"Custom filter complex string"`
+		Enabled                  *bool   `json:"enabled,omitempty" doc:"Whether the profile is enabled"`
+		FallbackEnabled          *bool   `json:"fallback_enabled,omitempty" doc:"Enable fallback to copy mode on error"`
+		FallbackErrorThreshold   *int    `json:"fallback_error_threshold,omitempty" doc:"Number of errors before fallback (1-10)"`
+		FallbackRecoveryInterval *int    `json:"fallback_recovery_interval,omitempty" doc:"Seconds between recovery attempts (5-300)"`
+		ForceVideoTranscode      *bool   `json:"force_video_transcode,omitempty" doc:"Force video transcoding even when source matches target codec"`
+		ForceAudioTranscode      *bool   `json:"force_audio_transcode,omitempty" doc:"Force audio transcoding even when source matches target codec"`
 	}
 }
 
@@ -592,6 +617,21 @@ func (h *RelayProfileHandler) Update(ctx context.Context, input *UpdateRelayProf
 		}
 		if input.Body.Enabled != nil {
 			profile.Enabled = *input.Body.Enabled
+		}
+		if input.Body.FallbackEnabled != nil {
+			profile.FallbackEnabled = *input.Body.FallbackEnabled
+		}
+		if input.Body.FallbackErrorThreshold != nil {
+			profile.FallbackErrorThreshold = *input.Body.FallbackErrorThreshold
+		}
+		if input.Body.FallbackRecoveryInterval != nil {
+			profile.FallbackRecoveryInterval = *input.Body.FallbackRecoveryInterval
+		}
+		if input.Body.ForceVideoTranscode != nil {
+			profile.ForceVideoTranscode = *input.Body.ForceVideoTranscode
+		}
+		if input.Body.ForceAudioTranscode != nil {
+			profile.ForceAudioTranscode = *input.Body.ForceAudioTranscode
 		}
 
 		// Validate custom flags if any were updated

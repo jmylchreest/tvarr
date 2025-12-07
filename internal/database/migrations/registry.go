@@ -64,6 +64,9 @@ func AllMigrations() []Migration {
 		// Codec caching for ffprobe pre-detection
 		migration025LastKnownCodecs(),
 
+		// Smart codec matching flags for relay profiles
+		migration026ForceTranscodeFlags(),
+
 		// Note: Logo caching (Phase 10) uses file-based storage with
 		// in-memory indexing, no database tables required.
 	}
@@ -808,6 +811,31 @@ func migration025LastKnownCodecs() Migration {
 		},
 		Down: func(tx *gorm.DB) error {
 			return tx.Migrator().DropTable("last_known_codecs")
+		},
+	}
+}
+
+// migration026ForceTranscodeFlags adds force_video_transcode and force_audio_transcode
+// columns to relay_profiles for smart codec matching (copy when source matches target).
+func migration026ForceTranscodeFlags() Migration {
+	return Migration{
+		Version:     "026",
+		Description: "Add force_video_transcode and force_audio_transcode to relay_profiles",
+		Up: func(tx *gorm.DB) error {
+			// AutoMigrate will add the new columns (default: false)
+			return tx.AutoMigrate(&models.RelayProfile{})
+		},
+		Down: func(tx *gorm.DB) error {
+			migrator := tx.Migrator()
+			columns := []string{"force_video_transcode", "force_audio_transcode"}
+			for _, col := range columns {
+				if migrator.HasColumn(&models.RelayProfile{}, col) {
+					if err := migrator.DropColumn(&models.RelayProfile{}, col); err != nil {
+						tx.Logger.Warn(tx.Statement.Context, "failed to drop column %s: %v", col, err)
+					}
+				}
+			}
+			return nil
 		},
 	}
 }

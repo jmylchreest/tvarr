@@ -289,8 +289,23 @@ func (s *RelaySession) runFFmpegPipeline() error {
 			}
 		}
 
-		// Apply hardware acceleration if determined
-		if hwAccelType != "" {
+		// EARLY DECISION: Determine if video copy will be used BEFORE applying hwaccel
+		// hwaccel is only useful for decoding/encoding, not for copy mode
+		videoCodec := string(s.Profile.VideoCodec)
+		willUseVideoCopy := s.Profile.VideoCodec == models.VideoCodecCopy
+		if !willUseVideoCopy && !s.Profile.ForceVideoTranscode && s.CachedCodecInfo != nil && s.CachedCodecInfo.VideoCodec != "" {
+			if ffmpeg.SourceMatchesTargetCodec(s.CachedCodecInfo.VideoCodec, videoCodec) {
+				slog.Info("Smart codec match: source video matches target, using copy instead of transcode",
+					slog.String("source_codec", s.CachedCodecInfo.VideoCodec),
+					slog.String("target_encoder", videoCodec),
+					slog.String("profile", s.Profile.Name))
+				willUseVideoCopy = true
+			}
+		}
+
+		// Apply hardware acceleration ONLY if we're actually going to transcode video
+		// hwaccel is for decoding - if we're copying, there's no decoding/encoding happening
+		if hwAccelType != "" && !willUseVideoCopy {
 			// Initialize hardware device first (critical for proper HW acceleration)
 			devicePath := s.Profile.HWAccelDevice
 			if devicePath == "" && s.Profile.GpuIndex >= 0 {
@@ -316,6 +331,10 @@ func (s *RelaySession) runFFmpegPipeline() error {
 			if s.Profile.HWAccelExtraOptions != "" {
 				builder.ApplyCustomInputOptions(s.Profile.HWAccelExtraOptions)
 			}
+		} else if willUseVideoCopy {
+			slog.Debug("Skipping hwaccel for video copy mode",
+				slog.String("hwaccel", hwAccelType),
+				slog.String("profile", s.Profile.Name))
 		}
 	}
 
@@ -347,19 +366,25 @@ func (s *RelaySession) runFFmpegPipeline() error {
 	builder.OutputArgs("-map", "0:v:0").
 		OutputArgs("-map", "0:a:0?") // ? makes audio optional
 
-	// Determine video codec and family for BSF selection
+	// Apply video codec and family for BSF selection
+	// The copy decision was already made above, now apply it
 	var videoCodecFamily ffmpeg.CodecFamily
-	var videoCodec string
 	var isVideoCopy bool
 
 	if s.Profile != nil {
-		videoCodec = string(s.Profile.VideoCodec)
-		if s.Profile.VideoCodec == models.VideoCodecCopy {
+		// Use the pre-computed copy decision
+		videoCodec := string(s.Profile.VideoCodec)
+		willUseVideoCopy := s.Profile.VideoCodec == models.VideoCodecCopy
+		if !willUseVideoCopy && !s.Profile.ForceVideoTranscode && s.CachedCodecInfo != nil && s.CachedCodecInfo.VideoCodec != "" {
+			willUseVideoCopy = ffmpeg.SourceMatchesTargetCodec(s.CachedCodecInfo.VideoCodec, videoCodec)
+		}
+
+		if willUseVideoCopy {
 			builder.VideoCodec("copy")
 			isVideoCopy = true
 			// For copy mode, use cached codec info if available for accurate BSF selection
 			if s.CachedCodecInfo != nil && s.CachedCodecInfo.VideoCodec != "" {
-				videoCodecFamily = ffmpeg.GetCodecFamily(s.CachedCodecInfo.VideoCodec)
+				videoCodecFamily = ffmpeg.MapFFprobeCodecToFamily(s.CachedCodecInfo.VideoCodec)
 				slog.Debug("Using cached codec for BSF selection",
 					slog.String("source_codec", s.CachedCodecInfo.VideoCodec),
 					slog.String("codec_family", string(videoCodecFamily)))
@@ -391,7 +416,19 @@ func (s *RelaySession) runFFmpegPipeline() error {
 			}
 		}
 
-		if s.Profile.AudioCodec == models.AudioCodecCopy {
+		// Smart codec matching for audio: if source matches target and ForceAudioTranscode is false, use copy
+		useAudioCopy := s.Profile.AudioCodec == models.AudioCodecCopy
+		if !useAudioCopy && !s.Profile.ForceAudioTranscode && s.CachedCodecInfo != nil && s.CachedCodecInfo.AudioCodec != "" {
+			if ffmpeg.SourceMatchesTargetCodec(s.CachedCodecInfo.AudioCodec, string(s.Profile.AudioCodec)) {
+				slog.Info("Smart codec match: source audio matches target, using copy instead of transcode",
+					slog.String("source_codec", s.CachedCodecInfo.AudioCodec),
+					slog.String("target_encoder", string(s.Profile.AudioCodec)),
+					slog.String("profile", s.Profile.Name))
+				useAudioCopy = true
+			}
+		}
+
+		if useAudioCopy {
 			builder.AudioCodec("copy")
 		} else {
 			builder.AudioCodec(string(s.Profile.AudioCodec))

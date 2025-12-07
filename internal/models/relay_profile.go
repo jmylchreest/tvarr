@@ -131,6 +131,10 @@ type RelayProfile struct {
 	FallbackErrorThreshold   int  `gorm:"default:3" json:"fallback_error_threshold"`       // Errors before fallback (1-10)
 	FallbackRecoveryInterval int  `gorm:"default:30" json:"fallback_recovery_interval"`    // Seconds between recovery attempts (5-300)
 
+	// Smart codec matching - when false, use copy if source matches target codec family
+	ForceVideoTranscode bool `gorm:"default:false" json:"force_video_transcode"` // Force video transcoding even if source matches target codec
+	ForceAudioTranscode bool `gorm:"default:false" json:"force_audio_transcode"` // Force audio transcoding even if source matches target codec
+
 	// Custom flags validation tracking
 	CustomFlagsValidated bool   `gorm:"default:false" json:"custom_flags_validated"`
 	CustomFlagsWarnings  string `gorm:"size:2000" json:"custom_flags_warnings,omitempty"` // JSON array of warnings

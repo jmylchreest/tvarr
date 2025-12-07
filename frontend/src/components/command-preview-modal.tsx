@@ -20,7 +20,6 @@ import {
   Terminal,
   Copy,
   Check,
-  Info,
   RefreshCw,
 } from 'lucide-react';
 import { RelayProfile, CommandPreview } from '@/types/api';
@@ -151,42 +150,56 @@ export function CommandPreviewModal({ profile, trigger }: CommandPreviewModalPro
           {/* Preview Content */}
           {preview && (
             <div className="space-y-4">
-              {/* Configuration Summary */}
-              <div className="grid grid-cols-3 gap-4">
-                <div className="p-3 rounded-lg bg-muted/50">
-                  <p className="text-xs text-muted-foreground">Video Codec</p>
-                  <p className="text-sm font-semibold">
-                    {preview.video_codec || 'Default'}
-                  </p>
+              {/* Configuration Summary - Categorized List */}
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-1 text-sm p-3 rounded-lg bg-muted/30 border">
+                {/* Video Settings */}
+                <div className="space-y-0.5">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Video</p>
+                  <p><span className="text-muted-foreground">Codec:</span> {preview.video_codec || 'copy'}</p>
+                  {(profile.video_bitrate ?? 0) > 0 && (
+                    <p><span className="text-muted-foreground">Bitrate:</span> {profile.video_bitrate}k</p>
+                  )}
+                  {profile.video_preset && (
+                    <p><span className="text-muted-foreground">Preset:</span> {profile.video_preset}</p>
+                  )}
+                  {preview.bitstream_filter && (
+                    <p><span className="text-muted-foreground">BSF:</span> {preview.bitstream_filter}</p>
+                  )}
                 </div>
-                <div className="p-3 rounded-lg bg-muted/50">
-                  <p className="text-xs text-muted-foreground">Audio Codec</p>
-                  <p className="text-sm font-semibold">
-                    {preview.audio_codec || 'Default'}
-                  </p>
+
+                {/* Audio Settings */}
+                <div className="space-y-0.5">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Audio</p>
+                  <p><span className="text-muted-foreground">Codec:</span> {preview.audio_codec || 'copy'}</p>
+                  {(profile.audio_bitrate ?? 0) > 0 && (
+                    <p><span className="text-muted-foreground">Bitrate:</span> {profile.audio_bitrate}k</p>
+                  )}
+                  {(profile.audio_sample_rate ?? 0) > 0 && (
+                    <p><span className="text-muted-foreground">Sample Rate:</span> {profile.audio_sample_rate}Hz</p>
+                  )}
                 </div>
-                <div className="p-3 rounded-lg bg-muted/50">
-                  <p className="text-xs text-muted-foreground">HW Accel</p>
-                  <p className="text-sm font-semibold">
-                    {preview.hw_accel || 'None'}
+
+                {/* Encoding Behavior */}
+                <div className="space-y-0.5">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Behavior</p>
+                  <p>
+                    <span className="text-muted-foreground">HW Accel:</span>{' '}
+                    {preview.hw_accel || 'none'}
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">Force Video:</span>{' '}
+                    {profile.force_video_transcode ? 'yes' : 'no'}
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">Force Audio:</span>{' '}
+                    {profile.force_audio_transcode ? 'yes' : 'no'}
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">Fallback:</span>{' '}
+                    {profile.fallback_enabled !== false ? 'enabled' : 'disabled'}
                   </p>
                 </div>
               </div>
-
-              {/* Notes */}
-              {preview.notes && preview.notes.length > 0 && (
-                <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
-                  <div className="flex items-center gap-2 text-blue-600 mb-2">
-                    <Info className="h-4 w-4" />
-                    <span className="font-medium">Configuration Notes</span>
-                  </div>
-                  <ul className="space-y-1 text-sm text-blue-600">
-                    {preview.notes.map((note, i) => (
-                      <li key={i}>{note}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
 
               {/* Full Command */}
               <div className="space-y-2">
