@@ -19,6 +19,7 @@ import {
   Paintbrush,
   ChevronRight,
   ChevronDown,
+  Users,
 } from 'lucide-react';
 import { useState } from 'react';
 import { usePathname } from 'next/navigation';
@@ -97,6 +98,11 @@ const navigation = [
         title: 'Relay Profiles',
         url: '/admin/relays',
         icon: Zap,
+      },
+      {
+        title: 'Client Detection',
+        url: '/admin/client-detection',
+        icon: Users,
       },
     ],
   },

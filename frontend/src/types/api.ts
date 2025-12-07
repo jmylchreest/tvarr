@@ -975,3 +975,78 @@ export interface ExpressionEditorConfig {
   debounceMs?: number;
   showTestResults?: boolean;
 }
+
+// Relay Profile Mapping Types (Client Auto-Detection)
+export interface RelayProfileMapping {
+  id: string;
+  name: string;
+  description?: string;
+  expression: string;
+  priority: number;
+  is_enabled: boolean;
+  is_system: boolean;
+  // Accepted codecs (array of codec strings the client can handle)
+  accepted_video_codecs: string[];
+  accepted_audio_codecs: string[];
+  accepted_containers: string[];
+  // Preferred codecs when transcoding is needed
+  preferred_video_codec: VideoCodec;
+  preferred_audio_codec: AudioCodec;
+  preferred_container: ContainerFormat;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RelayProfileMappingListResponse {
+  mappings: RelayProfileMapping[];
+}
+
+export interface RelayProfileMappingStats {
+  total: number;
+  enabled: number;
+  system: number;
+  custom: number;
+}
+
+export interface CreateRelayProfileMappingRequest {
+  name: string;
+  description?: string;
+  expression: string;
+  priority?: number;
+  is_enabled?: boolean;
+  accepted_video_codecs?: string[];
+  accepted_audio_codecs?: string[];
+  accepted_containers?: string[];
+  preferred_video_codec?: VideoCodec;
+  preferred_audio_codec?: AudioCodec;
+  preferred_container?: ContainerFormat;
+}
+
+export interface UpdateRelayProfileMappingRequest {
+  name?: string;
+  description?: string;
+  expression?: string;
+  priority?: number;
+  is_enabled?: boolean;
+  accepted_video_codecs?: string[];
+  accepted_audio_codecs?: string[];
+  accepted_containers?: string[];
+  preferred_video_codec?: VideoCodec;
+  preferred_audio_codec?: AudioCodec;
+  preferred_container?: ContainerFormat;
+}
+
+export interface ReorderMappingRequest {
+  id: string;
+  priority: number;
+}
+
+export interface TestMappingExpressionRequest {
+  expression: string;
+  test_data: Record<string, string>;
+}
+
+export interface TestMappingExpressionResponse {
+  matches: boolean;
+  error?: string;
+}

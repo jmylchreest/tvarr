@@ -10,6 +10,7 @@ import (
 type VideoCodec string
 
 const (
+	VideoCodecAuto VideoCodec = "auto" // Auto-detect based on client mapping rules
 	VideoCodecCopy VideoCodec = "copy" // Pass-through (no transcoding)
 	VideoCodecNone VideoCodec = "none" // No video codec (use FFmpeg flags)
 	VideoCodecH264 VideoCodec = "h264" // H.264/AVC
@@ -22,6 +23,8 @@ const (
 // This maps abstract codec types to concrete FFmpeg encoder names.
 func (c VideoCodec) GetFFmpegEncoder(hwaccel HWAccelType) string {
 	switch c {
+	case VideoCodecAuto:
+		return "" // Auto requires resolution via RelayProfileMapping
 	case VideoCodecCopy:
 		return "copy"
 	case VideoCodecNone:
@@ -93,6 +96,7 @@ func (c VideoCodec) IsFMP4Only() bool {
 type AudioCodec string
 
 const (
+	AudioCodecAuto AudioCodec = "auto" // Auto-detect based on client mapping rules
 	AudioCodecCopy AudioCodec = "copy" // Pass-through (no transcoding)
 	AudioCodecNone AudioCodec = "none" // No audio codec (use FFmpeg flags)
 	AudioCodecAAC  AudioCodec = "aac"  // AAC
@@ -105,6 +109,8 @@ const (
 // GetFFmpegEncoder returns the FFmpeg encoder name for this audio codec.
 func (c AudioCodec) GetFFmpegEncoder() string {
 	switch c {
+	case AudioCodecAuto:
+		return "" // Auto requires resolution via RelayProfileMapping
 	case AudioCodecCopy:
 		return "copy"
 	case AudioCodecNone:

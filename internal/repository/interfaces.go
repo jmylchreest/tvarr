@@ -333,3 +333,35 @@ type JobRepository interface {
 	// DeleteHistory deletes history records older than the specified time.
 	DeleteHistory(ctx context.Context, before time.Time) (int64, error)
 }
+
+// ReorderRequest represents a request to update an entity's priority.
+type ReorderRequest struct {
+	ID       models.ULID `json:"id"`
+	Priority int         `json:"priority"`
+}
+
+// RelayProfileMappingRepository defines operations for relay profile mapping persistence.
+type RelayProfileMappingRepository interface {
+	// Create creates a new relay profile mapping.
+	Create(ctx context.Context, mapping *models.RelayProfileMapping) error
+	// GetByID retrieves a relay profile mapping by ID.
+	GetByID(ctx context.Context, id models.ULID) (*models.RelayProfileMapping, error)
+	// GetAll retrieves all relay profile mappings.
+	GetAll(ctx context.Context) ([]*models.RelayProfileMapping, error)
+	// GetEnabled retrieves all enabled relay profile mappings.
+	GetEnabled(ctx context.Context) ([]*models.RelayProfileMapping, error)
+	// GetEnabledByPriority retrieves enabled mappings ordered by priority (lowest first).
+	GetEnabledByPriority(ctx context.Context) ([]*models.RelayProfileMapping, error)
+	// Update updates an existing relay profile mapping.
+	Update(ctx context.Context, mapping *models.RelayProfileMapping) error
+	// Delete deletes a relay profile mapping by ID.
+	Delete(ctx context.Context, id models.ULID) error
+	// Count returns the total number of relay profile mappings.
+	Count(ctx context.Context) (int64, error)
+	// CountEnabled returns the number of enabled mappings.
+	CountEnabled(ctx context.Context) (int64, error)
+	// CountSystem returns the number of system mappings.
+	CountSystem(ctx context.Context) (int64, error)
+	// Reorder updates the priority of multiple mappings in a batch.
+	Reorder(ctx context.Context, mappings []ReorderRequest) error
+}

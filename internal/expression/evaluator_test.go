@@ -533,3 +533,57 @@ func TestEvaluationResult(t *testing.T) {
 	assert.Len(t, result.Captures, 3)
 	assert.Equal(t, "group1", result.Captures[1])
 }
+
+func TestEvaluator_TautologyExpressions(t *testing.T) {
+	// Test expressions that should always be true (used for fallback rules)
+	// The recommended fallback pattern is 'user_agent contains ""' which always matches
+	// because every string contains an empty string
+
+	// Test with empty accessor - tautology should still match
+	emptyAccessor := newMockAccessor(map[string]string{})
+
+	// Test with populated accessor - tautology should still match
+	populatedAccessor := newMockAccessor(map[string]string{
+		"user_agent": "Mozilla/5.0",
+		"client_ip":  "192.168.1.1",
+	})
+
+	evaluator := NewEvaluator()
+
+	tests := []struct {
+		name     string
+		expr     string
+		expected bool
+	}{
+		{
+			name:     "user_agent contains empty string - recommended tautology",
+			expr:     `user_agent contains ""`,
+			expected: true, // Empty string is contained in any string (including empty)
+		},
+		{
+			name:     "empty expression - matches everything",
+			expr:     ``,
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name+" (empty accessor)", func(t *testing.T) {
+			parsed, err := Parse(tt.expr)
+			require.NoError(t, err)
+
+			result, err := evaluator.Evaluate(parsed, emptyAccessor)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, result.Matches)
+		})
+
+		t.Run(tt.name+" (populated accessor)", func(t *testing.T) {
+			parsed, err := Parse(tt.expr)
+			require.NoError(t, err)
+
+			result, err := evaluator.Evaluate(parsed, populatedAccessor)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, result.Matches)
+		})
+	}
+}

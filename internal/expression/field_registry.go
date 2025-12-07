@@ -24,10 +24,11 @@ type FieldDomain string
 
 // Field domains.
 const (
-	DomainStream FieldDomain = "stream" // Channel/stream fields
-	DomainEPG    FieldDomain = "epg"    // EPG/programme fields
-	DomainFilter FieldDomain = "filter" // Filter rule fields
-	DomainRule   FieldDomain = "rule"   // Data mapping rule fields
+	DomainStream  FieldDomain = "stream"  // Channel/stream fields
+	DomainEPG     FieldDomain = "epg"     // EPG/programme fields
+	DomainFilter  FieldDomain = "filter"  // Filter rule fields
+	DomainRule    FieldDomain = "rule"    // Data mapping rule fields
+	DomainRequest FieldDomain = "request" // HTTP request context fields (for client detection)
 )
 
 // String returns the string representation of the field domain.
@@ -183,6 +184,7 @@ func DefaultRegistry() *FieldRegistry {
 		registerChannelFields(defaultRegistry)
 		registerEPGFields(defaultRegistry)
 		registerSourceMetadataFields(defaultRegistry)
+		registerRequestContextFields(defaultRegistry)
 	})
 	return defaultRegistry
 }
@@ -370,6 +372,103 @@ func registerSourceMetadataFields(r *FieldRegistry) {
 		Type:        FieldTypeString,
 		Description: "The URL of the source",
 		Domains:     []FieldDomain{DomainStream, DomainEPG, DomainFilter},
+		ReadOnly:    true,
+	})
+}
+
+// registerRequestContextFields registers HTTP request context fields for client detection.
+func registerRequestContextFields(r *FieldRegistry) {
+	r.Register(&FieldDefinition{
+		Name:        "user_agent",
+		Type:        FieldTypeString,
+		Description: "The User-Agent header from the HTTP request",
+		Aliases:     []string{"ua"},
+		Domains:     []FieldDomain{DomainRequest},
+		ReadOnly:    true,
+	})
+
+	r.Register(&FieldDefinition{
+		Name:        "client_ip",
+		Type:        FieldTypeString,
+		Description: "The client IP address (considers X-Forwarded-For)",
+		Aliases:     []string{"ip", "remote_addr"},
+		Domains:     []FieldDomain{DomainRequest},
+		ReadOnly:    true,
+	})
+
+	r.Register(&FieldDefinition{
+		Name:        "request_path",
+		Type:        FieldTypeString,
+		Description: "The URL path of the request",
+		Aliases:     []string{"path"},
+		Domains:     []FieldDomain{DomainRequest},
+		ReadOnly:    true,
+	})
+
+	r.Register(&FieldDefinition{
+		Name:        "request_url",
+		Type:        FieldTypeString,
+		Description: "The full URL of the request",
+		Aliases:     []string{"url"},
+		Domains:     []FieldDomain{DomainRequest},
+		ReadOnly:    true,
+	})
+
+	r.Register(&FieldDefinition{
+		Name:        "query_params",
+		Type:        FieldTypeString,
+		Description: "The query string of the request",
+		Aliases:     []string{"query"},
+		Domains:     []FieldDomain{DomainRequest},
+		ReadOnly:    true,
+	})
+
+	r.Register(&FieldDefinition{
+		Name:        "x_forwarded_for",
+		Type:        FieldTypeString,
+		Description: "The X-Forwarded-For header value",
+		Domains:     []FieldDomain{DomainRequest},
+		ReadOnly:    true,
+	})
+
+	r.Register(&FieldDefinition{
+		Name:        "x_real_ip",
+		Type:        FieldTypeString,
+		Description: "The X-Real-IP header value",
+		Domains:     []FieldDomain{DomainRequest},
+		ReadOnly:    true,
+	})
+
+	r.Register(&FieldDefinition{
+		Name:        "accept",
+		Type:        FieldTypeString,
+		Description: "The Accept header value",
+		Domains:     []FieldDomain{DomainRequest},
+		ReadOnly:    true,
+	})
+
+	r.Register(&FieldDefinition{
+		Name:        "accept_language",
+		Type:        FieldTypeString,
+		Description: "The Accept-Language header value",
+		Domains:     []FieldDomain{DomainRequest},
+		ReadOnly:    true,
+	})
+
+	r.Register(&FieldDefinition{
+		Name:        "host",
+		Type:        FieldTypeString,
+		Description: "The Host header value",
+		Domains:     []FieldDomain{DomainRequest},
+		ReadOnly:    true,
+	})
+
+	r.Register(&FieldDefinition{
+		Name:        "referer",
+		Type:        FieldTypeString,
+		Description: "The Referer header value",
+		Aliases:     []string{"referrer"},
+		Domains:     []FieldDomain{DomainRequest},
 		ReadOnly:    true,
 	})
 }

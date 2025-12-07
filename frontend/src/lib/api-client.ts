@@ -17,6 +17,14 @@ import {
   DataMappingRule,
   DataMappingRuleListResponse,
   RelayProfile,
+  RelayProfileMapping,
+  RelayProfileMappingListResponse,
+  RelayProfileMappingStats,
+  CreateRelayProfileMappingRequest,
+  UpdateRelayProfileMappingRequest,
+  ReorderMappingRequest,
+  TestMappingExpressionRequest,
+  TestMappingExpressionResponse,
   RelayHealthApiResponse,
   RuntimeSettings,
   UpdateSettingsRequest,
@@ -984,6 +992,66 @@ class ApiClient {
   // Relay health check
   async getRelayHealth(): Promise<RelayHealthApiResponse> {
     return this.request<RelayHealthApiResponse>('/api/v1/relay/health');
+  }
+
+  // Relay Profile Mappings API (Client Auto-Detection)
+  async getRelayProfileMappings(): Promise<RelayProfileMapping[]> {
+    const response = await this.request<RelayProfileMappingListResponse>(
+      '/api/v1/relay-profile-mappings'
+    );
+    return response.mappings || [];
+  }
+
+  async getRelayProfileMapping(id: string): Promise<RelayProfileMapping> {
+    return this.request<RelayProfileMapping>(`/api/v1/relay-profile-mappings/${id}`);
+  }
+
+  async createRelayProfileMapping(
+    mapping: CreateRelayProfileMappingRequest
+  ): Promise<RelayProfileMapping> {
+    return this.request<RelayProfileMapping>('/api/v1/relay-profile-mappings', {
+      method: 'POST',
+      body: JSON.stringify(mapping),
+    });
+  }
+
+  async updateRelayProfileMapping(
+    id: string,
+    mapping: UpdateRelayProfileMappingRequest
+  ): Promise<RelayProfileMapping> {
+    return this.request<RelayProfileMapping>(`/api/v1/relay-profile-mappings/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(mapping),
+    });
+  }
+
+  async deleteRelayProfileMapping(id: string): Promise<void> {
+    await this.request<void>(`/api/v1/relay-profile-mappings/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async reorderRelayProfileMappings(mappings: ReorderMappingRequest[]): Promise<void> {
+    await this.request<void>('/api/v1/relay-profile-mappings/reorder', {
+      method: 'POST',
+      body: JSON.stringify({ mappings }),
+    });
+  }
+
+  async testRelayProfileMappingExpression(
+    request: TestMappingExpressionRequest
+  ): Promise<TestMappingExpressionResponse> {
+    return this.request<TestMappingExpressionResponse>(
+      '/api/v1/relay-profile-mappings/test',
+      {
+        method: 'POST',
+        body: JSON.stringify(request),
+      }
+    );
+  }
+
+  async getRelayProfileMappingStats(): Promise<RelayProfileMappingStats> {
+    return this.request<RelayProfileMappingStats>('/api/v1/relay-profile-mappings/stats');
   }
 }
 

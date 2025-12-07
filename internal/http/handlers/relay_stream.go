@@ -17,8 +17,9 @@ import (
 
 // RelayStreamHandler handles stream relay API endpoints.
 type RelayStreamHandler struct {
-	relayService *service.RelayService
-	logger       *slog.Logger
+	relayService          *service.RelayService
+	profileMappingService *service.RelayProfileMappingService
+	logger                *slog.Logger
 }
 
 // NewRelayStreamHandler creates a new relay stream handler.
@@ -32,6 +33,12 @@ func NewRelayStreamHandler(relayService *service.RelayService) *RelayStreamHandl
 // WithLogger sets the logger for the handler.
 func (h *RelayStreamHandler) WithLogger(logger *slog.Logger) *RelayStreamHandler {
 	h.logger = logger
+	return h
+}
+
+// WithProfileMappingService sets the profile mapping service for auto-detection.
+func (h *RelayStreamHandler) WithProfileMappingService(svc *service.RelayProfileMappingService) *RelayStreamHandler {
+	h.profileMappingService = svc
 	return h
 }
 
@@ -395,6 +402,120 @@ func matchLower(a, b string) bool {
 	return true
 }
 
+// resolveProfileWithAutoDetection resolves a profile's auto codecs using client detection.
+// If the profile has auto video/audio codecs and the profile mapping service is configured,
+// it evaluates the HTTP request against enabled mappings to determine the actual codecs.
+// Returns a copy of the profile with resolved codecs, or the original if no auto-detection needed.
+func (h *RelayStreamHandler) resolveProfileWithAutoDetection(ctx context.Context, r *http.Request, info *service.StreamInfo) *models.RelayProfile {
+	profile := info.Profile
+	if profile == nil {
+		return nil
+	}
+
+	// Check if profile has auto codecs that need resolution
+	hasAutoVideo := profile.VideoCodec == models.VideoCodecAuto
+	hasAutoAudio := profile.AudioCodec == models.AudioCodecAuto
+
+	if !hasAutoVideo && !hasAutoAudio {
+		// No auto codecs, return original profile
+		return profile
+	}
+
+	// Get client IP for logging
+	clientIP := r.Header.Get("X-Forwarded-For")
+	if clientIP == "" {
+		clientIP = r.Header.Get("X-Real-IP")
+	}
+	if clientIP == "" {
+		clientIP = r.RemoteAddr
+	}
+
+	// Get channel name for logging context
+	channelName := ""
+	if info.Channel != nil {
+		channelName = info.Channel.ChannelName
+	}
+
+	// Check if mapping service is available
+	if h.profileMappingService == nil {
+		h.logger.Warn("Profile has auto codecs but mapping service not configured, using defaults",
+			"profile_id", profile.ID,
+			"profile_name", profile.Name,
+		)
+		// Fall back to copy mode for auto codecs
+		resolved := *profile
+		if hasAutoVideo {
+			resolved.VideoCodec = models.VideoCodecCopy
+		}
+		if hasAutoAudio {
+			resolved.AudioCodec = models.AudioCodecCopy
+		}
+		return &resolved
+	}
+
+	// Evaluate request against mappings
+	decision, err := h.profileMappingService.EvaluateRequest(ctx, r, nil) // TODO: pass source codec info when available
+	if err != nil {
+		h.logger.Warn("Failed to evaluate client detection, using copy mode",
+			"profile_id", profile.ID,
+			"error", err,
+		)
+		resolved := *profile
+		if hasAutoVideo {
+			resolved.VideoCodec = models.VideoCodecCopy
+		}
+		if hasAutoAudio {
+			resolved.AudioCodec = models.AudioCodecCopy
+		}
+		return &resolved
+	}
+
+	if decision == nil {
+		// No matching rule found, use copy mode as safe default
+		resolved := *profile
+		if hasAutoVideo {
+			resolved.VideoCodec = models.VideoCodecCopy
+		}
+		if hasAutoAudio {
+			resolved.AudioCodec = models.AudioCodecCopy
+		}
+
+		h.logger.Info("Client detection: no matching rule, using copy mode",
+			"channel", channelName,
+			"profile", profile.Name,
+			"client_ip", clientIP,
+			"user_agent", r.UserAgent(),
+			"resolved_video", string(resolved.VideoCodec),
+			"resolved_audio", string(resolved.AudioCodec),
+		)
+
+		return &resolved
+	}
+
+	// Apply the decision to create a resolved profile copy
+	resolved := *profile
+	if hasAutoVideo {
+		resolved.VideoCodec = decision.TargetVideoCodec
+	}
+	if hasAutoAudio {
+		resolved.AudioCodec = decision.TargetAudioCodec
+	}
+
+	h.logger.Info("Client detection: matched rule",
+		"channel", channelName,
+		"profile", profile.Name,
+		"client_ip", clientIP,
+		"matched_rule", decision.MappingName,
+		"video_action", decision.VideoAction,
+		"audio_action", decision.AudioAction,
+		"resolved_video", string(resolved.VideoCodec),
+		"resolved_audio", string(resolved.AudioCodec),
+		"user_agent", r.UserAgent(),
+	)
+
+	return &resolved
+}
+
 // handleSmartPassthrough serves the source stream as-is (passthrough mode).
 // This is used when source format matches client format.
 func (h *RelayStreamHandler) handleSmartPassthrough(w http.ResponseWriter, r *http.Request, info *service.StreamInfo, classification *service.ClassificationResult) {
@@ -465,14 +586,18 @@ func (h *RelayStreamHandler) handleSmartTranscode(w http.ResponseWriter, r *http
 		"client_format", clientFormat,
 	)
 
-	// Determine profile ID to use
-	var profileID *models.ULID
-	if info.Profile != nil {
-		profileID = &info.Profile.ID
-	}
+	// Resolve profile with auto-detection if needed
+	resolvedProfile := h.resolveProfileWithAutoDetection(ctx, r, info)
 
-	// Start or join the relay session (reusing existing relay infrastructure)
-	session, err := h.relayService.StartRelay(ctx, info.Channel.ID, profileID)
+	// Start or join the relay session with the resolved profile
+	var session *relay.RelaySession
+	var err error
+	if resolvedProfile != nil {
+		session, err = h.relayService.StartRelayWithProfile(ctx, info.Channel.ID, resolvedProfile)
+	} else {
+		// No profile, use passthrough
+		session, err = h.relayService.StartRelay(ctx, info.Channel.ID, nil)
+	}
 	if err != nil {
 		h.logger.Error("Failed to start relay session for smart transcode",
 			"proxy_id", info.Proxy.ID,

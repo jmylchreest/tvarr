@@ -309,6 +309,39 @@ func (s *RelayService) StartRelay(ctx context.Context, channelID models.ULID, pr
 	return session, nil
 }
 
+// StartRelayWithProfile starts a relay session for a channel using a specific profile.
+// This is used when the profile has been pre-resolved (e.g., auto codecs resolved).
+func (s *RelayService) StartRelayWithProfile(ctx context.Context, channelID models.ULID, profile *models.RelayProfile) (*relay.RelaySession, error) {
+	// Get channel
+	channel, err := s.channelRepo.GetByID(ctx, channelID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrChannelNotFound, err)
+	}
+
+	// Convert ULID to UUID for relay manager
+	channelUUID := uuid.UUID(channelID)
+
+	// Start the relay session
+	session, err := s.relayManager.GetOrCreateSession(ctx, channelUUID, channel.ChannelName, channel.StreamURL, profile)
+	if err != nil {
+		return nil, fmt.Errorf("starting relay session: %w", err)
+	}
+
+	s.logger.Info("Started relay session with resolved profile",
+		"session_id", session.ID,
+		"channel_id", channelID,
+		"stream_url", channel.StreamURL,
+		"profile", func() string {
+			if profile != nil {
+				return profile.Name
+			}
+			return "passthrough"
+		}(),
+	)
+
+	return session, nil
+}
+
 // AddRelayClient adds a client to a relay session and returns a reader.
 func (s *RelayService) AddRelayClient(sessionID uuid.UUID, userAgent, remoteAddr string) (*relay.BufferClient, *relay.StreamReader, error) {
 	session, ok := s.relayManager.GetSession(sessionID)
