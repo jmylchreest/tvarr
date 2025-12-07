@@ -3,21 +3,28 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/jmylchreest/tvarr/internal/expression"
+	"github.com/jmylchreest/tvarr/internal/models"
+	"github.com/jmylchreest/tvarr/internal/repository"
 )
 
 // ExpressionHandler handles expression-related API endpoints.
 type ExpressionHandler struct {
-	validator *expression.Validator
+	validator      *expression.Validator
+	channelRepo    repository.ChannelRepository
+	epgProgramRepo repository.EpgProgramRepository
 }
 
 // NewExpressionHandler creates a new expression handler.
-func NewExpressionHandler() *ExpressionHandler {
+func NewExpressionHandler(channelRepo repository.ChannelRepository, epgProgramRepo repository.EpgProgramRepository) *ExpressionHandler {
 	return &ExpressionHandler{
-		validator: expression.NewValidator(nil), // Uses global registry
+		validator:      expression.NewValidator(nil), // Uses global registry
+		channelRepo:    channelRepo,
+		epgProgramRepo: epgProgramRepo,
 	}
 }
 
@@ -61,6 +68,24 @@ func (h *ExpressionHandler) Register(api huma.API) {
 	}, h.GetDataMappingFieldsEPG)
 
 	huma.Register(api, huma.Operation{
+		OperationID: "getDataMappingHelpers",
+		Method:      "GET",
+		Path:        "/api/v1/data-mapping/helpers",
+		Summary:     "Get available data mapping helpers",
+		Description: "Returns all helper functions available for data mapping expressions",
+		Tags:        []string{"Expressions"},
+	}, h.GetDataMappingHelpers)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "getClientDetectionFields",
+		Method:      "GET",
+		Path:        "/api/v1/client-detection/fields",
+		Summary:     "Get available client detection fields",
+		Description: "Returns all fields available for client detection expressions (user_agent, client_ip, etc.)",
+		Tags:        []string{"Expressions"},
+	}, h.GetClientDetectionFields)
+
+	huma.Register(api, huma.Operation{
 		OperationID: "validateExpression",
 		Method:      "POST",
 		Path:        "/api/v1/expressions/validate",
@@ -86,6 +111,25 @@ The endpoint validates field names against the appropriate schema for the specif
 providing intelligent suggestions for typos and unknown fields.`,
 		Tags: []string{"Expressions"},
 	}, h.Validate)
+
+	// Register test endpoints
+	huma.Register(api, huma.Operation{
+		OperationID: "testFilterExpression",
+		Method:      "POST",
+		Path:        "/api/v1/filters/test",
+		Summary:     "Test filter expression",
+		Description: "Tests a filter expression against channels/programs from a source and returns match statistics",
+		Tags:        []string{"Expressions"},
+	}, h.TestFilterExpression)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "testDataMappingExpression",
+		Method:      "POST",
+		Path:        "/api/v1/data-mapping/test",
+		Summary:     "Test data mapping expression",
+		Description: "Tests a data mapping expression against channels/programs from sources and returns affected count",
+		Tags:        []string{"Expressions"},
+	}, h.TestDataMappingExpression)
 }
 
 // ValidateExpressionInput is the input for validating an expression.
@@ -229,4 +273,372 @@ func (h *ExpressionHandler) GetDataMappingFieldsStream(ctx context.Context, inpu
 // GetDataMappingFieldsEPG returns fields available for EPG data mapping.
 func (h *ExpressionHandler) GetDataMappingFieldsEPG(ctx context.Context, input *struct{}) (*FieldsOutput, error) {
 	return h.getFieldsForDomain(expression.DomainEPG, "epg"), nil
+}
+
+// HelperCompletionOption represents a static completion option.
+type HelperCompletionOption struct {
+	Label       string `json:"label" doc:"Display label for the option"`
+	Value       string `json:"value" doc:"Value to insert when selected"`
+	Description string `json:"description,omitempty" doc:"Description of the option"`
+}
+
+// HelperCompletion represents the completion configuration for a helper.
+type HelperCompletion struct {
+	Type         string                   `json:"type" doc:"Completion type: search, static, or function"`
+	Endpoint     string                   `json:"endpoint,omitempty" doc:"API endpoint for search completion"`
+	QueryParam   string                   `json:"query_param,omitempty" doc:"Query parameter name for search"`
+	DisplayField string                   `json:"display_field,omitempty" doc:"Field to display from search results"`
+	ValueField   string                   `json:"value_field,omitempty" doc:"Field to use as value from search results"`
+	PreviewField string                   `json:"preview_field,omitempty" doc:"Field to use for preview (e.g., image URL)"`
+	MinChars     int                      `json:"min_chars,omitempty" doc:"Minimum characters before triggering search"`
+	DebounceMs   int                      `json:"debounce_ms,omitempty" doc:"Debounce time in milliseconds"`
+	MaxResults   int                      `json:"max_results,omitempty" doc:"Maximum number of results to return"`
+	Placeholder  string                   `json:"placeholder,omitempty" doc:"Placeholder text for input"`
+	EmptyMessage string                   `json:"empty_message,omitempty" doc:"Message when no results found"`
+	Options      []HelperCompletionOption `json:"options,omitempty" doc:"Static options for static completion type"`
+}
+
+// HelperResponse represents a helper in the API response.
+type HelperResponse struct {
+	Name        string            `json:"name" doc:"Helper name (e.g., time, logo)"`
+	Prefix      string            `json:"prefix" doc:"Helper prefix (e.g., @time:)"`
+	Description string            `json:"description" doc:"Description of the helper"`
+	Example     string            `json:"example" doc:"Example usage of the helper"`
+	Completion  *HelperCompletion `json:"completion,omitempty" doc:"Completion configuration for autocomplete"`
+}
+
+// HelpersOutput is the output for the helpers listing endpoint.
+type HelpersOutput struct {
+	Body struct {
+		Helpers []HelperResponse `json:"helpers" doc:"List of available helpers"`
+	}
+}
+
+// GetDataMappingHelpers returns available helper functions for data mapping expressions.
+func (h *ExpressionHandler) GetDataMappingHelpers(ctx context.Context, input *struct{}) (*HelpersOutput, error) {
+	helpers := []HelperResponse{
+		{
+			Name:        "time",
+			Prefix:      "@time:",
+			Description: "Time-related operations for date/time manipulation",
+			Example:     "@time:now",
+			Completion: &HelperCompletion{
+				Type: "static",
+				Options: []HelperCompletionOption{
+					{
+						Label:       "now",
+						Value:       "now",
+						Description: "Current time in RFC3339 format",
+					},
+					{
+						Label:       "parse",
+						Value:       "parse",
+						Description: "Parse a time string (input|format)",
+					},
+					{
+						Label:       "format",
+						Value:       "format",
+						Description: "Format a time (input|output_format)",
+					},
+					{
+						Label:       "add",
+						Value:       "add",
+						Description: "Add duration to time (base_time|duration)",
+					},
+				},
+			},
+		},
+		{
+			Name:        "logo",
+			Prefix:      "@logo:",
+			Description: "Logo lookup by ULID - resolves to logo URL (uploaded logos only)",
+			Example:     "@logo:01ARZ3NDEKTSV4RRFFQ69G5FAV",
+			Completion: &HelperCompletion{
+				Type:         "search",
+				Endpoint:     "/api/v1/logos?include_cached=false",
+				QueryParam:   "search",
+				DisplayField: "name",
+				ValueField:   "id",
+				PreviewField: "url",
+				MinChars:     2,
+				DebounceMs:   300,
+				MaxResults:   10,
+				Placeholder:  "Search logos...",
+				EmptyMessage: "No logos found",
+			},
+		},
+	}
+
+	resp := &HelpersOutput{}
+	resp.Body.Helpers = helpers
+	return resp, nil
+}
+
+// GetClientDetectionFields returns fields available for client detection expressions.
+func (h *ExpressionHandler) GetClientDetectionFields(ctx context.Context, input *struct{}) (*FieldsOutput, error) {
+	// Client detection fields are HTTP request properties
+	fields := []FieldResponse{
+		{Name: "user_agent", Type: "string", Description: "HTTP User-Agent header", SourceType: "client"},
+		{Name: "client_ip", Type: "string", Description: "Client IP address", SourceType: "client"},
+		{Name: "request_path", Type: "string", Description: "Request URL path", SourceType: "client"},
+		{Name: "request_url", Type: "string", Description: "Full request URL", SourceType: "client"},
+		{Name: "query_params", Type: "string", Description: "Raw query string", SourceType: "client"},
+		{Name: "x_forwarded_for", Type: "string", Description: "X-Forwarded-For header", SourceType: "client"},
+		{Name: "x_real_ip", Type: "string", Description: "X-Real-IP header", SourceType: "client"},
+		{Name: "accept", Type: "string", Description: "Accept header", SourceType: "client"},
+		{Name: "accept_language", Type: "string", Description: "Accept-Language header", SourceType: "client"},
+		{Name: "host", Type: "string", Description: "Host header", SourceType: "client"},
+		{Name: "referer", Type: "string", Description: "Referer header", SourceType: "client"},
+	}
+
+	return &FieldsOutput{Body: fields}, nil
+}
+
+// TestFilterExpressionInput is the input for testing a filter expression.
+type TestFilterExpressionInput struct {
+	Body struct {
+		SourceID         string `json:"source_id" doc:"Source ID to test against" minLength:"1"`
+		SourceType       string `json:"source_type" doc:"Source type (stream or epg)" enum:"stream,epg"`
+		FilterExpression string `json:"filter_expression" doc:"Filter expression to test" minLength:"1"`
+		IsInverse        bool   `json:"is_inverse" doc:"Whether to invert the match result"`
+	}
+}
+
+// TestFilterExpressionOutput is the output for testing a filter expression.
+type TestFilterExpressionOutput struct {
+	Body struct {
+		Success       bool   `json:"success" doc:"Whether the test completed successfully"`
+		MatchedCount  int    `json:"matched_count" doc:"Number of records that matched the expression"`
+		TotalChannels int    `json:"total_channels" doc:"Total number of records tested"`
+		Error         string `json:"error,omitempty" doc:"Error message if test failed"`
+	}
+}
+
+// TestFilterExpression tests a filter expression against a source.
+func (h *ExpressionHandler) TestFilterExpression(ctx context.Context, input *TestFilterExpressionInput) (*TestFilterExpressionOutput, error) {
+	resp := &TestFilterExpressionOutput{}
+
+	// Parse source ID
+	sourceID, err := models.ParseULID(input.Body.SourceID)
+	if err != nil {
+		resp.Body.Error = "invalid source_id format"
+		return resp, nil
+	}
+
+	// Parse the expression
+	parsed, err := expression.PreprocessAndParse(input.Body.FilterExpression)
+	if err != nil {
+		resp.Body.Error = "invalid expression: " + err.Error()
+		return resp, nil
+	}
+
+	// Create evaluator
+	evaluator := expression.NewEvaluator()
+	evaluator.SetCaseSensitive(false)
+
+	var matchCount, totalCount int
+
+	if input.Body.SourceType == "stream" {
+		// Test against channels
+		err = h.channelRepo.GetBySourceID(ctx, sourceID, func(ch *models.Channel) error {
+			totalCount++
+
+			// Create evaluation context
+			fields := map[string]string{
+				"channel_name": ch.ChannelName,
+				"tvg_id":       ch.TvgID,
+				"tvg_name":     ch.TvgName,
+				"tvg_logo":     ch.TvgLogo,
+				"group_title":  ch.GroupTitle,
+				"stream_url":   ch.StreamURL,
+			}
+			evalCtx := expression.NewChannelEvalContext(fields)
+
+			// Evaluate expression
+			result, evalErr := evaluator.Evaluate(parsed, evalCtx)
+			if evalErr != nil {
+				// Skip on error
+				return nil
+			}
+
+			matches := result.Matches
+			if input.Body.IsInverse {
+				matches = !matches
+			}
+
+			if matches {
+				matchCount++
+			}
+			return nil
+		})
+		if err != nil {
+			resp.Body.Error = "failed to read channels: " + err.Error()
+			return resp, nil
+		}
+	} else {
+		// Test against EPG programs
+		err = h.epgProgramRepo.GetBySourceID(ctx, sourceID, func(prog *models.EpgProgram) error {
+			totalCount++
+
+			// Create evaluation context
+			fields := map[string]string{
+				"programme_title":       prog.Title,
+				"programme_description": prog.Description,
+				"programme_category":    prog.Category,
+			}
+			if !prog.Start.IsZero() {
+				fields["programme_start"] = prog.Start.Format("2006-01-02T15:04:05Z07:00")
+			}
+			if !prog.Stop.IsZero() {
+				fields["programme_stop"] = prog.Stop.Format("2006-01-02T15:04:05Z07:00")
+			}
+			evalCtx := expression.NewProgramEvalContext(fields)
+
+			// Evaluate expression
+			result, evalErr := evaluator.Evaluate(parsed, evalCtx)
+			if evalErr != nil {
+				// Skip on error
+				return nil
+			}
+
+			matches := result.Matches
+			if input.Body.IsInverse {
+				matches = !matches
+			}
+
+			if matches {
+				matchCount++
+			}
+			return nil
+		})
+		if err != nil {
+			resp.Body.Error = "failed to read programs: " + err.Error()
+			return resp, nil
+		}
+	}
+
+	resp.Body.Success = true
+	resp.Body.MatchedCount = matchCount
+	resp.Body.TotalChannels = totalCount
+
+	return resp, nil
+}
+
+// TestDataMappingExpressionInput is the input for testing a data mapping expression.
+type TestDataMappingExpressionInput struct {
+	Body struct {
+		SourceIDs  []string `json:"source_ids" doc:"Source IDs to test against" minItems:"1"`
+		SourceType string   `json:"source_type" doc:"Source type (stream or epg)" enum:"stream,epg"`
+		Expression string   `json:"expression" doc:"Data mapping expression to test" minLength:"1"`
+	}
+}
+
+// TestDataMappingExpressionOutput is the output for testing a data mapping expression.
+type TestDataMappingExpressionOutput struct {
+	Body struct {
+		Success          bool   `json:"success" doc:"Whether the test completed successfully"`
+		Message          string `json:"message,omitempty" doc:"Result message"`
+		AffectedChannels int    `json:"affected_channels" doc:"Number of records that would be affected"`
+		TotalChannels    int    `json:"total_channels" doc:"Total number of records tested"`
+	}
+}
+
+// TestDataMappingExpression tests a data mapping expression against sources.
+func (h *ExpressionHandler) TestDataMappingExpression(ctx context.Context, input *TestDataMappingExpressionInput) (*TestDataMappingExpressionOutput, error) {
+	resp := &TestDataMappingExpressionOutput{}
+
+	// Parse the expression
+	parsed, err := expression.PreprocessAndParse(input.Body.Expression)
+	if err != nil {
+		resp.Body.Message = "invalid expression: " + err.Error()
+		return resp, nil
+	}
+
+	// Create evaluator
+	evaluator := expression.NewEvaluator()
+	evaluator.SetCaseSensitive(false)
+
+	var affectedCount, totalCount int
+
+	for _, sourceIDStr := range input.Body.SourceIDs {
+		sourceID, err := models.ParseULID(sourceIDStr)
+		if err != nil {
+			continue // Skip invalid source IDs
+		}
+
+		if input.Body.SourceType == "stream" {
+			// Test against channels
+			err = h.channelRepo.GetBySourceID(ctx, sourceID, func(ch *models.Channel) error {
+				totalCount++
+
+				// Create evaluation context
+				fields := map[string]string{
+					"channel_name": ch.ChannelName,
+					"tvg_id":       ch.TvgID,
+					"tvg_name":     ch.TvgName,
+					"tvg_logo":     ch.TvgLogo,
+					"group_title":  ch.GroupTitle,
+					"stream_url":   ch.StreamURL,
+				}
+				evalCtx := expression.NewChannelEvalContext(fields)
+
+				// Evaluate expression - for data mapping, any match means it would be affected
+				result, evalErr := evaluator.Evaluate(parsed, evalCtx)
+				if evalErr != nil {
+					return nil
+				}
+
+				if result.Matches {
+					affectedCount++
+				}
+				return nil
+			})
+			if err != nil {
+				// Continue with other sources
+				continue
+			}
+		} else {
+			// Test against EPG programs
+			err = h.epgProgramRepo.GetBySourceID(ctx, sourceID, func(prog *models.EpgProgram) error {
+				totalCount++
+
+				// Create evaluation context
+				fields := map[string]string{
+					"programme_title":       prog.Title,
+					"programme_description": prog.Description,
+					"programme_category":    prog.Category,
+				}
+				if !prog.Start.IsZero() {
+					fields["programme_start"] = prog.Start.Format("2006-01-02T15:04:05Z07:00")
+				}
+				if !prog.Stop.IsZero() {
+					fields["programme_stop"] = prog.Stop.Format("2006-01-02T15:04:05Z07:00")
+				}
+				evalCtx := expression.NewProgramEvalContext(fields)
+
+				// Evaluate expression
+				result, evalErr := evaluator.Evaluate(parsed, evalCtx)
+				if evalErr != nil {
+					return nil
+				}
+
+				if result.Matches {
+					affectedCount++
+				}
+				return nil
+			})
+			if err != nil {
+				continue
+			}
+		}
+	}
+
+	resp.Body.Success = true
+	resp.Body.AffectedChannels = affectedCount
+	resp.Body.TotalChannels = totalCount
+	if totalCount > 0 {
+		resp.Body.Message = fmt.Sprintf("Expression would affect %d of %d records", affectedCount, totalCount)
+	}
+
+	return resp, nil
 }

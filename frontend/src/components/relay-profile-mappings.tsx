@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
+import { ExpressionEditor } from '@/components/expression-editor';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -328,6 +329,22 @@ function CreateMappingSheet({
 }) {
   const [open, setOpen] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showTestSection, setShowTestSection] = useState(false);
+  const [testData, setTestData] = useState<Record<string, string>>({
+    user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+    client_ip: '127.0.0.1',
+    request_path: '/proxy/channel/12345',
+    request_url: '',
+    query_params: '',
+    x_forwarded_for: '',
+    x_real_ip: '',
+    accept: '*/*',
+    accept_language: typeof navigator !== 'undefined' ? navigator.language : 'en-US',
+    host: typeof window !== 'undefined' ? window.location.host : 'localhost:8080',
+    referer: '',
+  });
+  const [testResult, setTestResult] = useState<{ matches: boolean; error?: string } | null>(null);
+  const [testLoading, setTestLoading] = useState(false);
   const [formData, setFormData] = useState<CreateRelayProfileMappingRequest>({
     name: '',
     expression: '',
@@ -343,6 +360,31 @@ function CreateMappingSheet({
 
   // Expression validation
   const expressionValidation = useExpressionValidation(formData.expression);
+
+  // Test expression with sample data
+  const handleTestExpression = async () => {
+    if (!formData.expression.trim()) return;
+
+    setTestLoading(true);
+    setTestResult(null);
+
+    try {
+      const result = await apiClient.testRelayProfileMappingExpression({
+        expression: formData.expression,
+        test_data: testData,
+      });
+
+      if (result.error) {
+        setTestResult({ matches: false, error: result.error });
+      } else {
+        setTestResult({ matches: result.matches });
+      }
+    } catch {
+      setTestResult({ matches: false, error: 'Failed to test expression' });
+    } finally {
+      setTestLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -420,24 +462,26 @@ function CreateMappingSheet({
           <div className="space-y-2">
             <Label htmlFor="expression">Expression</Label>
             <div className="relative">
-              <Textarea
-                id="expression"
+              <ExpressionEditor
                 value={formData.expression}
-                onChange={(e) => setFormData({ ...formData, expression: e.target.value })}
+                onChange={(value) => setFormData({ ...formData, expression: value })}
+                fieldsEndpoint="/client-detection/fields"
+                sourceType="client"
+                enableValidation={false}
+                enableAutocomplete={true}
                 placeholder='e.g., user_agent contains "Chrome"'
-                required
                 disabled={loading}
-                className={`font-mono text-sm pr-10 ${
+                rows={3}
+                className={`text-sm pr-10 min-h-0 ${
                   expressionValidation.isValid === false
                     ? 'border-destructive focus-visible:ring-destructive'
                     : expressionValidation.isValid === true
                     ? 'border-green-500 focus-visible:ring-green-500'
                     : ''
                 }`}
-                rows={3}
               />
               {formData.expression && (
-                <div className="absolute right-2 top-2">
+                <div className="absolute right-2 top-2 z-10">
                   {expressionValidation.isValidating ? (
                     <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                   ) : expressionValidation.isValid === true ? (
@@ -452,8 +496,149 @@ function CreateMappingSheet({
               <p className="text-xs text-destructive">{expressionValidation.error}</p>
             )}
             <p className="text-xs text-muted-foreground">
-              Available fields: <code className="bg-muted px-1 rounded">user_agent</code>, <code className="bg-muted px-1 rounded">client_ip</code>, <code className="bg-muted px-1 rounded">request_path</code>, <code className="bg-muted px-1 rounded">request_url</code>, <code className="bg-muted px-1 rounded">query_params</code>, <code className="bg-muted px-1 rounded">x_forwarded_for</code>, <code className="bg-muted px-1 rounded">x_real_ip</code>, <code className="bg-muted px-1 rounded">accept</code>, <code className="bg-muted px-1 rounded">host</code>, <code className="bg-muted px-1 rounded">referer</code>
+              Start typing a field name to see autocomplete suggestions. Use Tab or Enter to select.
             </p>
+
+            {/* Collapsible Test Section */}
+            <div className="border rounded-md mt-2">
+              <button
+                type="button"
+                onClick={() => setShowTestSection(!showTestSection)}
+                className="flex w-full items-center justify-between p-3 text-sm font-medium hover:bg-muted/50"
+              >
+                <span>Test Expression with Sample Data</span>
+                {showTestSection ? (
+                  <ChevronUp className="h-4 w-4" />
+                ) : (
+                  <ChevronDown className="h-4 w-4" />
+                )}
+              </button>
+              {showTestSection && (
+                <div className="p-4 pt-0 space-y-4 border-t">
+                  <p className="text-xs text-muted-foreground">
+                    Test your expression against sample request data. User-Agent is pre-populated from your browser.
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label htmlFor="test_user_agent" className="text-xs">user_agent</Label>
+                      <Input
+                        id="test_user_agent"
+                        value={testData.user_agent}
+                        onChange={(e) => setTestData({ ...testData, user_agent: e.target.value })}
+                        className="text-xs h-8"
+                        placeholder="Browser User-Agent"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="test_client_ip" className="text-xs">client_ip</Label>
+                      <Input
+                        id="test_client_ip"
+                        value={testData.client_ip}
+                        onChange={(e) => setTestData({ ...testData, client_ip: e.target.value })}
+                        className="text-xs h-8"
+                        placeholder="127.0.0.1"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="test_request_path" className="text-xs">request_path</Label>
+                      <Input
+                        id="test_request_path"
+                        value={testData.request_path}
+                        onChange={(e) => setTestData({ ...testData, request_path: e.target.value })}
+                        className="text-xs h-8"
+                        placeholder="/proxy/channel/123"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="test_host" className="text-xs">host</Label>
+                      <Input
+                        id="test_host"
+                        value={testData.host}
+                        onChange={(e) => setTestData({ ...testData, host: e.target.value })}
+                        className="text-xs h-8"
+                        placeholder="localhost:8080"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="test_accept" className="text-xs">accept</Label>
+                      <Input
+                        id="test_accept"
+                        value={testData.accept}
+                        onChange={(e) => setTestData({ ...testData, accept: e.target.value })}
+                        className="text-xs h-8"
+                        placeholder="*/*"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="test_accept_language" className="text-xs">accept_language</Label>
+                      <Input
+                        id="test_accept_language"
+                        value={testData.accept_language}
+                        onChange={(e) => setTestData({ ...testData, accept_language: e.target.value })}
+                        className="text-xs h-8"
+                        placeholder="en-US"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="test_x_forwarded_for" className="text-xs">x_forwarded_for</Label>
+                      <Input
+                        id="test_x_forwarded_for"
+                        value={testData.x_forwarded_for}
+                        onChange={(e) => setTestData({ ...testData, x_forwarded_for: e.target.value })}
+                        className="text-xs h-8"
+                        placeholder="Optional"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="test_referer" className="text-xs">referer</Label>
+                      <Input
+                        id="test_referer"
+                        value={testData.referer}
+                        onChange={(e) => setTestData({ ...testData, referer: e.target.value })}
+                        className="text-xs h-8"
+                        placeholder="Optional"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleTestExpression}
+                      disabled={testLoading || !formData.expression.trim()}
+                      className="gap-2"
+                    >
+                      {testLoading && <Loader2 className="h-3 w-3 animate-spin" />}
+                      Test Expression
+                    </Button>
+
+                    {testResult && (
+                      <div className={`flex items-center gap-2 text-sm ${testResult.matches ? 'text-green-600' : 'text-destructive'}`}>
+                        {testResult.error ? (
+                          <>
+                            <X className="h-4 w-4" />
+                            <span>{testResult.error}</span>
+                          </>
+                        ) : testResult.matches ? (
+                          <>
+                            <Check className="h-4 w-4" />
+                            <span>Expression matches!</span>
+                          </>
+                        ) : (
+                          <>
+                            <X className="h-4 w-4" />
+                            <span>Expression does not match</span>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="space-y-2">

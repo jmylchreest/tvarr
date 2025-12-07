@@ -456,7 +456,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	proxyHandler := handlers.NewStreamProxyHandler(proxyService)
 	proxyHandler.Register(server.API())
 
-	expressionHandler := handlers.NewExpressionHandler()
+	expressionHandler := handlers.NewExpressionHandler(channelRepo, epgProgramRepo)
 	expressionHandler.Register(server.API())
 
 	filterHandler := handlers.NewFilterHandler(filterRepo)

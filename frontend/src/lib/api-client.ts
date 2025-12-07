@@ -913,7 +913,7 @@ class ApiClient {
 
   async updateLogo(id: string, data: LogoAssetUpdateRequest): Promise<LogoAsset> {
     return this.request(`${API_CONFIG.endpoints.logos}/${id}`, {
-      method: 'PUT',
+      method: 'PATCH',
       body: JSON.stringify(data),
     });
   }

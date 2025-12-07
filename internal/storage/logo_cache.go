@@ -456,6 +456,21 @@ func (c *LogoCache) TouchMetadata(meta *CachedLogoMetadata) error {
 	return nil
 }
 
+// SaveMetadata saves the logo metadata to disk without updating timestamps.
+func (c *LogoCache) SaveMetadata(meta *CachedLogoMetadata) error {
+	metaJSON, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling metadata: %w", err)
+	}
+
+	metaPath := meta.RelativeMetadataPath()
+	if err := c.sandbox.AtomicWrite(metaPath, metaJSON); err != nil {
+		return fmt.Errorf("writing metadata: %w", err)
+	}
+
+	return nil
+}
+
 // GetStaleLogos returns logos that haven't been seen since the cutoff time.
 // Only returns cached (URL-sourced) logos; uploaded logos are never stale.
 func (c *LogoCache) GetStaleLogos(cutoff time.Time) ([]*CachedLogoMetadata, error) {

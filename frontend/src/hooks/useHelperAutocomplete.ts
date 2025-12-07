@@ -1,57 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { getBackendUrl } from '@/lib/config';
 import { Debug } from '@/utils/debug';
+import { getCursorPosition } from '@/lib/expression-utils';
+import type {
+  Helper,
+  AutocompleteSuggestion,
+  AutocompleteContext,
+  AutocompleteState,
+} from '@/lib/expression-constants';
 
-export interface Helper {
-  name: string;
-  prefix: string;
-  description: string;
-  example: string;
-  completion?: {
-    type: 'search' | 'static' | 'function';
-    endpoint?: string;
-    query_param?: string;
-    display_field?: string;
-    value_field?: string;
-    preview_field?: string;
-    min_chars?: number;
-    debounce_ms?: number;
-    max_results?: number;
-    placeholder?: string;
-    empty_message?: string;
-    options?: Array<{
-      label: string;
-      value: string;
-      description?: string;
-    }>;
-    context_fields?: string[];
-  };
-}
-
-export interface AutocompleteSuggestion {
-  label: string;
-  value: string;
-  description?: string;
-  preview?: string;
-  type: 'helper' | 'completion';
-}
-
-export interface AutocompleteContext {
-  type: 'helper' | 'completion';
-  helper?: Helper;
-  query: string;
-  startPos: number;
-  endPos: number;
-}
-
-export interface AutocompleteState {
-  isOpen: boolean;
-  suggestions: AutocompleteSuggestion[];
-  selectedIndex: number;
-  position: { x: number; y: number };
-  context?: AutocompleteContext;
-  loading: boolean;
-}
+// Re-export types for backward compatibility
+export type { Helper, AutocompleteSuggestion, AutocompleteContext, AutocompleteState };
 
 export function useHelperAutocomplete(
   textareaRef: React.RefObject<HTMLTextAreaElement>,
@@ -68,37 +27,6 @@ export function useHelperAutocomplete(
 
   const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-
-  // Calculate cursor position for popup
-  const getCursorPosition = useCallback((textarea: HTMLTextAreaElement) => {
-    const { selectionStart } = textarea;
-    const rect = textarea.getBoundingClientRect();
-    const style = window.getComputedStyle(textarea);
-
-    // Create a hidden div to measure text position
-    const div = document.createElement('div');
-    div.style.position = 'absolute';
-    div.style.visibility = 'hidden';
-    div.style.whiteSpace = 'pre-wrap';
-    div.style.wordWrap = 'break-word';
-    div.style.font = style.font;
-    div.style.padding = style.padding;
-    div.style.border = style.border;
-    div.style.width = style.width;
-    div.style.lineHeight = style.lineHeight;
-
-    const textBeforeCursor = textarea.value.substring(0, selectionStart);
-    div.textContent = textBeforeCursor;
-
-    document.body.appendChild(div);
-    const divRect = div.getBoundingClientRect();
-    document.body.removeChild(div);
-
-    return {
-      x: rect.left + divRect.width + parseInt(style.paddingLeft, 10),
-      y: rect.top + divRect.height + parseInt(style.paddingTop, 10),
-    };
-  }, []);
 
   // Detect autocomplete context from cursor position
   const getAutocompleteContext = useCallback(
@@ -231,7 +159,7 @@ export function useHelperAutocomplete(
           const data = await response.json();
           Debug.log('AutoComplete: Search API response', data);
 
-          const items = Array.isArray(data) ? data : data.results || data.items || data.data || [];
+          const items = Array.isArray(data) ? data : data.assets || data.results || data.items || data.data || [];
           Debug.log('AutoComplete: Extracted items', items);
 
           const suggestions = items.map((item: any) => ({
@@ -348,7 +276,7 @@ export function useHelperAutocomplete(
     debounceTimeoutRef.current = setTimeout(() => {
       updateSuggestions(context);
     }, delay);
-  }, [textareaRef, getAutocompleteContext, getCursorPosition, updateSuggestions]);
+  }, [textareaRef, getAutocompleteContext, updateSuggestions]);
 
   // Handle keyboard navigation
   const handleKeyDown = useCallback(

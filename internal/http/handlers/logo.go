@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -101,6 +102,15 @@ func (h *LogoHandler) Register(api huma.API) {
 		Description: "Deletes a logo asset",
 		Tags:        []string{"Logos"},
 	}, h.DeleteLogo)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "updateLogo",
+		Method:      "PATCH",
+		Path:        "/api/v1/logos/{id}",
+		Summary:     "Update logo metadata",
+		Description: "Updates logo metadata (name, description) without replacing the image",
+		Tags:        []string{"Logos"},
+	}, h.UpdateLogo)
 
 	huma.Register(api, huma.Operation{
 		OperationID:      "uploadLogo",
@@ -277,9 +287,22 @@ func logoMetadataToAsset(meta *storage.CachedLogoMetadata) LogoAsset {
 		height = &meta.Height
 	}
 
+	// Use stored name if available, otherwise extract from URL
+	name := meta.Name
+	if name == "" {
+		name = extractNameFromURL(meta.OriginalURL, meta.GetID())
+	}
+
+	// Description pointer
+	var description *string
+	if meta.Description != "" {
+		description = &meta.Description
+	}
+
 	return LogoAsset{
 		ID:                meta.GetID(),
-		Name:              extractNameFromURL(meta.OriginalURL, meta.GetID()),
+		Name:              name,
+		Description:       description,
 		FileName:          fileName,
 		FilePath:          relPath,
 		FileSize:          meta.FileSize,
@@ -351,17 +374,40 @@ func (h *LogoHandler) GetLogos(ctx context.Context, input *GetLogosInput) (*GetL
 			continue
 		}
 
-		// Search filter
+		// Search filter - search name, description, URL, and ID
 		if input.Search != "" {
 			searchLower := strings.ToLower(input.Search)
-			if !strings.Contains(strings.ToLower(meta.OriginalURL), searchLower) &&
-				!strings.Contains(strings.ToLower(meta.GetID()), searchLower) {
+			matchesName := strings.Contains(strings.ToLower(meta.Name), searchLower)
+			matchesDesc := strings.Contains(strings.ToLower(meta.Description), searchLower)
+			matchesURL := strings.Contains(strings.ToLower(meta.OriginalURL), searchLower)
+			matchesID := strings.Contains(strings.ToLower(meta.GetID()), searchLower)
+			if !matchesName && !matchesDesc && !matchesURL && !matchesID {
 				continue
 			}
 		}
 
 		filtered = append(filtered, meta)
 	}
+
+	// Sort: uploaded logos first, then alphabetically by name
+	sort.Slice(filtered, func(i, j int) bool {
+		// Uploaded logos come first
+		iUploaded := filtered[i].Source == storage.LogoSourceUploaded
+		jUploaded := filtered[j].Source == storage.LogoSourceUploaded
+		if iUploaded != jUploaded {
+			return iUploaded // uploaded (true) comes before cached (false)
+		}
+		// Within same type, sort by name (or ID if no name)
+		iName := filtered[i].Name
+		if iName == "" {
+			iName = filtered[i].GetID()
+		}
+		jName := filtered[j].Name
+		if jName == "" {
+			jName = filtered[j].GetID()
+		}
+		return strings.ToLower(iName) < strings.ToLower(jName)
+	})
 
 	// Calculate pagination
 	totalCount := len(filtered)
@@ -569,6 +615,45 @@ func (h *LogoHandler) DeleteLogo(ctx context.Context, input *DeleteLogoInput) (*
 	}, nil
 }
 
+// UpdateLogoInput is the input for updating logo metadata.
+type UpdateLogoInput struct {
+	ID   string `path:"id" doc:"Logo ID"`
+	Body struct {
+		Name        *string `json:"name,omitempty" doc:"New name for the logo"`
+		Description *string `json:"description,omitempty" doc:"New description for the logo"`
+	}
+}
+
+// UpdateLogoOutput is the output for updating logo metadata.
+type UpdateLogoOutput struct {
+	Body LogoAsset
+}
+
+// UpdateLogo updates logo metadata (name, description) without replacing the image.
+func (h *LogoHandler) UpdateLogo(ctx context.Context, input *UpdateLogoInput) (*UpdateLogoOutput, error) {
+	meta := h.logoService.GetLogoByID(input.ID)
+	if meta == nil {
+		return nil, huma.Error404NotFound("Logo not found")
+	}
+
+	// Update fields if provided
+	if input.Body.Name != nil {
+		meta.Name = *input.Body.Name
+	}
+	if input.Body.Description != nil {
+		meta.Description = *input.Body.Description
+	}
+
+	// Save the updated metadata
+	if err := h.logoService.UpdateLogoMetadata(meta); err != nil {
+		return nil, huma.Error500InternalServerError("Failed to update logo: " + err.Error())
+	}
+
+	return &UpdateLogoOutput{
+		Body: logoMetadataToAsset(meta),
+	}, nil
+}
+
 // UploadLogoInput is the input for uploading a logo.
 type UploadLogoInput struct {
 	RawBody multipart.Form
@@ -620,8 +705,14 @@ func (h *LogoHandler) UploadLogo(ctx context.Context, input *UploadLogoInput) (*
 		name = names[0]
 	}
 
+	// Get description from form (optional)
+	var description string
+	if descriptions := input.RawBody.Value["description"]; len(descriptions) > 0 {
+		description = descriptions[0]
+	}
+
 	// Upload the logo
-	meta, err := h.logoService.UploadLogo(ctx, name, contentType, bytes.NewReader(content))
+	meta, err := h.logoService.UploadLogo(ctx, name, description, contentType, bytes.NewReader(content))
 	if err != nil {
 		return nil, huma.Error500InternalServerError("Failed to upload logo: " + err.Error())
 	}
@@ -714,8 +805,14 @@ func (h *LogoHandler) ReplaceLogo(ctx context.Context, input *ReplaceLogoInput) 
 		name = names[0]
 	}
 
+	// Get description from form (optional)
+	var description string
+	if descriptions := input.RawBody.Value["description"]; len(descriptions) > 0 {
+		description = descriptions[0]
+	}
+
 	// Replace the logo
-	meta, err := h.logoService.ReplaceLogo(ctx, input.ID, name, contentType, bytes.NewReader(content))
+	meta, err := h.logoService.ReplaceLogo(ctx, input.ID, name, description, contentType, bytes.NewReader(content))
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			return nil, huma.Error404NotFound("Logo not found")

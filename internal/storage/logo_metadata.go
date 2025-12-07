@@ -104,6 +104,13 @@ type CachedLogoMetadata struct {
 	// Examples: "channel:BBC One", "program:News at Ten"
 	SourceHint string `json:"source_hint,omitempty"`
 
+	// Name is the user-provided name for the logo.
+	// Primarily used for uploaded logos; cached logos may derive name from URL.
+	Name string `json:"name,omitempty"`
+
+	// Description is an optional user-provided description for the logo.
+	Description string `json:"description,omitempty"`
+
 	// LinkedAssets is the list of all files associated with this logo.
 	// Includes the converted/display image and optionally the original.
 	LinkedAssets []LinkedAsset `json:"linked_assets,omitempty"`

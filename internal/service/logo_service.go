@@ -391,6 +391,19 @@ func (s *LogoService) DeleteLogo(id string) error {
 	return nil
 }
 
+// UpdateLogoMetadata updates a logo's metadata (name, description) and persists it.
+func (s *LogoService) UpdateLogoMetadata(meta *storage.CachedLogoMetadata) error {
+	// Update the index
+	s.indexer.Add(meta)
+
+	// Persist to disk
+	if err := s.cache.SaveMetadata(meta); err != nil {
+		return fmt.Errorf("saving metadata: %w", err)
+	}
+
+	return nil
+}
+
 // GetStats returns statistics about cached logos.
 func (s *LogoService) GetStats() *LogoStats {
 	stats := s.indexer.Stats()
@@ -425,9 +438,11 @@ func (s *LogoService) EnqueueLogo(ctx context.Context, logoURL string) (*storage
 // Raster images (JPEG, GIF, WebP) are converted to PNG for consistent display.
 // The original image is also stored alongside the converted version.
 // SVG images are stored as-is since they are vector graphics.
-func (s *LogoService) UploadLogo(ctx context.Context, name string, contentType string, data io.Reader) (*storage.CachedLogoMetadata, error) {
+func (s *LogoService) UploadLogo(ctx context.Context, name, description, contentType string, data io.Reader) (*storage.CachedLogoMetadata, error) {
 	// Create metadata for the uploaded logo (generates ULID internally)
 	meta := storage.NewUploadedLogoMetadata()
+	meta.Name = name
+	meta.Description = description
 	meta.OriginalContentType = contentType
 
 	// Read data into buffer so we can process it
@@ -556,7 +571,7 @@ func (s *LogoService) UploadLogo(ctx context.Context, name string, contentType s
 
 // ReplaceLogo replaces an existing logo's images with new data.
 // The old linked assets are deleted and new images are stored.
-func (s *LogoService) ReplaceLogo(ctx context.Context, id string, name string, contentType string, data io.Reader) (*storage.CachedLogoMetadata, error) {
+func (s *LogoService) ReplaceLogo(ctx context.Context, id, name, description, contentType string, data io.Reader) (*storage.CachedLogoMetadata, error) {
 	// Get existing metadata
 	existingMeta := s.indexer.GetByID(id)
 	if existingMeta == nil {
@@ -577,7 +592,9 @@ func (s *LogoService) ReplaceLogo(ctx context.Context, id string, name string, c
 	}
 	originalData := buf.Bytes()
 
-	// Update metadata with new content info
+	// Update metadata with new content info and name/description
+	existingMeta.Name = name
+	existingMeta.Description = description
 	existingMeta.OriginalContentType = contentType
 	existingMeta.ClearLinkedAssets()
 

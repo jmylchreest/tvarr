@@ -890,10 +890,13 @@ export function Logos() {
     }
 
     // Sort: uploaded logos first, then cached, each sorted alphabetically by name
-    return filtered.sort((a, b) => {
-      // Uploaded logos come first
-      if (a.asset_type !== 'cached' && b.asset_type === 'cached') return -1;
-      if (a.asset_type === 'cached' && b.asset_type !== 'cached') return 1;
+    // Spread to create a new array to avoid mutating state
+    return [...filtered].sort((a, b) => {
+      // Uploaded logos come first (asset_type === 'uploaded')
+      const aIsUploaded = a.asset_type === 'uploaded';
+      const bIsUploaded = b.asset_type === 'uploaded';
+      if (aIsUploaded && !bIsUploaded) return -1;
+      if (!aIsUploaded && bIsUploaded) return 1;
       // Within same type, sort alphabetically by name
       return a.name.localeCompare(b.name, undefined, { numeric: true });
     });

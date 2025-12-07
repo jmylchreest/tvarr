@@ -4,12 +4,30 @@ import { cn } from '@/lib/utils';
 import { Code } from '@/components/ui/code';
 import { Badge } from '@/components/ui/badge';
 import { Loader2 } from 'lucide-react';
-import type { AutocompleteSuggestion, AutocompleteState } from '@/hooks/useHelperAutocomplete';
+import type { AutocompleteSuggestion, AutocompleteState } from '@/lib/expression-constants';
 
 export interface AutocompletePopupProps {
   state: AutocompleteState;
   onSuggestionClick: (suggestion: AutocompleteSuggestion) => void;
   className?: string;
+}
+
+/**
+ * Get badge variant and label for suggestion type.
+ */
+function getSuggestionTypeBadge(type: AutocompleteSuggestion['type']): { label: string; variant: 'default' | 'secondary' | 'outline' | 'destructive' } {
+  switch (type) {
+    case 'field':
+      return { label: 'field', variant: 'secondary' };
+    case 'operator':
+      return { label: 'operator', variant: 'outline' };
+    case 'helper':
+      return { label: 'helper', variant: 'default' };
+    case 'completion':
+      return { label: 'value', variant: 'outline' };
+    default:
+      return { label: type, variant: 'outline' };
+  }
 }
 
 export function AutocompletePopup({ state, onSuggestionClick, className }: AutocompletePopupProps) {
@@ -39,59 +57,63 @@ export function AutocompletePopup({ state, onSuggestionClick, className }: Autoc
         <div className="p-3 text-sm text-muted-foreground">No suggestions found</div>
       ) : (
         <div className="py-1 max-h-[300px] overflow-y-auto">
-          {suggestions.map((suggestion, index) => (
-            <div
-              key={`${suggestion.type}-${suggestion.value}-${index}`}
-              className={cn(
-                'px-3 py-2 cursor-pointer text-sm transition-colors',
-                'hover:bg-accent hover:text-accent-foreground',
-                index === selectedIndex && 'bg-accent text-accent-foreground'
-              )}
-              onClick={() => onSuggestionClick(suggestion)}
-              onMouseEnter={() => {
-                // Update selected index on hover for keyboard navigation consistency
-                // This could be handled by passing a callback to update selectedIndex
-              }}
-            >
-              <div className="flex items-center gap-2">
-                <Code variant="muted" size="sm" className="font-mono">
-                  {suggestion.label}
-                </Code>
-                {suggestion.type === 'helper' && (
-                  <Badge variant="outline" className="text-xs">
-                    helper
+          {suggestions.map((suggestion, index) => {
+            const badgeInfo = getSuggestionTypeBadge(suggestion.type);
+
+            return (
+              <div
+                key={`${suggestion.type}-${suggestion.value}-${index}`}
+                className={cn(
+                  'px-3 py-2 cursor-pointer text-sm transition-colors',
+                  'hover:bg-accent hover:text-accent-foreground',
+                  index === selectedIndex && 'bg-accent text-accent-foreground'
+                )}
+                onClick={() => onSuggestionClick(suggestion)}
+              >
+                <div className="flex items-center gap-2">
+                  <Code variant="muted" size="sm" className="font-mono">
+                    {suggestion.label}
+                  </Code>
+                  <Badge variant={badgeInfo.variant} className="text-xs">
+                    {badgeInfo.label}
                   </Badge>
+                </div>
+
+                {suggestion.description && (
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {suggestion.description}
+                  </div>
+                )}
+
+                {suggestion.preview && (
+                  <div className="mt-2">
+                    {suggestion.preview.startsWith('http') &&
+                    (suggestion.preview.includes('/logos/') ||
+                      suggestion.preview.includes('/images/')) ? (
+                      <img
+                        src={suggestion.preview}
+                        alt={suggestion.label}
+                        className="w-full object-contain border border-border rounded bg-muted"
+                        onError={(e) => {
+                          // Fallback to text preview if image fails
+                          (e.target as HTMLImageElement).style.display = 'none';
+                          const textPreview = document.createElement('div');
+                          textPreview.className = 'text-xs text-blue-600 font-mono';
+                          textPreview.textContent = `Preview: ${suggestion.preview}`;
+                          const target = e.target as HTMLImageElement;
+                          target.parentNode?.appendChild(textPreview);
+                        }}
+                      />
+                    ) : (
+                      <div className="text-xs text-blue-600 font-mono">
+                        Preview: {suggestion.preview}
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
-
-              {suggestion.preview && (
-                <div className="mt-2">
-                  {suggestion.preview.startsWith('http') &&
-                  (suggestion.preview.includes('/logos/') ||
-                    suggestion.preview.includes('/images/')) ? (
-                    <img
-                      src={suggestion.preview}
-                      alt={suggestion.label}
-                      className="w-full object-contain border border-border rounded bg-muted"
-                      onError={(e) => {
-                        // Fallback to text preview if image fails
-                        (e.target as HTMLImageElement).style.display = 'none';
-                        const textPreview = document.createElement('div');
-                        textPreview.className = 'text-xs text-blue-600 font-mono';
-                        textPreview.textContent = `Preview: ${suggestion.preview}`;
-                        const target = e.target as HTMLImageElement;
-                        target.parentNode?.appendChild(textPreview);
-                      }}
-                    />
-                  ) : (
-                    <div className="text-xs text-blue-600 font-mono">
-                      Preview: {suggestion.preview}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
