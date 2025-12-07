@@ -1,0 +1,378 @@
+openapi: 3.1.0
+info:
+  title: Tvarr Multi-Format Streaming API
+  version: 1.0.0
+  description: API extensions for HLS/DASH streaming output support
+
+servers:
+  - url: /api/v1
+    description: API v1
+
+paths:
+  /proxy/{proxyId}/{channelId}:
+    get:
+      operationId: streamChannel
+      summary: Stream a channel
+      description: |
+        Stream a channel with format selection. Returns continuous MPEG-TS stream,
+        HLS playlist, or DASH manifest based on format parameter.
+      tags:
+        - Stream Relay
+      parameters:
+        - name: proxyId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: ulid
+          description: Proxy configuration ID
+        - name: channelId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: ulid
+          description: Channel ID to stream
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [mpegts, hls, dash, auto]
+            default: mpegts
+          description: |
+            Output format selection:
+            - mpegts: Continuous MPEG-TS stream (default, backwards compatible)
+            - hls: HLS playlist (.m3u8)
+            - dash: DASH manifest (.mpd)
+            - auto: Auto-detect optimal format based on User-Agent
+        - name: seg
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          description: |
+            Segment sequence number for HLS/DASH segment requests.
+            Only valid when format=hls or format=dash.
+        - name: init
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [v, a]
+          description: |
+            DASH initialization segment type:
+            - v: Video init segment
+            - a: Audio init segment
+            Only valid when format=dash.
+      responses:
+        '200':
+          description: Stream content
+          content:
+            video/MP2T:
+              schema:
+                type: string
+                format: binary
+              description: Continuous MPEG-TS stream or HLS segment
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+              description: HLS playlist
+            application/dash+xml:
+              schema:
+                type: string
+              description: DASH manifest
+            video/iso.segment:
+              schema:
+                type: string
+                format: binary
+              description: DASH media segment
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+              description: DASH initialization segment
+        '302':
+          description: Redirect to stream URL (redirect mode)
+        '404':
+          description: Channel or segment not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Stream temporarily unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /relay/profiles:
+    post:
+      operationId: createRelayProfile
+      summary: Create a relay profile
+      description: Create a new relay profile with format and codec configuration
+      tags:
+        - Relay Profiles
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RelayProfileCreate'
+      responses:
+        '201':
+          description: Profile created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelayProfile'
+        '400':
+          description: Invalid profile configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /relay/profiles/{profileId}:
+    put:
+      operationId: updateRelayProfile
+      summary: Update a relay profile
+      description: Update relay profile with validation for codec/format compatibility
+      tags:
+        - Relay Profiles
+      parameters:
+        - name: profileId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: ulid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RelayProfileUpdate'
+      responses:
+        '200':
+          description: Profile updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelayProfile'
+        '400':
+          description: Invalid profile configuration (e.g., VP9 with HLS format)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /relay/codecs:
+    get:
+      operationId: getAvailableCodecs
+      summary: Get available codecs by format
+      description: Returns available video and audio codecs filtered by output format
+      tags:
+        - Relay Profiles
+      parameters:
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [mpegts, hls, dash]
+            default: mpegts
+          description: Output format to filter codecs by
+      responses:
+        '200':
+          description: Available codecs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodecList'
+
+  /relay/sessions/{sessionId}/stats:
+    get:
+      operationId: getSessionStats
+      summary: Get relay session statistics
+      description: Returns detailed statistics including segment buffer state
+      tags:
+        - Stream Relay
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Session statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionStats'
+
+components:
+  schemas:
+    RelayProfileCreate:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+        video_codec:
+          type: string
+          enum: [copy, libx264, libx265, h264_nvenc, hevc_nvenc, h264_qsv, hevc_qsv, h264_vaapi, hevc_vaapi, libvpx-vp9, libaom-av1, av1_nvenc, av1_qsv]
+          default: copy
+        audio_codec:
+          type: string
+          enum: [copy, aac, libmp3lame, ac3, eac3, libopus]
+          default: copy
+        output_format:
+          type: string
+          enum: [mpegts, hls, dash, flv, matroska, mp4]
+          default: mpegts
+        segment_duration:
+          type: integer
+          minimum: 2
+          maximum: 10
+          default: 6
+          description: HLS/DASH segment duration in seconds
+        playlist_size:
+          type: integer
+          minimum: 3
+          maximum: 20
+          default: 5
+          description: Number of segments in playlist
+        hw_accel:
+          type: string
+          enum: [auto, none, cuda, qsv, vaapi, videotoolbox]
+          default: auto
+        # ... other existing fields omitted for brevity
+
+    RelayProfileUpdate:
+      allOf:
+        - $ref: '#/components/schemas/RelayProfileCreate'
+
+    RelayProfile:
+      allOf:
+        - $ref: '#/components/schemas/RelayProfileCreate'
+        - type: object
+          properties:
+            id:
+              type: string
+              format: ulid
+            is_default:
+              type: boolean
+            is_system:
+              type: boolean
+            enabled:
+              type: boolean
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+
+    CodecList:
+      type: object
+      properties:
+        video_codecs:
+          type: array
+          items:
+            $ref: '#/components/schemas/CodecInfo'
+        audio_codecs:
+          type: array
+          items:
+            $ref: '#/components/schemas/CodecInfo'
+        format:
+          type: string
+          description: The format these codecs are valid for
+
+    CodecInfo:
+      type: object
+      properties:
+        value:
+          type: string
+          description: FFmpeg codec identifier
+        label:
+          type: string
+          description: Human-readable name
+        requires_hw:
+          type: boolean
+          description: Whether this codec requires hardware acceleration
+        dash_only:
+          type: boolean
+          description: Whether this codec is only available for DASH output
+
+    SessionStats:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        channel_id:
+          type: string
+          format: uuid
+        channel_name:
+          type: string
+        output_format:
+          type: string
+          enum: [mpegts, hls, dash]
+        started_at:
+          type: string
+          format: date-time
+        client_count:
+          type: integer
+        segment_buffer:
+          $ref: '#/components/schemas/SegmentBufferStats'
+
+    SegmentBufferStats:
+      type: object
+      properties:
+        segment_count:
+          type: integer
+          description: Number of segments in buffer
+        total_size:
+          type: integer
+          format: int64
+          description: Total buffer size in bytes
+        oldest_segment:
+          type: integer
+          format: int64
+          description: Oldest segment sequence number
+        newest_segment:
+          type: integer
+          format: int64
+          description: Newest segment sequence number
+        target_duration:
+          type: integer
+          description: Target segment duration (seconds)
+
+    Error:
+      type: object
+      properties:
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              message:
+                type: string
+              location:
+                type: string
