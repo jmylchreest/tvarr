@@ -31,6 +31,9 @@ class SSESingleton {
   private debug = Debug.createLogger('SSESingleton');
   private reconnectAttempts: number = 0;
   private reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  // Debounce disconnect to handle rapid subscribe/unsubscribe cycles during navigation
+  private disconnectTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  private static readonly DISCONNECT_DEBOUNCE_MS = 100;
 
   constructor() {
     // Bind methods to ensure correct 'this' context
@@ -79,6 +82,13 @@ class SSESingleton {
     if (!this.shouldBeConnected()) {
       this.debug.log('No subscribers, skipping connection');
       return;
+    }
+
+    // Cancel any pending disconnect - a new subscriber arrived
+    if (this.disconnectTimeoutId) {
+      this.debug.log('Cancelling pending disconnect - new subscriber arrived');
+      clearTimeout(this.disconnectTimeoutId);
+      this.disconnectTimeoutId = null;
     }
 
     // Already connected or connecting
@@ -144,10 +154,16 @@ class SSESingleton {
   }
 
   /**
-   * Disconnect from SSE endpoint
+   * Disconnect from SSE endpoint (immediate, used internally)
    */
-  private disconnect(): void {
-    this.debug.log('Disconnecting SSE');
+  private disconnectImmediate(): void {
+    this.debug.log('Disconnecting SSE (immediate)');
+
+    // Clear any pending disconnect
+    if (this.disconnectTimeoutId) {
+      clearTimeout(this.disconnectTimeoutId);
+      this.disconnectTimeoutId = null;
+    }
 
     // Clear any pending reconnect
     if (this.reconnectTimeoutId) {
@@ -162,6 +178,31 @@ class SSESingleton {
 
     this.reconnectAttempts = 0;
     this.notifyConnectionState(false);
+  }
+
+  /**
+   * Schedule a disconnect with debounce to handle rapid subscribe/unsubscribe cycles
+   * This prevents connection churn during page navigation
+   */
+  private scheduleDisconnect(): void {
+    // Already scheduled
+    if (this.disconnectTimeoutId) {
+      return;
+    }
+
+    // Don't schedule if we still have subscribers
+    if (this.shouldBeConnected()) {
+      return;
+    }
+
+    this.debug.log(`Scheduling disconnect in ${SSESingleton.DISCONNECT_DEBOUNCE_MS}ms`);
+    this.disconnectTimeoutId = setTimeout(() => {
+      this.disconnectTimeoutId = null;
+      // Double-check we still have no subscribers
+      if (!this.shouldBeConnected()) {
+        this.disconnectImmediate();
+      }
+    }, SSESingleton.DISCONNECT_DEBOUNCE_MS);
   }
 
   /**
@@ -305,10 +346,8 @@ class SSESingleton {
         }
       }
 
-      // Disconnect if no more subscribers
-      if (!this.shouldBeConnected()) {
-        this.disconnect();
-      }
+      // Schedule disconnect with debounce to handle navigation
+      this.scheduleDisconnect();
     };
   }
 
@@ -326,10 +365,8 @@ class SSESingleton {
       this.debug.log('Unsubscribing from all events');
       this.allSubscribers.delete(callback);
 
-      // Disconnect if no more subscribers
-      if (!this.shouldBeConnected()) {
-        this.disconnect();
-      }
+      // Schedule disconnect with debounce to handle navigation
+      this.scheduleDisconnect();
     };
   }
 
@@ -359,6 +396,12 @@ class SSESingleton {
   forceReconnect(): void {
     this.debug.log('Force reconnect requested');
     this.reconnectAttempts = 0;
+
+    // Clear any pending disconnect
+    if (this.disconnectTimeoutId) {
+      clearTimeout(this.disconnectTimeoutId);
+      this.disconnectTimeoutId = null;
+    }
 
     // Close existing connection
     if (this.eventSource) {
