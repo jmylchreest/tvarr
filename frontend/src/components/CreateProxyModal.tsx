@@ -28,7 +28,7 @@ import { Label } from '@/components/ui/label';
 import { Plus, GripVertical, Trash2, AlertCircle, Loader2, ArrowUp, ArrowDown } from 'lucide-react';
 import { getBackendUrl } from '@/lib/config';
 import { apiClient } from '@/lib/api-client';
-import { StreamProxy } from '@/types/api';
+import { StreamProxy, RelayProfile } from '@/types/api';
 
 // Types based on your API specification
 interface StreamSourceResponse {
@@ -53,12 +53,6 @@ interface FilterResponse {
   is_inverse: boolean;
   is_system_default: boolean;
   is_active?: boolean;
-}
-
-interface RelayProfileResponse {
-  id: string;
-  name: string;
-  description?: string;
 }
 
 interface StreamSourceAssignment {
@@ -448,7 +442,8 @@ export function ProxySheet({
   open,
   onOpenChange,
 }: ProxySheetProps) {
-  const [relayProfiles, setRelayProfiles] = useState<RelayProfileResponse[]>([]);
+  const [relayProfiles, setRelayProfiles] = useState<RelayProfile[]>([]);
+  const [isDataLoaded, setIsDataLoaded] = useState(false);
 
   // Modal states
   const [streamSourceModalOpen, setStreamSourceModalOpen] = useState(false);
@@ -472,15 +467,24 @@ export function ProxySheet({
     cache_program_logos: false,
   });
 
+  // Reset loading state when modal closes
+  useEffect(() => {
+    if (!open) {
+      setIsDataLoaded(false);
+      setRelayProfiles([]);
+    }
+  }, [open]);
+
   // Load relay profiles and proxy data when modal opens
   useEffect(() => {
-    if (open) {
+    if (open && !isDataLoaded) {
       const loadData = async () => {
         try {
           // Load relay profiles
-          const relayProfiles = await apiClient.getRelayProfiles();
-          console.log('Relay profiles data:', relayProfiles);
-          setRelayProfiles(Array.isArray(relayProfiles) ? relayProfiles : []);
+          const fetchedProfiles = await apiClient.getRelayProfiles();
+          const profilesArray = Array.isArray(fetchedProfiles) ? fetchedProfiles : [];
+          setRelayProfiles(profilesArray);
+          setIsDataLoaded(true);
 
           // If editing, load existing proxy data
           if (mode === 'edit' && proxy) {
@@ -551,6 +555,9 @@ export function ProxySheet({
             });
           } else {
             // Reset form for create mode
+            // Find the default relay profile (the one with is_default: true)
+            const defaultProfile = profilesArray.find((p) => p.is_default);
+
             setFormData({
               name: '',
               description: '',
@@ -565,6 +572,7 @@ export function ProxySheet({
               auto_regenerate: true,
               cache_channel_logos: true,
               cache_program_logos: false,
+              relay_profile_id: defaultProfile?.id || '',
             });
           }
         } catch (error) {
@@ -575,7 +583,7 @@ export function ProxySheet({
 
       loadData();
     }
-  }, [open, mode, proxy]);
+  }, [open, mode, proxy, isDataLoaded]);
 
   const addStreamSources = (sourceIds: string[]) => {
     // Append new sources with priority_order continuing from the current list length
@@ -661,6 +669,9 @@ export function ProxySheet({
         onOpenChange(false);
         // Reset form only for create mode
         if (mode === 'create') {
+          // Find the default relay profile for the reset
+          const defaultProfile = relayProfiles.find((p) => p.is_default);
+
           setFormData({
             name: '',
             description: '',
@@ -675,6 +686,7 @@ export function ProxySheet({
             auto_regenerate: true,
             cache_channel_logos: true,
             cache_program_logos: false,
+            relay_profile_id: defaultProfile?.id || '',
           });
         }
       }
@@ -747,32 +759,34 @@ export function ProxySheet({
                 {formData.proxy_mode === 'smart' && (
                   <div className="space-y-2">
                     <Label htmlFor="relay_profile">Relay Profile</Label>
-                    <Select
-                      value={formData.relay_profile_id || ''}
-                      onValueChange={(value) =>
-                        setFormData((prev) => ({ ...prev, relay_profile_id: value }))
-                      }
-                      required
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select relay profile" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {relayProfiles.map((profile) => (
-                          <SelectItem key={profile.id} value={profile.id}>
-                            {profile.name}
-                            {profile.description && (
-                              <span className="text-xs text-muted-foreground ml-2">
-                                - {profile.description}
-                              </span>
-                            )}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {relayProfiles.length === 0 && (
+                    {relayProfiles.length > 0 ? (
+                      <Select
+                        key={`relay-select-${relayProfiles.length}`}
+                        value={formData.relay_profile_id || ''}
+                        onValueChange={(value) =>
+                          setFormData((prev) => ({ ...prev, relay_profile_id: value }))
+                        }
+                        required
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select relay profile" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {relayProfiles.map((profile) => (
+                            <SelectItem key={profile.id} value={profile.id}>
+                              {profile.name}
+                              {profile.description && (
+                                <span className="text-xs text-muted-foreground ml-2">
+                                  - {profile.description}
+                                </span>
+                              )}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
                       <p className="text-xs text-muted-foreground">
-                        No relay profiles available. Please create a relay profile first.
+                        Loading relay profiles...
                       </p>
                     )}
                   </div>
