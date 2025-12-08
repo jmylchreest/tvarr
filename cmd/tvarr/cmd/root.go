@@ -10,6 +10,7 @@ import (
 	"github.com/jmylchreest/tvarr/internal/config"
 	"github.com/jmylchreest/tvarr/internal/version"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 )
 
@@ -30,14 +31,17 @@ proxy playlists for media servers like Plex, Jellyfin, and Emby.
 It supports multiple stream sources (M3U, Xtream Codes) and EPG formats
 (XMLTV, Xtream EPG), with features for channel filtering, merging, and
 automatic updates.`,
-	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+	PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
 		return initLogging()
 	},
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
 func Execute() error {
-	return rootCmd.Execute()
+	if err := rootCmd.Execute(); err != nil {
+		return fmt.Errorf("executing root command: %w", err)
+	}
+	return nil
 }
 
 func init() {
@@ -49,8 +53,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&logFormat, "log-format", "text", "log format (text, json)")
 
 	// Bind flags to viper
-	viper.BindPFlag("log.level", rootCmd.PersistentFlags().Lookup("log-level"))
-	viper.BindPFlag("log.format", rootCmd.PersistentFlags().Lookup("log-format"))
+	mustBindPFlag("log.level", rootCmd.PersistentFlags().Lookup("log-level"))
+	mustBindPFlag("log.format", rootCmd.PersistentFlags().Lookup("log-format"))
 }
 
 // initConfig reads in config file and ENV variables if set.
@@ -113,4 +117,12 @@ func initLogging() error {
 
 	slog.SetDefault(slog.New(handler))
 	return nil
+}
+
+// mustBindPFlag binds a viper key to a cobra flag and panics if binding fails.
+// This helper ensures lint-compliant error handling for viper.BindPFlag.
+func mustBindPFlag(key string, flag *pflag.Flag) {
+	if err := viper.BindPFlag(key, flag); err != nil {
+		panic(fmt.Sprintf("failed to bind flag %q to key %q: %v", flag.Name, key, err))
+	}
 }

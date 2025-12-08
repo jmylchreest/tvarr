@@ -26,7 +26,7 @@ func (r StatusCodeRange) Contains(code int) bool {
 //   - "200-299" - range (inclusive)
 //   - "200-299,404,500-599" - mixed ranges and codes
 type StatusCodeSet struct {
-	codes  map[int]struct{} // Individual codes for O(1) lookup
+	codes  map[int]struct{}  // Individual codes for O(1) lookup
 	ranges []StatusCodeRange // Ranges for efficient storage
 }
 

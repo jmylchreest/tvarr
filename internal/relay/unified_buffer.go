@@ -910,11 +910,11 @@ type UnifiedBufferStats struct {
 	ClientCount       int    `json:"client_count"`
 
 	// Memory usage metrics
-	MaxBufferSize      int64   `json:"max_buffer_size"`       // Configured maximum buffer size
-	BufferUtilization  float64 `json:"buffer_utilization"`    // Percentage of max buffer used (0-100)
-	AverageChunkSize   int64   `json:"average_chunk_size"`    // Average bytes per chunk
-	AverageSegmentSize int64   `json:"average_segment_size"`  // Average bytes per segment
-	TotalChunksWritten uint64  `json:"total_chunks_written"`  // Total chunks written since creation
+	MaxBufferSize      int64   `json:"max_buffer_size"`      // Configured maximum buffer size
+	BufferUtilization  float64 `json:"buffer_utilization"`   // Percentage of max buffer used (0-100)
+	AverageChunkSize   int64   `json:"average_chunk_size"`   // Average bytes per chunk
+	AverageSegmentSize int64   `json:"average_segment_size"` // Average bytes per segment
+	TotalChunksWritten uint64  `json:"total_chunks_written"` // Total chunks written since creation
 }
 
 // UnifiedClient represents a client connected to the unified buffer.
@@ -924,11 +924,11 @@ type UnifiedClient struct {
 	RemoteAddr  string
 	ConnectedAt time.Time
 
-	mu               sync.RWMutex
-	lastChunkSeq     uint64
-	lastRead         time.Time
-	bytesRead        uint64
-	notifyCh         chan struct{}
+	mu           sync.RWMutex
+	lastChunkSeq uint64
+	lastRead     time.Time
+	bytesRead    uint64
+	notifyCh     chan struct{}
 }
 
 // NewUnifiedClient creates a new unified client.

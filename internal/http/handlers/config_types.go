@@ -14,10 +14,10 @@ type UnifiedConfigResponse struct {
 
 // RuntimeConfig contains all runtime-modifiable settings.
 type RuntimeConfig struct {
-	Settings        ConfigRuntimeSettings            `json:"settings"`
-	Features        map[string]bool                  `json:"features"`
-	FeatureConfig   map[string]map[string]any        `json:"feature_config,omitempty"`
-	CircuitBreakers CircuitBreakerConfigData         `json:"circuit_breakers"`
+	Settings        ConfigRuntimeSettings     `json:"settings"`
+	Features        map[string]bool           `json:"features"`
+	FeatureConfig   map[string]map[string]any `json:"feature_config,omitempty"`
+	CircuitBreakers CircuitBreakerConfigData  `json:"circuit_breakers"`
 }
 
 // ConfigRuntimeSettings are the core runtime settings.
@@ -71,9 +71,9 @@ type PipelineConfigData struct {
 
 // SchedulerConfigData represents scheduler configuration.
 type SchedulerConfigData struct {
-	WorkerCount       int    `json:"worker_count"`
-	PollInterval      string `json:"poll_interval"`
-	SyncInterval      string `json:"sync_interval"`
+	WorkerCount         int    `json:"worker_count"`
+	PollInterval        string `json:"poll_interval"`
+	SyncInterval        string `json:"sync_interval"`
 	JobHistoryRetention string `json:"job_history_retention"`
 }
 
@@ -104,15 +104,15 @@ type ConfigMeta struct {
 
 // UnifiedConfigUpdate is the request body for updating configuration.
 type UnifiedConfigUpdate struct {
-	Settings        *ConfigRuntimeSettings            `json:"settings,omitempty"`
-	Features        map[string]bool                   `json:"features,omitempty"`
-	CircuitBreakers *CircuitBreakerConfigUpdateData   `json:"circuit_breakers,omitempty"`
+	Settings        *ConfigRuntimeSettings          `json:"settings,omitempty"`
+	Features        map[string]bool                 `json:"features,omitempty"`
+	CircuitBreakers *CircuitBreakerConfigUpdateData `json:"circuit_breakers,omitempty"`
 }
 
 // CircuitBreakerConfigUpdateData is for updating circuit breaker configuration.
 type CircuitBreakerConfigUpdateData struct {
-	Global   *CircuitBreakerProfile            `json:"global,omitempty"`
-	Profiles map[string]CircuitBreakerProfile  `json:"profiles,omitempty"`
+	Global   *CircuitBreakerProfile           `json:"global,omitempty"`
+	Profiles map[string]CircuitBreakerProfile `json:"profiles,omitempty"`
 }
 
 // ConfigUpdateResponse is the response for a config update.

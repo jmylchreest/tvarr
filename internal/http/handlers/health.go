@@ -17,10 +17,10 @@ import (
 
 // HealthHandler handles health check endpoints.
 type HealthHandler struct {
-	version        string
-	startTime      time.Time
-	cbManager      *httpclient.CircuitBreakerManager
-	db             *gorm.DB
+	version   string
+	startTime time.Time
+	cbManager *httpclient.CircuitBreakerManager
+	db        *gorm.DB
 }
 
 // NewHealthHandler creates a new health handler.

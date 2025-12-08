@@ -8,9 +8,9 @@ import (
 // ClientFactory creates HTTP clients with appropriate circuit breaker protection
 // based on service names. This decouples services from circuit breaker management.
 type ClientFactory struct {
-	manager        *CircuitBreakerManager
-	defaultConfig  Config
-	logger         *slog.Logger
+	manager       *CircuitBreakerManager
+	defaultConfig Config
+	logger        *slog.Logger
 }
 
 // NewClientFactory creates a new client factory.

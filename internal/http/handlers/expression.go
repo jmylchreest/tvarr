@@ -151,10 +151,10 @@ type ValidateExpressionOutput struct {
 
 // ValidateExpressionResponse is the response body for expression validation.
 type ValidateExpressionResponse struct {
-	IsValid             bool                            `json:"is_valid" doc:"Whether the expression is valid"`
-	CanonicalExpression string                          `json:"canonical_expression,omitempty" doc:"The canonical form of the expression (if valid)"`
-	Errors              []ExpressionValidationError     `json:"errors" doc:"List of validation errors (if invalid)"`
-	ExpressionTree      map[string]any                  `json:"expression_tree,omitempty" doc:"JSON representation of the parsed expression tree (if valid)"`
+	IsValid             bool                        `json:"is_valid" doc:"Whether the expression is valid"`
+	CanonicalExpression string                      `json:"canonical_expression,omitempty" doc:"The canonical form of the expression (if valid)"`
+	Errors              []ExpressionValidationError `json:"errors" doc:"List of validation errors (if invalid)"`
+	ExpressionTree      map[string]any              `json:"expression_tree,omitempty" doc:"JSON representation of the parsed expression tree (if valid)"`
 }
 
 // ExpressionValidationError represents a single validation error.

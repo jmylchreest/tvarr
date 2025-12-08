@@ -555,12 +555,12 @@ func TestDetectKeyframeInChunk(t *testing.T) {
 			name: "sync byte with random access",
 			data: func() []byte {
 				d := make([]byte, 188)
-				d[0] = 0x47         // Sync byte
-				d[1] = 0x00         // No errors, no payload unit start
-				d[2] = 0x00         // PID low
-				d[3] = 0x30         // Has adaptation field (0x20 set)
-				d[4] = 0x07         // Adaptation field length
-				d[5] = 0x40         // Random access indicator set (0x40)
+				d[0] = 0x47 // Sync byte
+				d[1] = 0x00 // No errors, no payload unit start
+				d[2] = 0x00 // PID low
+				d[3] = 0x30 // Has adaptation field (0x20 set)
+				d[4] = 0x07 // Adaptation field length
+				d[5] = 0x40 // Random access indicator set (0x40)
 				return d
 			}(),
 			expected: true,

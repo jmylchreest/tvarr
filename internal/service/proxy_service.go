@@ -212,7 +212,7 @@ func (s *ProxyService) Generate(ctx context.Context, proxyID models.ULID) (*pipe
 	// Create orchestrator
 	orchestrator, err := s.pipelineFactory.Create(proxy)
 	if err != nil {
-		s.proxyRepo.UpdateStatus(ctx, proxyID, models.StreamProxyStatusFailed, err.Error())
+		_ = s.proxyRepo.UpdateStatus(ctx, proxyID, models.StreamProxyStatusFailed, err.Error())
 		return nil, fmt.Errorf("creating pipeline: %w", err)
 	}
 
@@ -239,7 +239,7 @@ func (s *ProxyService) Generate(ctx context.Context, proxyID models.ULID) (*pipe
 		if progressMgr != nil {
 			progressMgr.Fail(err)
 		}
-		s.proxyRepo.UpdateStatus(ctx, proxyID, models.StreamProxyStatusFailed, err.Error())
+		_ = s.proxyRepo.UpdateStatus(ctx, proxyID, models.StreamProxyStatusFailed, err.Error())
 		return nil, fmt.Errorf("getting sources: %w", err)
 	}
 	orchestrator.SetSources(sources)
@@ -250,7 +250,7 @@ func (s *ProxyService) Generate(ctx context.Context, proxyID models.ULID) (*pipe
 		if progressMgr != nil {
 			progressMgr.Fail(err)
 		}
-		s.proxyRepo.UpdateStatus(ctx, proxyID, models.StreamProxyStatusFailed, err.Error())
+		_ = s.proxyRepo.UpdateStatus(ctx, proxyID, models.StreamProxyStatusFailed, err.Error())
 		return nil, fmt.Errorf("getting EPG sources: %w", err)
 	}
 	orchestrator.SetEpgSources(epgSources)
@@ -263,7 +263,7 @@ func (s *ProxyService) Generate(ctx context.Context, proxyID models.ULID) (*pipe
 			detail := s.createErrorDetail(err)
 			progressMgr.FailWithDetail(detail)
 		}
-		s.proxyRepo.UpdateStatus(ctx, proxyID, models.StreamProxyStatusFailed, err.Error())
+		_ = s.proxyRepo.UpdateStatus(ctx, proxyID, models.StreamProxyStatusFailed, err.Error())
 		return result, fmt.Errorf("executing pipeline: %w", err)
 	}
 

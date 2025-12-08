@@ -15,15 +15,15 @@ import (
 type HWAccelType string
 
 const (
-	HWAccelNone           HWAccelType = "none"
-	HWAccelCUDA           HWAccelType = "cuda"
-	HWAccelNVDEC          HWAccelType = "nvdec"
-	HWAccelQSV            HWAccelType = "qsv"
-	HWAccelVAAPI          HWAccelType = "vaapi"
-	HWAccelVideoToolbox   HWAccelType = "videotoolbox"
-	HWAccelDXVA2          HWAccelType = "dxva2"
-	HWAccelD3D11VA        HWAccelType = "d3d11va"
-	HWAccelVulkan         HWAccelType = "vulkan"
+	HWAccelNone         HWAccelType = "none"
+	HWAccelCUDA         HWAccelType = "cuda"
+	HWAccelNVDEC        HWAccelType = "nvdec"
+	HWAccelQSV          HWAccelType = "qsv"
+	HWAccelVAAPI        HWAccelType = "vaapi"
+	HWAccelVideoToolbox HWAccelType = "videotoolbox"
+	HWAccelDXVA2        HWAccelType = "dxva2"
+	HWAccelD3D11VA      HWAccelType = "d3d11va"
+	HWAccelVulkan       HWAccelType = "vulkan"
 )
 
 // HardwareCapability represents a detected hardware acceleration capability
@@ -300,14 +300,14 @@ func matchesHWAccel(codec, accel string) bool {
 // getHWAccelDisplayName returns a user-friendly name for the hwaccel type
 func getHWAccelDisplayName(accel string) string {
 	names := map[string]string{
-		"cuda":          "NVIDIA CUDA",
-		"nvdec":         "NVIDIA NVDEC",
-		"qsv":           "Intel Quick Sync Video",
-		"vaapi":         "Video Acceleration API (Linux)",
-		"videotoolbox":  "Apple VideoToolbox",
-		"dxva2":         "DirectX Video Acceleration 2",
-		"d3d11va":       "Direct3D 11 Video Acceleration",
-		"vulkan":        "Vulkan Video",
+		"cuda":         "NVIDIA CUDA",
+		"nvdec":        "NVIDIA NVDEC",
+		"qsv":          "Intel Quick Sync Video",
+		"vaapi":        "Video Acceleration API (Linux)",
+		"videotoolbox": "Apple VideoToolbox",
+		"dxva2":        "DirectX Video Acceleration 2",
+		"d3d11va":      "Direct3D 11 Video Acceleration",
+		"vulkan":       "Vulkan Video",
 	}
 
 	if name, ok := names[accel]; ok {

@@ -14,14 +14,14 @@ import (
 type OutputFormatType string
 
 const (
-	FormatMPEGTS   OutputFormatType = "mpegts"
-	FormatHLS      OutputFormatType = "hls"
-	FormatFLV      OutputFormatType = "flv"
-	FormatMP4      OutputFormatType = "mp4"
-	FormatFMP4     OutputFormatType = "fmp4" // Fragmented MP4 (CMAF)
-	FormatMKV      OutputFormatType = "matroska"
-	FormatWebM     OutputFormatType = "webm"
-	FormatUnknown  OutputFormatType = ""
+	FormatMPEGTS  OutputFormatType = "mpegts"
+	FormatHLS     OutputFormatType = "hls"
+	FormatFLV     OutputFormatType = "flv"
+	FormatMP4     OutputFormatType = "mp4"
+	FormatFMP4    OutputFormatType = "fmp4" // Fragmented MP4 (CMAF)
+	FormatMKV     OutputFormatType = "matroska"
+	FormatWebM    OutputFormatType = "webm"
+	FormatUnknown OutputFormatType = ""
 )
 
 // CodecFamily represents the base codec family (independent of encoder implementation)
@@ -76,12 +76,12 @@ var encoderToCodecFamily = map[string]CodecFamily{
 	"vp9_qsv":    CodecFamilyVP9,
 
 	// AV1 encoders
-	"libaom-av1":  CodecFamilyAV1,
-	"libsvtav1":   CodecFamilyAV1,
-	"av1_nvenc":   CodecFamilyAV1,
-	"av1_qsv":     CodecFamilyAV1,
-	"av1_vaapi":   CodecFamilyAV1,
-	"librav1e":    CodecFamilyAV1,
+	"libaom-av1": CodecFamilyAV1,
+	"libsvtav1":  CodecFamilyAV1,
+	"av1_nvenc":  CodecFamilyAV1,
+	"av1_qsv":    CodecFamilyAV1,
+	"av1_vaapi":  CodecFamilyAV1,
+	"librav1e":   CodecFamilyAV1,
 
 	// Audio encoders
 	"aac":        CodecFamilyAAC,
@@ -118,10 +118,10 @@ func GetCodecFamily(encoder string) CodecFamily {
 // for converting from a source codec to a target output format.
 //
 // IMPORTANT: The isCopying parameter determines whether video is being copied or transcoded:
-// - When COPYING (isCopying=true): BSF may be needed to convert between container formats
-//   (e.g., h264_mp4toannexb converts AVCC from MP4 to Annex B for MPEG-TS)
-// - When TRANSCODING (isCopying=false): The encoder outputs the correct format directly,
-//   and FFmpeg's muxer handles it. Adding BSF would corrupt the stream.
+//   - When COPYING (isCopying=true): BSF may be needed to convert between container formats
+//     (e.g., h264_mp4toannexb converts AVCC from MP4 to Annex B for MPEG-TS)
+//   - When TRANSCODING (isCopying=false): The encoder outputs the correct format directly,
+//     and FFmpeg's muxer handles it. Adding BSF would corrupt the stream.
 func GetVideoBitstreamFilter(codecFamily CodecFamily, outputFormat OutputFormatType, isCopying bool) BitstreamFilterInfo {
 	// When transcoding (encoding), the encoder and muxer handle format correctly.
 	// BSF is only needed when copying to convert between container formats.
@@ -216,12 +216,12 @@ func combineReasons(video, audio string) string {
 
 // SourceCodecInfo contains detected codec information from a stream
 type SourceCodecInfo struct {
-	VideoCodec  string      // e.g., "h264", "hevc"
-	AudioCodec  string      // e.g., "aac", "ac3"
+	VideoCodec  string // e.g., "h264", "hevc"
+	AudioCodec  string // e.g., "aac", "ac3"
 	VideoFamily CodecFamily
 	AudioFamily CodecFamily
-	Resolution  string      // e.g., "1920x1080"
-	FrameRate   string      // e.g., "25"
+	Resolution  string // e.g., "1920x1080"
+	FrameRate   string // e.g., "25"
 }
 
 // CodecDetector handles codec detection using ffprobe
@@ -252,7 +252,7 @@ func (d *CodecDetector) DetectSourceCodecs(ctx context.Context, streamURL string
 		"-show_entries", "stream=codec_name,width,height,r_frame_rate",
 		"-of", "default=noprint_wrappers=1",
 		"-analyzeduration", "5000000", // 5 seconds
-		"-probesize", "5000000",       // 5MB
+		"-probesize", "5000000", // 5MB
 		streamURL,
 	}
 

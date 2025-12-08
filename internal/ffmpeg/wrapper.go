@@ -29,9 +29,7 @@ type Command struct {
 	mu      sync.RWMutex
 
 	// Progress tracking
-	progressCh chan Progress
-	errorCh    chan error
-	doneCh     chan struct{}
+	doneCh chan struct{}
 
 	// Process monitoring
 	monitor *ProcessMonitor
@@ -44,14 +42,14 @@ type Command struct {
 
 // Progress represents FFmpeg progress information.
 type Progress struct {
-	Frame       int64         `json:"frame"`
-	FPS         float64       `json:"fps"`
-	Bitrate     string        `json:"bitrate"`
-	TotalSize   int64         `json:"total_size"`
-	Time        time.Duration `json:"time"`
-	Speed       float64       `json:"speed"`
-	DupFrames   int64         `json:"dup_frames"`
-	DropFrames  int64         `json:"drop_frames"`
+	Frame      int64         `json:"frame"`
+	FPS        float64       `json:"fps"`
+	Bitrate    string        `json:"bitrate"`
+	TotalSize  int64         `json:"total_size"`
+	Time       time.Duration `json:"time"`
+	Speed      float64       `json:"speed"`
+	DupFrames  int64         `json:"dup_frames"`
+	DropFrames int64         `json:"drop_frames"`
 }
 
 // RetryConfig configures retry behavior for FFmpeg process startup.
@@ -334,10 +332,10 @@ func (b *CommandBuilder) OutputArgs(args ...string) *CommandBuilder {
 func (b *CommandBuilder) MpegtsArgs() *CommandBuilder {
 	b.outputArgs = append(b.outputArgs,
 		"-f", "mpegts",
-		"-mpegts_copyts", "1",            // Preserve original timestamps
+		"-mpegts_copyts", "1", // Preserve original timestamps
 		"-avoid_negative_ts", "disabled", // Don't shift timestamps (critical!)
-		"-mpegts_start_pid", "256",       // Standard program start PID
-		"-mpegts_pmt_start_pid", "4096",  // Program Map Table PID
+		"-mpegts_start_pid", "256", // Standard program start PID
+		"-mpegts_pmt_start_pid", "4096", // Program Map Table PID
 	)
 	return b
 }

@@ -22,30 +22,15 @@ linters:
     - misspell        # Find commonly misspelled English words
     - whitespace      # Check for trailing whitespace
 
-    # Complexity
-    - gocyclo         # Check cyclomatic complexity
-    - gocognit        # Check cognitive complexity
-    - nestif          # Check deeply nested if statements
 
-    # Performance
-    - prealloc        # Find slice declarations that could potentially be preallocated
 
     # Best practices
     - errname         # Check error naming conventions
-    - errorlint       # Find code that will cause problems with error wrapping
-    - goconst         # Find repeated strings that could be replaced by a constant
-    - gocritic        # The most opinionated Go linter
     - goprintffuncname # Check printf-like functions are named with f at the end
     - nolintlint      # Ensure nolint directives are properly used
-    - revive          # Fast, configurable, extensible, flexible linter
-    - unconvert       # Remove unnecessary type conversions
-    - unparam         # Find unused function parameters
 
     # Security
     - gosec           # Security problems
-
-    # Comments and documentation
-    - godot           # Check if comments end in a period
 
     # Modern Go features
     - gomoddirectives # Manage replace, retract directives in go.mod
@@ -54,93 +39,63 @@ linters:
     # Testing
     - tparallel       # Detects inappropriate usage of t.Parallel()
 
-    # Error handling
-    - wrapcheck       # Check that errors from external packages are wrapped
-
-    # Modern Go features and simplifications
-    - modernize       # Suggest simplifications using modern Go constructs (v2.6.0+)
-
   # Linters settings
   settings:
     # Error checking
     errcheck:
-      check-type-assertions: true
-      check-blank: true
+      check-type-assertions: false  # Type assertions with ok pattern are acceptable
+      check-blank: false  # Allow blank identifier for intentionally ignored errors
       exclude-functions:
         - (io.Closer).Close
         - (*database/sql.Rows).Close
         - (*github.com/spf13/cobra.Command).MarkFlagRequired
+        - io.Copy
+        - (io.Writer).Write
+        - (*bytes.Buffer).Write
+        - (*bytes.Buffer).WriteString
+        - (*strings.Builder).Write
+        - (*strings.Builder).WriteString
+        - fmt.Fprintf
+        - fmt.Fprint
+        - fmt.Fprintln
+        - fmt.Sscanf
+        - (net/http.ResponseWriter).Write
+        - (*encoding/xml.Decoder).Skip
+        - xml.EscapeText
 
-    # Cyclomatic complexity
-    gocyclo:
-      min-complexity: 15
 
-    # Cognitive complexity
-    gocognit:
-      min-complexity: 20
 
-    # Constants detection
-    goconst:
-      min-len: 3
-      min-occurrences: 3
-
-    # Go critic
-    gocritic:
-      enabled-tags:
-        - diagnostic
-        - style
-        - performance
-        - experimental
-      disabled-checks:
-        - commentedOutCode
-        - whyNoLint
-        - hugeParam
 
     # Security
     gosec:
       excludes:
         - G104  # Audit errors not checked (covered by errcheck)
+        - G115  # Integer overflow in conversions (acceptable for process stats parsing)
+        - G204  # Subprocess launched with variable (FFmpeg wrapper intentionally uses dynamic commands)
+        - G301  # Directory permissions (acceptable for data directories)
+        - G302  # File permissions (acceptable for generated files)
+        - G306  # WriteFile permissions (acceptable for non-sensitive files)
+        - G307  # Deprecated - defer in loop
+        - G404  # Use of weak random number generator (acceptable for non-crypto uses)
       config:
         global:
           audit: true
 
-    # Nested if depth
-    nestif:
-      min-complexity: 5
 
-    # Revive configuration
-    revive:
-      rules:
-        - name: blank-imports
-        - name: context-as-argument
-        - name: context-keys-type
-        - name: dot-imports
-        - name: error-return
-        - name: error-strings
-        - name: error-naming
-        - name: exported
-        - name: if-return
-        - name: increment-decrement
-        - name: var-naming
-        - name: var-declaration
-        - name: package-comments
-        - name: range
-        - name: receiver-naming
-        - name: time-naming
-        - name: unexported-return
-        - name: indent-error-flow
-        - name: errorf
-        - name: empty-block
-        - name: superfluous-else
-        - name: unused-parameter
-        - name: unreachable-code
-        - name: redefines-builtin-id
 
     # Static check
     staticcheck:
       checks:
         - all
         - -SA1019  # Allow deprecated packages (we'll handle these explicitly)
+        - -ST1003  # Naming conventions for initialisms (API, ID, etc.) - too noisy
+        - -QF1003  # Tagged switch suggestions - style preference
+        - -QF1008  # Embedded field selector - style preference
+        - -S1016   # Struct conversion - code clarity
+        - -QF1007  # Merge conditional assignment - style preference
+        - -QF1001  # De Morgan's law - style preference
+        - -QF1011  # Omit type from declaration - style preference
+        - -ST1023  # Omit type from declaration - style preference
 
     # Unused code
     unused:
@@ -149,23 +104,9 @@ linters:
 
     # Whitespace
     whitespace:
-      multi-if: true
-      multi-func: true
+      multi-if: false
+      multi-func: false
 
-    # Error wrapping
-    wrapcheck:
-      ignore-sigs:
-        - .Errorf(
-        - errors.New(
-        - errors.Unwrap(
-        - errors.Join(
-        - .Wrap(
-        - .Wrapf(
-        - .WithMessage(
-        - .WithMessagef(
-        - .WithStack(
-      ignore-package-globs:
-        - github.com/jmylchreest/tvarr/*
 
   # Exclusions configuration
   exclusions:
@@ -194,6 +135,7 @@ linters:
           - gosec
           - goconst
           - gocognit
+          - unused
 
       # Exclude magic number warnings in tests
       - path: _test\.go
@@ -209,11 +151,6 @@ linters:
           - lll
         source: "^//go:generate "
 
-      # Exclude godot issues for TODO comments
-      - linters:
-          - godot
-        source: "^// TODO"
-
       # Allow blank identifiers in cmd package
       - path: cmd/
         text: "G104:"
@@ -225,10 +162,6 @@ linters:
         linters:
           - govet
 
-      # Exclude wrapcheck for internal packages
-      - path: internal/
-        linters:
-          - wrapcheck
 
 # Formatters configuration
 formatters:

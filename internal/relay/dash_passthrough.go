@@ -50,7 +50,7 @@ type DASHPassthroughHandler struct {
 	upstreamURL string // Upstream manifest URL
 
 	mu                sync.RWMutex
-	cachedManifest    string    // Cached and rewritten manifest
+	cachedManifest    string // Cached and rewritten manifest
 	lastManifestFetch time.Time
 	segments          map[string]*cachedDASHSegment // segment URL -> cached data
 	initSegments      map[string]*cachedDASHSegment // init segment URL -> cached data

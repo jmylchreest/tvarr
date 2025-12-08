@@ -611,16 +611,16 @@ type SetProxyEpgSourcesRequest struct {
 
 // HealthResponse represents the comprehensive health check response.
 type HealthResponse struct {
-	Status        string              `json:"status"`
-	Timestamp     string              `json:"timestamp"`
-	Version       string              `json:"version"`
-	Uptime        string              `json:"uptime"`
-	UptimeSeconds float64             `json:"uptime_seconds"`
-	SystemLoad    float64             `json:"system_load"`
-	CPUInfo       CPUInfo             `json:"cpu_info"`
-	Memory        MemoryInfo          `json:"memory"`
-	Components    HealthComponents    `json:"components"`
-	Checks        map[string]string   `json:"checks,omitempty"`
+	Status        string            `json:"status"`
+	Timestamp     string            `json:"timestamp"`
+	Version       string            `json:"version"`
+	Uptime        string            `json:"uptime"`
+	UptimeSeconds float64           `json:"uptime_seconds"`
+	SystemLoad    float64           `json:"system_load"`
+	CPUInfo       CPUInfo           `json:"cpu_info"`
+	Memory        MemoryInfo        `json:"memory"`
+	Components    HealthComponents  `json:"components"`
+	Checks        map[string]string `json:"checks,omitempty"`
 }
 
 // CPUInfo contains CPU load information.
@@ -645,11 +645,11 @@ type MemoryInfo struct {
 
 // ProcessMemoryInfo contains process-specific memory information.
 type ProcessMemoryInfo struct {
-	MainProcessMB        float64 `json:"main_process_mb"`
-	ChildProcessesMB     float64 `json:"child_processes_mb"`
-	TotalProcessTreeMB   float64 `json:"total_process_tree_mb"`
-	PercentageOfSystem   float64 `json:"percentage_of_system"`
-	ChildProcessCount    int     `json:"child_process_count"`
+	MainProcessMB      float64 `json:"main_process_mb"`
+	ChildProcessesMB   float64 `json:"child_processes_mb"`
+	TotalProcessTreeMB float64 `json:"total_process_tree_mb"`
+	PercentageOfSystem float64 `json:"percentage_of_system"`
+	ChildProcessCount  int     `json:"child_process_count"`
 }
 
 // HealthComponents contains health status of various components.
@@ -819,26 +819,26 @@ type EpgProgramListResponse struct {
 
 // JobResponse represents a job in API responses.
 type JobResponse struct {
-	ID             models.ULID     `json:"id"`
-	CreatedAt      time.Time       `json:"created_at"`
-	UpdatedAt      time.Time       `json:"updated_at"`
-	Type           models.JobType  `json:"type"`
-	TargetID       models.ULID     `json:"target_id,omitempty"`
-	TargetName     string          `json:"target_name,omitempty"`
+	ID             models.ULID      `json:"id"`
+	CreatedAt      time.Time        `json:"created_at"`
+	UpdatedAt      time.Time        `json:"updated_at"`
+	Type           models.JobType   `json:"type"`
+	TargetID       models.ULID      `json:"target_id,omitempty"`
+	TargetName     string           `json:"target_name,omitempty"`
 	Status         models.JobStatus `json:"status"`
-	CronSchedule   string          `json:"cron_schedule,omitempty"`
-	NextRunAt      *time.Time      `json:"next_run_at,omitempty"`
-	StartedAt      *time.Time      `json:"started_at,omitempty"`
-	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
-	DurationMs     int64           `json:"duration_ms,omitempty"`
-	AttemptCount   int             `json:"attempt_count"`
-	MaxAttempts    int             `json:"max_attempts"`
-	BackoffSeconds int             `json:"backoff_seconds"`
-	LastError      string          `json:"last_error,omitempty"`
-	Result         string          `json:"result,omitempty"`
-	Priority       int             `json:"priority"`
-	LockedBy       string          `json:"locked_by,omitempty"`
-	LockedAt       *time.Time      `json:"locked_at,omitempty"`
+	CronSchedule   string           `json:"cron_schedule,omitempty"`
+	NextRunAt      *time.Time       `json:"next_run_at,omitempty"`
+	StartedAt      *time.Time       `json:"started_at,omitempty"`
+	CompletedAt    *time.Time       `json:"completed_at,omitempty"`
+	DurationMs     int64            `json:"duration_ms,omitempty"`
+	AttemptCount   int              `json:"attempt_count"`
+	MaxAttempts    int              `json:"max_attempts"`
+	BackoffSeconds int              `json:"backoff_seconds"`
+	LastError      string           `json:"last_error,omitempty"`
+	Result         string           `json:"result,omitempty"`
+	Priority       int              `json:"priority"`
+	LockedBy       string           `json:"locked_by,omitempty"`
+	LockedAt       *time.Time       `json:"locked_at,omitempty"`
 }
 
 // JobFromModel converts a job model to a response.
@@ -882,19 +882,19 @@ func JobFromModel(j *models.Job) JobResponse {
 
 // JobHistoryResponse represents a job history record in API responses.
 type JobHistoryResponse struct {
-	ID            models.ULID     `json:"id"`
-	CreatedAt     time.Time       `json:"created_at"`
-	JobID         models.ULID     `json:"job_id"`
-	Type          models.JobType  `json:"type"`
-	TargetID      models.ULID     `json:"target_id,omitempty"`
-	TargetName    string          `json:"target_name,omitempty"`
+	ID            models.ULID      `json:"id"`
+	CreatedAt     time.Time        `json:"created_at"`
+	JobID         models.ULID      `json:"job_id"`
+	Type          models.JobType   `json:"type"`
+	TargetID      models.ULID      `json:"target_id,omitempty"`
+	TargetName    string           `json:"target_name,omitempty"`
 	Status        models.JobStatus `json:"status"`
-	StartedAt     *time.Time      `json:"started_at,omitempty"`
-	CompletedAt   *time.Time      `json:"completed_at,omitempty"`
-	DurationMs    int64           `json:"duration_ms,omitempty"`
-	AttemptNumber int             `json:"attempt_number"`
-	Error         string          `json:"error,omitempty"`
-	Result        string          `json:"result,omitempty"`
+	StartedAt     *time.Time       `json:"started_at,omitempty"`
+	CompletedAt   *time.Time       `json:"completed_at,omitempty"`
+	DurationMs    int64            `json:"duration_ms,omitempty"`
+	AttemptNumber int              `json:"attempt_number"`
+	Error         string           `json:"error,omitempty"`
+	Result        string           `json:"result,omitempty"`
 }
 
 // JobHistoryFromModel converts a job history model to a response.

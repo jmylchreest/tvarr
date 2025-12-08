@@ -68,16 +68,16 @@ func init() {
 	serveCmd.Flags().Duration("job-history-retention", 14*24*time.Hour, "Retention period for job history records (older records are deleted on startup)")
 
 	// Bind flags to viper
-	viper.BindPFlag("server.host", serveCmd.Flags().Lookup("host"))
-	viper.BindPFlag("server.port", serveCmd.Flags().Lookup("port"))
-	viper.BindPFlag("server.base_url", serveCmd.Flags().Lookup("base-url"))
-	viper.BindPFlag("database.dsn", serveCmd.Flags().Lookup("database"))
-	viper.BindPFlag("storage.base_dir", serveCmd.Flags().Lookup("data-dir"))
-	viper.BindPFlag("pipeline.ingestion_guard", serveCmd.Flags().Lookup("ingestion-guard"))
-	viper.BindPFlag("scheduler.sync_interval", serveCmd.Flags().Lookup("scheduler-sync-interval"))
-	viper.BindPFlag("scheduler.workers", serveCmd.Flags().Lookup("scheduler-workers"))
-	viper.BindPFlag("scheduler.logo_scan_schedule", serveCmd.Flags().Lookup("logo-scan-schedule"))
-	viper.BindPFlag("scheduler.job_history_retention", serveCmd.Flags().Lookup("job-history-retention"))
+	mustBindPFlag("server.host", serveCmd.Flags().Lookup("host"))
+	mustBindPFlag("server.port", serveCmd.Flags().Lookup("port"))
+	mustBindPFlag("server.base_url", serveCmd.Flags().Lookup("base-url"))
+	mustBindPFlag("database.dsn", serveCmd.Flags().Lookup("database"))
+	mustBindPFlag("storage.base_dir", serveCmd.Flags().Lookup("data-dir"))
+	mustBindPFlag("pipeline.ingestion_guard", serveCmd.Flags().Lookup("ingestion-guard"))
+	mustBindPFlag("scheduler.sync_interval", serveCmd.Flags().Lookup("scheduler-sync-interval"))
+	mustBindPFlag("scheduler.workers", serveCmd.Flags().Lookup("scheduler-workers"))
+	mustBindPFlag("scheduler.logo_scan_schedule", serveCmd.Flags().Lookup("logo-scan-schedule"))
+	mustBindPFlag("scheduler.job_history_retention", serveCmd.Flags().Lookup("job-history-retention"))
 }
 
 func runServe(cmd *cobra.Command, args []string) error {

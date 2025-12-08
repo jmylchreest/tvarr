@@ -26,32 +26,10 @@ func setupTestDB(t *testing.T) *gorm.DB {
 func TestAllMigrations_ReturnsExpectedCount(t *testing.T) {
 	migrations := AllMigrations()
 
-	// We have 34 migrations:
-	// 001-003: stream sources, channels, manual_stream_channels
-	// 004-005: EPG sources and programs
-	// 006-010: proxy tables and joins
-	// 011-013: filters and data mapping rules
-	// 014-015: relay profiles
-	// 016: is_system column
-	// 017: EPG timezone fields
-	// 018: channel index fix
-	// 019: priority rename
-	// 020: api_method column
-	// 021: jobs and job_history
-	// 022: hls_collapse column
-	// 023: FFmpeg profile configuration extensions
-	// 024: hwaccel for system profiles
-	// 025: last_known_codecs table
-	// 026: force transcode flags
-	// 027: segment_duration rename
-	// 028: container_format for CMAF
-	// 029: smart delivery proxy modes
-	// 030: simplified system profiles
-	// 031: simplify codec values to abstract types
-	// 032: cleanup legacy profiles and ensure default
-	// 033: Automatic profile, rename Efficiency/Universal, add VP9/Opus and AV1/Opus
-	// 034: relay_profile_mappings table with default client detection rules
-	assert.Len(t, migrations, 34)
+	// Compacted to 2 migrations:
+	// 001: Create all database tables (schema)
+	// 002: Insert default filters, rules, profiles, and mappings (system data)
+	assert.Len(t, migrations, 2)
 }
 
 func TestAllMigrations_VersionsAreUnique(t *testing.T) {
@@ -121,10 +99,10 @@ func TestMigrator_Status(t *testing.T) {
 	migrator := NewMigrator(db, nil)
 	migrator.RegisterAll(AllMigrations())
 
-	// Before running migrations
+	// Before running migrations (compacted to 2 migrations)
 	statuses, err := migrator.Status(ctx)
 	require.NoError(t, err)
-	assert.Len(t, statuses, 34)
+	assert.Len(t, statuses, 2)
 
 	for _, s := range statuses {
 		assert.False(t, s.Applied)
@@ -154,39 +132,28 @@ func TestMigrator_Down_RollsBackLastMigration(t *testing.T) {
 	err := migrator.Up(ctx)
 	require.NoError(t, err)
 
-	// Roll back migrations one by one until we've removed data_mapping_rules and filters tables
-	// Current order (34 migrations): 034 (relay profile mappings), 033 (Automatic profile),
-	// 032 (cleanup legacy), 031 (simplify codecs), 030-028 (CMAF/smart delivery),
-	// 027-023 (segment rename through FFmpeg config), 022 (hls_collapse), 021 (jobs),
-	// 020 (api_method), 019 (priority rename), 018 (channel index fix), 017 (EPG timezone),
-	// 016 (is_system), 015 (default relay profiles), 014 (relay_profiles table),
-	// 013 (default filters/rules), 012 (data_mapping_rules), 011 (filters)
-
-	// Roll back 034-013 (22 migrations: relay profile mappings, Automatic profile, cleanup legacy,
-	// simplify codecs, CMAF/smart delivery 028-030, segment rename, force transcode, codecs table,
-	// hwaccel, FFmpeg profile config, hls_collapse, jobs, api_method, priority rename, channel index,
-	// EPG timezone, is_system, default relay profiles, relay profiles table, default filters/rules)
-	for i := 0; i < 22; i++ {
-		err = migrator.Down(ctx)
-		require.NoError(t, err)
-	}
-
-	// Tables still exist after rolling back to 012
+	// After running all migrations, tables should exist
 	assert.True(t, db.Migrator().HasTable("filters"))
 	assert.True(t, db.Migrator().HasTable("data_mapping_rules"))
+	assert.True(t, db.Migrator().HasTable("relay_profiles"))
+	assert.True(t, db.Migrator().HasTable("relay_profile_mappings"))
 
-	// Roll back 012 (data_mapping_rules table)
+	// Roll back migration 002 (system data)
 	err = migrator.Down(ctx)
 	require.NoError(t, err)
 
-	assert.False(t, db.Migrator().HasTable("data_mapping_rules"))
-	assert.True(t, db.Migrator().HasTable("filters")) // Still exists
+	// Tables still exist after rolling back system data (only data deleted)
+	assert.True(t, db.Migrator().HasTable("filters"))
+	assert.True(t, db.Migrator().HasTable("relay_profiles"))
 
-	// Roll back 011 (filters table)
+	// Roll back migration 001 (schema)
 	err = migrator.Down(ctx)
 	require.NoError(t, err)
 
+	// Tables should no longer exist
 	assert.False(t, db.Migrator().HasTable("filters"))
+	assert.False(t, db.Migrator().HasTable("data_mapping_rules"))
+	assert.False(t, db.Migrator().HasTable("relay_profiles"))
 }
 
 func TestMigrator_Pending(t *testing.T) {
@@ -196,10 +163,10 @@ func TestMigrator_Pending(t *testing.T) {
 	migrator := NewMigrator(db, nil)
 	migrator.RegisterAll(AllMigrations())
 
-	// All should be pending initially
+	// All should be pending initially (compacted to 2 migrations)
 	pending, err := migrator.Pending(ctx)
 	require.NoError(t, err)
-	assert.Len(t, pending, 34)
+	assert.Len(t, pending, 2)
 
 	// Run migrations
 	err = migrator.Up(ctx)

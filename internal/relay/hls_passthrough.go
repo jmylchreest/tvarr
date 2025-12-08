@@ -44,26 +44,25 @@ func DefaultHLSPassthroughConfig() HLSPassthroughConfig {
 // It fetches playlists from upstream, rewrites segment URLs to point to the proxy,
 // and caches segments locally to reduce upstream connections.
 type HLSPassthroughHandler struct {
-	config     HLSPassthroughConfig
-	baseURL    string  // Base URL for proxy (e.g., http://localhost:8080/stream/123)
+	config      HLSPassthroughConfig
+	baseURL     string // Base URL for proxy (e.g., http://localhost:8080/stream/123)
 	upstreamURL string // Upstream playlist URL
 
-	mu              sync.RWMutex
-	cachedPlaylist  string    // Cached and rewritten playlist
+	mu                sync.RWMutex
+	cachedPlaylist    string // Cached and rewritten playlist
 	lastPlaylistFetch time.Time
-	segments        map[string]*cachedSegment // segment URL -> cached data
+	segments          map[string]*cachedSegment // segment URL -> cached data
 
 	// Upstream playlist parsing state
-	mediaSequence   uint64
-	targetDuration  int
-	segmentURLs     []string // Ordered list of segment URLs from upstream
+	mediaSequence  uint64
+	targetDuration int
+	segmentURLs    []string // Ordered list of segment URLs from upstream
 }
 
 // cachedSegment holds a cached segment and its metadata.
 type cachedSegment struct {
 	data      []byte
 	fetchedAt time.Time
-	duration  float64
 }
 
 // NewHLSPassthroughHandler creates a new HLS passthrough handler.

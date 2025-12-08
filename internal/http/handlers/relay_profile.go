@@ -363,27 +363,27 @@ func (h *RelayProfileHandler) GetDefault(ctx context.Context, input *GetDefaultR
 // CreateRelayProfileInput is the input for creating a relay profile.
 type CreateRelayProfileInput struct {
 	Body struct {
-		Name                string `json:"name" required:"true" doc:"Profile name"`
-		Description         string `json:"description,omitempty" doc:"Profile description"`
-		VideoCodec          string `json:"video_codec" doc:"Video codec (copy, h264, hevc, vp9, av1)"`
-		AudioCodec          string `json:"audio_codec" doc:"Audio codec (copy, aac, mp3, opus, flac)"`
-		VideoBitrate        int    `json:"video_bitrate,omitempty" doc:"Video bitrate in kbps"`
-		AudioBitrate        int    `json:"audio_bitrate,omitempty" doc:"Audio bitrate in kbps"`
-		VideoMaxrate        int    `json:"video_maxrate,omitempty" doc:"Video max bitrate in kbps"`
-		VideoPreset         string `json:"video_preset,omitempty" doc:"Encoder preset"`
-		VideoWidth          int    `json:"video_width,omitempty" doc:"Output video width"`
-		VideoHeight         int    `json:"video_height,omitempty" doc:"Output video height"`
-		AudioSampleRate     int    `json:"audio_sample_rate,omitempty" doc:"Audio sample rate in Hz"`
-		AudioChannels       int    `json:"audio_channels,omitempty" doc:"Audio channels (1=mono, 2=stereo)"`
-		HWAccel             string `json:"hw_accel,omitempty" doc:"Hardware acceleration (none, nvenc, qsv, vaapi, amf, videotoolbox)"`
-		HWAccelDevice       string `json:"hw_accel_device,omitempty" doc:"Hardware acceleration device path"`
-		HWAccelOutputFormat string `json:"hw_accel_output_format,omitempty" doc:"Hardware acceleration output format"`
-		HWAccelDecoderCodec string `json:"hw_accel_decoder_codec,omitempty" doc:"Hardware acceleration decoder codec"`
-		HWAccelExtraOptions string `json:"hw_accel_extra_options,omitempty" doc:"Extra hardware acceleration options"`
-		GpuIndex            int    `json:"gpu_index,omitempty" doc:"GPU device index (-1 for auto)"`
-		ContainerFormat     string `json:"container_format,omitempty" doc:"Container format (auto, fmp4, mpegts)"`
-		InputOptions        string `json:"input_options,omitempty" doc:"Custom FFmpeg input options"`
-		OutputOptions       string `json:"output_options,omitempty" doc:"Custom FFmpeg output options"`
+		Name                     string `json:"name" required:"true" doc:"Profile name"`
+		Description              string `json:"description,omitempty" doc:"Profile description"`
+		VideoCodec               string `json:"video_codec" doc:"Video codec (copy, h264, hevc, vp9, av1)"`
+		AudioCodec               string `json:"audio_codec" doc:"Audio codec (copy, aac, mp3, opus, flac)"`
+		VideoBitrate             int    `json:"video_bitrate,omitempty" doc:"Video bitrate in kbps"`
+		AudioBitrate             int    `json:"audio_bitrate,omitempty" doc:"Audio bitrate in kbps"`
+		VideoMaxrate             int    `json:"video_maxrate,omitempty" doc:"Video max bitrate in kbps"`
+		VideoPreset              string `json:"video_preset,omitempty" doc:"Encoder preset"`
+		VideoWidth               int    `json:"video_width,omitempty" doc:"Output video width"`
+		VideoHeight              int    `json:"video_height,omitempty" doc:"Output video height"`
+		AudioSampleRate          int    `json:"audio_sample_rate,omitempty" doc:"Audio sample rate in Hz"`
+		AudioChannels            int    `json:"audio_channels,omitempty" doc:"Audio channels (1=mono, 2=stereo)"`
+		HWAccel                  string `json:"hw_accel,omitempty" doc:"Hardware acceleration (none, nvenc, qsv, vaapi, amf, videotoolbox)"`
+		HWAccelDevice            string `json:"hw_accel_device,omitempty" doc:"Hardware acceleration device path"`
+		HWAccelOutputFormat      string `json:"hw_accel_output_format,omitempty" doc:"Hardware acceleration output format"`
+		HWAccelDecoderCodec      string `json:"hw_accel_decoder_codec,omitempty" doc:"Hardware acceleration decoder codec"`
+		HWAccelExtraOptions      string `json:"hw_accel_extra_options,omitempty" doc:"Extra hardware acceleration options"`
+		GpuIndex                 int    `json:"gpu_index,omitempty" doc:"GPU device index (-1 for auto)"`
+		ContainerFormat          string `json:"container_format,omitempty" doc:"Container format (auto, fmp4, mpegts)"`
+		InputOptions             string `json:"input_options,omitempty" doc:"Custom FFmpeg input options"`
+		OutputOptions            string `json:"output_options,omitempty" doc:"Custom FFmpeg output options"`
 		FilterComplex            string `json:"filter_complex,omitempty" doc:"Custom filter complex string"`
 		IsDefault                bool   `json:"is_default,omitempty" doc:"Set as default profile"`
 		FallbackEnabled          *bool  `json:"fallback_enabled,omitempty" doc:"Enable fallback to copy mode on error"`
@@ -416,35 +416,35 @@ func (h *RelayProfileHandler) Create(ctx context.Context, input *CreateRelayProf
 	}
 
 	profile := &models.RelayProfile{
-		Name:                 input.Body.Name,
-		Description:          input.Body.Description,
-		VideoCodec:           models.VideoCodec(input.Body.VideoCodec),
-		AudioCodec:           models.AudioCodec(input.Body.AudioCodec),
-		VideoBitrate:         input.Body.VideoBitrate,
-		AudioBitrate:         input.Body.AudioBitrate,
-		VideoMaxrate:         input.Body.VideoMaxrate,
-		VideoPreset:          input.Body.VideoPreset,
-		VideoWidth:           input.Body.VideoWidth,
-		VideoHeight:          input.Body.VideoHeight,
-		AudioSampleRate:      input.Body.AudioSampleRate,
-		AudioChannels:        input.Body.AudioChannels,
-		HWAccel:              models.HWAccelType(input.Body.HWAccel),
-		HWAccelDevice:        input.Body.HWAccelDevice,
-		HWAccelOutputFormat:  input.Body.HWAccelOutputFormat,
-		HWAccelDecoderCodec:  input.Body.HWAccelDecoderCodec,
-		HWAccelExtraOptions:  input.Body.HWAccelExtraOptions,
-		GpuIndex:             input.Body.GpuIndex,
-		ContainerFormat:      models.ContainerFormat(input.Body.ContainerFormat),
-		InputOptions:         input.Body.InputOptions,
-		OutputOptions:        input.Body.OutputOptions,
-		FilterComplex:        input.Body.FilterComplex,
-		CustomFlagsValidated:    flagsValidated,
-		CustomFlagsWarnings:     flagsWarnings,
-		IsDefault:               input.Body.IsDefault,
-		FallbackErrorThreshold:  input.Body.FallbackErrorThreshold,
+		Name:                     input.Body.Name,
+		Description:              input.Body.Description,
+		VideoCodec:               models.VideoCodec(input.Body.VideoCodec),
+		AudioCodec:               models.AudioCodec(input.Body.AudioCodec),
+		VideoBitrate:             input.Body.VideoBitrate,
+		AudioBitrate:             input.Body.AudioBitrate,
+		VideoMaxrate:             input.Body.VideoMaxrate,
+		VideoPreset:              input.Body.VideoPreset,
+		VideoWidth:               input.Body.VideoWidth,
+		VideoHeight:              input.Body.VideoHeight,
+		AudioSampleRate:          input.Body.AudioSampleRate,
+		AudioChannels:            input.Body.AudioChannels,
+		HWAccel:                  models.HWAccelType(input.Body.HWAccel),
+		HWAccelDevice:            input.Body.HWAccelDevice,
+		HWAccelOutputFormat:      input.Body.HWAccelOutputFormat,
+		HWAccelDecoderCodec:      input.Body.HWAccelDecoderCodec,
+		HWAccelExtraOptions:      input.Body.HWAccelExtraOptions,
+		GpuIndex:                 input.Body.GpuIndex,
+		ContainerFormat:          models.ContainerFormat(input.Body.ContainerFormat),
+		InputOptions:             input.Body.InputOptions,
+		OutputOptions:            input.Body.OutputOptions,
+		FilterComplex:            input.Body.FilterComplex,
+		CustomFlagsValidated:     flagsValidated,
+		CustomFlagsWarnings:      flagsWarnings,
+		IsDefault:                input.Body.IsDefault,
+		FallbackErrorThreshold:   input.Body.FallbackErrorThreshold,
 		FallbackRecoveryInterval: input.Body.FallbackRecoveryInterval,
-		ForceVideoTranscode:     input.Body.ForceVideoTranscode,
-		ForceAudioTranscode:     input.Body.ForceAudioTranscode,
+		ForceVideoTranscode:      input.Body.ForceVideoTranscode,
+		ForceAudioTranscode:      input.Body.ForceAudioTranscode,
 	}
 
 	// Handle fallback_enabled (defaults to true if not specified)
@@ -485,26 +485,26 @@ func (h *RelayProfileHandler) Create(ctx context.Context, input *CreateRelayProf
 type UpdateRelayProfileInput struct {
 	ID   string `path:"id" doc:"Relay profile ID (UUID)"`
 	Body struct {
-		Name                string  `json:"name,omitempty" doc:"Profile name"`
-		Description         string  `json:"description,omitempty" doc:"Profile description"`
-		VideoCodec          string  `json:"video_codec,omitempty" doc:"Video codec"`
-		AudioCodec          string  `json:"audio_codec,omitempty" doc:"Audio codec"`
-		VideoBitrate        int     `json:"video_bitrate,omitempty" doc:"Video bitrate in kbps"`
-		AudioBitrate        int     `json:"audio_bitrate,omitempty" doc:"Audio bitrate in kbps"`
-		VideoMaxrate        int     `json:"video_maxrate,omitempty" doc:"Video max bitrate in kbps"`
-		VideoPreset         string  `json:"video_preset,omitempty" doc:"Encoder preset"`
-		VideoWidth          int     `json:"video_width,omitempty" doc:"Output video width"`
-		VideoHeight         int     `json:"video_height,omitempty" doc:"Output video height"`
-		AudioSampleRate     int     `json:"audio_sample_rate,omitempty" doc:"Audio sample rate in Hz"`
-		AudioChannels       int     `json:"audio_channels,omitempty" doc:"Audio channels"`
-		HWAccel             string  `json:"hw_accel,omitempty" doc:"Hardware acceleration"`
-		HWAccelDevice       *string `json:"hw_accel_device,omitempty" doc:"Hardware acceleration device path"`
-		HWAccelOutputFormat *string `json:"hw_accel_output_format,omitempty" doc:"Hardware acceleration output format"`
-		HWAccelDecoderCodec *string `json:"hw_accel_decoder_codec,omitempty" doc:"Hardware acceleration decoder codec"`
-		HWAccelExtraOptions *string `json:"hw_accel_extra_options,omitempty" doc:"Extra hardware acceleration options"`
-		GpuIndex            *int    `json:"gpu_index,omitempty" doc:"GPU device index (-1 for auto)"`
-		ContainerFormat     string  `json:"container_format,omitempty" doc:"Container format (auto, fmp4, mpegts)"`
-		InputOptions        *string `json:"input_options,omitempty" doc:"Custom FFmpeg input options"`
+		Name                     string  `json:"name,omitempty" doc:"Profile name"`
+		Description              string  `json:"description,omitempty" doc:"Profile description"`
+		VideoCodec               string  `json:"video_codec,omitempty" doc:"Video codec"`
+		AudioCodec               string  `json:"audio_codec,omitempty" doc:"Audio codec"`
+		VideoBitrate             int     `json:"video_bitrate,omitempty" doc:"Video bitrate in kbps"`
+		AudioBitrate             int     `json:"audio_bitrate,omitempty" doc:"Audio bitrate in kbps"`
+		VideoMaxrate             int     `json:"video_maxrate,omitempty" doc:"Video max bitrate in kbps"`
+		VideoPreset              string  `json:"video_preset,omitempty" doc:"Encoder preset"`
+		VideoWidth               int     `json:"video_width,omitempty" doc:"Output video width"`
+		VideoHeight              int     `json:"video_height,omitempty" doc:"Output video height"`
+		AudioSampleRate          int     `json:"audio_sample_rate,omitempty" doc:"Audio sample rate in Hz"`
+		AudioChannels            int     `json:"audio_channels,omitempty" doc:"Audio channels"`
+		HWAccel                  string  `json:"hw_accel,omitempty" doc:"Hardware acceleration"`
+		HWAccelDevice            *string `json:"hw_accel_device,omitempty" doc:"Hardware acceleration device path"`
+		HWAccelOutputFormat      *string `json:"hw_accel_output_format,omitempty" doc:"Hardware acceleration output format"`
+		HWAccelDecoderCodec      *string `json:"hw_accel_decoder_codec,omitempty" doc:"Hardware acceleration decoder codec"`
+		HWAccelExtraOptions      *string `json:"hw_accel_extra_options,omitempty" doc:"Extra hardware acceleration options"`
+		GpuIndex                 *int    `json:"gpu_index,omitempty" doc:"GPU device index (-1 for auto)"`
+		ContainerFormat          string  `json:"container_format,omitempty" doc:"Container format (auto, fmp4, mpegts)"`
+		InputOptions             *string `json:"input_options,omitempty" doc:"Custom FFmpeg input options"`
 		OutputOptions            *string `json:"output_options,omitempty" doc:"Custom FFmpeg output options"`
 		FilterComplex            *string `json:"filter_complex,omitempty" doc:"Custom filter complex string"`
 		Enabled                  *bool   `json:"enabled,omitempty" doc:"Whether the profile is enabled"`
@@ -808,10 +808,10 @@ type GetRelayStatsInput struct{}
 // GetRelayStatsOutput is the output for getting relay stats.
 type GetRelayStatsOutput struct {
 	Body struct {
-		ActiveSessions int                    `json:"active_sessions"`
-		MaxSessions    int                    `json:"max_sessions"`
-		Sessions       []map[string]any       `json:"sessions,omitempty"`
-		ConnectionPool map[string]any         `json:"connection_pool"`
+		ActiveSessions int              `json:"active_sessions"`
+		MaxSessions    int              `json:"max_sessions"`
+		Sessions       []map[string]any `json:"sessions,omitempty"`
+		ConnectionPool map[string]any   `json:"connection_pool"`
 	}
 }
 
@@ -837,10 +837,10 @@ func (h *RelayProfileHandler) GetStats(ctx context.Context, input *GetRelayStats
 
 	return &GetRelayStatsOutput{
 		Body: struct {
-			ActiveSessions int                    `json:"active_sessions"`
-			MaxSessions    int                    `json:"max_sessions"`
-			Sessions       []map[string]any       `json:"sessions,omitempty"`
-			ConnectionPool map[string]any         `json:"connection_pool"`
+			ActiveSessions int              `json:"active_sessions"`
+			MaxSessions    int              `json:"max_sessions"`
+			Sessions       []map[string]any `json:"sessions,omitempty"`
+			ConnectionPool map[string]any   `json:"connection_pool"`
 		}{
 			ActiveSessions: stats.ActiveSessions,
 			MaxSessions:    stats.MaxSessions,
@@ -871,21 +871,21 @@ type RelayConnectedClientHealth struct {
 
 // RelayProcessHealth represents the health status of a relay process.
 type RelayProcessHealth struct {
-	ConfigID                string                       `json:"config_id"`
-	ProfileID               string                       `json:"profile_id"`
-	ProfileName             string                       `json:"profile_name"`
-	ChannelName             string                       `json:"channel_name,omitempty"`
-	SourceURL               string                       `json:"source_url"`
-	Status                  string                       `json:"status"`
-	PID                     string                       `json:"pid,omitempty"`
-	UptimeSeconds           string                       `json:"uptime_seconds"`
-	MemoryUsageMB           string                       `json:"memory_usage_mb"`
-	CPUUsagePercent         string                       `json:"cpu_usage_percent"`
-	BytesReceivedUpstream   string                       `json:"bytes_received_upstream"`
-	BytesDeliveredDownstream string                      `json:"bytes_delivered_downstream"`
-	ConnectedClients        []RelayConnectedClientHealth `json:"connected_clients"`
-	LastHeartbeat           string                       `json:"last_heartbeat"`
-	Error                   string                       `json:"error,omitempty"`
+	ConfigID                 string                       `json:"config_id"`
+	ProfileID                string                       `json:"profile_id"`
+	ProfileName              string                       `json:"profile_name"`
+	ChannelName              string                       `json:"channel_name,omitempty"`
+	SourceURL                string                       `json:"source_url"`
+	Status                   string                       `json:"status"`
+	PID                      string                       `json:"pid,omitempty"`
+	UptimeSeconds            string                       `json:"uptime_seconds"`
+	MemoryUsageMB            string                       `json:"memory_usage_mb"`
+	CPUUsagePercent          string                       `json:"cpu_usage_percent"`
+	BytesReceivedUpstream    string                       `json:"bytes_received_upstream"`
+	BytesDeliveredDownstream string                       `json:"bytes_delivered_downstream"`
+	ConnectedClients         []RelayConnectedClientHealth `json:"connected_clients"`
+	LastHeartbeat            string                       `json:"last_heartbeat"`
+	Error                    string                       `json:"error,omitempty"`
 }
 
 // GetRelayHealthOutput is the output for getting relay health.

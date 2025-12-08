@@ -47,32 +47,30 @@ type logoJob struct {
 
 // logoResult represents the result of a logo download job.
 type logoResult struct {
-	url       string
-	meta      *storage.CachedLogoMetadata
-	err       error
-	cached    bool // true if already cached
-	skipped   bool // true if skipped (local/unfetchable)
+	url  string
+	meta *storage.CachedLogoMetadata
+	err  error
 }
 
 // Stats holds statistics from the logo caching stage execution.
 type Stats struct {
 	// Channel logo stats
-	ChannelsProcessed      int
-	ChannelsWithLogos      int
-	UniqueChannelLogoURLs  int
-	ChannelLogosAlready    int
-	ChannelLogosNewly      int
-	ChannelLogoErrors      int
-	ChannelLogosLocalSkip  int // Logos served by tvarr itself (skipped)
+	ChannelsProcessed     int
+	ChannelsWithLogos     int
+	UniqueChannelLogoURLs int
+	ChannelLogosAlready   int
+	ChannelLogosNewly     int
+	ChannelLogoErrors     int
+	ChannelLogosLocalSkip int // Logos served by tvarr itself (skipped)
 
 	// Program logo stats
-	ProgramsProcessed      int
-	ProgramsWithLogos      int
-	UniqueProgramLogoURLs  int
-	ProgramLogosAlready    int
-	ProgramLogosNewly      int
-	ProgramLogoErrors      int
-	ProgramLogosLocalSkip  int // Logos served by tvarr itself (skipped)
+	ProgramsProcessed     int
+	ProgramsWithLogos     int
+	UniqueProgramLogoURLs int
+	ProgramLogosAlready   int
+	ProgramLogosNewly     int
+	ProgramLogoErrors     int
+	ProgramLogosLocalSkip int // Logos served by tvarr itself (skipped)
 
 	// Combined stats (for backward compatibility)
 	UniqueLogoURLs int
@@ -326,8 +324,8 @@ func (s *Stage) cacheChannelLogos(ctx context.Context, state *core.State, batchS
 
 	// Use concurrent workers to cache logos
 	var (
-		processed int32
-		errors    int32
+		processed   int32
+		errors      int32
 		newlyCached int32
 	)
 

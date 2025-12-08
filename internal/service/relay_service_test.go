@@ -49,11 +49,11 @@ func TestRelayService_CreateProfile(t *testing.T) {
 
 	t.Run("creates profile with valid data", func(t *testing.T) {
 		profile := &models.RelayProfile{
-			Name:         "test-profile",
-			Description:  "Test profile description",
-			VideoCodec:   models.VideoCodecCopy,
-			AudioCodec:   models.AudioCodecCopy,
-			HWAccel:      models.HWAccelNone,
+			Name:            "test-profile",
+			Description:     "Test profile description",
+			VideoCodec:      models.VideoCodecCopy,
+			AudioCodec:      models.AudioCodecCopy,
+			HWAccel:         models.HWAccelNone,
 			ContainerFormat: models.ContainerFormatMPEGTS,
 		}
 
@@ -82,10 +82,10 @@ func TestRelayService_GetProfile(t *testing.T) {
 
 	// Create a profile first
 	profile := &models.RelayProfile{
-		Name:         "get-test",
-		VideoCodec:   models.VideoCodecCopy,
-		AudioCodec:   models.AudioCodecCopy,
-		HWAccel:      models.HWAccelNone,
+		Name:            "get-test",
+		VideoCodec:      models.VideoCodecCopy,
+		AudioCodec:      models.AudioCodecCopy,
+		HWAccel:         models.HWAccelNone,
 		ContainerFormat: models.ContainerFormatMPEGTS,
 	}
 	require.NoError(t, svc.CreateProfile(ctx, profile))
@@ -122,10 +122,10 @@ func TestRelayService_UpdateProfile(t *testing.T) {
 
 	// Create a profile first
 	profile := &models.RelayProfile{
-		Name:         "update-test",
-		VideoCodec:   models.VideoCodecCopy,
-		AudioCodec:   models.AudioCodecCopy,
-		HWAccel:      models.HWAccelNone,
+		Name:            "update-test",
+		VideoCodec:      models.VideoCodecCopy,
+		AudioCodec:      models.AudioCodecCopy,
+		HWAccel:         models.HWAccelNone,
 		ContainerFormat: models.ContainerFormatMPEGTS,
 	}
 	require.NoError(t, svc.CreateProfile(ctx, profile))
@@ -152,10 +152,10 @@ func TestRelayService_DeleteProfile(t *testing.T) {
 
 	// Create a profile first
 	profile := &models.RelayProfile{
-		Name:         "delete-test",
-		VideoCodec:   models.VideoCodecCopy,
-		AudioCodec:   models.AudioCodecCopy,
-		HWAccel:      models.HWAccelNone,
+		Name:            "delete-test",
+		VideoCodec:      models.VideoCodecCopy,
+		AudioCodec:      models.AudioCodecCopy,
+		HWAccel:         models.HWAccelNone,
 		ContainerFormat: models.ContainerFormatMPEGTS,
 	}
 	require.NoError(t, svc.CreateProfile(ctx, profile))
@@ -178,10 +178,10 @@ func TestRelayService_GetAllProfiles(t *testing.T) {
 	// Create multiple profiles
 	for i := 0; i < 3; i++ {
 		profile := &models.RelayProfile{
-			Name:         "list-test-" + string(rune('a'+i)),
-			VideoCodec:   models.VideoCodecCopy,
-			AudioCodec:   models.AudioCodecCopy,
-			HWAccel:      models.HWAccelNone,
+			Name:            "list-test-" + string(rune('a'+i)),
+			VideoCodec:      models.VideoCodecCopy,
+			AudioCodec:      models.AudioCodecCopy,
+			HWAccel:         models.HWAccelNone,
 			ContainerFormat: models.ContainerFormatMPEGTS,
 		}
 		require.NoError(t, svc.CreateProfile(ctx, profile))
@@ -202,19 +202,19 @@ func TestRelayService_DefaultProfile(t *testing.T) {
 
 	// Create profiles
 	profile1 := &models.RelayProfile{
-		Name:         "default-test-1",
-		VideoCodec:   models.VideoCodecCopy,
-		AudioCodec:   models.AudioCodecCopy,
-		HWAccel:      models.HWAccelNone,
+		Name:            "default-test-1",
+		VideoCodec:      models.VideoCodecCopy,
+		AudioCodec:      models.AudioCodecCopy,
+		HWAccel:         models.HWAccelNone,
 		ContainerFormat: models.ContainerFormatMPEGTS,
 	}
 	require.NoError(t, svc.CreateProfile(ctx, profile1))
 
 	profile2 := &models.RelayProfile{
-		Name:         "default-test-2",
-		VideoCodec:   models.VideoCodecCopy,
-		AudioCodec:   models.AudioCodecCopy,
-		HWAccel:      models.HWAccelNone,
+		Name:            "default-test-2",
+		VideoCodec:      models.VideoCodecCopy,
+		AudioCodec:      models.AudioCodecCopy,
+		HWAccel:         models.HWAccelNone,
 		ContainerFormat: models.ContainerFormatMPEGTS,
 	}
 	require.NoError(t, svc.CreateProfile(ctx, profile2))

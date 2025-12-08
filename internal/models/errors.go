@@ -5,14 +5,14 @@ import (
 	"fmt"
 )
 
-// ErrValidation represents a validation error with field and message.
-type ErrValidation struct {
+// ValidationError represents a validation error with field and message.
+type ValidationError struct {
 	Field   string
 	Message string
 }
 
 // Error implements the error interface.
-func (e ErrValidation) Error() string {
+func (e ValidationError) Error() string {
 	return fmt.Sprintf("validation error on field %s: %s", e.Field, e.Message)
 }
 

@@ -15,30 +15,30 @@ import (
 
 // BinaryInfo contains information about the FFmpeg/FFprobe installation.
 type BinaryInfo struct {
-	FFmpegPath   string         `json:"ffmpeg_path"`
-	FFprobePath  string         `json:"ffprobe_path"`
-	Version      string         `json:"version"`
-	MajorVersion int            `json:"major_version"`
-	MinorVersion int            `json:"minor_version"`
-	BuildDate    string         `json:"build_date,omitempty"`
+	FFmpegPath    string        `json:"ffmpeg_path"`
+	FFprobePath   string        `json:"ffprobe_path"`
+	Version       string        `json:"version"`
+	MajorVersion  int           `json:"major_version"`
+	MinorVersion  int           `json:"minor_version"`
+	BuildDate     string        `json:"build_date,omitempty"`
 	Configuration string        `json:"configuration,omitempty"`
-	Codecs       []Codec        `json:"codecs,omitempty"`
-	Encoders     []string       `json:"encoders,omitempty"`
-	Decoders     []string       `json:"decoders,omitempty"`
-	HWAccels     []HWAccelInfo  `json:"hw_accels,omitempty"`
-	Formats      []FormatInfo   `json:"formats,omitempty"`
+	Codecs        []Codec       `json:"codecs,omitempty"`
+	Encoders      []string      `json:"encoders,omitempty"`
+	Decoders      []string      `json:"decoders,omitempty"`
+	HWAccels      []HWAccelInfo `json:"hw_accels,omitempty"`
+	Formats       []FormatInfo  `json:"formats,omitempty"`
 }
 
 // Codec represents codec information from FFmpeg.
 type Codec struct {
-	Name           string `json:"name"`
-	LongName       string `json:"long_name,omitempty"`
-	Type           string `json:"type"` // video, audio, subtitle, data
-	CanDecode      bool   `json:"can_decode"`
-	CanEncode      bool   `json:"can_encode"`
-	IsLossy        bool   `json:"is_lossy,omitempty"`
-	IsLossless     bool   `json:"is_lossless,omitempty"`
-	IsIntraOnly    bool   `json:"is_intra_only,omitempty"`
+	Name        string `json:"name"`
+	LongName    string `json:"long_name,omitempty"`
+	Type        string `json:"type"` // video, audio, subtitle, data
+	CanDecode   bool   `json:"can_decode"`
+	CanEncode   bool   `json:"can_encode"`
+	IsLossy     bool   `json:"is_lossy,omitempty"`
+	IsLossless  bool   `json:"is_lossless,omitempty"`
+	IsIntraOnly bool   `json:"is_intra_only,omitempty"`
 }
 
 // FormatInfo represents format/container information from FFmpeg.

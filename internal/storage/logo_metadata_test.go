@@ -260,7 +260,7 @@ func TestCachedLogoMetadata_ExtensionFromContentType(t *testing.T) {
 		{"image/bmp", ".bmp"},
 		{"image/tiff", ".tiff"},
 		{"application/octet-stream", ".png"}, // Default
-		{"", ".png"},                          // Default
+		{"", ".png"},                         // Default
 	}
 
 	for _, tt := range tests {

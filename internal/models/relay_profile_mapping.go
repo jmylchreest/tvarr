@@ -30,9 +30,9 @@ type RelayProfileMapping struct {
 	AcceptedContainers PqStringArray `json:"accepted_containers" gorm:"type:text;serializer:json"`
 
 	// Preferred transcode targets (used when source codec is not in accepted list)
-	PreferredVideoCodec  VideoCodec      `json:"preferred_video_codec" gorm:"default:'h265'"`
-	PreferredAudioCodec  AudioCodec      `json:"preferred_audio_codec" gorm:"default:'aac'"`
-	PreferredContainer   ContainerFormat `json:"preferred_container" gorm:"default:'fmp4'"`
+	PreferredVideoCodec VideoCodec      `json:"preferred_video_codec" gorm:"default:'h265'"`
+	PreferredAudioCodec AudioCodec      `json:"preferred_audio_codec" gorm:"default:'aac'"`
+	PreferredContainer  ContainerFormat `json:"preferred_container" gorm:"default:'fmp4'"`
 }
 
 // PqStringArray is a helper type for storing string arrays in the database

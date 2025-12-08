@@ -50,20 +50,8 @@ func (r *relayProfileMappingRepository) GetAll(ctx context.Context) ([]*models.R
 	return mappings, nil
 }
 
-// GetEnabled retrieves all enabled relay profile mappings.
+// GetEnabled retrieves all enabled relay profile mappings ordered by priority.
 func (r *relayProfileMappingRepository) GetEnabled(ctx context.Context) ([]*models.RelayProfileMapping, error) {
-	var mappings []*models.RelayProfileMapping
-	if err := r.db.WithContext(ctx).
-		Where("is_enabled = ?", true).
-		Order("priority ASC, created_at ASC").
-		Find(&mappings).Error; err != nil {
-		return nil, err
-	}
-	return mappings, nil
-}
-
-// GetEnabledByPriority retrieves enabled mappings ordered by priority (lowest first).
-func (r *relayProfileMappingRepository) GetEnabledByPriority(ctx context.Context) ([]*models.RelayProfileMapping, error) {
 	var mappings []*models.RelayProfileMapping
 	if err := r.db.WithContext(ctx).
 		Where("is_enabled = ?", true).

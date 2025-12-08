@@ -4,9 +4,9 @@ import "github.com/danielgtaylor/huma/v2"
 
 // CORSConfig holds CORS configuration options.
 type CORSConfig struct {
-	AllowOrigin  string
-	AllowMethods string
-	AllowHeaders string
+	AllowOrigin   string
+	AllowMethods  string
+	AllowHeaders  string
 	ExposeHeaders string
 }
 

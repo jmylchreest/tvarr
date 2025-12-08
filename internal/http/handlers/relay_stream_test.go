@@ -16,10 +16,10 @@ func TestProxyModeHandler_CORSHeaders(t *testing.T) {
 		// This test documents the expected CORS headers for proxy mode
 		// Implementation will be verified when handleProxyMode is implemented
 		expectedHeaders := map[string]string{
-			"Access-Control-Allow-Origin":      "*",
-			"Access-Control-Allow-Methods":     "GET, OPTIONS",
-			"Access-Control-Allow-Headers":     "Content-Type, Accept, Range",
-			"Access-Control-Expose-Headers":    "Content-Length, Content-Range",
+			"Access-Control-Allow-Origin":   "*",
+			"Access-Control-Allow-Methods":  "GET, OPTIONS",
+			"Access-Control-Allow-Headers":  "Content-Type, Accept, Range",
+			"Access-Control-Expose-Headers": "Content-Length, Content-Range",
 		}
 
 		// Verify expected headers are defined
@@ -102,10 +102,10 @@ func TestRedirectModeHandler(t *testing.T) {
 // Test X-Stream debug headers
 func TestXStreamDebugHeaders(t *testing.T) {
 	tests := []struct {
-		name       string
-		mode       string
-		wantKind   string
-		wantMode   string
+		name     string
+		mode     string
+		wantKind string
+		wantMode string
 	}{
 		{
 			name:     "redirect mode headers",

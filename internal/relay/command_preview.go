@@ -209,10 +209,10 @@ func GenerateCommandPreview(profile *models.RelayProfile, inputURL, outputURL st
 		}
 		builder.FMP4Args(fragDuration).FlushPackets()
 	case ffmpeg.FormatMPEGTS, ffmpeg.FormatHLS:
-		builder.MpegtsArgs().     // Proper MPEG-TS flags (copyts, PIDs, etc.)
-			FlushPackets().       // -flush_packets 1 - immediate output
-			MuxDelay("0").        // -muxdelay 0 - zero muxing delay
-			PatPeriod("0.1")      // -pat_period 0.1 - frequent PAT/PMT
+		builder.MpegtsArgs(). // Proper MPEG-TS flags (copyts, PIDs, etc.)
+					FlushPackets().  // -flush_packets 1 - immediate output
+					MuxDelay("0").   // -muxdelay 0 - zero muxing delay
+					PatPeriod("0.1") // -pat_period 0.1 - frequent PAT/PMT
 	default:
 		builder.MpegtsArgs().FlushPackets().MuxDelay("0").PatPeriod("0.1")
 	}

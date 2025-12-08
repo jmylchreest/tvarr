@@ -62,12 +62,12 @@ func DefaultCircuitBreakerConfig() CircuitBreakerConfig {
 type CircuitBreaker struct {
 	config CircuitBreakerConfig
 
-	mu               sync.RWMutex
-	state            CircuitState
-	failures         int
-	successes        int
-	lastFailureTime  time.Time
-	lastStateChange  time.Time
+	mu              sync.RWMutex
+	state           CircuitState
+	failures        int
+	successes       int
+	lastFailureTime time.Time
+	lastStateChange time.Time
 }
 
 // NewCircuitBreaker creates a new circuit breaker.
@@ -200,11 +200,11 @@ func (cb *CircuitBreaker) Stats() CircuitStats {
 	defer cb.mu.RUnlock()
 
 	return CircuitStats{
-		State:            cb.State().String(),
-		Failures:         cb.failures,
-		Successes:        cb.successes,
-		LastFailureTime:  cb.lastFailureTime,
-		LastStateChange:  cb.lastStateChange,
+		State:           cb.State().String(),
+		Failures:        cb.failures,
+		Successes:       cb.successes,
+		LastFailureTime: cb.lastFailureTime,
+		LastStateChange: cb.lastStateChange,
 	}
 }
 

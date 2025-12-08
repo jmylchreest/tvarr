@@ -233,18 +233,18 @@ func TestIsValidULID(t *testing.T) {
 		input string
 		valid bool
 	}{
-		{"01ARZ3NDEKTSV4RRFFQ69G5FAV", true},  // Valid ULID
-		{"01arz3ndektsv4rrffq69g5fav", true},  // Valid lowercase ULID
-		{"00000000000000000000000000", true},  // All zeros
-		{"7ZZZZZZZZZZZZZZZZZZZZZZZZZ", true},  // Max value
-		{"not-a-ulid", false},                  // Wrong format
-		{"01ARZ3NDEKTSV4RRFFQ69G5FA", false},  // Too short (25 chars)
-		{"01ARZ3NDEKTSV4RRFFQ69G5FAVX", false}, // Too long (27 chars)
-		{"01ARZ3NDEKTSV4RRFFQ69G5FAI", false}, // Contains I (invalid)
-		{"01ARZ3NDEKTSV4RRFFQ69G5FAL", false}, // Contains L (invalid)
-		{"01ARZ3NDEKTSV4RRFFQ69G5FAO", false}, // Contains O (invalid)
-		{"01ARZ3NDEKTSV4RRFFQ69G5FAU", false}, // Contains U (invalid)
-		{"", false}, // Empty
+		{"01ARZ3NDEKTSV4RRFFQ69G5FAV", true},            // Valid ULID
+		{"01arz3ndektsv4rrffq69g5fav", true},            // Valid lowercase ULID
+		{"00000000000000000000000000", true},            // All zeros
+		{"7ZZZZZZZZZZZZZZZZZZZZZZZZZ", true},            // Max value
+		{"not-a-ulid", false},                           // Wrong format
+		{"01ARZ3NDEKTSV4RRFFQ69G5FA", false},            // Too short (25 chars)
+		{"01ARZ3NDEKTSV4RRFFQ69G5FAVX", false},          // Too long (27 chars)
+		{"01ARZ3NDEKTSV4RRFFQ69G5FAI", false},           // Contains I (invalid)
+		{"01ARZ3NDEKTSV4RRFFQ69G5FAL", false},           // Contains L (invalid)
+		{"01ARZ3NDEKTSV4RRFFQ69G5FAO", false},           // Contains O (invalid)
+		{"01ARZ3NDEKTSV4RRFFQ69G5FAU", false},           // Contains U (invalid)
+		{"", false},                                     // Empty
 		{"550e8400-e29b-41d4-a716-446655440000", false}, // UUID format (not ULID)
 	}
 

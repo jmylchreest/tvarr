@@ -350,10 +350,8 @@ type RelayProfileMappingRepository interface {
 	GetByID(ctx context.Context, id models.ULID) (*models.RelayProfileMapping, error)
 	// GetAll retrieves all relay profile mappings.
 	GetAll(ctx context.Context) ([]*models.RelayProfileMapping, error)
-	// GetEnabled retrieves all enabled relay profile mappings.
+	// GetEnabled retrieves all enabled relay profile mappings ordered by priority.
 	GetEnabled(ctx context.Context) ([]*models.RelayProfileMapping, error)
-	// GetEnabledByPriority retrieves enabled mappings ordered by priority (lowest first).
-	GetEnabledByPriority(ctx context.Context) ([]*models.RelayProfileMapping, error)
 	// Update updates an existing relay profile mapping.
 	Update(ctx context.Context, mapping *models.RelayProfileMapping) error
 	// Delete deletes a relay profile mapping by ID.

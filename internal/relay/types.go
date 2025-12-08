@@ -39,9 +39,9 @@ func (m StreamMode) String() string {
 type SourceFormat string
 
 const (
-	SourceFormatMPEGTS SourceFormat = "mpegts"
-	SourceFormatHLS    SourceFormat = "hls"
-	SourceFormatDASH   SourceFormat = "dash"
+	SourceFormatMPEGTS  SourceFormat = "mpegts"
+	SourceFormatHLS     SourceFormat = "hls"
+	SourceFormatDASH    SourceFormat = "dash"
 	SourceFormatUnknown SourceFormat = "unknown"
 )
 

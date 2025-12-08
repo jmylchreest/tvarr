@@ -194,22 +194,22 @@ type RelayProfile struct {
 
 	// Video settings
 	VideoCodec     VideoCodec `gorm:"size:50;default:'copy'" json:"video_codec"`
-	VideoBitrate   int        `gorm:"default:0" json:"video_bitrate,omitempty"`        // kbps, 0 = auto
-	VideoMaxrate   int        `gorm:"default:0" json:"video_maxrate,omitempty"`        // kbps, 0 = no limit
-	VideoBufsize   int        `gorm:"default:0" json:"video_bufsize,omitempty"`        // kbps, 0 = auto
-	VideoWidth     int        `gorm:"default:0" json:"video_width,omitempty"`          // 0 = keep original
-	VideoHeight    int        `gorm:"default:0" json:"video_height,omitempty"`         // 0 = keep original
-	VideoFramerate float64    `gorm:"default:0" json:"video_framerate,omitempty"`      // 0 = keep original
-	VideoPreset    string     `gorm:"size:50" json:"video_preset,omitempty"`           // ultrafast, fast, medium, slow
-	VideoCRF       int        `gorm:"default:0" json:"video_crf,omitempty"`            // Constant Rate Factor (0-51, 0=lossless)
-	VideoProfile   string     `gorm:"size:50" json:"video_profile,omitempty"`          // baseline, main, high
-	VideoLevel     string     `gorm:"size:10" json:"video_level,omitempty"`            // 3.0, 4.0, 4.1, etc.
+	VideoBitrate   int        `gorm:"default:0" json:"video_bitrate,omitempty"`   // kbps, 0 = auto
+	VideoMaxrate   int        `gorm:"default:0" json:"video_maxrate,omitempty"`   // kbps, 0 = no limit
+	VideoBufsize   int        `gorm:"default:0" json:"video_bufsize,omitempty"`   // kbps, 0 = auto
+	VideoWidth     int        `gorm:"default:0" json:"video_width,omitempty"`     // 0 = keep original
+	VideoHeight    int        `gorm:"default:0" json:"video_height,omitempty"`    // 0 = keep original
+	VideoFramerate float64    `gorm:"default:0" json:"video_framerate,omitempty"` // 0 = keep original
+	VideoPreset    string     `gorm:"size:50" json:"video_preset,omitempty"`      // ultrafast, fast, medium, slow
+	VideoCRF       int        `gorm:"default:0" json:"video_crf,omitempty"`       // Constant Rate Factor (0-51, 0=lossless)
+	VideoProfile   string     `gorm:"size:50" json:"video_profile,omitempty"`     // baseline, main, high
+	VideoLevel     string     `gorm:"size:10" json:"video_level,omitempty"`       // 3.0, 4.0, 4.1, etc.
 
 	// Audio settings
 	AudioCodec      AudioCodec `gorm:"size:50;default:'copy'" json:"audio_codec"`
-	AudioBitrate    int        `gorm:"default:0" json:"audio_bitrate,omitempty"`       // kbps, 0 = auto
-	AudioSampleRate int        `gorm:"default:0" json:"audio_sample_rate,omitempty"`   // Hz, 0 = keep original
-	AudioChannels   int        `gorm:"default:0" json:"audio_channels,omitempty"`      // 0 = keep original
+	AudioBitrate    int        `gorm:"default:0" json:"audio_bitrate,omitempty"`     // kbps, 0 = auto
+	AudioSampleRate int        `gorm:"default:0" json:"audio_sample_rate,omitempty"` // Hz, 0 = keep original
+	AudioChannels   int        `gorm:"default:0" json:"audio_channels,omitempty"`    // 0 = keep original
 
 	// Hardware acceleration
 	HWAccel             HWAccelType `gorm:"size:50;default:'auto'" json:"hw_accel"`
@@ -225,25 +225,25 @@ type RelayProfile struct {
 	PlaylistSize    int             `gorm:"default:5" json:"playlist_size,omitempty"`    // HLS/DASH playlist entries, 3-20
 
 	// Buffer and timeout settings
-	InputBufferSize  int `gorm:"default:8192" json:"input_buffer_size"`    // KB
-	OutputBufferSize int `gorm:"default:8192" json:"output_buffer_size"`   // KB
-	ProbeSize        int `gorm:"default:5000000" json:"probe_size"`        // Bytes for stream analysis
-	AnalyzeDuration  int `gorm:"default:5000000" json:"analyze_duration"`  // Microseconds for analysis
-	Timeout          int `gorm:"default:30" json:"timeout"`                // Connection timeout (seconds)
+	InputBufferSize  int `gorm:"default:8192" json:"input_buffer_size"`   // KB
+	OutputBufferSize int `gorm:"default:8192" json:"output_buffer_size"`  // KB
+	ProbeSize        int `gorm:"default:5000000" json:"probe_size"`       // Bytes for stream analysis
+	AnalyzeDuration  int `gorm:"default:5000000" json:"analyze_duration"` // Microseconds for analysis
+	Timeout          int `gorm:"default:30" json:"timeout"`               // Connection timeout (seconds)
 
 	// Advanced FFmpeg options
-	InputOptions  string `gorm:"size:1000" json:"input_options,omitempty"`   // Extra FFmpeg input options
-	OutputOptions string `gorm:"size:1000" json:"output_options,omitempty"`  // Extra FFmpeg output options
-	FilterComplex string `gorm:"size:2000" json:"filter_complex,omitempty"`  // Custom filter graph
+	InputOptions  string `gorm:"size:1000" json:"input_options,omitempty"`  // Extra FFmpeg input options
+	OutputOptions string `gorm:"size:1000" json:"output_options,omitempty"` // Extra FFmpeg output options
+	FilterComplex string `gorm:"size:2000" json:"filter_complex,omitempty"` // Custom filter graph
 
 	// Thread settings
-	Threads     int `gorm:"default:0" json:"threads,omitempty"`      // 0 = auto
-	ThreadQueue int `gorm:"default:512" json:"thread_queue"`         // Thread queue size
+	Threads     int `gorm:"default:0" json:"threads,omitempty"` // 0 = auto
+	ThreadQueue int `gorm:"default:512" json:"thread_queue"`    // Thread queue size
 
 	// Fallback settings for error handling
-	FallbackEnabled          bool `gorm:"default:true" json:"fallback_enabled"`            // Enable fallback stream on error
-	FallbackErrorThreshold   int  `gorm:"default:3" json:"fallback_error_threshold"`       // Errors before fallback (1-10)
-	FallbackRecoveryInterval int  `gorm:"default:30" json:"fallback_recovery_interval"`    // Seconds between recovery attempts (5-300)
+	FallbackEnabled          bool `gorm:"default:true" json:"fallback_enabled"`         // Enable fallback stream on error
+	FallbackErrorThreshold   int  `gorm:"default:3" json:"fallback_error_threshold"`    // Errors before fallback (1-10)
+	FallbackRecoveryInterval int  `gorm:"default:30" json:"fallback_recovery_interval"` // Seconds between recovery attempts (5-300)
 
 	// Smart codec matching - when false, use copy if source matches target codec family
 	ForceVideoTranscode bool `gorm:"default:false" json:"force_video_transcode"` // Force video transcoding even if source matches target codec

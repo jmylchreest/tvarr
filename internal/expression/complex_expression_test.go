@@ -332,9 +332,9 @@ func TestFilterEvaluation(t *testing.T) {
 
 		channels := []map[string]string{
 			{"channel_name": "BBC One HD", "group_title": "UK Entertainment"},
-			{"channel_name": "BBC One", "group_title": "UK Entertainment"},   // No HD
-			{"channel_name": "CNN HD", "group_title": "US News"},             // Not UK
-			{"channel_name": "ITV HD", "group_title": "UK Sports"},           // Both match
+			{"channel_name": "BBC One", "group_title": "UK Entertainment"}, // No HD
+			{"channel_name": "CNN HD", "group_title": "US News"},           // Not UK
+			{"channel_name": "ITV HD", "group_title": "UK Sports"},         // Both match
 		}
 
 		var included []string

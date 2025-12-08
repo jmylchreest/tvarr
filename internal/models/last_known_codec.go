@@ -24,14 +24,14 @@ type LastKnownCodec struct {
 	VideoWidth     int     `json:"video_width,omitempty"`
 	VideoHeight    int     `json:"video_height,omitempty"`
 	VideoFramerate float64 `json:"video_framerate,omitempty"`
-	VideoBitrate   int     `json:"video_bitrate,omitempty"`       // bps
+	VideoBitrate   int     `json:"video_bitrate,omitempty"`                // bps
 	VideoPixFmt    string  `gorm:"size:50" json:"video_pix_fmt,omitempty"` // yuv420p, etc.
 
 	// Audio codec information
 	AudioCodec      string `gorm:"size:50" json:"audio_codec,omitempty"`
 	AudioSampleRate int    `json:"audio_sample_rate,omitempty"` // Hz
 	AudioChannels   int    `json:"audio_channels,omitempty"`
-	AudioBitrate    int    `json:"audio_bitrate,omitempty"`     // bps
+	AudioBitrate    int    `json:"audio_bitrate,omitempty"` // bps
 
 	// Container information
 	ContainerFormat string `gorm:"size:100" json:"container_format,omitempty"`

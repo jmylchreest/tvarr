@@ -124,12 +124,12 @@ func makeFtyp() []byte {
 
 func TestPeekBoxHeader(t *testing.T) {
 	tests := []struct {
-		name        string
-		data        []byte
-		wantSize    uint64
-		wantType    string
-		wantErr     bool
-		wantExtend  bool
+		name       string
+		data       []byte
+		wantSize   uint64
+		wantType   string
+		wantErr    bool
+		wantExtend bool
 	}{
 		{
 			name:     "standard box",
@@ -364,9 +364,9 @@ func TestCMAFMuxer_ExtractTiming(t *testing.T) {
 
 func TestCMAFMuxer_VideoAudioDetection(t *testing.T) {
 	tests := []struct {
-		name       string
-		hasVideo   bool
-		hasAudio   bool
+		name     string
+		hasVideo bool
+		hasAudio bool
 	}{
 		{"video only", true, false},
 		{"audio only", false, true},

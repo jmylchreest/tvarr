@@ -62,12 +62,7 @@ type SegmentExtractor struct {
 	startTime     time.Time
 	packetCount   int
 	lastPTS       int64
-	firstPTS      int64
-	ptsSet        bool
-
-	// Accumulation state
-	accumulatedDuration float64
-	keyframeFound       bool
+	keyframeFound bool
 
 	// Stats
 	totalPackets   int64
@@ -319,15 +314,15 @@ func (e *SegmentExtractor) Stats() SegmentExtractorStats {
 	defer e.mu.Unlock()
 
 	return SegmentExtractorStats{
-		TotalPackets:        e.totalPackets,
-		TotalSegments:       e.totalSegments,
-		TotalBytes:          e.totalBytes,
-		AverageSegDuration:  e.avgSegDuration,
-		LastSegmentAt:       e.lastSegmentAt,
-		BufferedBytes:       e.currentBuffer.Len(),
-		BufferedPackets:     e.packetCount,
-		RunningTime:         time.Since(e.startTime),
-		TargetDuration:      e.config.TargetDuration,
+		TotalPackets:       e.totalPackets,
+		TotalSegments:      e.totalSegments,
+		TotalBytes:         e.totalBytes,
+		AverageSegDuration: e.avgSegDuration,
+		LastSegmentAt:      e.lastSegmentAt,
+		BufferedBytes:      e.currentBuffer.Len(),
+		BufferedPackets:    e.packetCount,
+		RunningTime:        time.Since(e.startTime),
+		TargetDuration:     e.config.TargetDuration,
 	}
 }
 

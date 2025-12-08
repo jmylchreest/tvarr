@@ -19,9 +19,9 @@ import (
 // Test the marshalAnnexB helper function
 func TestMarshalAnnexB(t *testing.T) {
 	tests := []struct {
-		name   string
-		nalus  [][]byte
-		want   []byte
+		name  string
+		nalus [][]byte
+		want  []byte
 	}{
 		{
 			name:  "single NALU",
@@ -384,8 +384,8 @@ func TestHLSCollapser_Stop(t *testing.T) {
 // Benchmark marshalAnnexB
 func BenchmarkMarshalAnnexB(b *testing.B) {
 	nalus := [][]byte{
-		bytes.Repeat([]byte{0x67}, 30),  // SPS ~30 bytes
-		bytes.Repeat([]byte{0x68}, 10),  // PPS ~10 bytes
+		bytes.Repeat([]byte{0x67}, 30),   // SPS ~30 bytes
+		bytes.Repeat([]byte{0x68}, 10),   // PPS ~10 bytes
 		bytes.Repeat([]byte{0x65}, 5000), // IDR slice ~5KB
 	}
 
