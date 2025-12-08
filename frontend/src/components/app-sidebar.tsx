@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { usePathname } from 'next/navigation';
+import Link from 'next/link';
 import {
   Sidebar,
   SidebarHeader,
@@ -214,10 +215,10 @@ export function AppSidebar() {
                           isActive={pathname === item.url}
                           tooltip={item.title}
                         >
-                          <a href={item.url}>
+                          <Link href={item.url}>
                             <item.icon />
                             <span>{item.title}</span>
-                          </a>
+                          </Link>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
                     ))}
