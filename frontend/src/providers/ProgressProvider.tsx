@@ -10,9 +10,8 @@ import React, {
   useMemo,
   ReactNode,
 } from 'react';
-import { usePathname } from 'next/navigation';
-import { sseManager, ProgressEvent as SSEProgressEvent } from '@/lib/sse-singleton';
-import { ProgressEvent as APIProgressEvent, ProgressStage } from '@/types/api';
+import { sseManager } from '@/lib/sse-singleton';
+import { ProgressEvent as APIProgressEvent } from '@/types/api';
 import { Debug } from '@/utils/debug';
 import { getBackendUrl } from '@/lib/config';
 
@@ -96,8 +95,10 @@ const deserializeEventsFromStorage = (): Map<string, NotificationEvent> => {
   return new Map();
 };
 
+// Module-level logger to avoid recreating on each render
+const providerDebug = Debug.createLogger('ProgressProvider');
+
 export function ProgressProvider({ children }: { children: ReactNode }) {
-  const pathname = usePathname();
   const [events, setEvents] = useState<Map<string, NotificationEvent>>(() => {
     // Initialize with persisted state from localStorage
     if (typeof window !== 'undefined') {
@@ -106,11 +107,12 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
     return new Map();
   });
   const [connected, setConnected] = useState(false);
-  const debug = Debug.createLogger('ProgressProvider');
   const notificationSubscribersRef = useRef<Set<{ current: (event: NotificationEvent) => void }>>(
     new Set()
   );
   const hasInitializedRef = useRef(false);
+  // Track if SSE subscription is active to prevent duplicate subscriptions
+  const sseSubscriptionRef = useRef<(() => void) | null>(null);
 
   // Clean up old localStorage entries on startup
   useEffect(() => {
@@ -134,58 +136,16 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
           }
 
           if (hasOldEntries) {
-            debug.log('Cleaning up old notification entries from localStorage');
+            providerDebug.log('Cleaning up old notification entries from localStorage');
             localStorage.removeItem(NOTIFICATION_STORAGE_KEY);
           }
         }
       } catch (error) {
-        debug.warn('Error during localStorage cleanup, clearing all:', error);
+        providerDebug.warn('Error during localStorage cleanup, clearing all:', error);
         localStorage.removeItem(NOTIFICATION_STORAGE_KEY);
       }
     }
-  }, [debug]);
-
-  // Local filtering logic based on current page
-  const getOperationTypeFilter = useCallback((path: string): string | null => {
-    // Normalize path to handle both with and without trailing slashes
-    const normalizedPath = path.endsWith('/') ? path : path + '/';
-
-    switch (normalizedPath) {
-      case '/sources/stream/':
-        return 'stream_ingestion';
-      case '/sources/epg/':
-        return 'epg_ingestion';
-      case '/proxies/':
-        return 'proxy_regeneration';
-      default:
-        return null; // No filter for events page and other pages
-    }
   }, []);
-
-  const shouldIncludeCompleted = useCallback((path: string): boolean => {
-    return path === '/events' || path === '/events/';
-  }, []);
-
-  // Local event filtering based on current page context
-  const filterEventForCurrentPage = useCallback(
-    (event: ProgressEvent, currentPath: string): boolean => {
-      const operationTypeFilter = getOperationTypeFilter(currentPath);
-      const includeCompleted = shouldIncludeCompleted(currentPath);
-
-      // Operation type filtering
-      if (operationTypeFilter && event.operation_type !== operationTypeFilter) {
-        return false;
-      }
-
-      // Completion filtering - on most pages we don't want to show completed events cluttering the UI
-      if (!includeCompleted && (event.state === 'completed' || event.state === 'error')) {
-        return false;
-      }
-
-      return true;
-    },
-    [getOperationTypeFilter, shouldIncludeCompleted]
-  );
 
   // Persist events to localStorage whenever they change
   useEffect(() => {
@@ -193,16 +153,16 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
       try {
         const serialized = serializeEventsForStorage(events);
         localStorage.setItem(NOTIFICATION_STORAGE_KEY, JSON.stringify(serialized));
-        debug.log('Persisted notification state to localStorage:', events.size, 'events');
+        providerDebug.log('Persisted notification state to localStorage:', events.size, 'events');
       } catch (error) {
-        debug.error('Failed to persist notification state to localStorage:', error);
+        providerDebug.error('Failed to persist notification state to localStorage:', error);
       }
     }
-  }, [events, debug]);
+  }, [events]);
 
   // Handle progress events (now with single operation ID per process)
   const handleProgressEvent = useCallback((event: ProgressEvent) => {
-    debug.log('Received event:', {
+    providerDebug.log('Received event:', {
       id: event.id,
       owner_id: event.owner_id,
       owner_type: event.owner_type,
@@ -220,7 +180,7 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
       hasBeenSeen: false,
     };
 
-    debug.log('🔔 Creating new notification event:', {
+    providerDebug.log('Creating new notification event:', {
       id: event.id,
       operation_type: event.operation_type,
       state: event.state,
@@ -247,7 +207,7 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
         if (hasChanged) {
           // Reset acknowledgment for any actual update - user needs to see the change
           notificationEvent.hasBeenSeen = false;
-          debug.log('Reset acknowledgment for updated event:', event.id);
+          providerDebug.log('Reset acknowledgment for updated event:', event.id);
         } else {
           // No change, preserve acknowledgment state (for SSE reconnect scenarios)
           notificationEvent.hasBeenSeen = existingEvent.hasBeenSeen;
@@ -269,7 +229,7 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
         const toRemove = sortedEvents.slice(0, newEvents.size - 50);
         toRemove.forEach(([id]) => {
           newEvents.delete(id);
-          debug.log('Removed old event to stay under 50 limit:', id);
+          providerDebug.log('Removed old event to stay under 50 limit:', id);
         });
       }
 
@@ -281,19 +241,25 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
       subscriberRef.current(notificationEvent);
     }
 
-    debug.log('Event processed, stored in local events map, and sent to notification subscribers');
+    providerDebug.log('Event processed, stored in local events map, and sent to notification subscribers');
   }, []); // NO DEPENDENCIES - stable callback to prevent SSE reconnections
 
   // Use global SSE singleton - subscriber-driven connection lifecycle
   // The SSE singleton handles its own connection management based on subscriber count
   useEffect(() => {
-    debug.log('ProgressProvider: Setting up SSE subscriptions');
+    // Skip if already subscribed (handles React Strict Mode double-mount and navigation)
+    if (sseSubscriptionRef.current) {
+      providerDebug.log('ProgressProvider: SSE subscription already active, skipping');
+      return;
+    }
+
+    providerDebug.log('ProgressProvider: Setting up SSE subscriptions');
 
     // Fetch initial state from REST endpoint (only once)
     const fetchInitialState = async () => {
       // Skip if already initialized (handles React Strict Mode double-mount)
       if (hasInitializedRef.current) {
-        debug.log('ProgressProvider: Already initialized, skipping initial fetch');
+        providerDebug.log('ProgressProvider: Already initialized, skipping initial fetch');
         return;
       }
       hasInitializedRef.current = true;
@@ -309,7 +275,7 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
         const data = await response.json();
         // API returns {operations: [...]} wrapper
         const activeOperations: NotificationEvent[] = data.operations || [];
-        debug.log('ProgressProvider: Fetched initial active operations:', activeOperations.length);
+        providerDebug.log('ProgressProvider: Fetched initial active operations:', activeOperations.length);
 
         // Clear localStorage and rebuild from server state
         const NOTIFICATION_STORAGE_KEY = 'tvarr-notifications';
@@ -325,9 +291,9 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
         });
 
         setEvents(initialEvents);
-        debug.log('ProgressProvider: Initialized with', initialEvents.size, 'active operations');
+        providerDebug.log('ProgressProvider: Initialized with', initialEvents.size, 'active operations');
       } catch (error) {
-        debug.error('ProgressProvider: Failed to fetch initial state:', error);
+        providerDebug.error('ProgressProvider: Failed to fetch initial state:', error);
         // Clear localStorage anyway to prevent stale state
         const NOTIFICATION_STORAGE_KEY = 'tvarr-notifications';
         localStorage.removeItem(NOTIFICATION_STORAGE_KEY);
@@ -344,24 +310,28 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
       handleProgressEvent(event);
     });
 
+    // Store the unsubscribe function so we can track if subscription is active
+    sseSubscriptionRef.current = unsubscribeFromAll;
+
     // Subscribe to connection state changes (reactive instead of polling)
     const unsubscribeConnectionState = sseManager.subscribeToConnectionState((isConnected) => {
-      debug.log('ProgressProvider: SSE connection state changed:', isConnected);
+      providerDebug.log('ProgressProvider: SSE connection state changed:', isConnected);
       setConnected(isConnected);
     });
 
     // Cleanup on unmount
     // When we unsubscribe, the singleton will auto-disconnect if no other subscribers
     return () => {
-      debug.log('ProgressProvider: Cleaning up SSE subscriptions');
+      providerDebug.log('ProgressProvider: Cleaning up SSE subscriptions');
       unsubscribeFromAll();
       unsubscribeConnectionState();
+      sseSubscriptionRef.current = null;
     };
   }, [handleProgressEvent]);
 
   // Subscribe to events for specific resource ID using global singleton
   const subscribe = useCallback((resourceId: string, callback: (event: ProgressEvent) => void) => {
-    debug.log(`Subscribing to resource via singleton: ${resourceId}`);
+    providerDebug.log(`Subscribing to resource via singleton: ${resourceId}`);
 
     // Use the global singleton manager for subscriptions
     return sseManager.subscribe(resourceId, callback);
@@ -370,7 +340,7 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
   // Subscribe to events by operation type using global singleton
   const subscribeToType = useCallback(
     (operationType: string, callback: (event: ProgressEvent) => void) => {
-      debug.log(`Subscribing to operation type via singleton: ${operationType}`);
+      providerDebug.log(`Subscribing to operation type via singleton: ${operationType}`);
 
       // Use the global singleton manager for subscriptions
       return sseManager.subscribe(operationType, callback);
@@ -381,7 +351,7 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
   // Subscribe to all events (for notifications)
   const subscribeToAll = useCallback(
     (callback: (event: NotificationEvent) => void) => {
-      debug.log('Subscribing to all events (for notifications)');
+      providerDebug.log('Subscribing to all events (for notifications)');
 
       // Store the callback in a ref so we can call it from handleProgressEvent
       const callbackRef = { current: callback };
@@ -395,7 +365,7 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
       }
 
       return () => {
-        debug.log('Unsubscribing from all events (notifications)');
+        providerDebug.log('Unsubscribing from all events (notifications)');
         notificationSubscribersRef.current.delete(callbackRef);
       };
     },
@@ -406,7 +376,7 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
   const getResourceState = useCallback(
     (resourceId: string): ProgressEvent | null => {
       // Check if any event is for this resource ID using owner_id
-      for (const [eventId, event] of events) {
+      for (const event of events.values()) {
         if (event.owner_id === resourceId) {
           return event;
         }
@@ -427,56 +397,20 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
 
   // Mark events as seen/acknowledged
   const markAsSeen = useCallback((eventIds: string[]) => {
-    debug.log('🔔 markAsSeen called with eventIds:', eventIds);
+    providerDebug.log('markAsSeen called with eventIds:', eventIds);
 
     setEvents((prev) => {
-      debug.log(
-        '🔔 markAsSeen - current events before update:',
-        Array.from(prev.values()).map((e) => ({
-          id: e.id,
-          hasBeenSeen: e.hasBeenSeen,
-          operation_type: e.operation_type,
-          state: e.state,
-        }))
-      );
-
       const newEvents = new Map(prev);
       let hasChanges = false;
 
       eventIds.forEach((eventId) => {
         const event = newEvents.get(eventId);
-        debug.log(`🔔 Processing eventId: ${eventId}`, {
-          found: !!event,
-          currentlySeen: event?.hasBeenSeen,
-          willUpdate: event && !event.hasBeenSeen,
-        });
-
         if (event && !event.hasBeenSeen) {
           newEvents.set(eventId, { ...event, hasBeenSeen: true });
           hasChanges = true;
-          debug.log(`🔔 ✅ Marked event ${eventId} as seen/acknowledged`);
-        } else if (event && event.hasBeenSeen) {
-          debug.log(`🔔 ⚠️ Event ${eventId} was already seen`);
-        } else if (!event) {
-          debug.log(`🔔 ❌ Event ${eventId} not found in events map`);
+          providerDebug.log(`Marked event ${eventId} as seen/acknowledged`);
         }
       });
-
-      debug.log('🔔 markAsSeen - hasChanges:', hasChanges);
-
-      if (hasChanges) {
-        debug.log(
-          '🔔 markAsSeen - returning updated events:',
-          Array.from(newEvents.values()).map((e) => ({
-            id: e.id,
-            hasBeenSeen: e.hasBeenSeen,
-            operation_type: e.operation_type,
-            state: e.state,
-          }))
-        );
-      } else {
-        debug.log('🔔 markAsSeen - no changes, returning previous events');
-      }
 
       return hasChanges ? newEvents : prev;
     });
@@ -487,28 +421,15 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
   // Get unseen/unacknowledged count
   const getUnreadCount = useCallback(
     (operationType?: string) => {
-      debug.log('🔔 getUnreadCount called for operationType:', operationType);
-      debug.log(
-        '🔔 getUnreadCount - current events:',
-        Array.from(events.values()).map((e) => ({
-          id: e.id,
-          operation_type: e.operation_type,
-          hasBeenSeen: e.hasBeenSeen,
-        }))
-      );
-
       let count = 0;
       for (const event of events.values()) {
         // Count events that are unseen (dismissed events are deleted from map)
         if (!event.hasBeenSeen) {
           if (!operationType || event.operation_type === operationType) {
             count++;
-            debug.log('🔔 getUnreadCount - counting unseen event:', event.id, event.operation_type);
           }
         }
       }
-
-      debug.log('🔔 getUnreadCount - final count:', count);
       return count;
     },
     [events]
@@ -525,7 +446,7 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
       getUnreadCount,
       isConnected: connected,
     }),
-    [subscribe, subscribeToType, subscribeToAll, getResourceState, markAsSeen, connected]
+    [subscribe, subscribeToType, subscribeToAll, getResourceState, getAllEvents, markAsSeen, getUnreadCount, connected]
   );
 
   return <ProgressContext.Provider value={contextValue}>{children}</ProgressContext.Provider>;
