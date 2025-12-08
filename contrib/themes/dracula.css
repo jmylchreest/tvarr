@@ -1,0 +1,114 @@
+/* Dracula Theme - Based on https://draculatheme.com/
+ * Background: #282a36 | Current Line: #44475a | Foreground: #f8f8f2
+ * Comment: #6272a4 | Cyan: #8be9fd | Green: #50fa7b
+ * Orange: #ffb86c | Pink: #ff79c6 | Purple: #bd93f9
+ * Red: #ff5555 | Yellow: #f1fa8c
+ */
+
+:root {
+  /* Light mode - Dracula-inspired light variant */
+  --background: oklch(0.95 0.01 280);
+  --foreground: oklch(0.25 0.02 280);
+  --card: oklch(0.98 0.005 280);
+  --card-foreground: oklch(0.25 0.02 280);
+  --popover: oklch(0.98 0.005 280);
+  --popover-foreground: oklch(0.25 0.02 280);
+  --primary: oklch(0.55 0.15 300);
+  --primary-foreground: oklch(0.98 0 0);
+  --secondary: oklch(0.90 0.02 280);
+  --secondary-foreground: oklch(0.25 0.02 280);
+  --muted: oklch(0.88 0.02 280);
+  --muted-foreground: oklch(0.45 0.03 280);
+  --accent: oklch(0.65 0.18 330);
+  --accent-foreground: oklch(0.98 0 0);
+  --destructive: oklch(0.60 0.22 25);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: oklch(0.85 0.02 280);
+  --input: oklch(0.90 0.01 280);
+  --ring: oklch(0.55 0.15 300);
+  --chart-1: oklch(0.55 0.15 300);
+  --chart-2: oklch(0.65 0.18 330);
+  --chart-3: oklch(0.75 0.15 170);
+  --chart-4: oklch(0.80 0.12 90);
+  --chart-5: oklch(0.70 0.18 200);
+  --sidebar-background: oklch(0.93 0.01 280);
+  --sidebar-foreground: oklch(0.25 0.02 280);
+  --sidebar-primary: oklch(0.55 0.15 300);
+  --sidebar-primary-foreground: oklch(0.98 0 0);
+  --sidebar-accent: oklch(0.65 0.18 330);
+  --sidebar-accent-foreground: oklch(0.98 0 0);
+  --sidebar-border: oklch(0.85 0.02 280);
+  --sidebar-ring: oklch(0.55 0.15 300);
+  --radius: 0.35rem;
+}
+
+.dark {
+  /* Dark mode - True Dracula colors */
+  --background: oklch(0.24 0.02 280);
+  --foreground: oklch(0.96 0.01 90);
+  --card: oklch(0.30 0.025 280);
+  --card-foreground: oklch(0.96 0.01 90);
+  --popover: oklch(0.30 0.025 280);
+  --popover-foreground: oklch(0.96 0.01 90);
+  --primary: oklch(0.72 0.14 300);
+  --primary-foreground: oklch(0.20 0.02 280);
+  --secondary: oklch(0.36 0.03 280);
+  --secondary-foreground: oklch(0.96 0.01 90);
+  --muted: oklch(0.32 0.025 280);
+  --muted-foreground: oklch(0.55 0.06 260);
+  --accent: oklch(0.72 0.18 330);
+  --accent-foreground: oklch(0.20 0.02 280);
+  --destructive: oklch(0.65 0.22 25);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: oklch(0.38 0.03 280);
+  --input: oklch(0.36 0.03 280);
+  --ring: oklch(0.72 0.14 300);
+  --chart-1: oklch(0.72 0.14 300);
+  --chart-2: oklch(0.72 0.18 330);
+  --chart-3: oklch(0.82 0.15 170);
+  --chart-4: oklch(0.88 0.12 90);
+  --chart-5: oklch(0.78 0.18 200);
+  --sidebar-background: oklch(0.22 0.02 280);
+  --sidebar-foreground: oklch(0.96 0.01 90);
+  --sidebar-primary: oklch(0.72 0.14 300);
+  --sidebar-primary-foreground: oklch(0.20 0.02 280);
+  --sidebar-accent: oklch(0.72 0.18 330);
+  --sidebar-accent-foreground: oklch(0.20 0.02 280);
+  --sidebar-border: oklch(0.38 0.03 280);
+  --sidebar-ring: oklch(0.72 0.14 300);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar-background);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}

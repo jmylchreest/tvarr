@@ -10,6 +10,8 @@ Auto-generated from all feature plans. Last updated: 2025-12-05
 - SQLite/PostgreSQL/MySQL (configurable via GORM), YAML config files (006-config-settings-ui)
 - Go 1.25.x (latest stable) + Huma v2.34+ (Chi router), GORM v2, FFmpeg (external binary), gohlslib v2, go-astits (008-multi-format-streaming)
 - SQLite/PostgreSQL/MySQL (configurable via GORM) - existing relay_profiles table (008-multi-format-streaming)
+- Go 1.25.x (backend), TypeScript/Next.js 16.x (frontend) + Huma v2.34+ (API), React 19, shadcn/ui, Tailwind CSS v4 (011-frontend-theme-polish)
+- File system for custom themes (`$DATA/themes/`), localStorage for user preferences (011-frontend-theme-polish)
 
 - Go 1.25.x (latest stable) + Huma v2.34+ (API), Chi (router), GORM v2 (ORM), FFmpeg (external binary) (005-ffmpeg-relay-transcoding)
 
@@ -29,9 +31,9 @@ tests/
 Go 1.25.x (latest stable): Follow standard conventions
 
 ## Recent Changes
+- 011-frontend-theme-polish: Added Go 1.25.x (backend), TypeScript/Next.js 16.x (frontend) + Huma v2.34+ (API), React 19, shadcn/ui, Tailwind CSS v4
 - 010-codebase-cleanup: Added Go 1.25.x (latest stable) + Huma v2.34+ (Chi router), GORM v2, FFmpeg (external binary)
 - 008-multi-format-streaming: Added Go 1.25.x (latest stable) + Huma v2.34+ (Chi router), GORM v2, FFmpeg (external binary), gohlslib v2, go-astits
-- 007-ffmpeg-profile-configuration: Added Go 1.25.x (latest stable) + Huma v2.34+ (Chi router), GORM v2, FFmpeg (external binary)
 
 
 <!-- MANUAL ADDITIONS START -->

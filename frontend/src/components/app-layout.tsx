@@ -74,13 +74,14 @@ function getOperationTypeForPath(pathname: string): string | undefined {
 }
 
 export function AppLayout({ children }: AppLayoutProps) {
-  const { isConnected, isChecking, checkConnection, backendUrl } = useBackendConnectivity();
+  const { isConnected, isChecking, hasInitialCheckCompleted, checkConnection, backendUrl } =
+    useBackendConnectivity();
   const pathname = usePathname();
   const pageTitle = getPageTitle(pathname);
   const operationType = getOperationTypeForPath(pathname);
 
-  // Show loading state during initial check
-  if (isChecking && !isConnected) {
+  // Show loading state only during INITIAL check (not on navigation)
+  if (!hasInitialCheckCompleted && isChecking) {
     return (
       <SidebarProvider>
         <AppSidebar />
@@ -109,8 +110,8 @@ export function AppLayout({ children }: AppLayoutProps) {
     );
   }
 
-  // Show backend unavailable page if not connected
-  if (!isConnected) {
+  // Show backend unavailable page only if we've checked and confirmed disconnection
+  if (hasInitialCheckCompleted && !isConnected) {
     return (
       <BackendUnavailable
         onRetry={checkConnection}

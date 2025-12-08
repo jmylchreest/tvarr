@@ -15,9 +15,15 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body>
+    <html lang="en" suppressHydrationWarning style={{ backgroundColor: 'var(--background)' }}>
+      <head>
+        {/* Theme CSS must load first to prevent flash of unstyled content */}
+        {/* Use static path for initial load (works without backend) */}
+        <link id="theme-css" rel="stylesheet" href="/themes/graphite.css" />
+        {/* Theme script runs synchronously to apply dark mode class before content renders */}
         <script dangerouslySetInnerHTML={{ __html: enhancedThemeScript }} />
+      </head>
+      <body className="bg-background text-foreground">
         <EnhancedThemeProvider defaultTheme="graphite" defaultMode="system">
           <FeatureFlagsProvider>
             <BackendConnectivityProvider>
