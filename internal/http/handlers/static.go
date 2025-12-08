@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"io"
 	"io/fs"
 	"net/http"
 	"path"
@@ -90,18 +91,16 @@ func (h *StaticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		filePath = "index.html"
 	}
 
-	// Try to find the file
 	staticFS, _ := assets.GetStaticFS()
-	_, err := fs.Stat(staticFS, filePath)
 
+	// Try to find the file
+	fileInfo, err := fs.Stat(staticFS, filePath)
 	if err != nil {
 		// File not found - check if it's a directory path with index.html
 		indexPath := path.Join(filePath, "index.html")
 		if _, err := fs.Stat(staticFS, indexPath); err == nil {
-			// Serve the directory's index.html
-			r.URL.Path = "/" + indexPath
-			h.setHeaders(w, indexPath)
-			h.fileServer.ServeHTTP(w, r)
+			// Serve the directory's index.html directly (no redirect)
+			h.serveFile(w, r, staticFS, indexPath)
 			return
 		}
 
@@ -110,16 +109,60 @@ func (h *StaticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Serve the file
-	h.setHeaders(w, filePath)
-	h.fileServer.ServeHTTP(w, r)
+	// If it's a directory, serve its index.html
+	if fileInfo.IsDir() {
+		indexPath := path.Join(filePath, "index.html")
+		if _, err := fs.Stat(staticFS, indexPath); err == nil {
+			h.serveFile(w, r, staticFS, indexPath)
+			return
+		}
+		// Directory without index.html - return 404
+		http.NotFound(w, r)
+		return
+	}
+
+	// Serve the file directly
+	h.serveFile(w, r, staticFS, filePath)
 }
 
-// setHeaders sets appropriate cache and content-type headers.
-func (h *StaticHandler) setHeaders(w http.ResponseWriter, filePath string) {
+// serveFile serves a file from the filesystem with proper headers.
+func (h *StaticHandler) serveFile(w http.ResponseWriter, r *http.Request, fsys fs.FS, filePath string) {
+	file, err := fsys.Open(filePath)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer file.Close()
+
+	// Get file info for size
+	stat, err := file.Stat()
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	// Set Content-Type explicitly before ServeContent can guess it
+	// This must be done before any writes to the response
 	contentType := assets.GetContentType(filePath)
 	w.Header().Set("Content-Type", contentType)
 
+	// Set cache headers
+	h.setCacheHeaders(w, filePath)
+
+	// For seekable files, use http.ServeContent for range support
+	// Pass empty string for name so it doesn't try to sniff content type
+	if seeker, ok := file.(io.ReadSeeker); ok {
+		http.ServeContent(w, r, "", stat.ModTime(), seeker)
+		return
+	}
+
+	// Fallback: just copy the content
+	w.WriteHeader(http.StatusOK)
+	io.Copy(w, file)
+}
+
+// setCacheHeaders sets appropriate cache headers based on file type.
+func (h *StaticHandler) setCacheHeaders(w http.ResponseWriter, filePath string) {
 	// Set cache headers based on file type
 	if strings.Contains(filePath, "_next/static/") || strings.HasSuffix(filePath, ".woff2") {
 		// Hashed Next.js assets and fonts can be cached for a long time
