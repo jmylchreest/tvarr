@@ -33,10 +33,10 @@ type ValidationError struct {
 
 // ValidationResult contains the result of validating an expression.
 type ValidationResult struct {
-	IsValid             bool             `json:"is_valid"`
-	CanonicalExpression string           `json:"canonical_expression,omitempty"`
+	IsValid             bool              `json:"is_valid"`
+	CanonicalExpression string            `json:"canonical_expression,omitempty"`
 	Errors              []ValidationError `json:"errors"`
-	ExpressionTree      json.RawMessage  `json:"expression_tree,omitempty"`
+	ExpressionTree      json.RawMessage   `json:"expression_tree,omitempty"`
 }
 
 // Validator validates expressions against a set of valid fields.

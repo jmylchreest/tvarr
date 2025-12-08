@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"strconv"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/go-chi/chi/v5"
@@ -196,30 +195,6 @@ func (h *RelayStreamHandler) handleRawStreamOptions(w http.ResponseWriter, r *ht
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept, Range")
 	w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range")
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// parseFormatParams parses the format-related query parameters from a request.
-// Returns an OutputRequest with the parsed format, segment number, and init type.
-func parseFormatParams(r *http.Request) relay.OutputRequest {
-	q := r.URL.Query()
-
-	req := relay.OutputRequest{
-		Format:    q.Get(relay.QueryParamFormat),
-		UserAgent: r.Header.Get("User-Agent"),
-		Accept:    r.Header.Get("Accept"),
-	}
-
-	// Parse segment number if present
-	if segStr := q.Get(relay.QueryParamSegment); segStr != "" {
-		if seg, err := strconv.ParseUint(segStr, 10, 64); err == nil {
-			req.Segment = &seg
-		}
-	}
-
-	// Parse init type if present (for DASH initialization segments)
-	req.InitType = q.Get(relay.QueryParamInit)
-
-	return req
 }
 
 // handleRawStream is the main raw HTTP handler for streaming.
@@ -730,84 +705,6 @@ func (h *RelayStreamHandler) handleSmartTranscode(w http.ResponseWriter, r *http
 	)
 }
 
-// streamRawHLSCollapsed streams collapsed HLS as continuous MPEG-TS via raw ResponseWriter.
-func (h *RelayStreamHandler) streamRawHLSCollapsed(w http.ResponseWriter, r *http.Request, info *service.StreamInfo, classification *service.ClassificationResult) {
-	ctx := r.Context()
-	playlistURL := classification.SelectedMediaPlaylist
-	if playlistURL == "" {
-		playlistURL = info.Channel.StreamURL
-	}
-
-	h.logger.Info("Proxy mode: starting HLS collapse",
-		"proxy_id", info.Proxy.ID,
-		"channel_id", info.Channel.ID,
-		"playlist_url", playlistURL,
-		"bandwidth", classification.SelectedBandwidth,
-	)
-
-	w.Header().Set("X-Stream-Decision", "collapsed-hls")
-	w.Header().Set("Content-Type", "video/mp2t")
-	w.Header().Set("Cache-Control", "no-cache, no-store")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Transfer-Encoding", "chunked")
-	w.WriteHeader(http.StatusOK)
-
-	// Create HLS collapser
-	collapser := h.relayService.CreateHLSCollapser(playlistURL)
-
-	// Start the collapser
-	if err := collapser.Start(ctx); err != nil {
-		h.logger.Error("Failed to start HLS collapser",
-			"proxy_id", info.Proxy.ID,
-			"channel_id", info.Channel.ID,
-			"error", err,
-		)
-		return
-	}
-	defer collapser.Stop()
-
-	h.logger.Info("HLS collapser started",
-		"proxy_id", info.Proxy.ID,
-		"channel_id", info.Channel.ID,
-		"session_id", collapser.SessionID(),
-	)
-
-	// Stream data to client
-	buf := make([]byte, 64*1024) // 64KB buffer for larger HLS segments
-	for {
-		n, err := collapser.Read(buf)
-		if n > 0 {
-			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
-				h.logger.Debug("Client disconnected during HLS collapse write",
-					"proxy_id", info.Proxy.ID,
-					"channel_id", info.Channel.ID,
-					"error", writeErr,
-				)
-				break
-			}
-			// Flush if possible
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
-			}
-		}
-		if err != nil {
-			if err != io.EOF {
-				h.logger.Debug("HLS collapser error",
-					"proxy_id", info.Proxy.ID,
-					"channel_id", info.Channel.ID,
-					"error", err,
-				)
-			}
-			break
-		}
-	}
-
-	h.logger.Info("HLS collapse stream ended",
-		"proxy_id", info.Proxy.ID,
-		"channel_id", info.Channel.ID,
-	)
-}
-
 // streamRawDirectProxy streams content directly from upstream with CORS headers.
 func (h *RelayStreamHandler) streamRawDirectProxy(w http.ResponseWriter, r *http.Request, info *service.StreamInfo, classification *service.ClassificationResult) {
 	streamURL := info.Channel.StreamURL
@@ -917,7 +814,6 @@ func (h *RelayStreamHandler) streamRawDirectProxy(w http.ResponseWriter, r *http
 		"channel_id", info.Channel.ID,
 	)
 }
-
 
 // ProbeStreamInput is the input for probing a stream.
 type ProbeStreamInput struct {
@@ -1120,5 +1016,3 @@ func (h *RelayStreamHandler) StreamChannelByProxyOptions(ctx context.Context, in
 	// The actual CORS headers are set in the StreamChannelByProxy handler
 	return &StreamChannelByProxyOptionsOutput{}, nil
 }
-
-

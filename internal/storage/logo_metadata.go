@@ -357,33 +357,3 @@ func computeURLHash(url string) string {
 	hash := sha256.Sum256([]byte(url))
 	return hex.EncodeToString(hash[:])
 }
-
-// extensionFromContentType is already defined in logo_cache.go but we need it here too.
-// This is a helper that maps MIME types to file extensions.
-func logoMetadataExtensionFromContentType(contentType string) string {
-	// Handle content type with parameters (e.g., "image/png; charset=utf-8")
-	contentType = strings.Split(contentType, ";")[0]
-	contentType = strings.TrimSpace(contentType)
-	contentType = strings.ToLower(contentType)
-
-	switch contentType {
-	case "image/png":
-		return ".png"
-	case "image/jpeg", "image/jpg":
-		return ".jpg"
-	case "image/gif":
-		return ".gif"
-	case "image/webp":
-		return ".webp"
-	case "image/svg+xml":
-		return ".svg"
-	case "image/x-icon", "image/vnd.microsoft.icon":
-		return ".ico"
-	case "image/bmp":
-		return ".bmp"
-	case "image/tiff":
-		return ".tiff"
-	default:
-		return ""
-	}
-}

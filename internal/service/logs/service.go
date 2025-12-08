@@ -35,13 +35,13 @@ type LogEntry struct {
 
 // LogStats provides statistics about the log stream.
 type LogStats struct {
-	TotalLogs          int64             `json:"total_logs"`
-	LogsByLevel        map[string]int64  `json:"logs_by_level"`
-	LogsByModule       map[string]int64  `json:"logs_by_module"`
-	RecentErrors       []LogEntry        `json:"recent_errors"`
-	LogRatePerMinute   float64           `json:"log_rate_per_minute"`
-	OldestLogTimestamp *time.Time        `json:"oldest_log_timestamp,omitempty"`
-	NewestLogTimestamp *time.Time        `json:"newest_log_timestamp,omitempty"`
+	TotalLogs          int64            `json:"total_logs"`
+	LogsByLevel        map[string]int64 `json:"logs_by_level"`
+	LogsByModule       map[string]int64 `json:"logs_by_module"`
+	RecentErrors       []LogEntry       `json:"recent_errors"`
+	LogRatePerMinute   float64          `json:"log_rate_per_minute"`
+	OldestLogTimestamp *time.Time       `json:"oldest_log_timestamp,omitempty"`
+	NewestLogTimestamp *time.Time       `json:"newest_log_timestamp,omitempty"`
 }
 
 // Subscriber represents a client subscribed to log events.

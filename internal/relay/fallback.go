@@ -352,9 +352,9 @@ func (s *FallbackStreamer) Stop() {
 type ErrorPatternDetector struct {
 	logger *slog.Logger
 
-	mu           sync.Mutex
-	errorCount   int
-	lastError    time.Time
+	mu            sync.Mutex
+	errorCount    int
+	lastError     time.Time
 	errorPatterns []string
 }
 
@@ -366,8 +366,8 @@ func DefaultErrorPatterns() []string {
 		"Connection timed out",
 		"No route to host",
 		"Network is unreachable",
-		"Server returned 4",   // HTTP 4xx errors
-		"Server returned 5",   // HTTP 5xx errors
+		"Server returned 4", // HTTP 4xx errors
+		"Server returned 5", // HTTP 5xx errors
 		"Invalid data found",
 		"Stream not found",
 		"End of file",
@@ -466,9 +466,9 @@ func truncateString(s string, maxLen int) string {
 
 // FallbackController manages fallback state and recovery for a session.
 type FallbackController struct {
-	generator        *FallbackGenerator
-	errorDetector    *ErrorPatternDetector
-	logger           *slog.Logger
+	generator     *FallbackGenerator
+	errorDetector *ErrorPatternDetector
+	logger        *slog.Logger
 
 	// Configuration
 	errorThreshold   int

@@ -12,9 +12,9 @@ import (
 //   - Runtime config updates that preserve circuit breaker state
 type CircuitBreakerManager struct {
 	mu       sync.RWMutex
-	breakers map[string]*CircuitBreaker                  // Shared breakers by service name
-	configs  map[string]*CircuitBreakerProfileConfig     // Per-service config pointers
-	config   *CircuitBreakerConfig                       // Full config with global + profiles
+	breakers map[string]*CircuitBreaker              // Shared breakers by service name
+	configs  map[string]*CircuitBreakerProfileConfig // Per-service config pointers
+	config   *CircuitBreakerConfig                   // Full config with global + profiles
 	logger   *slog.Logger
 }
 

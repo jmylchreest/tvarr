@@ -782,8 +782,8 @@ func TestJobService_GetStats(t *testing.T) {
 	stats, err := svc.GetStats(ctx)
 	require.NoError(t, err)
 
-	assert.Equal(t, int64(3), stats.PendingCount)  // 2 pending + 1 scheduled
-	assert.Equal(t, int64(1), stats.RunningCount)  // 1 running
+	assert.Equal(t, int64(3), stats.PendingCount)   // 2 pending + 1 scheduled
+	assert.Equal(t, int64(1), stats.RunningCount)   // 1 running
 	assert.Equal(t, int64(1), stats.CompletedCount) // 1 completed
 	assert.Equal(t, int64(1), stats.FailedCount)    // 1 failed
 

@@ -18,10 +18,10 @@ type ProcessStats struct {
 	PID int `json:"pid"`
 
 	// CPU usage
-	CPUPercent     float64       `json:"cpu_percent"`      // Current CPU usage as percentage (0-100 per core)
-	CPUUser        time.Duration `json:"cpu_user"`         // Total user CPU time
-	CPUSystem      time.Duration `json:"cpu_system"`       // Total system CPU time
-	CPUTotal       time.Duration `json:"cpu_total"`        // Total CPU time (user + system)
+	CPUPercent float64       `json:"cpu_percent"` // Current CPU usage as percentage (0-100 per core)
+	CPUUser    time.Duration `json:"cpu_user"`    // Total user CPU time
+	CPUSystem  time.Duration `json:"cpu_system"`  // Total system CPU time
+	CPUTotal   time.Duration `json:"cpu_total"`   // Total CPU time (user + system)
 
 	// Memory usage
 	MemoryRSSBytes uint64  `json:"memory_rss_bytes"` // Resident Set Size in bytes
@@ -30,11 +30,11 @@ type ProcessStats struct {
 	MemoryPercent  float64 `json:"memory_percent"`   // Memory usage as percentage of total system memory
 
 	// Bandwidth (tracked externally via CountingWriter)
-	BytesWritten    uint64  `json:"bytes_written"`     // Total bytes written to output
-	BytesRead       uint64  `json:"bytes_read"`        // Total bytes read from input (if tracked)
-	WriteRateBps    float64 `json:"write_rate_bps"`    // Current write rate in bytes/sec
-	WriteRateKbps   float64 `json:"write_rate_kbps"`   // Current write rate in kbps
-	WriteRateMbps   float64 `json:"write_rate_mbps"`   // Current write rate in Mbps
+	BytesWritten  uint64  `json:"bytes_written"`   // Total bytes written to output
+	BytesRead     uint64  `json:"bytes_read"`      // Total bytes read from input (if tracked)
+	WriteRateBps  float64 `json:"write_rate_bps"`  // Current write rate in bytes/sec
+	WriteRateKbps float64 `json:"write_rate_kbps"` // Current write rate in kbps
+	WriteRateMbps float64 `json:"write_rate_mbps"` // Current write rate in Mbps
 
 	// Timing
 	StartedAt   time.Time     `json:"started_at"`
@@ -44,13 +44,13 @@ type ProcessStats struct {
 
 // ProcessMonitor monitors resource usage of an FFmpeg process.
 type ProcessMonitor struct {
-	pid         int
-	startedAt   time.Time
-	interval    time.Duration
+	pid       int
+	startedAt time.Time
+	interval  time.Duration
 
-	mu          sync.RWMutex
-	stats       ProcessStats
-	running     bool
+	mu      sync.RWMutex
+	stats   ProcessStats
+	running bool
 
 	// For CPU percentage calculation
 	lastCPUTime   time.Duration
@@ -65,9 +65,9 @@ type ProcessMonitor struct {
 	bytesRead    atomic.Uint64
 
 	// System info cache
-	totalMemory   uint64
-	numCPU        int
-	clockTicksHz  int64
+	totalMemory  uint64
+	numCPU       int
+	clockTicksHz int64
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -281,8 +281,8 @@ func (pm *ProcessMonitor) calculateBandwidthRates(now time.Time) {
 	if elapsed > 0 {
 		bytesDelta := currentBytes - pm.lastBytesWritten
 		pm.stats.WriteRateBps = float64(bytesDelta) / elapsed.Seconds()
-		pm.stats.WriteRateKbps = pm.stats.WriteRateBps * 8 / 1000        // Convert to kbps
-		pm.stats.WriteRateMbps = pm.stats.WriteRateBps * 8 / 1_000_000  // Convert to Mbps
+		pm.stats.WriteRateKbps = pm.stats.WriteRateBps * 8 / 1000      // Convert to kbps
+		pm.stats.WriteRateMbps = pm.stats.WriteRateBps * 8 / 1_000_000 // Convert to Mbps
 	}
 
 	pm.stats.BytesWritten = currentBytes

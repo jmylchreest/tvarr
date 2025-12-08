@@ -300,7 +300,7 @@ func (p *Prober) QuickProbe(ctx context.Context, url string) (*StreamInfo, error
 		"-read_intervals", "%+0.5", // Only read first 500ms
 		"-analyzeduration", "2000000", // 2 second analyze limit
 		"-probesize", "2000000", // 2MB probe limit
-		"-timeout", "5000000",    // 5 second timeout
+		"-timeout", "5000000", // 5 second timeout
 	}
 
 	// Add URL-specific options

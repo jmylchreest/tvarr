@@ -61,7 +61,7 @@ func TestParse(t *testing.T) {
 		{"weeks days hours", "1w2d12h", 9*24*time.Hour + 12*time.Hour, false},
 		{"full combo short", "1w2d3h4m5s", 9*24*time.Hour + 3*time.Hour + 4*time.Minute + 5*time.Second, false},
 		{"full combo words", "1 week 2 days 3h", 9*24*time.Hour + 3*time.Hour, false},
-		{"year month week day", "1y1mo1w1d", (365+30+7+1)*24*time.Hour, false},
+		{"year month week day", "1y1mo1w1d", (365 + 30 + 7 + 1) * 24 * time.Hour, false},
 
 		// Case insensitive
 		{"DAYS uppercase", "30DAYS", 30 * 24 * time.Hour, false},

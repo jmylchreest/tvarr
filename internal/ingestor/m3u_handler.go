@@ -19,12 +19,6 @@ const (
 	defaultM3UTimeout = 5 * time.Minute
 )
 
-// URL scheme prefixes.
-const (
-	httpPrefix  = "http://"
-	httpsPrefix = "https://"
-)
-
 // M3UHandler handles ingestion of M3U playlist sources.
 type M3UHandler struct {
 	// fetcher handles both HTTP/HTTPS and file:// URLs.

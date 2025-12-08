@@ -55,23 +55,23 @@ func TestMultiFormatStreaming_E2E(t *testing.T) {
 	// Build FFmpeg command - simpler version that's more reliable
 	// Generate 8 seconds of video with keyframes every second
 	cmd := exec.CommandContext(ctx, ffmpegPath,
-		"-y",                    // Overwrite output
-		"-f", "lavfi",           // Use lavfi for test source
+		"-y",          // Overwrite output
+		"-f", "lavfi", // Use lavfi for test source
 		"-i", "testsrc=duration=8:size=320x240:rate=15", // Test video - 8 seconds
 		"-f", "lavfi",
 		"-i", "anullsrc=r=44100:cl=mono", // Silent audio
-		"-t", "8",               // Duration 8 seconds
-		"-pix_fmt", "yuv420p",   // Convert to YUV420 for baseline compatibility
+		"-t", "8", // Duration 8 seconds
+		"-pix_fmt", "yuv420p", // Convert to YUV420 for baseline compatibility
 		"-c:v", "libx264",
 		"-preset", "ultrafast",
 		"-tune", "zerolatency",
 		"-profile:v", "baseline",
 		"-level", "3.0",
-		"-g", "15",              // GOP size = framerate (1 keyframe per second)
+		"-g", "15", // GOP size = framerate (1 keyframe per second)
 		"-force_key_frames", "expr:gte(t,n_forced*1)", // Force keyframe every 1 second
 		"-c:a", "aac",
 		"-b:a", "32k",
-		"-ac", "1",              // Mono audio
+		"-ac", "1", // Mono audio
 		"-f", "mpegts",
 		"-mpegts_copyts", "1",
 		"pipe:1",
@@ -388,9 +388,9 @@ func testFormatRouterIntegration(t *testing.T, buf *UnifiedBuffer) {
 
 	// Test format resolution
 	tests := []struct {
-		name      string
-		request   OutputRequest
-		expected  string
+		name     string
+		request  OutputRequest
+		expected string
 	}{
 		{
 			name:     "explicit HLS",

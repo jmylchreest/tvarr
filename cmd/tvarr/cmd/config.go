@@ -101,7 +101,7 @@ func contains(s string, substrs ...string) bool {
 	return false
 }
 
-func runConfigDump(cmd *cobra.Command, args []string) error {
+func runConfigDump(_ *cobra.Command, _ []string) error {
 	// Load config with defaults (no file, just defaults)
 	cfg, err := config.Load("")
 	if err != nil {

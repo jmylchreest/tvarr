@@ -178,8 +178,8 @@ func TestLastKnownCodec_GetAudioInfo(t *testing.T) {
 
 func TestLastKnownCodec_NeedsVideoTranscode(t *testing.T) {
 	c := &LastKnownCodec{
-		VideoCodec: "h264",
-		VideoWidth: 1920,
+		VideoCodec:  "h264",
+		VideoWidth:  1920,
 		VideoHeight: 1080,
 	}
 

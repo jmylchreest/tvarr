@@ -1,5 +1,7 @@
 // Package main provides an E2E test runner for validating the tvarr pipeline.
 // This binary tests the complete flow from source ingestion through M3U/XMLTV output.
+//
+//nolint:errcheck,gocognit,gocyclo,nestif,gocritic,godot,wrapcheck,gosec,revive,goprintffuncname,modernize // E2E test runner uses relaxed linting for cleaner test code
 package main
 
 import (
@@ -1011,8 +1013,8 @@ type CreateStreamProxyOptions struct {
 	EpgSourceIDs      []string
 	CacheChannelLogos bool
 	CacheProgramLogos bool
-	ProxyMode         string // "redirect", "proxy", or "relay"
-	RelayProfileID    string // optional relay profile ID for relay mode
+	ProxyMode         string // "direct" (HTTP 302 redirect) or "smart" (auto-optimizes delivery)
+	RelayProfileID    string // Optional relay profile ID for transcoding (only used with "smart" mode)
 }
 
 // CreateStreamProxy creates a new stream proxy
@@ -1024,11 +1026,11 @@ func (c *APIClient) CreateStreamProxy(ctx context.Context, opts CreateStreamProx
 		"cache_channel_logos": opts.CacheChannelLogos,
 		"cache_program_logos": opts.CacheProgramLogos,
 	}
-	// Add proxy_mode if specified
+	// Add proxy_mode if specified (valid values: "direct", "smart")
 	if opts.ProxyMode != "" {
 		body["proxy_mode"] = opts.ProxyMode
 	}
-	// Add relay_profile_id if specified
+	// Add relay_profile_id if specified (enables transcoding with "smart" mode)
 	if opts.RelayProfileID != "" {
 		body["relay_profile_id"] = opts.RelayProfileID
 	}
@@ -1063,14 +1065,14 @@ func (c *APIClient) CreateStreamProxy(ctx context.Context, opts CreateStreamProx
 	return id, nil
 }
 
-// TriggerProxyGeneration triggers proxy generation and waits for completion
-// Note: The generate endpoint is synchronous - it returns when generation completes.
-// We don't need to wait for SSE since a 200 response means it's done.
+// TriggerProxyGeneration triggers proxy generation and waits for completion.
+// Note: The generate endpoint is async - it starts generation in a goroutine.
+// We poll the proxy status until generation completes (success/failed).
 func (c *APIClient) TriggerProxyGeneration(ctx context.Context, proxyID string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Trigger regeneration - this is synchronous and returns when complete
+	// Trigger regeneration - this is async
 	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/v1/proxies/"+proxyID+"/regenerate", nil)
 	if err != nil {
 		return err
@@ -1080,15 +1082,41 @@ func (c *APIClient) TriggerProxyGeneration(ctx context.Context, proxyID string, 
 	if err != nil {
 		return fmt.Errorf("trigger generation failed: %w", err)
 	}
-	defer resp.Body.Close()
+	resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("trigger generation failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	// Generation is complete (endpoint is synchronous)
-	return nil
+	// Poll for completion - generation runs asynchronously
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("generation timeout: %w", ctx.Err())
+		case <-ticker.C:
+			proxy, err := c.GetProxy(ctx, proxyID)
+			if err != nil {
+				return fmt.Errorf("failed to check generation status: %w", err)
+			}
+			status, _ := proxy["status"].(string)
+			switch status {
+			case "success":
+				return nil
+			case "failed":
+				lastError, _ := proxy["last_error"].(string)
+				return fmt.Errorf("generation failed: %s", lastError)
+			case "generating", "pending":
+				// Still running, continue polling
+				continue
+			default:
+				return fmt.Errorf("unknown proxy status: %s", status)
+			}
+		}
+	}
 }
 
 // GetProxy fetches a proxy by ID
@@ -1439,19 +1467,19 @@ func (c *APIClient) GetFirstRelayProfileID(ctx context.Context) (string, error) 
 
 // ClientDetectionMapping represents a client detection rule
 type ClientDetectionMapping struct {
-	ID                   string   `json:"id"`
-	Name                 string   `json:"name"`
-	Description          string   `json:"description"`
-	Expression           string   `json:"expression"`
-	Priority             int      `json:"priority"`
-	IsEnabled            bool     `json:"is_enabled"`
-	IsSystem             bool     `json:"is_system"`
-	AcceptedVideoCodecs  []string `json:"accepted_video_codecs"`
-	AcceptedAudioCodecs  []string `json:"accepted_audio_codecs"`
-	AcceptedContainers   []string `json:"accepted_containers"`
-	PreferredVideoCodec  string   `json:"preferred_video_codec"`
-	PreferredAudioCodec  string   `json:"preferred_audio_codec"`
-	PreferredContainer   string   `json:"preferred_container"`
+	ID                  string   `json:"id"`
+	Name                string   `json:"name"`
+	Description         string   `json:"description"`
+	Expression          string   `json:"expression"`
+	Priority            int      `json:"priority"`
+	IsEnabled           bool     `json:"is_enabled"`
+	IsSystem            bool     `json:"is_system"`
+	AcceptedVideoCodecs []string `json:"accepted_video_codecs"`
+	AcceptedAudioCodecs []string `json:"accepted_audio_codecs"`
+	AcceptedContainers  []string `json:"accepted_containers"`
+	PreferredVideoCodec string   `json:"preferred_video_codec"`
+	PreferredAudioCodec string   `json:"preferred_audio_codec"`
+	PreferredContainer  string   `json:"preferred_container"`
 }
 
 // ClientDetectionStats represents statistics about client detection mappings
@@ -1481,13 +1509,14 @@ func (c *APIClient) GetClientDetectionMappings(ctx context.Context) ([]ClientDet
 	}
 
 	var result struct {
-		Items []ClientDetectionMapping `json:"items"`
+		Mappings []ClientDetectionMapping `json:"mappings"`
+		Count    int                       `json:"count"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode response failed: %w", err)
 	}
 
-	return result.Items, nil
+	return result.Mappings, nil
 }
 
 // GetClientDetectionStats fetches client detection statistics
@@ -1602,22 +1631,22 @@ type E2ERunner struct {
 	epgURL            string
 	verbose           bool
 	results           []TestResult
-	runID             string         // Unique ID for this test run to avoid name collisions
-	cacheChannelLogos bool           // Enable channel logo caching
-	cacheProgramLogos bool           // Enable program logo caching
-	sseCollector      *SSECollector  // Collects SSE events for timeline
-	channelLogoID     string         // ULID of uploaded channel logo placeholder
-	channelLogoURL    string         // URL of uploaded channel logo placeholder
-	programLogoID     string         // ULID of uploaded program logo placeholder
-	programLogoURL    string         // URL of uploaded program logo placeholder
-	outputDir         string         // Directory to write artifact files (m3u/xmltv)
-	showSamples       bool           // Display sample channels and programs to stdout
-	expectedChannels  int            // Expected channel count in output (0 to skip validation)
-	expectedPrograms  int            // Expected program count in output (0 to skip validation)
-	server            *ManagedServer // Reference to managed server for log validation
-	ffmpegAvailable   bool           // Whether ffmpeg is available for relay tests
+	runID             string          // Unique ID for this test run to avoid name collisions
+	cacheChannelLogos bool            // Enable channel logo caching
+	cacheProgramLogos bool            // Enable program logo caching
+	sseCollector      *SSECollector   // Collects SSE events for timeline
+	channelLogoID     string          // ULID of uploaded channel logo placeholder
+	channelLogoURL    string          // URL of uploaded channel logo placeholder
+	programLogoID     string          // ULID of uploaded program logo placeholder
+	programLogoURL    string          // URL of uploaded program logo placeholder
+	outputDir         string          // Directory to write artifact files (m3u/xmltv)
+	showSamples       bool            // Display sample channels and programs to stdout
+	expectedChannels  int             // Expected channel count in output (0 to skip validation)
+	expectedPrograms  int             // Expected program count in output (0 to skip validation)
+	server            *ManagedServer  // Reference to managed server for log validation
+	ffmpegAvailable   bool            // Whether ffmpeg is available for relay tests
 	testdataServer    *TestdataServer // Server for serving testdata files
-	testProxyModes    bool           // Whether to test different proxy modes
+	testProxyModes    bool            // Whether to test different proxy modes
 }
 
 // E2ERunnerOptions holds configuration options for the E2E runner
@@ -1726,8 +1755,8 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 
 		// Check for FFmpeg availability - warn if not present (print to both stdout and stderr for CI visibility)
 		if !r.ffmpegAvailable {
-			fmt.Println("WARNING: ffmpeg not found in PATH, relay mode tests will be skipped")
-			fmt.Fprintln(os.Stderr, "WARNING: ffmpeg not found in PATH, relay mode tests will be skipped")
+			fmt.Println("WARNING: ffmpeg not found in PATH, relay profile tests will be skipped")
+			fmt.Fprintln(os.Stderr, "WARNING: ffmpeg not found in PATH, relay profile tests will be skipped")
 		}
 	}
 
@@ -1999,11 +2028,11 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 		}
 
 		if r.testProxyModes {
-			// Create redirect proxy with explicit mode for proxy mode testing
-			opts.Name = fmt.Sprintf("E2E Redirect Proxy %s", r.runID)
-			opts.ProxyMode = "redirect"
+			// Create direct mode proxy with explicit mode for proxy mode testing
+			opts.Name = fmt.Sprintf("E2E Direct Mode Proxy %s", r.runID)
+			opts.ProxyMode = "direct"
 		} else {
-			// Create default proxy (defaults to redirect mode)
+			// Create default proxy (defaults to direct mode)
 			opts.Name = fmt.Sprintf("E2E Test Proxy %s", r.runID)
 		}
 
@@ -2196,31 +2225,31 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 	// Phase 8: Proxy Mode Tests (optional, enabled via -test-proxy-modes)
 	// Note: Channels already have correct testdata server URLs from test data generation,
 	// no data mapping rule or re-ingestion needed.
-	// The redirect mode proxy was already created in Phase 4 (proxyID), so we only create
-	// proxy mode and relay mode proxies here.
+	// The direct mode proxy was already created in Phase 4 (proxyID), so we only create
+	// smart mode and smart+relay proxies here.
 	if r.testProxyModes && streamSourceID != "" && r.testdataServer != nil {
 		// Proxy IDs stored at outer scope for stream testing
-		var proxyModeProxyID string
-		var relayProxyID string
+		var smartModeProxyID string
+		var relayProfileProxyID string
 
-		// Create proxy with proxy mode
-		r.runTest("Create Proxy (Proxy Mode)", func() error {
+		// Create proxy with smart mode (passthrough/repackage)
+		r.runTest("Create Proxy (Smart Mode)", func() error {
 			var err error
-			proxyModeProxyID, err = r.client.CreateStreamProxy(ctx, CreateStreamProxyOptions{
-				Name:            fmt.Sprintf("E2E Proxy Mode Proxy %s", r.runID),
+			smartModeProxyID, err = r.client.CreateStreamProxy(ctx, CreateStreamProxyOptions{
+				Name:            fmt.Sprintf("E2E Smart Mode Proxy %s", r.runID),
 				StreamSourceIDs: []string{streamSourceID},
-				ProxyMode:       "proxy",
+				ProxyMode:       "smart",
 			})
 			if err != nil {
 				return err
 			}
-			r.log("  Created proxy mode proxy: %s", proxyModeProxyID)
+			r.log("  Created smart mode proxy: %s", smartModeProxyID)
 			return nil
 		})
 
-		// Create proxy with relay mode (only if ffmpeg is available)
+		// Create proxy with smart mode + relay profile for transcoding (only if ffmpeg is available)
 		if r.ffmpegAvailable {
-			r.runTest("Create Proxy (Relay Mode)", func() error {
+			r.runTest("Create Proxy (Smart Mode with Relay Profile)", func() error {
 				// Get the first relay profile ID (should exist from seeded profiles)
 				relayProfileID, err := r.client.GetFirstRelayProfileID(ctx)
 				if err != nil {
@@ -2231,33 +2260,33 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 				}
 				r.log("  Using relay profile: %s", relayProfileID)
 
-				relayProxyID, err = r.client.CreateStreamProxy(ctx, CreateStreamProxyOptions{
-					Name:            fmt.Sprintf("E2E Relay Proxy %s", r.runID),
+				relayProfileProxyID, err = r.client.CreateStreamProxy(ctx, CreateStreamProxyOptions{
+					Name:            fmt.Sprintf("E2E Smart+Relay Proxy %s", r.runID),
 					StreamSourceIDs: []string{streamSourceID},
-					ProxyMode:       "relay",
+					ProxyMode:       "smart",
 					RelayProfileID:  relayProfileID,
 				})
 				if err != nil {
 					return err
 				}
-				r.log("  Created relay mode proxy: %s", relayProxyID)
+				r.log("  Created smart mode proxy with relay profile: %s", relayProfileProxyID)
 				return nil
 			})
 		} else {
-			// Log that we're skipping relay mode tests
-			r.runTest("Skip Relay Mode (No FFmpeg)", func() error {
-				r.log("  SKIPPED: Relay mode tests require ffmpeg")
-				fmt.Println("WARNING: Skipping relay mode proxy test - ffmpeg not available")
-				fmt.Fprintln(os.Stderr, "WARNING: Skipping relay mode proxy test - ffmpeg not available")
+			// Log that we're skipping relay profile tests
+			r.runTest("Skip Relay Profile Tests (No FFmpeg)", func() error {
+				r.log("  SKIPPED: Relay profile tests require ffmpeg")
+				fmt.Println("WARNING: Skipping relay profile proxy test - ffmpeg not available")
+				fmt.Fprintln(os.Stderr, "WARNING: Skipping relay profile proxy test - ffmpeg not available")
 				return nil
 			})
 		}
 
-		// Test Redirect Mode Stream Fetching
-		// Uses proxyID which was created with redirect mode in Phase 4
-		r.runTest("Test Stream (Redirect Mode)", func() error {
+		// Test Direct Mode Stream Fetching
+		// Uses proxyID which was created with direct mode in Phase 4
+		r.runTest("Test Stream (Direct Mode)", func() error {
 			if proxyID == "" {
-				return fmt.Errorf("redirect proxy was not created")
+				return fmt.Errorf("direct mode proxy was not created")
 			}
 
 			// Proxy was already generated in Phase 4, no need to regenerate
@@ -2279,25 +2308,25 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 				return fmt.Errorf("stream request: %w", err)
 			}
 
-			// Redirect mode should return HTTP 302
+			// Direct mode should return HTTP 302 redirect to source URL
 			if result.StatusCode != http.StatusFound {
 				return fmt.Errorf("expected HTTP 302, got %d", result.StatusCode)
 			}
 			if result.Location == "" {
 				return fmt.Errorf("expected Location header in redirect response")
 			}
-			r.log("  Redirect mode: HTTP %d -> %s", result.StatusCode, result.Location)
+			r.log("  Direct mode: HTTP %d -> %s", result.StatusCode, result.Location)
 			return nil
 		})
 
-		// Test Proxy Mode Stream Fetching
-		r.runTest("Test Stream (Proxy Mode)", func() error {
-			if proxyModeProxyID == "" {
-				return fmt.Errorf("proxy mode proxy was not created")
+		// Test Smart Mode Stream Fetching (passthrough/repackage)
+		r.runTest("Test Stream (Smart Mode)", func() error {
+			if smartModeProxyID == "" {
+				return fmt.Errorf("smart mode proxy was not created")
 			}
 
 			// Trigger proxy generation
-			if err := r.client.TriggerProxyGeneration(ctx, proxyModeProxyID, time.Minute); err != nil {
+			if err := r.client.TriggerProxyGeneration(ctx, smartModeProxyID, time.Minute); err != nil {
 				return fmt.Errorf("trigger proxy generation: %w", err)
 			}
 
@@ -2309,7 +2338,7 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 			}
 
 			// Construct the proxy stream URL
-			streamURL := r.client.GetProxyStreamURL(proxyModeProxyID, channelID)
+			streamURL := r.client.GetProxyStreamURL(smartModeProxyID, channelID)
 			r.log("  Testing stream URL: %s", streamURL)
 
 			// Test the stream request
@@ -2318,7 +2347,7 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 				return fmt.Errorf("stream request: %w", err)
 			}
 
-			// Proxy mode should return HTTP 200 with CORS headers and TS content
+			// Smart mode should return HTTP 200 with CORS headers and content
 			if result.StatusCode != http.StatusOK {
 				return fmt.Errorf("expected HTTP 200, got %d", result.StatusCode)
 			}
@@ -2331,16 +2360,16 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 			if !result.TSSyncByteValid {
 				r.log("  WARNING: First byte is not TS sync byte (0x47), may not be TS format")
 			}
-			r.log("  Proxy mode: HTTP %d, CORS: %v, Bytes: %d, TS: %v",
+			r.log("  Smart mode: HTTP %d, CORS: %v, Bytes: %d, TS: %v",
 				result.StatusCode, result.HasCORSHeaders, result.BytesReceived, result.TSSyncByteValid)
 			return nil
 		})
 
-		// Test Relay Mode Stream Fetching (only if ffmpeg is available and relay proxy was created)
-		if r.ffmpegAvailable && relayProxyID != "" {
-			r.runTest("Test Stream (Relay Mode)", func() error {
+		// Test Smart Mode with Relay Profile Stream Fetching (only if ffmpeg is available and proxy was created)
+		if r.ffmpegAvailable && relayProfileProxyID != "" {
+			r.runTest("Test Stream (Smart Mode with Relay Profile)", func() error {
 				// Trigger proxy generation
-				if err := r.client.TriggerProxyGeneration(ctx, relayProxyID, time.Minute); err != nil {
+				if err := r.client.TriggerProxyGeneration(ctx, relayProfileProxyID, time.Minute); err != nil {
 					return fmt.Errorf("trigger proxy generation: %w", err)
 				}
 
@@ -2352,20 +2381,20 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 				}
 
 				// Construct the proxy stream URL
-				streamURL := r.client.GetProxyStreamURL(relayProxyID, channelID)
+				streamURL := r.client.GetProxyStreamURL(relayProfileProxyID, channelID)
 				r.log("  Testing stream URL: %s", streamURL)
 
-				// Test the stream request - relay mode should also return HTTP 200
+				// Test the stream request - smart mode with relay profile should return HTTP 200
 				result, err := r.client.TestStreamRequest(ctx, streamURL)
 				if err != nil {
 					return fmt.Errorf("stream request: %w", err)
 				}
 
-				// Relay mode should return HTTP 200 (transcoded content)
+				// Smart mode with relay profile should return HTTP 200 (transcoded content)
 				if result.StatusCode != http.StatusOK {
 					return fmt.Errorf("expected HTTP 200, got %d", result.StatusCode)
 				}
-				r.log("  Relay mode: HTTP %d, Bytes: %d, TS: %v",
+				r.log("  Smart mode with relay profile: HTTP %d, Bytes: %d, TS: %v",
 					result.StatusCode, result.BytesReceived, result.TSSyncByteValid)
 				return nil
 			})

@@ -102,13 +102,13 @@ type IngestionConfig struct {
 
 // PipelineConfig holds proxy generation pipeline configuration.
 type PipelineConfig struct {
-	StreamBatchSize       int           `mapstructure:"stream_batch_size"`
-	EnableGCHints         bool          `mapstructure:"enable_gc_hints"`
-	LogoBatchSize         int           `mapstructure:"logo_batch_size"`
-	LogoConcurrency       int           `mapstructure:"logo_concurrency"`         // Number of concurrent logo downloads (default 10)
-	LogoTimeout           time.Duration `mapstructure:"logo_timeout"`             // Timeout for individual logo downloads (default 30s)
-	LogoRetryAttempts     int           `mapstructure:"logo_retry_attempts"`      // Number of retry attempts for failed logo downloads (default 3)
-	LogoCircuitBreaker    string        `mapstructure:"logo_circuit_breaker"`     // Circuit breaker namespace for logos (default "logos")
+	StreamBatchSize    int           `mapstructure:"stream_batch_size"`
+	EnableGCHints      bool          `mapstructure:"enable_gc_hints"`
+	LogoBatchSize      int           `mapstructure:"logo_batch_size"`
+	LogoConcurrency    int           `mapstructure:"logo_concurrency"`     // Number of concurrent logo downloads (default 10)
+	LogoTimeout        time.Duration `mapstructure:"logo_timeout"`         // Timeout for individual logo downloads (default 30s)
+	LogoRetryAttempts  int           `mapstructure:"logo_retry_attempts"`  // Number of retry attempts for failed logo downloads (default 3)
+	LogoCircuitBreaker string        `mapstructure:"logo_circuit_breaker"` // Circuit breaker namespace for logos (default "logos")
 }
 
 // RelayConfig holds stream relay configuration.

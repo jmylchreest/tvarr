@@ -228,7 +228,7 @@ func formatXMLTVTime(t time.Time) string {
 // xmlEscape escapes special XML characters.
 func xmlEscape(s string) string {
 	var buf []byte
-	xml.EscapeText((*xmlEscapeWriter)(&buf), []byte(s))
+	_ = xml.EscapeText((*xmlEscapeWriter)(&buf), []byte(s))
 	return string(buf)
 }
 

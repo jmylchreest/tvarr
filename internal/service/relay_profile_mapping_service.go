@@ -87,14 +87,9 @@ func (s *RelayProfileMappingService) GetAll(ctx context.Context) ([]*models.Rela
 	return s.repo.GetAll(ctx)
 }
 
-// GetEnabled retrieves all enabled relay profile mappings.
+// GetEnabled retrieves all enabled relay profile mappings ordered by priority.
 func (s *RelayProfileMappingService) GetEnabled(ctx context.Context) ([]*models.RelayProfileMapping, error) {
 	return s.repo.GetEnabled(ctx)
-}
-
-// GetEnabledByPriority retrieves enabled mappings ordered by priority.
-func (s *RelayProfileMappingService) GetEnabledByPriority(ctx context.Context) ([]*models.RelayProfileMapping, error) {
-	return s.repo.GetEnabledByPriority(ctx)
 }
 
 // Update updates an existing relay profile mapping.
@@ -166,7 +161,7 @@ func (s *RelayProfileMappingService) Reorder(ctx context.Context, requests []rep
 // It returns the codec decision based on the first matching rule.
 // If no rule matches, returns nil.
 func (s *RelayProfileMappingService) EvaluateRequest(ctx context.Context, r *http.Request, sourceCodecs *CodecInfo) (*CodecDecision, error) {
-	mappings, err := s.repo.GetEnabledByPriority(ctx)
+	mappings, err := s.repo.GetEnabled(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -324,7 +319,7 @@ type RuleValidationIssue struct {
 // ValidateRulesOnLoad validates all enabled rules and logs warnings for any issues.
 // This should be called when the service is initialized or rules are modified.
 func (s *RelayProfileMappingService) ValidateRulesOnLoad(ctx context.Context) {
-	mappings, err := s.repo.GetEnabledByPriority(ctx)
+	mappings, err := s.repo.GetEnabled(ctx)
 	if err != nil {
 		s.logger.Warn("failed to load rules for validation", "error", err)
 		return

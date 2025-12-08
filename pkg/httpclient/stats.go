@@ -307,11 +307,11 @@ type EnhancedCircuitBreakerStats struct {
 	StateDurationMs int64        `json:"state_duration_ms"`
 
 	// Counters
-	ConsecutiveFailures  int   `json:"consecutive_failures"`
-	ConsecutiveSuccesses int   `json:"consecutive_successes"`
-	TotalRequests        int64 `json:"total_requests"`
-	TotalSuccesses       int64 `json:"total_successes"`
-	TotalFailures        int64 `json:"total_failures"`
+	ConsecutiveFailures  int     `json:"consecutive_failures"`
+	ConsecutiveSuccesses int     `json:"consecutive_successes"`
+	TotalRequests        int64   `json:"total_requests"`
+	TotalSuccesses       int64   `json:"total_successes"`
+	TotalFailures        int64   `json:"total_failures"`
 	FailureRate          float64 `json:"failure_rate"`
 
 	// Error categorization

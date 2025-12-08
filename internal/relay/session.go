@@ -17,43 +17,43 @@ import (
 
 // RelaySession represents an active relay session.
 type RelaySession struct {
-	ID             uuid.UUID
-	ChannelID      uuid.UUID
-	ChannelName    string // Display name of the channel
-	StreamURL      string
-	Profile        *models.RelayProfile
-	Classification ClassificationResult
+	ID              uuid.UUID
+	ChannelID       uuid.UUID
+	ChannelName     string // Display name of the channel
+	StreamURL       string
+	Profile         *models.RelayProfile
+	Classification  ClassificationResult
 	CachedCodecInfo *models.LastKnownCodec // Pre-probed codec info for faster startup
-	StartedAt      time.Time
-	LastActivity   time.Time
-	IdleSince      time.Time // When the session became idle (0 clients), zero if not idle
+	StartedAt       time.Time
+	LastActivity    time.Time
+	IdleSince       time.Time // When the session became idle (0 clients), zero if not idle
 
 	// Smart delivery context (set when using smart mode)
 	DeliveryContext *DeliveryContext
 
 	manager            *Manager
-	buffer             *CyclicBuffer    // Legacy buffer for MPEG-TS streaming (deprecated, use unifiedBuffer)
-	unifiedBuffer      *UnifiedBuffer   // Unified buffer for all streaming formats
+	buffer             *CyclicBuffer  // Legacy buffer for MPEG-TS streaming (deprecated, use unifiedBuffer)
+	unifiedBuffer      *UnifiedBuffer // Unified buffer for all streaming formats
 	ctx                context.Context
 	cancel             context.CancelFunc
 	fallbackController *FallbackController
 	fallbackGenerator  *FallbackGenerator
 
 	// Multi-format streaming support
-	formatRouter     *FormatRouter           // Routes requests to appropriate output handler
-	containerFormat  models.ContainerFormat  // Current container format
+	formatRouter    *FormatRouter          // Routes requests to appropriate output handler
+	containerFormat models.ContainerFormat // Current container format
 
 	// Passthrough handlers for HLS/DASH sources
 	hlsPassthrough  *HLSPassthroughHandler
 	dashPassthrough *DASHPassthroughHandler
 
-	mu             sync.RWMutex
-	ffmpegCmd      *ffmpeg.Command // Running FFmpeg command for stats access
-	hlsCollapser   *HLSCollapser
-	inputReader    io.ReadCloser
-	closed         bool
-	err            error
-	inFallback     bool
+	mu           sync.RWMutex
+	ffmpegCmd    *ffmpeg.Command // Running FFmpeg command for stats access
+	hlsCollapser *HLSCollapser
+	inputReader  io.ReadCloser
+	closed       bool
+	err          error
+	inFallback   bool
 }
 
 // start begins the relay session.
@@ -395,14 +395,14 @@ func (s *RelaySession) runFFmpegPipeline() error {
 	if s.CachedCodecInfo != nil && s.CachedCodecInfo.IsValid() {
 		// Minimal probing - we already know the codec from ffprobe cache
 		builder.InputArgs("-analyzeduration", "500000"). // 0.5 seconds
-			InputArgs("-probesize", "500000")            // 500KB
+									InputArgs("-probesize", "500000") // 500KB
 		slog.Debug("Using reduced probe settings with cached codec info",
 			slog.String("video_codec", s.CachedCodecInfo.VideoCodec))
 	} else {
 		// Live stream probing - 3 seconds is sufficient for MPEG-TS/HLS detection
 		// Previous 10 second values caused significant startup delays
 		builder.InputArgs("-analyzeduration", "3000000"). // 3 seconds
-			InputArgs("-probesize", "3000000")            // 3MB
+									InputArgs("-probesize", "3000000") // 3MB
 	}
 	builder.Reconnect() // Enable auto-reconnect for network streams
 
@@ -558,10 +558,10 @@ func (s *RelaySession) runFFmpegPipeline() error {
 	case ffmpeg.FormatMPEGTS, ffmpeg.FormatHLS:
 		// MPEG-TS output settings - use proven m3u-proxy configuration
 		// This sets proper timestamp handling, PID allocation, and format flags
-		builder.MpegtsArgs().     // Proper MPEG-TS flags (copyts, PIDs, etc.)
-			FlushPackets().       // -flush_packets 1 - immediate output
-			MuxDelay("0").        // -muxdelay 0 - zero muxing delay
-			PatPeriod("0.1")      // -pat_period 0.1 - frequent PAT/PMT for mid-stream joins
+		builder.MpegtsArgs(). // Proper MPEG-TS flags (copyts, PIDs, etc.)
+					FlushPackets().  // -flush_packets 1 - immediate output
+					MuxDelay("0").   // -muxdelay 0 - zero muxing delay
+					PatPeriod("0.1") // -pat_period 0.1 - frequent PAT/PMT for mid-stream joins
 	default:
 		// Default case - use MPEG-TS args for compatibility
 		builder.MpegtsArgs().
@@ -926,20 +926,20 @@ func (s *RelaySession) Stats() SessionStats {
 
 // SessionStats holds session statistics.
 type SessionStats struct {
-	ID             string    `json:"id"`
-	ChannelID      string    `json:"channel_id"`
-	ChannelName    string    `json:"channel_name,omitempty"`
-	ProfileName    string    `json:"profile_name,omitempty"`
-	StreamURL      string    `json:"stream_url"`
-	Classification string    `json:"classification"`
-	StartedAt      time.Time `json:"started_at"`
-	LastActivity   time.Time `json:"last_activity"`
-	IdleSince      time.Time `json:"idle_since,omitempty"`
-	ClientCount    int       `json:"client_count"`
-	BytesWritten   uint64    `json:"bytes_written"`
-	BytesFromUpstream uint64 `json:"bytes_from_upstream"`
-	Closed         bool      `json:"closed"`
-	Error          string    `json:"error,omitempty"`
+	ID                string    `json:"id"`
+	ChannelID         string    `json:"channel_id"`
+	ChannelName       string    `json:"channel_name,omitempty"`
+	ProfileName       string    `json:"profile_name,omitempty"`
+	StreamURL         string    `json:"stream_url"`
+	Classification    string    `json:"classification"`
+	StartedAt         time.Time `json:"started_at"`
+	LastActivity      time.Time `json:"last_activity"`
+	IdleSince         time.Time `json:"idle_since,omitempty"`
+	ClientCount       int       `json:"client_count"`
+	BytesWritten      uint64    `json:"bytes_written"`
+	BytesFromUpstream uint64    `json:"bytes_from_upstream"`
+	Closed            bool      `json:"closed"`
+	Error             string    `json:"error,omitempty"`
 	// Smart delivery information (only present when using smart mode)
 	DeliveryDecision string `json:"delivery_decision,omitempty"` // passthrough, repackage, or transcode
 	ClientFormat     string `json:"client_format,omitempty"`     // requested output format
@@ -976,13 +976,13 @@ type SessionSegmentBufferStats struct {
 
 // FFmpegProcessStats contains resource usage for the FFmpeg process.
 type FFmpegProcessStats struct {
-	PID            int     `json:"pid"`
-	CPUPercent     float64 `json:"cpu_percent"`
-	MemoryRSSMB    float64 `json:"memory_rss_mb"`
-	MemoryPercent  float64 `json:"memory_percent"`
-	BytesWritten   uint64  `json:"bytes_written"`
-	WriteRateMbps  float64 `json:"write_rate_mbps"`
-	DurationSecs   float64 `json:"duration_secs"`
+	PID           int     `json:"pid"`
+	CPUPercent    float64 `json:"cpu_percent"`
+	MemoryRSSMB   float64 `json:"memory_rss_mb"`
+	MemoryPercent float64 `json:"memory_percent"`
+	BytesWritten  uint64  `json:"bytes_written"`
+	WriteRateMbps float64 `json:"write_rate_mbps"`
+	DurationSecs  float64 `json:"duration_secs"`
 }
 
 // InitMultiFormatOutput initializes the unified buffer and format router for multi-format output.

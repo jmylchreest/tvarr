@@ -771,9 +771,9 @@ func (cb *CircuitBreaker) Successes() int {
 // CircuitBreakerStats holds statistics about a circuit breaker.
 type CircuitBreakerStats struct {
 	State               CircuitState                `json:"state"`
-	Failures            int                         `json:"failures"`              // consecutive failures
-	Successes           int                         `json:"successes"`             // consecutive successes in half-open
-	ConsecutiveFailures int                         `json:"consecutive_failures"`  // same as Failures (for clarity)
+	Failures            int                         `json:"failures"`             // consecutive failures
+	Successes           int                         `json:"successes"`            // consecutive successes in half-open
+	ConsecutiveFailures int                         `json:"consecutive_failures"` // same as Failures (for clarity)
 	TotalRequests       int64                       `json:"total_requests"`
 	TotalSuccesses      int64                       `json:"total_successes"`
 	TotalFailures       int64                       `json:"total_failures"`

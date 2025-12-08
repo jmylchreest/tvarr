@@ -12,26 +12,26 @@ import (
 type HWAccelType string
 
 const (
-	HWAccelNone       HWAccelType = "none"
-	HWAccelNVDEC      HWAccelType = "nvdec"      // NVIDIA NVDEC (decode)
-	HWAccelNVENC      HWAccelType = "cuda"       // NVIDIA CUDA/NVENC
-	HWAccelQSV        HWAccelType = "qsv"        // Intel Quick Sync
-	HWAccelVAAPI      HWAccelType = "vaapi"      // VA-API (Linux)
+	HWAccelNone         HWAccelType = "none"
+	HWAccelNVDEC        HWAccelType = "nvdec"        // NVIDIA NVDEC (decode)
+	HWAccelNVENC        HWAccelType = "cuda"         // NVIDIA CUDA/NVENC
+	HWAccelQSV          HWAccelType = "qsv"          // Intel Quick Sync
+	HWAccelVAAPI        HWAccelType = "vaapi"        // VA-API (Linux)
 	HWAccelVideoToolbox HWAccelType = "videotoolbox" // macOS
-	HWAccelDXVA2      HWAccelType = "dxva2"      // Windows (older)
-	HWAccelD3D11VA    HWAccelType = "d3d11va"    // Windows 8+
-	HWAccelVulkan     HWAccelType = "vulkan"     // Cross-platform Vulkan
-	HWAccelOCL        HWAccelType = "opencl"     // OpenCL
+	HWAccelDXVA2        HWAccelType = "dxva2"        // Windows (older)
+	HWAccelD3D11VA      HWAccelType = "d3d11va"      // Windows 8+
+	HWAccelVulkan       HWAccelType = "vulkan"       // Cross-platform Vulkan
+	HWAccelOCL          HWAccelType = "opencl"       // OpenCL
 )
 
 // HWAccelInfo contains information about a hardware accelerator.
 type HWAccelInfo struct {
-	Type        HWAccelType `json:"type"`
-	Name        string      `json:"name"`
-	Available   bool        `json:"available"`
-	DeviceName  string      `json:"device_name,omitempty"`
-	Encoders    []string    `json:"encoders,omitempty"`
-	Decoders    []string    `json:"decoders,omitempty"`
+	Type       HWAccelType `json:"type"`
+	Name       string      `json:"name"`
+	Available  bool        `json:"available"`
+	DeviceName string      `json:"device_name,omitempty"`
+	Encoders   []string    `json:"encoders,omitempty"`
+	Decoders   []string    `json:"decoders,omitempty"`
 }
 
 // HWAccelDetector detects available hardware acceleration.

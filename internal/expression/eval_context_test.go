@@ -52,9 +52,9 @@ func TestChannelEvalContext_Aliases(t *testing.T) {
 		alias    string
 		expected string
 	}{
-		{"name", "BBC One HD"},     // alias for channel_name
+		{"name", "BBC One HD"},                 // alias for channel_name
 		{"logo", "http://example.com/bbc.png"}, // alias for tvg_logo
-		{"group", "UK Entertainment"},           // alias for group_title
+		{"group", "UK Entertainment"},          // alias for group_title
 	}
 
 	for _, tt := range tests {
@@ -142,12 +142,12 @@ func TestProgramEvalContext_Aliases(t *testing.T) {
 		alias    string
 		expected string
 	}{
-		{"program_title", "News at Ten"},        // US spelling alias
-		{"title", "News at Ten"},                // short alias
+		{"program_title", "News at Ten"},           // US spelling alias
+		{"title", "News at Ten"},                   // short alias
 		{"program_description", "The latest news"}, // US spelling alias
-		{"description", "The latest news"},      // short alias
-		{"program_category", "News"},            // US spelling alias
-		{"genre", "News"},                       // category alias
+		{"description", "The latest news"},         // short alias
+		{"program_category", "News"},               // US spelling alias
+		{"genre", "News"},                          // category alias
 	}
 
 	for _, tt := range tests {

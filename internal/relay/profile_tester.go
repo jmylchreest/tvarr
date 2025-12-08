@@ -16,25 +16,25 @@ import (
 
 // ProfileTestResult contains the results of testing a relay profile
 type ProfileTestResult struct {
-	Success          bool            `json:"success"`
-	DurationMs       int64           `json:"duration_ms"`
-	FramesProcessed  int             `json:"frames_processed"`
-	FPS              float64         `json:"fps"`
-	VideoCodecIn     string          `json:"video_codec_in,omitempty"`
-	VideoCodecOut    string          `json:"video_codec_out,omitempty"`
-	AudioCodecIn     string          `json:"audio_codec_in,omitempty"`
-	AudioCodecOut    string          `json:"audio_codec_out,omitempty"`
-	Resolution       string          `json:"resolution,omitempty"`
-	HWAccelActive    bool            `json:"hw_accel_active"`
-	HWAccelMethod    string          `json:"hw_accel_method,omitempty"`
-	BitrateKbps      int             `json:"bitrate_kbps,omitempty"`
-	Errors           []string        `json:"errors,omitempty"`
-	Warnings         []string        `json:"warnings,omitempty"`
-	Suggestions      []string        `json:"suggestions,omitempty"`
-	FFmpegOutput     string          `json:"ffmpeg_output,omitempty"`
-	FFmpegCommand    string          `json:"ffmpeg_command,omitempty"`
-	ExitCode         int             `json:"exit_code"`
-	StreamInfo       *TestStreamInfo `json:"stream_info,omitempty"`
+	Success         bool            `json:"success"`
+	DurationMs      int64           `json:"duration_ms"`
+	FramesProcessed int             `json:"frames_processed"`
+	FPS             float64         `json:"fps"`
+	VideoCodecIn    string          `json:"video_codec_in,omitempty"`
+	VideoCodecOut   string          `json:"video_codec_out,omitempty"`
+	AudioCodecIn    string          `json:"audio_codec_in,omitempty"`
+	AudioCodecOut   string          `json:"audio_codec_out,omitempty"`
+	Resolution      string          `json:"resolution,omitempty"`
+	HWAccelActive   bool            `json:"hw_accel_active"`
+	HWAccelMethod   string          `json:"hw_accel_method,omitempty"`
+	BitrateKbps     int             `json:"bitrate_kbps,omitempty"`
+	Errors          []string        `json:"errors,omitempty"`
+	Warnings        []string        `json:"warnings,omitempty"`
+	Suggestions     []string        `json:"suggestions,omitempty"`
+	FFmpegOutput    string          `json:"ffmpeg_output,omitempty"`
+	FFmpegCommand   string          `json:"ffmpeg_command,omitempty"`
+	ExitCode        int             `json:"exit_code"`
+	StreamInfo      *TestStreamInfo `json:"stream_info,omitempty"`
 }
 
 // TestStreamInfo contains information about the test stream
@@ -307,9 +307,9 @@ func (t *ProfileTester) parseFFmpegOutput(result *ProfileTestResult, output stri
 
 	// Check for hardware acceleration indicators
 	hwAccelPatterns := map[string]string{
-		"nvdec":       `Using NVIDIA NVDEC|hwaccel.*cuda|hw_frames_ctx`,
-		"qsv":         `Using Intel QSV|hwaccel.*qsv`,
-		"vaapi":       `Using VAAPI|hwaccel.*vaapi|libva`,
+		"nvdec":        `Using NVIDIA NVDEC|hwaccel.*cuda|hw_frames_ctx`,
+		"qsv":          `Using Intel QSV|hwaccel.*qsv`,
+		"vaapi":        `Using VAAPI|hwaccel.*vaapi|libva`,
 		"videotoolbox": `Using VideoToolbox|hwaccel.*videotoolbox`,
 	}
 

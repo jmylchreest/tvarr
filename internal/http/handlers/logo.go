@@ -193,27 +193,27 @@ type LinkedAssetResponse struct {
 
 // LogoAsset represents a logo asset in API responses.
 type LogoAsset struct {
-	ID                  string                `json:"id"`
-	Name                string                `json:"name"`
-	Description         *string               `json:"description,omitempty"`
-	FileName            string                `json:"file_name"`
-	FilePath            string                `json:"file_path"`
-	FileSize            int64                 `json:"file_size"`
-	MimeType            string                `json:"mime_type"`
-	OriginalMimeType    *string               `json:"original_mime_type,omitempty"`
-	OriginalFileSize    *int64                `json:"original_file_size,omitempty"`
-	AssetType           string                `json:"asset_type"` // 'uploaded' | 'cached'
-	SourceURL           *string               `json:"source_url,omitempty"`
-	Width               *int                  `json:"width,omitempty"`
-	Height              *int                  `json:"height,omitempty"`
-	ParentAssetID       *string               `json:"parent_asset_id,omitempty"`
-	FormatType          string                `json:"format_type"`
-	CreatedAt           string                `json:"created_at"`
-	UpdatedAt           string                `json:"updated_at"`
-	URL                 string                `json:"url"`
-	LinkedAssets        []LinkedAssetResponse `json:"linked_assets,omitempty"`
-	LinkedAssetsCount   int                   `json:"linked_assets_count"`
-	TotalLinkedSize     int64                 `json:"total_linked_size"`
+	ID                string                `json:"id"`
+	Name              string                `json:"name"`
+	Description       *string               `json:"description,omitempty"`
+	FileName          string                `json:"file_name"`
+	FilePath          string                `json:"file_path"`
+	FileSize          int64                 `json:"file_size"`
+	MimeType          string                `json:"mime_type"`
+	OriginalMimeType  *string               `json:"original_mime_type,omitempty"`
+	OriginalFileSize  *int64                `json:"original_file_size,omitempty"`
+	AssetType         string                `json:"asset_type"` // 'uploaded' | 'cached'
+	SourceURL         *string               `json:"source_url,omitempty"`
+	Width             *int                  `json:"width,omitempty"`
+	Height            *int                  `json:"height,omitempty"`
+	ParentAssetID     *string               `json:"parent_asset_id,omitempty"`
+	FormatType        string                `json:"format_type"`
+	CreatedAt         string                `json:"created_at"`
+	UpdatedAt         string                `json:"updated_at"`
+	URL               string                `json:"url"`
+	LinkedAssets      []LinkedAssetResponse `json:"linked_assets,omitempty"`
+	LinkedAssetsCount int                   `json:"linked_assets_count"`
+	TotalLinkedSize   int64                 `json:"total_linked_size"`
 }
 
 // logoMetadataToAsset converts storage.CachedLogoMetadata to LogoAsset.

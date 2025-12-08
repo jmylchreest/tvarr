@@ -259,40 +259,6 @@ func (s *Service) Unsubscribe(subscriberID string) {
 	}
 }
 
-// updateOperation updates an operation and broadcasts to subscribers.
-func (s *Service) updateOperation(operationID string, updateFn func(*UniversalProgress)) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	op, ok := s.operations[operationID]
-	if !ok {
-		return ErrOperationNotFound
-	}
-
-	updateFn(op)
-	op.UpdatedAt = time.Now()
-
-	s.broadcastLocked(op)
-	return nil
-}
-
-// updateOperationSilent updates an operation without broadcasting.
-// Use this for intermediate updates that will be broadcasted later.
-func (s *Service) updateOperationSilent(operationID string, updateFn func(*UniversalProgress)) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	op, ok := s.operations[operationID]
-	if !ok {
-		return ErrOperationNotFound
-	}
-
-	updateFn(op)
-	op.UpdatedAt = time.Now()
-
-	return nil
-}
-
 // updateOperationThrottled updates an operation with throttled broadcasting (ADR-001).
 // Updates are accumulated but only broadcast at most every DefaultProgressBroadcastInterval
 // per operation ID. Returns true if a broadcast was sent.
@@ -558,24 +524,6 @@ func (m *OperationManager) StartStage(stageID string) *StageUpdater {
 		manager: m,
 		stageID: stageID,
 	}
-}
-
-// recalculateProgressImmediate updates the overall progress and broadcasts immediately.
-// Use this for stage transitions and completions (ADR-001).
-func (m *OperationManager) recalculateProgressImmediate() {
-	_ = m.service.updateOperationImmediate(m.operationID, func(op *UniversalProgress) {
-		var totalProgress float64
-		var totalWeight float64
-
-		for _, stage := range op.Stages {
-			totalProgress += stage.Weight * stage.Progress
-			totalWeight += stage.Weight
-		}
-
-		if totalWeight > 0 {
-			op.Progress = totalProgress / totalWeight
-		}
-	})
 }
 
 // StageUpdater provides methods to update a specific stage.

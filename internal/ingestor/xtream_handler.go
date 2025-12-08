@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/jmylchreest/tvarr/pkg/httpclient"
 	"github.com/jmylchreest/tvarr/internal/models"
+	"github.com/jmylchreest/tvarr/pkg/httpclient"
 	"github.com/jmylchreest/tvarr/pkg/xtream"
 )
 

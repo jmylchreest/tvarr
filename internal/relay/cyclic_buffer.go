@@ -60,9 +60,9 @@ type CyclicBuffer struct {
 	clientsMu sync.RWMutex
 	clients   map[uuid.UUID]*BufferClient
 
-	totalBytes     atomic.Uint64
-	upstreamBytes  atomic.Uint64
-	currentSize    atomic.Int64
+	totalBytes    atomic.Uint64
+	upstreamBytes atomic.Uint64
+	currentSize   atomic.Int64
 
 	stopCh chan struct{}
 	wg     sync.WaitGroup
@@ -356,13 +356,13 @@ func (cb *CyclicBuffer) Stats() CyclicBufferStats {
 	cb.clientsMu.RUnlock()
 
 	return CyclicBufferStats{
-		TotalChunks:     chunkCount,
-		TotalBufferSize: cb.currentSize.Load(),
-		TotalBytesWritten:     cb.totalBytes.Load(),
-		BytesFromUpstream:     cb.upstreamBytes.Load(),
-		CurrentSequence:       cb.sequence.Load(),
-		ClientCount:           clientCount,
-		Clients:               clients,
+		TotalChunks:       chunkCount,
+		TotalBufferSize:   cb.currentSize.Load(),
+		TotalBytesWritten: cb.totalBytes.Load(),
+		BytesFromUpstream: cb.upstreamBytes.Load(),
+		CurrentSequence:   cb.sequence.Load(),
+		ClientCount:       clientCount,
+		Clients:           clients,
 	}
 }
 
@@ -408,8 +408,8 @@ func (sw *StreamWriter) Write(p []byte) (int, error) {
 
 // StreamReader wraps a CyclicBuffer for reading by a specific client.
 type StreamReader struct {
-	buffer *CyclicBuffer
-	client *BufferClient
+	buffer  *CyclicBuffer
+	client  *BufferClient
 	pending []byte
 }
 

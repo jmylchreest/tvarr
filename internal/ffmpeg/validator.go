@@ -43,37 +43,37 @@ var dangerousPatterns = []struct {
 
 // blockedFlags are flags that should never be in custom options
 var blockedFlags = map[string]string{
-	"-i":                   "Input is controlled separately",
-	"-y":                   "Overwrite mode is controlled separately",
-	"-n":                   "No-overwrite mode is controlled separately",
-	"-filter_script":       "Could load arbitrary script files",
-	"-filter_script:v":     "Could load arbitrary script files",
-	"-filter_script:a":     "Could load arbitrary script files",
-	"-protocol_whitelist":  "Security risk - could enable dangerous protocols",
-	"-protocol_blacklist":  "Security risk - affects protocol handling",
-	"-safe":                "Security setting should not be overridden",
-	"-dump":                "Debugging flag that could expose sensitive info",
-	"-hex":                 "Debugging flag that could expose sensitive info",
+	"-i":                  "Input is controlled separately",
+	"-y":                  "Overwrite mode is controlled separately",
+	"-n":                  "No-overwrite mode is controlled separately",
+	"-filter_script":      "Could load arbitrary script files",
+	"-filter_script:v":    "Could load arbitrary script files",
+	"-filter_script:a":    "Could load arbitrary script files",
+	"-protocol_whitelist": "Security risk - could enable dangerous protocols",
+	"-protocol_blacklist": "Security risk - affects protocol handling",
+	"-safe":               "Security setting should not be overridden",
+	"-dump":               "Debugging flag that could expose sensitive info",
+	"-hex":                "Debugging flag that could expose sensitive info",
 }
 
 // warnFlags are flags that trigger warnings but are allowed
 var warnFlags = map[string]string{
-	"-f":              "Output format is usually set via profile settings",
-	"-c:v":            "Video codec is usually set via profile settings",
-	"-c:a":            "Audio codec is usually set via profile settings",
-	"-vcodec":         "Video codec is usually set via profile settings (use -c:v)",
-	"-acodec":         "Audio codec is usually set via profile settings (use -c:a)",
-	"-threads":        "Thread count is usually set via profile settings",
-	"-re":             "Real-time mode can cause streaming issues with live sources",
-	"-nostdin":        "Disables stdin which may affect signal handling",
-	"-progress":       "Progress output is managed by the relay system",
+	"-f":        "Output format is usually set via profile settings",
+	"-c:v":      "Video codec is usually set via profile settings",
+	"-c:a":      "Audio codec is usually set via profile settings",
+	"-vcodec":   "Video codec is usually set via profile settings (use -c:v)",
+	"-acodec":   "Audio codec is usually set via profile settings (use -c:a)",
+	"-threads":  "Thread count is usually set via profile settings",
+	"-re":       "Real-time mode can cause streaming issues with live sources",
+	"-nostdin":  "Disables stdin which may affect signal handling",
+	"-progress": "Progress output is managed by the relay system",
 }
 
 // ValidateCustomFlags validates custom FFmpeg flags for security and correctness
 func ValidateCustomFlags(inputOptions, outputOptions, filterComplex string) FlagValidationResult {
 	result := FlagValidationResult{
-		Valid:  true,
-		Flags:  []string{},
+		Valid: true,
+		Flags: []string{},
 	}
 
 	// Validate input options

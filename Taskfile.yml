@@ -903,7 +903,8 @@ tasks:
   # ============================================
 
   e2e:build:
-    desc: Build the E2E test runner binary
+    desc: Build the E2E test runner and tvarr binaries
+    deps: [build]
     cmds:
       - mkdir -p {{.DEBUG_DIR}}
       - go build -o {{.DEBUG_DIR}}/e2e-runner ./cmd/e2e-runner

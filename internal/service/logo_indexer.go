@@ -35,11 +35,11 @@ type LogoIndexerStats struct {
 
 // LogoIndexerLoadResult contains statistics from loading the index.
 type LogoIndexerLoadResult struct {
-	TotalLoaded   int
-	CachedLoaded  int
+	TotalLoaded    int
+	CachedLoaded   int
 	UploadedLoaded int
-	PrunedCount   int   // Number of stale logos deleted
-	PrunedSize    int64 // Total bytes freed from pruning
+	PrunedCount    int   // Number of stale logos deleted
+	PrunedSize     int64 // Total bytes freed from pruning
 }
 
 // LogoIndexer provides an in-memory index for cached logos.

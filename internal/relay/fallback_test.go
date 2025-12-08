@@ -204,8 +204,8 @@ func TestContainsString(t *testing.T) {
 		substr string
 		want   bool
 	}{
-		{"Hello World", "world", true},   // case-insensitive
-		{"Hello World", "WORLD", true},   // case-insensitive
+		{"Hello World", "world", true}, // case-insensitive
+		{"Hello World", "WORLD", true}, // case-insensitive
 		{"Hello World", "foo", false},
 		{"Connection refused", "refused", true},
 		{"", "test", false},

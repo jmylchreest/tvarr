@@ -73,8 +73,8 @@ func TestStage_Preserve_WithConflicts(t *testing.T) {
 
 	channels := []*models.Channel{
 		testChannel("Channel A", 5),
-		testChannel("Channel B", 5),  // Conflict!
-		testChannel("Channel C", 5),  // Another conflict!
+		testChannel("Channel B", 5), // Conflict!
+		testChannel("Channel C", 5), // Another conflict!
 		testChannel("Channel D", 10),
 	}
 

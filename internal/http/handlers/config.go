@@ -74,8 +74,8 @@ func (h *ConfigHandler) GetConfig(ctx context.Context, input *UnifiedConfigInput
 			LogLevel:             observability.GetLogLevel(),
 			EnableRequestLogging: observability.IsRequestLoggingEnabled(),
 		},
-		Features:      h.getFeatures(),
-		FeatureConfig: h.getFeatureConfig(),
+		Features:        h.getFeatures(),
+		FeatureConfig:   h.getFeatureConfig(),
 		CircuitBreakers: h.getCircuitBreakerConfig(),
 	}
 

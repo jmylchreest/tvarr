@@ -570,14 +570,14 @@ type GuideProgramInfo struct {
 // GetGuideOutput is the output for the EPG TV guide.
 type GetGuideOutput struct {
 	Body struct {
-		Success   bool                          `json:"success"`
-		Data      *GuideData                    `json:"data"`
+		Success bool       `json:"success"`
+		Data    *GuideData `json:"data"`
 	}
 }
 
 // GuideData contains the guide response data.
 type GuideData struct {
-	Channels  map[string]GuideChannelInfo  `json:"channels"`
+	Channels  map[string]GuideChannelInfo   `json:"channels"`
 	Programs  map[string][]GuideProgramInfo `json:"programs"`
 	TimeSlots []string                      `json:"time_slots"`
 	StartTime string                        `json:"start_time"`

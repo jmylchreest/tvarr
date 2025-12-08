@@ -56,16 +56,16 @@ func (DataMappingRule) TableName() string {
 // Validate checks if the rule configuration is valid.
 func (r *DataMappingRule) Validate() error {
 	if r.Name == "" {
-		return ErrValidation{Field: "name", Message: "name is required"}
+		return ValidationError{Field: "name", Message: "name is required"}
 	}
 	if r.Expression == "" {
-		return ErrValidation{Field: "expression", Message: "expression is required"}
+		return ValidationError{Field: "expression", Message: "expression is required"}
 	}
 	if r.SourceType == "" {
-		return ErrValidation{Field: "source_type", Message: "source_type is required"}
+		return ValidationError{Field: "source_type", Message: "source_type is required"}
 	}
 	if r.SourceType != DataMappingRuleSourceTypeStream && r.SourceType != DataMappingRuleSourceTypeEPG {
-		return ErrValidation{Field: "source_type", Message: "source_type must be 'stream' or 'epg'"}
+		return ValidationError{Field: "source_type", Message: "source_type must be 'stream' or 'epg'"}
 	}
 	return nil
 }

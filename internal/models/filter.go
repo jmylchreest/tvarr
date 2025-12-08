@@ -64,22 +64,22 @@ func (Filter) TableName() string {
 // Validate checks if the filter configuration is valid.
 func (f *Filter) Validate() error {
 	if f.Name == "" {
-		return ErrValidation{Field: "name", Message: "name is required"}
+		return ValidationError{Field: "name", Message: "name is required"}
 	}
 	if f.Expression == "" {
-		return ErrValidation{Field: "expression", Message: "expression is required"}
+		return ValidationError{Field: "expression", Message: "expression is required"}
 	}
 	if f.SourceType == "" {
-		return ErrValidation{Field: "source_type", Message: "source_type is required"}
+		return ValidationError{Field: "source_type", Message: "source_type is required"}
 	}
 	if f.SourceType != FilterSourceTypeStream && f.SourceType != FilterSourceTypeEPG {
-		return ErrValidation{Field: "source_type", Message: "source_type must be 'stream' or 'epg'"}
+		return ValidationError{Field: "source_type", Message: "source_type must be 'stream' or 'epg'"}
 	}
 	if f.Action == "" {
 		f.Action = FilterActionInclude
 	}
 	if f.Action != FilterActionInclude && f.Action != FilterActionExclude {
-		return ErrValidation{Field: "action", Message: "action must be 'include' or 'exclude'"}
+		return ValidationError{Field: "action", Message: "action must be 'include' or 'exclude'"}
 	}
 	return nil
 }

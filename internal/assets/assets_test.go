@@ -9,8 +9,8 @@ import (
 func TestGetContentType(t *testing.T) {
 	// Test that we get reasonable MIME types (exact values depend on system)
 	tests := []struct {
-		path            string
-		expectedPrefix  string
+		path           string
+		expectedPrefix string
 	}{
 		{"index.html", "text/html"},
 		{"style.css", "text/css"},

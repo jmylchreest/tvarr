@@ -1,4 +1,4 @@
-// Package main provides test data generation for E2E testing.
+//nolint:gocritic,staticcheck,ineffassign // E2E test data generator uses relaxed linting
 package main
 
 import (

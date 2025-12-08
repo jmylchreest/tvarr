@@ -43,21 +43,21 @@ type HLSCollapser struct {
 	closeErr error
 
 	// Track state
-	videoTrack    *gohlslib.Track
-	audioTrack    *gohlslib.Track
-	videoPID      uint16
-	audioPID      uint16
-	videoReady    bool
-	audioReady    bool
-	h264SPS       []byte
-	h264PPS       []byte
-	h265VPS       []byte
-	h265SPS       []byte
-	h265PPS       []byte
-	lastPTS       int64
-	ptsOffset     int64
-	firstPTS      int64
-	firstPTSSet   bool
+	videoTrack  *gohlslib.Track
+	audioTrack  *gohlslib.Track
+	videoPID    uint16
+	audioPID    uint16
+	videoReady  bool
+	audioReady  bool
+	h264SPS     []byte
+	h264PPS     []byte
+	h265VPS     []byte
+	h265SPS     []byte
+	h265PPS     []byte
+	lastPTS     int64
+	ptsOffset   int64
+	firstPTS    int64
+	firstPTSSet bool
 
 	// Config
 	httpClient *http.Client
@@ -314,11 +314,11 @@ func (c *HLSCollapser) writeVideoData(pts, dts int64, data []byte) {
 		PES: &astits.PESData{
 			Header: &astits.PESHeader{
 				OptionalHeader: &astits.PESOptionalHeader{
-					MarkerBits:              2,
-					PTSDTSIndicator:         3,
-					PTS:                     ptsTime,
-					DTS:                     dtsTime,
-					DataAlignmentIndicator:  true,
+					MarkerBits:             2,
+					PTSDTSIndicator:        3,
+					PTS:                    ptsTime,
+					DTS:                    dtsTime,
+					DataAlignmentIndicator: true,
 				},
 				StreamID: 224, // Video stream
 			},
