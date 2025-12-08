@@ -1,8 +1,10 @@
 'use client';
 
+import { useMemo } from 'react';
 import { Check, Monitor, Sun, Moon, Palette } from 'lucide-react';
-import { useTheme } from '@/components/enhanced-theme-provider';
+import { useTheme, ThemeDefinition } from '@/components/enhanced-theme-provider';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -14,6 +16,22 @@ import {
 
 export function EnhancedThemeSelector() {
   const { theme, mode, actualMode, themes, setTheme, setMode } = useTheme();
+
+  // Group themes by source (built-in vs custom)
+  const { builtinThemes, customThemes } = useMemo(() => {
+    const builtin: ThemeDefinition[] = [];
+    const custom: ThemeDefinition[] = [];
+
+    themes.forEach((t) => {
+      if (t.source === 'custom') {
+        custom.push(t);
+      } else {
+        builtin.push(t);
+      }
+    });
+
+    return { builtinThemes: builtin, customThemes: custom };
+  }, [themes]);
 
   const getModeIcon = (themeMode: string) => {
     switch (themeMode) {
@@ -66,6 +84,25 @@ export function EnhancedThemeSelector() {
     );
   };
 
+  const ThemeMenuItem = ({ themeOption }: { themeOption: ThemeDefinition }) => (
+    <DropdownMenuItem
+      key={themeOption.id}
+      onClick={() => setTheme(themeOption.id)}
+      className="flex items-center justify-between py-2"
+    >
+      <div className="flex items-center gap-3">
+        <ColorPreview colors={themeOption.colors?.[actualMode]} />
+        <span>{themeOption.name}</span>
+        {themeOption.source === 'custom' && (
+          <Badge variant="outline" className="text-xs px-1.5 py-0 h-4">
+            Custom
+          </Badge>
+        )}
+      </div>
+      {theme === themeOption.id && <Check className="h-4 w-4" />}
+    </DropdownMenuItem>
+  );
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -74,7 +111,7 @@ export function EnhancedThemeSelector() {
           <span className="sr-only">Theme selector</span>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56 dropdown-backdrop">
+      <DropdownMenuContent align="end" className="w-64 dropdown-backdrop max-h-[70vh] overflow-y-auto">
         <DropdownMenuLabel>Mode</DropdownMenuLabel>
 
         {(['system', 'light', 'dark'] as const).map((themeMode) => (
@@ -92,21 +129,21 @@ export function EnhancedThemeSelector() {
         ))}
 
         <DropdownMenuSeparator />
-        <DropdownMenuLabel>Theme</DropdownMenuLabel>
+        <DropdownMenuLabel>Built-in Themes</DropdownMenuLabel>
 
-        {themes.map((themeOption) => (
-          <DropdownMenuItem
-            key={themeOption.id}
-            onClick={() => setTheme(themeOption.id)}
-            className="flex items-center justify-between py-2"
-          >
-            <div className="flex items-center gap-3">
-              <ColorPreview colors={themeOption.colors?.[actualMode]} />
-              <span>{themeOption.name}</span>
-            </div>
-            {theme === themeOption.id && <Check className="h-4 w-4" />}
-          </DropdownMenuItem>
+        {builtinThemes.map((themeOption) => (
+          <ThemeMenuItem key={themeOption.id} themeOption={themeOption} />
         ))}
+
+        {customThemes.length > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>Custom Themes</DropdownMenuLabel>
+            {customThemes.map((themeOption) => (
+              <ThemeMenuItem key={themeOption.id} themeOption={themeOption} />
+            ))}
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

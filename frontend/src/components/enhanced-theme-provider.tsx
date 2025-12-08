@@ -1,12 +1,14 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { ThemeProvider as NextThemesProvider, useTheme as useNextTheme } from 'next-themes';
 import { Debug } from '@/utils/debug';
 
 export interface ThemeDefinition {
   id: string;
   name: string;
   description?: string;
+  source?: 'builtin' | 'custom';
   colors?: {
     light: {
       primary: string;
@@ -23,55 +25,69 @@ export interface ThemeDefinition {
   };
 }
 
-type ThemeMode = 'light' | 'dark' | 'system';
-
-interface ThemeContextType {
-  theme: string;
-  mode: ThemeMode;
-  actualMode: 'light' | 'dark';
+interface ColorThemeContextType {
+  colorTheme: string;
   themes: ThemeDefinition[];
-  setTheme: (theme: string) => void;
-  setMode: (mode: ThemeMode) => void;
+  setColorTheme: (theme: string) => void;
 }
 
-const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
+const ColorThemeContext = createContext<ColorThemeContextType | undefined>(undefined);
 
+// Hook that combines next-themes mode with our color theme
 export function useTheme() {
-  const context = useContext(ThemeContext);
-  if (context === undefined) {
+  const { theme: mode, setTheme: setMode, resolvedTheme } = useNextTheme();
+  const colorContext = useContext(ColorThemeContext);
+
+  if (colorContext === undefined) {
     throw new Error('useTheme must be used within a ThemeProvider');
   }
-  return context;
+
+  return {
+    theme: colorContext.colorTheme,
+    mode: (mode || 'system') as 'light' | 'dark' | 'system',
+    actualMode: (resolvedTheme || 'light') as 'light' | 'dark',
+    themes: colorContext.themes,
+    setTheme: colorContext.setColorTheme,
+    setMode: (newMode: 'light' | 'dark' | 'system') => setMode(newMode),
+  };
 }
 
-interface ThemeProviderProps {
+interface ColorThemeProviderProps {
   children: React.ReactNode;
-  defaultTheme?: string;
-  defaultMode?: ThemeMode;
+  defaultColorTheme: string;
 }
 
-export function EnhancedThemeProvider({
-  children,
-  defaultTheme: defaultThemeProp = 'graphite',
-  defaultMode = 'system',
-}: ThemeProviderProps) {
-  const [theme, setThemeState] = useState<string>(defaultThemeProp);
-  const [mode, setModeState] = useState<ThemeMode>(defaultMode);
-  const [actualMode, setActualMode] = useState<'light' | 'dark'>('light');
+// Inner provider that handles color themes (runs after next-themes is initialized)
+function ColorThemeProvider({ children, defaultColorTheme }: ColorThemeProviderProps) {
+  const [colorTheme, setColorThemeState] = useState<string>(() => {
+    // Initialize from localStorage on client
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('color-theme') || defaultColorTheme;
+    }
+    return defaultColorTheme;
+  });
   const [themes, setThemes] = useState<ThemeDefinition[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [mounted, setMounted] = useState(false);
 
-  // Parse CSS to extract color values
-  const parseThemeColors = useCallback(async (themeId: string) => {
+  // Get CSS URL for a theme - static for built-in, API for custom
+  const getThemeCssUrl = useCallback(
+    (themeName: string, isCustom: boolean) => {
+      // Custom themes must come from API, built-in themes use static path
+      return isCustom ? `/api/v1/themes/${themeName}.css` : `/themes/${themeName}.css`;
+    },
+    []
+  );
+
+  // Parse CSS to extract color values from :root and .dark blocks
+  const parseThemeColors = useCallback(async (themeId: string, isCustom: boolean = false) => {
     try {
-      const response = await fetch(`/themes/${themeId}.css`);
+      const response = await fetch(getThemeCssUrl(themeId, isCustom));
       if (!response.ok) {
         throw new Error(`Failed to load theme CSS: ${themeId}`);
       }
 
       const cssText = await response.text();
 
-      // Extract colors from :root and .dark sections
       const extractColors = (section: string) => {
         const primaryMatch = section.match(/--primary:\s*([^;]+);/);
         const accentMatch = section.match(/--accent:\s*([^;]+);/);
@@ -86,192 +102,177 @@ export function EnhancedThemeProvider({
         };
       };
 
-      // Extract light mode colors from :root
+      // Extract light mode colors from :root block
       const rootMatch = cssText.match(/:root\s*\{([^}]+)\}/);
       const lightColors = rootMatch
         ? extractColors(rootMatch[1])
-        : {
-            primary: '',
-            accent: '',
-            background: '',
-            secondary: '',
-          };
+        : { primary: '', accent: '', background: '', secondary: '' };
 
-      // Extract dark mode colors from .dark
+      // Extract dark mode colors from .dark block
       const darkMatch = cssText.match(/\.dark\s*\{([^}]+)\}/);
       const darkColors = darkMatch
         ? extractColors(darkMatch[1])
-        : {
-            primary: '',
-            accent: '',
-            background: '',
-            secondary: '',
-          };
+        : { primary: '', accent: '', background: '', secondary: '' };
 
-      return {
-        light: lightColors,
-        dark: darkColors,
-      };
+      return { light: lightColors, dark: darkColors };
     } catch (error) {
       console.error(`Failed to parse colors for theme ${themeId}:`, error);
       return null;
     }
-  }, []);
+  }, [getThemeCssUrl]);
 
-  const applyTheme = useCallback((themeName: string, actualMode: 'light' | 'dark') => {
-    // Remove existing theme stylesheets
-    const existingLinks = document.querySelectorAll('link[data-theme-css]');
-    existingLinks.forEach((link) => link.remove());
+  // Apply color theme by loading CSS
+  const applyColorTheme = useCallback((themeName: string, isCustom: boolean = false) => {
+    // Built-in themes use static path, custom themes use API
+    const cssUrl = getThemeCssUrl(themeName, isCustom);
 
-    // Add new theme stylesheet
-    const link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = `/themes/${themeName}.css`;
-    link.setAttribute('data-theme-css', themeName);
-    link.onload = () => Debug.log(`Theme CSS loaded: ${themeName}`);
-    link.onerror = () => console.error(`Failed to load theme CSS: ${themeName}`);
-    document.head.appendChild(link);
+    // Update the theme CSS link
+    const themeLink = document.getElementById('theme-css') as HTMLLinkElement | null;
+    if (themeLink) {
+      if (!themeLink.href.endsWith(cssUrl)) {
+        themeLink.href = cssUrl;
+        Debug.log(`Theme CSS updated: ${themeName}`);
+      }
+    } else {
+      // Fallback: create link if it doesn't exist
+      const existingLinks = document.querySelectorAll('link[data-theme-css]');
+      existingLinks.forEach((link) => link.remove());
 
-    // Apply dark mode class - the CSS uses :root and .dark structure
-    document.documentElement.classList.remove('dark');
-    if (actualMode === 'dark') {
-      document.documentElement.classList.add('dark');
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.id = 'theme-css';
+      link.href = cssUrl;
+      link.setAttribute('data-theme-css', themeName);
+      link.onload = () => Debug.log(`Theme CSS loaded: ${themeName}`);
+      link.onerror = () => console.error(`Failed to load theme CSS: ${themeName}`);
+      document.head.appendChild(link);
     }
 
-    Debug.log(`Applied theme: ${themeName} (${actualMode})`);
-    Debug.log(`Document classes:`, document.documentElement.className);
-    Debug.log(`Has dark class:`, document.documentElement.classList.contains('dark'));
-  }, []);
+    Debug.log(`Applied color theme: ${themeName} (${isCustom ? 'custom' : 'builtin'})`);
+  }, [getThemeCssUrl]);
 
-  // Load themes from JSON file
+  // Load themes from API
   useEffect(() => {
     const loadThemes = async () => {
+      let themeData: { themes: ThemeDefinition[]; default: string } | null = null;
+
       try {
-        const response = await fetch('/themes/themes.json');
-        if (!response.ok) {
-          throw new Error('Failed to load themes');
+        const apiResponse = await fetch('/api/v1/themes');
+        if (apiResponse.ok) {
+          themeData = await apiResponse.json();
+          Debug.log('Loaded themes from API:', themeData);
         }
-        const themeData = await response.json();
-        const themesWithColors = await Promise.all(
-          (themeData.themes || []).map(async (theme: ThemeDefinition) => {
-            const colors = await parseThemeColors(theme.id);
+      } catch (error) {
+        Debug.log('Failed to load themes from API:', error);
+      }
+
+      if (themeData && themeData.themes) {
+        // Parse colors for themes that don't have them (API should provide colors, but fallback)
+        const themesWithColors: ThemeDefinition[] = await Promise.all(
+          themeData.themes.map(async (themeItem: ThemeDefinition): Promise<ThemeDefinition> => {
+            if (themeItem.colors) {
+              return themeItem;
+            }
+            const isCustom = themeItem.source === 'custom';
+            const colors = await parseThemeColors(themeItem.id, isCustom);
             return {
-              ...theme,
-              colors,
+              ...themeItem,
+              colors: colors || undefined,
             };
           })
         );
 
-        // Sort themes: default theme first, then alphabetically by name
-        const defaultTheme = themeData.default || 'graphite';
+        // Sort themes: default first, then built-in, then custom, then alphabetically
+        const defaultThemeId = themeData.default || 'graphite';
         const sortedThemes = [...themesWithColors].sort((a, b) => {
-          // If one is the default theme, it goes first
-          if (a.id === defaultTheme && b.id !== defaultTheme) return -1;
-          if (b.id === defaultTheme && a.id !== defaultTheme) return 1;
-          // If both are default or both are not default, sort alphabetically
+          if (a.id === defaultThemeId && b.id !== defaultThemeId) return -1;
+          if (b.id === defaultThemeId && a.id !== defaultThemeId) return 1;
+          if (a.source === 'builtin' && b.source === 'custom') return -1;
+          if (a.source === 'custom' && b.source === 'builtin') return 1;
           return a.name.localeCompare(b.name);
         });
 
         setThemes(sortedThemes);
 
-        // If no saved theme, use the default from JSON
-        const savedTheme = localStorage.getItem('theme');
-        if (!savedTheme) {
-          setThemeState(themeData.default || 'graphite');
+        // Check if current color theme still exists
+        const savedTheme = localStorage.getItem('color-theme');
+        if (savedTheme && !sortedThemes.find((t) => t.id === savedTheme)) {
+          Debug.log(`Theme "${savedTheme}" no longer exists, resetting to default`);
+          setColorThemeState(defaultThemeId);
+          localStorage.setItem('color-theme', defaultThemeId);
+          applyColorTheme(defaultThemeId, false); // default is always builtin
         }
-      } catch (error) {
-        console.error('Failed to load themes:', error);
-        // Fallback to default theme with basic info
+      } else {
+        // Fallback to default theme
+        console.error('Failed to load themes from API');
         setThemes([
           {
             id: 'graphite',
             name: 'Graphite',
             description: 'Default theme',
+            source: 'builtin',
           },
         ]);
-        setThemeState('graphite');
-      } finally {
-        setIsLoading(false);
       }
+
+      setMounted(true);
     };
 
     loadThemes();
-  }, [parseThemeColors]);
+  }, [parseThemeColors, applyColorTheme]);
 
+  // Apply color theme on mount and when it changes
   useEffect(() => {
-    if (isLoading) return;
+    if (!mounted) return;
+    const themeInfo = themes.find((t) => t.id === colorTheme);
+    const isCustom = themeInfo?.source === 'custom';
+    applyColorTheme(colorTheme, isCustom);
+  }, [colorTheme, mounted, themes, applyColorTheme]);
 
-    // Load theme from localStorage
-    const savedTheme = localStorage.getItem('theme');
-    const savedMode = localStorage.getItem('mode') as ThemeMode | null;
-
-    const finalTheme =
-      savedTheme && themes.find((t) => t.id === savedTheme) ? savedTheme : defaultThemeProp;
-    const finalMode = savedMode || defaultMode;
-
-    setThemeState(finalTheme);
-    setModeState(finalMode);
-
-    // Apply theme immediately
-    const immediateActualMode =
-      finalMode === 'system'
-        ? window.matchMedia('(prefers-color-scheme: dark)').matches
-          ? 'dark'
-          : 'light'
-        : (finalMode as 'light' | 'dark');
-
-    setActualMode(immediateActualMode);
-    applyTheme(finalTheme, immediateActualMode);
-  }, [applyTheme, defaultThemeProp, defaultMode, themes, isLoading]);
-
-  useEffect(() => {
-    const calculateActualMode = () => {
-      if (mode === 'system') {
-        return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-      }
-      return mode;
-    };
-
-    const updateActualMode = () => {
-      const newActualMode = calculateActualMode();
-      setActualMode(newActualMode);
-      applyTheme(theme, newActualMode);
-    };
-
-    // Initial calculation
-    updateActualMode();
-
-    if (mode === 'system') {
-      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-      const listener = () => updateActualMode();
-      mediaQuery.addEventListener('change', listener);
-      return () => mediaQuery.removeEventListener('change', listener);
-    }
-  }, [mode, theme, applyTheme]);
-
-  const setTheme = (newTheme: string) => {
-    setThemeState(newTheme);
-    localStorage.setItem('theme', newTheme);
-    applyTheme(newTheme, actualMode);
-  };
-
-  const setMode = (newMode: ThemeMode) => {
-    setModeState(newMode);
-    localStorage.setItem('mode', newMode);
-  };
+  const setColorTheme = useCallback(
+    (newTheme: string) => {
+      const themeInfo = themes.find((t) => t.id === newTheme);
+      const isCustom = themeInfo?.source === 'custom';
+      setColorThemeState(newTheme);
+      localStorage.setItem('color-theme', newTheme);
+      applyColorTheme(newTheme, isCustom);
+    },
+    [themes, applyColorTheme]
+  );
 
   return (
-    <ThemeContext.Provider
+    <ColorThemeContext.Provider
       value={{
-        theme,
-        mode,
-        actualMode,
+        colorTheme,
         themes,
-        setTheme,
-        setMode,
+        setColorTheme,
       }}
     >
       {children}
-    </ThemeContext.Provider>
+    </ColorThemeContext.Provider>
+  );
+}
+
+interface ThemeProviderProps {
+  children: React.ReactNode;
+  defaultTheme?: string;
+  defaultMode?: 'light' | 'dark' | 'system';
+}
+
+// Main provider that wraps next-themes with our color theme provider
+export function EnhancedThemeProvider({
+  children,
+  defaultTheme = 'graphite',
+  defaultMode = 'system',
+}: ThemeProviderProps) {
+  return (
+    <NextThemesProvider
+      attribute="class"
+      defaultTheme={defaultMode}
+      enableSystem
+      disableTransitionOnChange
+    >
+      <ColorThemeProvider defaultColorTheme={defaultTheme}>{children}</ColorThemeProvider>
+    </NextThemesProvider>
   );
 }

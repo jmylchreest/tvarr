@@ -1510,7 +1510,7 @@ func (c *APIClient) GetClientDetectionMappings(ctx context.Context) ([]ClientDet
 
 	var result struct {
 		Mappings []ClientDetectionMapping `json:"mappings"`
-		Count    int                       `json:"count"`
+		Count    int                      `json:"count"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode response failed: %w", err)
@@ -1578,6 +1578,72 @@ func (c *APIClient) TestClientDetectionExpression(ctx context.Context, expressio
 	}
 
 	return result.Matches, nil
+}
+
+// ThemeInfo represents theme metadata
+type ThemeInfo struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Source      string `json:"source"`
+}
+
+// ThemeListResponse represents the response from the themes API
+type ThemeListResponse struct {
+	Themes  []ThemeInfo `json:"themes"`
+	Default string      `json:"default"`
+}
+
+// GetThemes fetches all available themes
+func (c *APIClient) GetThemes(ctx context.Context) (*ThemeListResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/themes", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch themes failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("fetch themes failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result ThemeListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode response failed: %w", err)
+	}
+
+	return &result, nil
+}
+
+// GetThemeCSS fetches the CSS content for a theme
+func (c *APIClient) GetThemeCSS(ctx context.Context, themeID string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/themes/"+themeID+".css", nil)
+	if err != nil {
+		return "", err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch theme CSS failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("fetch theme CSS failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	content, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read theme CSS failed: %w", err)
+	}
+
+	return string(content), nil
 }
 
 // ValidateM3U checks if the M3U content is valid
@@ -1880,6 +1946,79 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 		if !fallbackFound {
 			return fmt.Errorf("expected fallback rule with priority 999 and expression 'user_agent contains \"\"'")
 		}
+		return nil
+	})
+
+	// Phase 1.2: Themes API tests
+	r.runTest("Themes: List All Themes", func() error {
+		themes, err := r.client.GetThemes(ctx)
+		if err != nil {
+			return err
+		}
+		if len(themes.Themes) == 0 {
+			return fmt.Errorf("expected at least one theme, got none")
+		}
+		if themes.Default == "" {
+			return fmt.Errorf("expected default theme to be set")
+		}
+
+		// Count built-in vs custom themes
+		var builtinCount, customCount int
+		for _, t := range themes.Themes {
+			if t.Source == "builtin" {
+				builtinCount++
+			} else if t.Source == "custom" {
+				customCount++
+			}
+		}
+		r.log("  Found %d themes (%d built-in, %d custom), default: %s",
+			len(themes.Themes), builtinCount, customCount, themes.Default)
+
+		// Verify default theme exists in list
+		var defaultFound bool
+		for _, t := range themes.Themes {
+			if t.ID == themes.Default {
+				defaultFound = true
+				break
+			}
+		}
+		if !defaultFound {
+			return fmt.Errorf("default theme %q not found in theme list", themes.Default)
+		}
+		return nil
+	})
+
+	r.runTest("Themes: Get Built-in Theme CSS (graphite)", func() error {
+		css, err := r.client.GetThemeCSS(ctx, "graphite")
+		if err != nil {
+			return err
+		}
+		if len(css) == 0 {
+			return fmt.Errorf("expected non-empty CSS content")
+		}
+		// Verify CSS structure
+		if !strings.Contains(css, ":root") {
+			return fmt.Errorf("CSS missing :root selector")
+		}
+		if !strings.Contains(css, ".dark") {
+			return fmt.Errorf("CSS missing .dark selector")
+		}
+		if !strings.Contains(css, "--background") {
+			return fmt.Errorf("CSS missing --background variable")
+		}
+		r.log("  Got graphite.css (%d bytes)", len(css))
+		return nil
+	})
+
+	r.runTest("Themes: Get Non-Existent Theme Returns 404", func() error {
+		_, err := r.client.GetThemeCSS(ctx, "nonexistent-theme-12345")
+		if err == nil {
+			return fmt.Errorf("expected error for non-existent theme")
+		}
+		if !strings.Contains(err.Error(), "404") {
+			return fmt.Errorf("expected 404 error, got: %v", err)
+		}
+		r.log("  Correctly returned 404 for non-existent theme")
 		return nil
 	})
 

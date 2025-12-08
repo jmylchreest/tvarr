@@ -7,6 +7,7 @@ import { Debug } from '@/utils/debug';
 export interface BackendConnectivityState {
   isConnected: boolean;
   isChecking: boolean;
+  hasInitialCheckCompleted: boolean;
   lastChecked: Date | null;
   error: string | null;
   backendUrl: string;
@@ -32,6 +33,8 @@ export function BackendConnectivityProvider({ children }: BackendConnectivityPro
   const [isChecking, setIsChecking] = useState(false);
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Track whether initial check has completed - prevents flash during navigation
+  const [hasInitialCheckCompleted, setHasInitialCheckCompleted] = useState(false);
 
   const backendUrl = getBackendUrl();
 
@@ -100,6 +103,7 @@ export function BackendConnectivityProvider({ children }: BackendConnectivityPro
     } finally {
       setIsChecking(false);
       setLastChecked(new Date());
+      setHasInitialCheckCompleted(true);
     }
   }, [backendUrl]);
 
@@ -167,6 +171,7 @@ export function BackendConnectivityProvider({ children }: BackendConnectivityPro
   const contextValue: BackendConnectivityState = {
     isConnected,
     isChecking,
+    hasInitialCheckCompleted,
     lastChecked,
     error,
     backendUrl,

@@ -475,6 +475,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 	settingsHandler := handlers.NewSettingsHandler()
 	settingsHandler.Register(server.API())
 
+	// Initialize theme service and handler
+	themeService := service.NewThemeService(viper.GetString("storage.base_dir")).WithLogger(logger)
+	if err := themeService.EnsureThemesDirectory(); err != nil {
+		logger.Warn("failed to create themes directory", slog.String("error", err.Error()))
+	}
+	themeHandler := handlers.NewThemeHandler(themeService)
+	themeHandler.Register(server.API())
+	themeHandler.RegisterChiRoutes(server.Router())
+
 	logoHandler.Register(server.API())
 
 	relayProfileHandler := handlers.NewRelayProfileHandler(relayService)
