@@ -111,8 +111,6 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
     new Set()
   );
   const hasInitializedRef = useRef(false);
-  // Track if SSE subscription is active to prevent duplicate subscriptions
-  const sseSubscriptionRef = useRef<(() => void) | null>(null);
 
   // Clean up old localStorage entries on startup
   useEffect(() => {
@@ -244,26 +242,16 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
     providerDebug.log('Event processed, stored in local events map, and sent to notification subscribers');
   }, []); // NO DEPENDENCIES - stable callback to prevent SSE reconnections
 
-  // Use global SSE singleton - subscriber-driven connection lifecycle
-  // The SSE singleton handles its own connection management based on subscriber count
+  // Fetch initial state from REST endpoint (only once on mount)
   useEffect(() => {
-    // Skip if already subscribed (handles React Strict Mode double-mount and navigation)
-    if (sseSubscriptionRef.current) {
-      providerDebug.log('ProgressProvider: SSE subscription already active, skipping');
+    // Skip if already initialized (handles React Strict Mode double-mount)
+    if (hasInitializedRef.current) {
+      providerDebug.log('ProgressProvider: Already initialized, skipping initial fetch');
       return;
     }
+    hasInitializedRef.current = true;
 
-    providerDebug.log('ProgressProvider: Setting up SSE subscriptions');
-
-    // Fetch initial state from REST endpoint (only once)
     const fetchInitialState = async () => {
-      // Skip if already initialized (handles React Strict Mode double-mount)
-      if (hasInitializedRef.current) {
-        providerDebug.log('ProgressProvider: Already initialized, skipping initial fetch');
-        return;
-      }
-      hasInitializedRef.current = true;
-
       try {
         const backendUrl = getBackendUrl();
         const response = await fetch(`${backendUrl}/api/v1/progress/operations`);
@@ -301,33 +289,39 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
       }
     };
 
-    // Fetch initial state (doesn't depend on SSE)
     fetchInitialState();
+  }, []);
 
-    // Subscribe to all events from the singleton
-    // This automatically triggers SSE connection when first subscriber joins
-    const unsubscribeFromAll = sseManager.subscribeToAll((event) => {
-      handleProgressEvent(event);
-    });
+  // SSE subscription - use the singleton's built-in subscriber tracking
+  // The singleton will only create ONE connection regardless of how many times subscribe is called
+  // We use a stable callback ref pattern to avoid recreating subscriptions
+  const handleProgressEventRef = useRef(handleProgressEvent);
+  handleProgressEventRef.current = handleProgressEvent;
 
-    // Store the unsubscribe function so we can track if subscription is active
-    sseSubscriptionRef.current = unsubscribeFromAll;
+  useEffect(() => {
+    providerDebug.log('ProgressProvider: Setting up SSE subscription');
 
-    // Subscribe to connection state changes (reactive instead of polling)
+    // Subscribe using a stable wrapper that delegates to the ref
+    // This way we only subscribe once, but always call the latest handler
+    const stableHandler = (event: ProgressEvent) => {
+      handleProgressEventRef.current(event);
+    };
+
+    const unsubscribeFromAll = sseManager.subscribeToAll(stableHandler);
+
+    // Subscribe to connection state changes
     const unsubscribeConnectionState = sseManager.subscribeToConnectionState((isConnected) => {
       providerDebug.log('ProgressProvider: SSE connection state changed:', isConnected);
       setConnected(isConnected);
     });
 
-    // Cleanup on unmount
-    // When we unsubscribe, the singleton will auto-disconnect if no other subscribers
+    // Cleanup on unmount - the singleton's debounce will prevent connection churn
     return () => {
-      providerDebug.log('ProgressProvider: Cleaning up SSE subscriptions');
+      providerDebug.log('ProgressProvider: Cleaning up SSE subscription');
       unsubscribeFromAll();
       unsubscribeConnectionState();
-      sseSubscriptionRef.current = null;
     };
-  }, [handleProgressEvent]);
+  }, []); // Empty deps - subscribe once, use ref for latest handler
 
   // Subscribe to events for specific resource ID using global singleton
   const subscribe = useCallback((resourceId: string, callback: (event: ProgressEvent) => void) => {
