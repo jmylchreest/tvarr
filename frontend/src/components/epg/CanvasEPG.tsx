@@ -9,6 +9,7 @@ interface Channel {
   database_id?: string;
   name: string;
   logo?: string;
+  stream_url?: string;
 }
 
 interface EpgProgram {
@@ -28,7 +29,7 @@ interface EpgProgram {
 }
 
 interface EpgGuideResponse {
-  channels: Record<string, { id: string; database_id?: string; name: string; logo?: string }>;
+  channels: Record<string, { id: string; database_id?: string; name: string; logo?: string; stream_url?: string }>;
   programs: Record<string, EpgProgram[]>;
   time_slots: string[];
   start_time: string;
@@ -42,7 +43,7 @@ interface CanvasEPGProps {
   currentTime: Date;
   selectedTimezone: string;
   onProgramClick?: (program: EpgProgram) => void;
-  onChannelPlay?: (channel: { id: string; database_id?: string; name: string; logo?: string }) => void;
+  onChannelPlay?: (channel: { id: string; database_id?: string; name: string; logo?: string; stream_url?: string }) => void;
   className?: string;
 }
 
@@ -789,7 +790,7 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
           if (relativeY >= 16 && relativeY <= 44) {
             const [channelId, channelData] = filteredChannels[channelIndex];
             if (onChannelPlay) {
-              onChannelPlay({ id: channelId, database_id: channelData.database_id, name: channelData.name, logo: channelData.logo });
+              onChannelPlay({ id: channelId, database_id: channelData.database_id, name: channelData.name, logo: channelData.logo, stream_url: channelData.stream_url });
             }
             return;
           }

@@ -106,7 +106,7 @@ interface EpgProgramsResponse {
 }
 
 interface EpgGuideResponse {
-  channels: Record<string, { id: string; database_id?: string; name: string; logo?: string }>;
+  channels: Record<string, { id: string; database_id?: string; name: string; logo?: string; stream_url?: string }>;
   programs: Record<string, EpgProgram[]>;
   time_slots: string[];
   start_time: string;
@@ -608,14 +608,22 @@ export default function EpgPage() {
     database_id?: string;
     name: string;
     logo?: string;
+    stream_url?: string;
   }) => {
-    // Use database_id for streaming if available, otherwise fall back to id
-    const streamId = channel.database_id || channel.id;
+    // Use stream_url directly if available (preferred), otherwise fall back to proxy endpoint
+    const streamUrl = channel.stream_url ||
+      (channel.database_id ? `${getBackendUrl()}/channel/${encodeURIComponent(channel.database_id)}/stream` : '');
+
+    if (!streamUrl) {
+      console.warn('No stream URL available for channel:', channel.id);
+      return;
+    }
+
     const channelData: Channel = {
-      id: streamId,
+      id: channel.database_id || channel.id,
       name: channel.name,
       logo_url: channel.logo,
-      stream_url: `${getBackendUrl()}/channel/${encodeURIComponent(streamId)}/stream`,
+      stream_url: streamUrl,
       source_type: 'channel',
       group: '',
       source_name: 'EPG',
