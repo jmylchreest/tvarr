@@ -106,7 +106,7 @@ interface EpgProgramsResponse {
 }
 
 interface EpgGuideResponse {
-  channels: Record<string, { id: string; name: string; logo?: string }>;
+  channels: Record<string, { id: string; database_id?: string; name: string; logo?: string }>;
   programs: Record<string, EpgProgram[]>;
   time_slots: string[];
   start_time: string;
@@ -603,12 +603,19 @@ export default function EpgPage() {
   };
 
   // Handle channel play (only for channel rows, not individual programs)
-  const handlePlayChannel = (channel: { id: string; name: string; logo?: string }) => {
+  const handlePlayChannel = (channel: {
+    id: string;
+    database_id?: string;
+    name: string;
+    logo?: string;
+  }) => {
+    // Use database_id for streaming if available, otherwise fall back to id
+    const streamId = channel.database_id || channel.id;
     const channelData: Channel = {
-      id: channel.id,
+      id: streamId,
       name: channel.name,
       logo_url: channel.logo,
-      stream_url: `${getBackendUrl()}/channel/${encodeURIComponent(channel.id)}/stream`,
+      stream_url: `${getBackendUrl()}/channel/${encodeURIComponent(streamId)}/stream`,
       source_type: 'channel',
       group: '',
       source_name: 'EPG',

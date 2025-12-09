@@ -546,9 +546,10 @@ type GetGuideInput struct {
 
 // GuideChannelInfo represents channel info in the guide response.
 type GuideChannelInfo struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Logo string `json:"logo,omitempty"`
+	ID         string `json:"id"`                    // The EPG channel ID (e.g., tvg_id)
+	DatabaseID string `json:"database_id,omitempty"` // The database channel ID (ULID) for streaming
+	Name       string `json:"name"`
+	Logo       string `json:"logo,omitempty"`
 }
 
 // GuideProgramInfo represents a program in the guide response.
@@ -666,6 +667,7 @@ func (h *EpgHandler) GetGuide(ctx context.Context, input *GetGuideInput) (*GetGu
 				if info, exists := channels[ch.TvgID]; exists {
 					info.Name = ch.ChannelName
 					info.Logo = ch.TvgLogo
+					info.DatabaseID = ch.ID.String() // Add the database ID for streaming
 					channels[ch.TvgID] = info
 					// Update program channel names
 					for i := range programsByChannel[ch.TvgID] {

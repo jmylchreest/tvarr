@@ -6,6 +6,7 @@ import { Debug } from '@/utils/debug';
 
 interface Channel {
   id: string;
+  database_id?: string;
   name: string;
   logo?: string;
 }
@@ -27,7 +28,7 @@ interface EpgProgram {
 }
 
 interface EpgGuideResponse {
-  channels: Record<string, { id: string; name: string; logo?: string }>;
+  channels: Record<string, { id: string; database_id?: string; name: string; logo?: string }>;
   programs: Record<string, EpgProgram[]>;
   time_slots: string[];
   start_time: string;
@@ -41,7 +42,7 @@ interface CanvasEPGProps {
   currentTime: Date;
   selectedTimezone: string;
   onProgramClick?: (program: EpgProgram) => void;
-  onChannelPlay?: (channel: { id: string; name: string; logo?: string }) => void;
+  onChannelPlay?: (channel: { id: string; database_id?: string; name: string; logo?: string }) => void;
   className?: string;
 }
 
@@ -69,6 +70,7 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
   const [canvasDimensions, setCanvasDimensions] = useState({ width: 1200, height: 600 });
   const [scrollPosition, setScrollPosition] = useState({ x: 0, y: 0 });
   const [hoveredProgram, setHoveredProgram] = useState<EpgProgram | null>(null);
+  const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [themeKey, setThemeKey] = useState(0); // Force theme updates
   const isRenderingRef = useRef(false);
 
@@ -755,6 +757,11 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
       const program = findProgramAtPoint(x, y);
       setHoveredProgram(program);
 
+      // Track tooltip position relative to the container
+      if (program) {
+        setTooltipPosition({ x: event.clientX, y: event.clientY });
+      }
+
       canvas.style.cursor = program || isOverPlayButton ? 'pointer' : 'default';
     },
     [findProgramAtPoint, scrollPosition, filteredChannels]
@@ -782,7 +789,7 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
           if (relativeY >= 16 && relativeY <= 44) {
             const [channelId, channelData] = filteredChannels[channelIndex];
             if (onChannelPlay) {
-              onChannelPlay({ id: channelId, name: channelData.name, logo: channelData.logo });
+              onChannelPlay({ id: channelId, database_id: channelData.database_id, name: channelData.name, logo: channelData.logo });
             }
             return;
           }
@@ -843,6 +850,27 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
         onClick={handleClick}
         tabIndex={0}
       />
+      {/* Program tooltip */}
+      {hoveredProgram && hoveredProgram.description && (
+        <div
+          className="fixed z-50 max-w-xs rounded-md border bg-popover px-3 py-2 text-sm text-popover-foreground shadow-md"
+          style={{
+            left: tooltipPosition.x + 12,
+            top: tooltipPosition.y + 12,
+            pointerEvents: 'none',
+          }}
+        >
+          <div className="font-semibold mb-1">{hoveredProgram.title}</div>
+          <div className="text-muted-foreground text-xs line-clamp-4">
+            {hoveredProgram.description}
+          </div>
+          {hoveredProgram.category && (
+            <div className="text-xs mt-1 text-accent-foreground">
+              {hoveredProgram.category}
+            </div>
+          )}
+        </div>
+      )}
       <ScrollArea
         className="w-full h-full epg-scroll overflow-auto"
         ref={scrollAreaRef}

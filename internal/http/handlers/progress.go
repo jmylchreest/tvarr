@@ -86,8 +86,10 @@ func ProgressFromService(p *progress.UniversalProgress) ProgressResponse {
 		currentStage = p.Stages[p.CurrentStageIndex].ID
 	}
 
-	// Generate an operation name from metadata or use a default
-	operationName := p.Message
+	// Use OwnerName as the stable operation name (e.g., "s8k (EPG): Refresh")
+	// This should not change during the operation - it identifies WHAT is being operated on.
+	// The updating status message is provided separately via the stage's StageStep field.
+	operationName := p.OwnerName
 	if operationName == "" {
 		operationName = string(p.OperationType)
 	}
