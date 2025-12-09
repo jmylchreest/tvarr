@@ -2,31 +2,47 @@ package handlers
 
 import (
 	"context"
-	"io"
 	"log/slog"
-	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/go-chi/chi/v5"
 	"github.com/jmylchreest/tvarr/internal/models"
-	"github.com/jmylchreest/tvarr/internal/service"
 	"gorm.io/gorm"
 )
 
 // ChannelHandler handles channel browsing API endpoints.
 type ChannelHandler struct {
-	db           *gorm.DB
-	relayService *service.RelayService
-	logger       *slog.Logger
+	db     *gorm.DB
+	logger *slog.Logger
 }
 
 // NewChannelHandler creates a new channel handler.
-func NewChannelHandler(db *gorm.DB, relayService *service.RelayService) *ChannelHandler {
+func NewChannelHandler(db *gorm.DB) *ChannelHandler {
 	return &ChannelHandler{
-		db:           db,
-		relayService: relayService,
-		logger:       slog.Default(),
+		db:     db,
+		logger: slog.Default(),
 	}
+}
+
+// getCodecMapForStreamURLs retrieves codec info for multiple stream URLs efficiently.
+// Returns a map of stream_url -> LastKnownCodec for easy lookup.
+func (h *ChannelHandler) getCodecMapForStreamURLs(ctx context.Context, streamURLs []string) map[string]*models.LastKnownCodec {
+	codecMap := make(map[string]*models.LastKnownCodec)
+	if len(streamURLs) == 0 {
+		return codecMap
+	}
+
+	var codecs []models.LastKnownCodec
+	if err := h.db.WithContext(ctx).
+		Where("stream_url IN ?", streamURLs).
+		Find(&codecs).Error; err != nil {
+		h.logger.Warn("Failed to fetch codec info for channels", "error", err)
+		return codecMap
+	}
+
+	for i := range codecs {
+		codecMap[codecs[i].StreamURL] = &codecs[i]
+	}
+	return codecMap
 }
 
 // WithLogger sets the logger for the handler.
@@ -54,15 +70,6 @@ func (h *ChannelHandler) Register(api huma.API) {
 		Description: "Returns a specific channel by ID",
 		Tags:        []string{"Channels"},
 	}, h.GetChannel)
-
-	huma.Register(api, huma.Operation{
-		OperationID: "probeChannel",
-		Method:      "POST",
-		Path:        "/api/v1/channels/{id}/probe",
-		Summary:     "Probe channel stream",
-		Description: "Probes the channel stream to get codec information",
-		Tags:        []string{"Channels"},
-	}, h.ProbeChannel)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "getChannelGroups",
@@ -148,10 +155,23 @@ func (h *ChannelHandler) ListChannels(ctx context.Context, input *ListChannelsIn
 		return nil, huma.Error500InternalServerError("Failed to fetch channels")
 	}
 
+	// Collect stream URLs for batch codec lookup
+	streamURLs := make([]string, len(channels))
+	for i := range channels {
+		streamURLs[i] = channels[i].StreamURL
+	}
+
+	// Batch fetch codec info for all channels
+	codecMap := h.getCodecMapForStreamURLs(ctx, streamURLs)
+
 	// Convert to response format using shared type
 	items := make([]ChannelResponse, len(channels))
 	for i := range channels {
 		items[i] = ChannelFromModel(&channels[i])
+		// Populate codec info if available
+		if codec, ok := codecMap[channels[i].StreamURL]; ok {
+			items[i].PopulateCodecInfo(codec)
+		}
 	}
 
 	totalPages := int(total) / input.Limit
@@ -200,101 +220,13 @@ func (h *ChannelHandler) GetChannel(ctx context.Context, input *GetChannelInput)
 	resp.Body.Success = true
 	resp.Body.Data = ChannelFromModel(&channel)
 
-	return resp, nil
-}
-
-// ProbeChannelInput is the input for probing a channel.
-type ProbeChannelInput struct {
-	ID string `path:"id" required:"true"`
-}
-
-// ProbeChannelOutput is the output for probing a channel.
-type ProbeChannelOutput struct {
-	Body struct {
-		Success   bool   `json:"success"`
-		ChannelID string `json:"channel_id"`
-		StreamURL string `json:"stream_url"`
-		Codecs    struct {
-			Video string `json:"video,omitempty"`
-			Audio string `json:"audio,omitempty"`
-		} `json:"codecs"`
-		Container  string `json:"container,omitempty"`
-		Duration   string `json:"duration,omitempty"`
-		Resolution string `json:"resolution,omitempty"`
-		Bitrate    int    `json:"bitrate,omitempty"`
-		Message    string `json:"message,omitempty"`
+	// Look up codec info for this channel
+	var codec models.LastKnownCodec
+	if err := h.db.WithContext(ctx).Where("stream_url = ?", channel.StreamURL).First(&codec).Error; err == nil {
+		resp.Body.Data.PopulateCodecInfo(&codec)
 	}
-}
-
-// ProbeChannel probes a channel stream for codec information using ffprobe.
-func (h *ChannelHandler) ProbeChannel(ctx context.Context, input *ProbeChannelInput) (*ProbeChannelOutput, error) {
-	var channel models.Channel
-
-	if err := h.db.WithContext(ctx).Where("id = ?", input.ID).First(&channel).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, huma.Error404NotFound("Channel not found")
-		}
-		return nil, huma.Error500InternalServerError("Failed to fetch channel")
-	}
-
-	// Check if relay service is available
-	if h.relayService == nil {
-		resp := &ProbeChannelOutput{}
-		resp.Body.Success = false
-		resp.Body.ChannelID = channel.ID.String()
-		resp.Body.StreamURL = channel.StreamURL
-		resp.Body.Message = "Stream probing not available (relay service not configured)"
-		return resp, nil
-	}
-
-	// Probe the stream using the relay service
-	codec, err := h.relayService.ProbeStream(ctx, channel.StreamURL)
-	if err != nil {
-		resp := &ProbeChannelOutput{}
-		resp.Body.Success = false
-		resp.Body.ChannelID = channel.ID.String()
-		resp.Body.StreamURL = channel.StreamURL
-		resp.Body.Message = "Failed to probe stream: " + err.Error()
-		return resp, nil
-	}
-
-	// Build successful response
-	resp := &ProbeChannelOutput{}
-	resp.Body.Success = true
-	resp.Body.ChannelID = channel.ID.String()
-	resp.Body.StreamURL = channel.StreamURL
-	resp.Body.Codecs.Video = codec.VideoCodec
-	resp.Body.Codecs.Audio = codec.AudioCodec
-
-	// Build resolution string
-	if codec.VideoWidth > 0 && codec.VideoHeight > 0 {
-		resp.Body.Resolution = formatResolution(codec.VideoWidth, codec.VideoHeight)
-	}
-
-	// Calculate total bitrate
-	resp.Body.Bitrate = codec.VideoBitrate + codec.AudioBitrate
 
 	return resp, nil
-}
-
-// formatResolution formats video dimensions as a resolution string.
-func formatResolution(width, height int) string {
-	if width == 0 || height == 0 {
-		return ""
-	}
-	// Common resolution names
-	switch {
-	case height >= 2160:
-		return "4K"
-	case height >= 1080:
-		return "1080p"
-	case height >= 720:
-		return "720p"
-	case height >= 480:
-		return "480p"
-	default:
-		return ""
-	}
 }
 
 // GetGroupsInput is the input for getting channel groups.
@@ -328,182 +260,4 @@ func (h *ChannelHandler) GetGroups(ctx context.Context, input *GetGroupsInput) (
 	resp.Body.Count = len(groups)
 
 	return resp, nil
-}
-
-// RegisterChiRoutes registers raw Chi routes for streaming endpoints.
-// This is needed for proper CORS and streaming support that Huma doesn't handle well.
-func (h *ChannelHandler) RegisterChiRoutes(router chi.Router) {
-	router.Get("/channel/{channelId}/stream", h.handleChannelStream)
-	router.Options("/channel/{channelId}/stream", h.handleChannelStreamOptions)
-	router.Head("/channel/{channelId}/stream", h.handleChannelStreamHead)
-}
-
-// handleChannelStreamOptions handles CORS preflight requests for the stream endpoint.
-func (h *ChannelHandler) handleChannelStreamOptions(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept, Range")
-	w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Content-Type")
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// handleChannelStreamHead handles HEAD requests for stream availability check.
-func (h *ChannelHandler) handleChannelStreamHead(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	channelIDStr := chi.URLParam(r, "channelId")
-
-	// Look up channel
-	var channel models.Channel
-	if err := h.db.WithContext(ctx).Where("id = ?", channelIDStr).First(&channel).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			http.Error(w, "channel not found", http.StatusNotFound)
-			return
-		}
-		http.Error(w, "failed to fetch channel", http.StatusInternalServerError)
-		return
-	}
-
-	// Set CORS headers
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
-	w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Content-Type")
-
-	// Try to get content type from upstream
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, channel.StreamURL, nil)
-	if err != nil {
-		w.Header().Set("Content-Type", "video/mp2t")
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		w.Header().Set("Content-Type", "video/mp2t")
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	defer resp.Body.Close()
-
-	// Forward content type from upstream
-	if ct := resp.Header.Get("Content-Type"); ct != "" {
-		w.Header().Set("Content-Type", ct)
-	} else {
-		w.Header().Set("Content-Type", "video/mp2t")
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
-
-// handleChannelStream streams a channel directly for preview playback.
-func (h *ChannelHandler) handleChannelStream(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	channelIDStr := chi.URLParam(r, "channelId")
-
-	// Look up channel
-	var channel models.Channel
-	if err := h.db.WithContext(ctx).Where("id = ?", channelIDStr).First(&channel).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			http.Error(w, "channel not found", http.StatusNotFound)
-			return
-		}
-		h.logger.Error("Failed to fetch channel", "channel_id", channelIDStr, "error", err)
-		http.Error(w, "failed to fetch channel", http.StatusInternalServerError)
-		return
-	}
-
-	h.logger.Info("Channel preview stream requested",
-		"channel_id", channelIDStr,
-		"channel_name", channel.ChannelName,
-		"stream_url", channel.StreamURL,
-	)
-
-	// Set CORS headers first
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept, Range")
-	w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Content-Type")
-
-	// Create request to upstream
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, channel.StreamURL, nil)
-	if err != nil {
-		h.logger.Error("Failed to create upstream request", "error", err)
-		http.Error(w, "failed to create upstream request", http.StatusBadGateway)
-		return
-	}
-
-	// Forward relevant headers
-	if ua := r.Header.Get("User-Agent"); ua != "" {
-		req.Header.Set("User-Agent", ua)
-	}
-	if accept := r.Header.Get("Accept"); accept != "" {
-		req.Header.Set("Accept", accept)
-	}
-	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
-		req.Header.Set("Range", rangeHeader)
-	}
-
-	// Execute request
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		h.logger.Error("Upstream request failed", "error", err)
-		http.Error(w, "upstream request failed", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	// Set content type from upstream or default
-	contentType := resp.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = "video/mp2t"
-	}
-	w.Header().Set("Content-Type", contentType)
-
-	// Forward content length if available
-	if contentLength := resp.Header.Get("Content-Length"); contentLength != "" {
-		w.Header().Set("Content-Length", contentLength)
-	}
-
-	// Forward content range for partial content
-	if resp.StatusCode == http.StatusPartialContent {
-		if contentRange := resp.Header.Get("Content-Range"); contentRange != "" {
-			w.Header().Set("Content-Range", contentRange)
-		}
-		w.WriteHeader(http.StatusPartialContent)
-	} else {
-		w.Header().Set("Cache-Control", "no-cache, no-store")
-		w.Header().Set("Connection", "keep-alive")
-		w.WriteHeader(http.StatusOK)
-	}
-
-	// Stream data to client
-	buf := make([]byte, 32*1024) // 32KB buffer
-	for {
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
-				h.logger.Debug("Client disconnected during stream",
-					"channel_id", channelIDStr,
-					"error", writeErr,
-				)
-				break
-			}
-			// Flush if possible
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
-			}
-		}
-		if err != nil {
-			if err != io.EOF {
-				h.logger.Debug("Upstream read error",
-					"channel_id", channelIDStr,
-					"error", err,
-				)
-			}
-			break
-		}
-	}
-
-	h.logger.Info("Channel preview stream ended", "channel_id", channelIDStr)
 }

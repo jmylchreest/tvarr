@@ -111,7 +111,7 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
 
   // Filtered channels with search - memoized with stable keys
   const filteredChannels = useMemo(() => {
-    if (!guideData) return [];
+    if (!guideData || !guideData.channels || !guideData.programs) return [];
 
     let channels = Object.entries(guideData.channels);
 
@@ -125,7 +125,7 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
           return true;
         }
 
-        const channelPrograms = guideData.programs[id] || [];
+        const channelPrograms = guideData.programs?.[id] || [];
         return channelPrograms.some(
           (program) =>
             program.title.toLowerCase().includes(searchLower) ||
@@ -388,7 +388,7 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
       ctx.stroke();
 
       // Render programs for this channel
-      const channelPrograms = guideData.programs[channelId] || [];
+      const channelPrograms = guideData.programs?.[channelId] || [];
       const programStartX = CHANNEL_SIDEBAR_WIDTH - scrollPosition.x;
 
       channelPrograms.forEach((program) => {
@@ -694,10 +694,10 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
   // Hit testing for mouse events
   const findProgramAtPoint = useCallback(
     (x: number, y: number): EpgProgram | null => {
-      if (!guideData) return null;
+      if (!guideData || !guideData.programs) return null;
 
       for (const [channelId] of filteredChannels) {
-        const programs = guideData.programs[channelId] || [];
+        const programs = guideData.programs?.[channelId] || [];
         for (const program of programs) {
           const bounds = (program as any)._bounds;
           if (

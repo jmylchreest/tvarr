@@ -59,8 +59,8 @@ func (h *RelayStreamHandler) Register(api huma.API) {
 		OperationID: "probeStream",
 		Method:      "POST",
 		Path:        "/api/v1/relay/probe",
-		Summary:     "Probe a stream URL",
-		Description: "Probes a stream URL to detect codec information",
+		Summary:     "Probe a stream for codec information",
+		Description: "Probes a stream to detect codec information. Either provide a URL directly, or a channel_id to look up the channel's stream URL from the database.",
 		Tags:        []string{"Stream Relay"},
 	}, h.ProbeStream)
 
@@ -96,8 +96,14 @@ func (h *RelayStreamHandler) Register(api huma.API) {
 // This is necessary because Huma's StreamResponse doesn't support HTTP 302 redirects
 // or setting CORS headers before the response body is written.
 func (h *RelayStreamHandler) RegisterChiRoutes(router chi.Router) {
+	// Full proxy streaming: /proxy/{proxyId}/{channelId}
 	router.Get("/proxy/{proxyId}/{channelId}", h.handleRawStream)
 	router.Options("/proxy/{proxyId}/{channelId}", h.handleRawStreamOptions)
+
+	// Channel preview streaming: /proxy/{channelId}
+	// Uses zero-transcode smart delivery (passthrough/repackage only)
+	router.Get("/proxy/{channelId}", h.handleChannelPreview)
+	router.Options("/proxy/{channelId}", h.handleRawStreamOptions)
 }
 
 // proxyStreamDocsHandler is a no-op handler for documentation-only registrations.
@@ -243,6 +249,89 @@ func (h *RelayStreamHandler) handleRawStream(w http.ResponseWriter, r *http.Requ
 			"mode", streamInfo.Proxy.ProxyMode,
 		)
 		http.Error(w, fmt.Sprintf("unknown proxy mode: %s (valid modes: direct, smart)", streamInfo.Proxy.ProxyMode), http.StatusInternalServerError)
+	}
+}
+
+// handleChannelPreview handles channel preview streaming at /proxy/{channelId}.
+// This provides zero-transcode smart delivery for admin UI previews.
+// Unlike the full proxy endpoint, this only uses passthrough or repackage modes.
+func (h *RelayStreamHandler) handleChannelPreview(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	channelIDStr := chi.URLParam(r, "channelId")
+
+	channelID, err := models.ParseULID(channelIDStr)
+	if err != nil {
+		http.Error(w, "invalid channel ID format", http.StatusBadRequest)
+		return
+	}
+
+	// Get channel directly from relay service
+	channel, err := h.relayService.GetChannel(ctx, channelID)
+	if err != nil {
+		h.logger.Error("Failed to get channel for preview",
+			"channel_id", channelIDStr,
+			"error", err,
+		)
+		http.Error(w, fmt.Sprintf("channel not found: %v", err), http.StatusNotFound)
+		return
+	}
+
+	streamURL := channel.StreamURL
+
+	// Classify the source stream
+	serviceClassification := h.relayService.ClassifyStream(ctx, streamURL)
+
+	// Convert service classification to relay classification
+	classification := relay.ClassificationResult{
+		Mode:                  serviceClassification.Mode,
+		SourceFormat:          serviceClassification.SourceFormat,
+		VariantCount:          serviceClassification.VariantCount,
+		TargetDuration:        serviceClassification.TargetDuration,
+		IsEncrypted:           serviceClassification.IsEncrypted,
+		UsesFMP4:              serviceClassification.UsesFMP4,
+		EligibleForCollapse:   serviceClassification.EligibleForCollapse,
+		SelectedMediaPlaylist: serviceClassification.SelectedMediaPlaylist,
+		SelectedBandwidth:     serviceClassification.SelectedBandwidth,
+		Reasons:               serviceClassification.Reasons,
+	}
+
+	// Determine client's desired format from query param or Accept header
+	clientFormat := h.resolveClientFormat(r, classification)
+
+	// Get delivery decision - use nil profile to force zero-transcode behavior
+	// With no profile, SelectDelivery will choose passthrough or repackage only
+	deliveryDecision := relay.SelectDelivery(classification, clientFormat, nil)
+
+	h.logger.Info("Channel preview: delivery decision",
+		"channel_id", channel.ID,
+		"channel_name", channel.ChannelName,
+		"stream_url", streamURL,
+		"source_format", classification.SourceFormat,
+		"client_format", clientFormat,
+		"decision", deliveryDecision.String(),
+	)
+
+	// Create a minimal StreamInfo for the handlers
+	previewInfo := &service.StreamInfo{
+		Channel: channel,
+		// No Proxy or Profile - this is a preview-only stream
+	}
+
+	// Dispatch based on delivery decision - but never transcode for preview
+	switch deliveryDecision {
+	case relay.DeliveryPassthrough:
+		h.handleSmartPassthrough(w, r, previewInfo, &serviceClassification)
+
+	case relay.DeliveryRepackage:
+		h.handleSmartRepackage(w, r, previewInfo, &serviceClassification, clientFormat)
+
+	case relay.DeliveryTranscode:
+		// For preview, fall back to passthrough instead of transcoding
+		h.logger.Info("Channel preview: transcoding requested but falling back to passthrough",
+			"channel_id", channel.ID,
+		)
+		h.handleSmartPassthrough(w, r, previewInfo, &serviceClassification)
 	}
 }
 
@@ -539,11 +628,14 @@ func (h *RelayStreamHandler) handleSmartPassthrough(w http.ResponseWriter, r *ht
 	w.Header().Set("X-Stream-Mode", "smart")
 	w.Header().Set("X-Stream-Decision", "passthrough")
 
-	h.logger.Info("Smart mode: passthrough delivery",
-		"proxy_id", info.Proxy.ID,
+	logAttrs := []any{
 		"channel_id", info.Channel.ID,
 		"source_format", classification.SourceFormat,
-	)
+	}
+	if info.Proxy != nil {
+		logAttrs = append([]any{"proxy_id", info.Proxy.ID}, logAttrs...)
+	}
+	h.logger.Info("Smart mode: passthrough delivery", logAttrs...)
 
 	// Reuse the direct proxy streaming logic
 	h.streamRawDirectProxy(w, r, info, classification)
@@ -561,19 +653,23 @@ func (h *RelayStreamHandler) handleSmartRepackage(w http.ResponseWriter, r *http
 	w.Header().Set("X-Stream-Mode", "smart")
 	w.Header().Set("X-Stream-Decision", "repackage")
 
-	h.logger.Info("Smart mode: repackage delivery",
-		"proxy_id", info.Proxy.ID,
+	logAttrs := []any{
 		"channel_id", info.Channel.ID,
 		"source_format", classification.SourceFormat,
 		"target_format", clientFormat,
-	)
+	}
+	if info.Proxy != nil {
+		logAttrs = append([]any{"proxy_id", info.Proxy.ID}, logAttrs...)
+	}
+	h.logger.Info("Smart mode: repackage delivery", logAttrs...)
 
 	// TODO: Implement manifest repackaging (HLS↔DASH)
 	// For now, fall back to passthrough with a warning
-	h.logger.Warn("Smart mode: repackage not yet implemented, falling back to passthrough",
-		"proxy_id", info.Proxy.ID,
-		"channel_id", info.Channel.ID,
-	)
+	warnAttrs := []any{"channel_id", info.Channel.ID}
+	if info.Proxy != nil {
+		warnAttrs = append([]any{"proxy_id", info.Proxy.ID}, warnAttrs...)
+	}
+	h.logger.Warn("Smart mode: repackage not yet implemented, falling back to passthrough", warnAttrs...)
 	h.streamRawDirectProxy(w, r, info, classification)
 }
 
@@ -591,11 +687,14 @@ func (h *RelayStreamHandler) handleSmartTranscode(w http.ResponseWriter, r *http
 	w.Header().Set("X-Stream-Mode", "smart")
 	w.Header().Set("X-Stream-Decision", "transcode")
 
-	h.logger.Info("Smart mode: transcode delivery",
-		"proxy_id", info.Proxy.ID,
+	logAttrs := []any{
 		"channel_id", info.Channel.ID,
 		"client_format", clientFormat,
-	)
+	}
+	if info.Proxy != nil {
+		logAttrs = append([]any{"proxy_id", info.Proxy.ID}, logAttrs...)
+	}
+	h.logger.Info("Smart mode: transcode delivery", logAttrs...)
 
 	// Resolve profile with auto-detection if needed
 	resolvedProfile := h.resolveProfileWithAutoDetection(ctx, r, info)
@@ -610,11 +709,14 @@ func (h *RelayStreamHandler) handleSmartTranscode(w http.ResponseWriter, r *http
 		session, err = h.relayService.StartRelay(ctx, info.Channel.ID, nil)
 	}
 	if err != nil {
-		h.logger.Error("Failed to start relay session for smart transcode",
-			"proxy_id", info.Proxy.ID,
+		errAttrs := []any{
 			"channel_id", info.Channel.ID,
 			"error", err,
-		)
+		}
+		if info.Proxy != nil {
+			errAttrs = append([]any{"proxy_id", info.Proxy.ID}, errAttrs...)
+		}
+		h.logger.Error("Failed to start relay session for smart transcode", errAttrs...)
 		http.Error(w, "failed to start relay session", http.StatusInternalServerError)
 		return
 	}
@@ -637,13 +739,16 @@ func (h *RelayStreamHandler) handleSmartTranscode(w http.ResponseWriter, r *http
 		return
 	}
 
-	h.logger.Info("Client connected to smart transcode relay",
+	connAttrs := []any{
 		"session_id", session.ID,
 		"client_id", client.ID,
-		"proxy_id", info.Proxy.ID,
 		"channel_id", info.Channel.ID,
 		"client_format", clientFormat,
-	)
+	}
+	if info.Proxy != nil {
+		connAttrs = append([]any{"proxy_id", info.Proxy.ID}, connAttrs...)
+	}
+	h.logger.Info("Client connected to smart transcode relay", connAttrs...)
 
 	// Set content type based on client format
 	contentType := relay.ContentTypeMPEGTS
@@ -709,23 +814,26 @@ func (h *RelayStreamHandler) handleSmartTranscode(w http.ResponseWriter, r *http
 func (h *RelayStreamHandler) streamRawDirectProxy(w http.ResponseWriter, r *http.Request, info *service.StreamInfo, classification *service.ClassificationResult) {
 	streamURL := info.Channel.StreamURL
 
-	h.logger.Info("Proxy mode: direct proxy",
-		"proxy_id", info.Proxy.ID,
+	logAttrs := []any{
 		"channel_id", info.Channel.ID,
 		"stream_url", streamURL,
 		"stream_mode", classification.Mode.String(),
-	)
+	}
+	if info.Proxy != nil {
+		logAttrs = append([]any{"proxy_id", info.Proxy.ID}, logAttrs...)
+	}
+	h.logger.Info("Proxy mode: direct proxy", logAttrs...)
 
 	w.Header().Set("X-Stream-Decision", "direct-proxy")
 
 	// Create HTTP request to upstream
 	req, err := http.NewRequest(http.MethodGet, streamURL, nil)
 	if err != nil {
-		h.logger.Error("Failed to create upstream request",
-			"proxy_id", info.Proxy.ID,
-			"channel_id", info.Channel.ID,
-			"error", err,
-		)
+		errAttrs := []any{"channel_id", info.Channel.ID, "error", err}
+		if info.Proxy != nil {
+			errAttrs = append([]any{"proxy_id", info.Proxy.ID}, errAttrs...)
+		}
+		h.logger.Error("Failed to create upstream request", errAttrs...)
 		http.Error(w, "failed to create upstream request", http.StatusBadGateway)
 		return
 	}
@@ -745,11 +853,11 @@ func (h *RelayStreamHandler) streamRawDirectProxy(w http.ResponseWriter, r *http
 	client := h.relayService.GetHTTPClient()
 	resp, err := client.Do(req)
 	if err != nil {
-		h.logger.Error("Upstream request failed",
-			"proxy_id", info.Proxy.ID,
-			"channel_id", info.Channel.ID,
-			"error", err,
-		)
+		errAttrs := []any{"channel_id", info.Channel.ID, "error", err}
+		if info.Proxy != nil {
+			errAttrs = append([]any{"proxy_id", info.Proxy.ID}, errAttrs...)
+		}
+		h.logger.Error("Upstream request failed", errAttrs...)
 		http.Error(w, "upstream request failed", http.StatusBadGateway)
 		return
 	}
@@ -785,11 +893,11 @@ func (h *RelayStreamHandler) streamRawDirectProxy(w http.ResponseWriter, r *http
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
 			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
-				h.logger.Debug("Client disconnected during proxy write",
-					"proxy_id", info.Proxy.ID,
-					"channel_id", info.Channel.ID,
-					"error", writeErr,
-				)
+				debugAttrs := []any{"channel_id", info.Channel.ID, "error", writeErr}
+				if info.Proxy != nil {
+					debugAttrs = append([]any{"proxy_id", info.Proxy.ID}, debugAttrs...)
+				}
+				h.logger.Debug("Client disconnected during proxy write", debugAttrs...)
 				break
 			}
 			// Flush if possible
@@ -799,32 +907,37 @@ func (h *RelayStreamHandler) streamRawDirectProxy(w http.ResponseWriter, r *http
 		}
 		if err != nil {
 			if err != io.EOF {
-				h.logger.Debug("Upstream read error",
-					"proxy_id", info.Proxy.ID,
-					"channel_id", info.Channel.ID,
-					"error", err,
-				)
+				debugAttrs := []any{"channel_id", info.Channel.ID, "error", err}
+				if info.Proxy != nil {
+					debugAttrs = append([]any{"proxy_id", info.Proxy.ID}, debugAttrs...)
+				}
+				h.logger.Debug("Upstream read error", debugAttrs...)
 			}
 			break
 		}
 	}
 
-	h.logger.Info("Proxy stream ended",
-		"proxy_id", info.Proxy.ID,
-		"channel_id", info.Channel.ID,
-	)
+	endAttrs := []any{"channel_id", info.Channel.ID}
+	if info.Proxy != nil {
+		endAttrs = append([]any{"proxy_id", info.Proxy.ID}, endAttrs...)
+	}
+	h.logger.Info("Proxy stream ended", endAttrs...)
 }
 
 // ProbeStreamInput is the input for probing a stream.
+// Either URL or ChannelID must be provided. If ChannelID is provided, the channel's
+// stream URL will be looked up from the database.
 type ProbeStreamInput struct {
 	Body struct {
-		URL string `json:"url" required:"true" doc:"Stream URL to probe"`
+		URL       string `json:"url,omitempty" doc:"Stream URL to probe (required if channel_id not provided)"`
+		ChannelID string `json:"channel_id,omitempty" doc:"Channel ULID to probe (required if url not provided)"`
 	}
 }
 
 // ProbeStreamOutput is the output for probing a stream.
 type ProbeStreamOutput struct {
 	Body struct {
+		ChannelID       string  `json:"channel_id,omitempty" doc:"Channel ULID if probed by channel_id"`
 		StreamURL       string  `json:"stream_url"`
 		VideoCodec      string  `json:"video_codec,omitempty"`
 		VideoWidth      int     `json:"video_width,omitempty"`
@@ -839,14 +952,40 @@ type ProbeStreamOutput struct {
 }
 
 // ProbeStream probes a stream URL for codec information.
+// Accepts either a URL directly or a channel_id to look up the URL from the database.
 func (h *RelayStreamHandler) ProbeStream(ctx context.Context, input *ProbeStreamInput) (*ProbeStreamOutput, error) {
-	codec, err := h.relayService.ProbeStream(ctx, input.Body.URL)
+	var streamURL string
+	var channelIDStr string
+
+	// Determine the stream URL - either from direct URL or channel lookup
+	if input.Body.ChannelID != "" {
+		// Parse and look up channel by ULID
+		channelID, err := models.ParseULID(input.Body.ChannelID)
+		if err != nil {
+			return nil, huma.Error400BadRequest("invalid channel_id format")
+		}
+
+		channel, err := h.relayService.GetChannel(ctx, channelID)
+		if err != nil {
+			return nil, huma.Error404NotFound("channel not found")
+		}
+
+		streamURL = channel.StreamURL
+		channelIDStr = input.Body.ChannelID
+	} else if input.Body.URL != "" {
+		streamURL = input.Body.URL
+	} else {
+		return nil, huma.Error400BadRequest("either url or channel_id must be provided")
+	}
+
+	codec, err := h.relayService.ProbeStream(ctx, streamURL)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to probe stream", err)
 	}
 
 	return &ProbeStreamOutput{
 		Body: struct {
+			ChannelID       string  `json:"channel_id,omitempty" doc:"Channel ULID if probed by channel_id"`
 			StreamURL       string  `json:"stream_url"`
 			VideoCodec      string  `json:"video_codec,omitempty"`
 			VideoWidth      int     `json:"video_width,omitempty"`
@@ -858,6 +997,7 @@ func (h *RelayStreamHandler) ProbeStream(ctx context.Context, input *ProbeStream
 			AudioChannels   int     `json:"audio_channels,omitempty"`
 			AudioBitrate    int     `json:"audio_bitrate,omitempty"`
 		}{
+			ChannelID:       channelIDStr,
 			StreamURL:       codec.StreamURL,
 			VideoCodec:      codec.VideoCodec,
 			VideoWidth:      codec.VideoWidth,

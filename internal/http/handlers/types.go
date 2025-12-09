@@ -719,6 +719,18 @@ type ChannelResponse struct {
 	IsAdult       bool        `json:"is_adult"`
 	CreatedAt     time.Time   `json:"created_at"`
 	UpdatedAt     time.Time   `json:"updated_at"`
+
+	// Codec/probe info from last_known_codecs table (optional, populated when available)
+	VideoCodec      string     `json:"video_codec,omitempty"`
+	VideoWidth      int        `json:"video_width,omitempty"`
+	VideoHeight     int        `json:"video_height,omitempty"`
+	VideoFramerate  float64    `json:"video_framerate,omitempty"`
+	AudioCodec      string     `json:"audio_codec,omitempty"`
+	AudioChannels   int        `json:"audio_channels,omitempty"`
+	AudioSampleRate int        `json:"audio_sample_rate,omitempty"`
+	ContainerFormat string     `json:"container_format,omitempty"`
+	IsLiveStream    bool       `json:"is_live_stream,omitempty"`
+	LastProbedAt    *time.Time `json:"last_probed_at,omitempty"`
 }
 
 // ChannelFromModel converts a model to a response.
@@ -749,6 +761,24 @@ func ChannelFromModel(c *models.Channel) ChannelResponse {
 		CreatedAt:     c.CreatedAt,
 		UpdatedAt:     c.UpdatedAt,
 	}
+}
+
+// ChannelResponseWithCodec populates codec fields from LastKnownCodec into a ChannelResponse.
+func (r *ChannelResponse) PopulateCodecInfo(codec *models.LastKnownCodec) {
+	if codec == nil {
+		return
+	}
+	r.VideoCodec = codec.VideoCodec
+	r.VideoWidth = codec.VideoWidth
+	r.VideoHeight = codec.VideoHeight
+	r.VideoFramerate = codec.VideoFramerate
+	r.AudioCodec = codec.AudioCodec
+	r.AudioChannels = codec.AudioChannels
+	r.AudioSampleRate = codec.AudioSampleRate
+	r.ContainerFormat = codec.ContainerFormat
+	r.IsLiveStream = codec.IsLiveStream
+	probedAt := time.Time(codec.ProbedAt)
+	r.LastProbedAt = &probedAt
 }
 
 // ChannelListResponse is the paginated response for channel listings.

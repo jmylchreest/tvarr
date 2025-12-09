@@ -376,25 +376,27 @@ export default function EpgPage() {
           throw new Error('API returned unsuccessful response');
         }
 
+        const programsData = data.data?.programs || [];
+
         if (append) {
           setPrograms((prev) => {
             // Deduplicate by ID
             const existing = new Set(prev.map((program) => program.id));
-            const newPrograms = data.data.programs.filter((program) => !existing.has(program.id));
+            const newPrograms = programsData.filter((program) => !existing.has(program.id));
             return [...prev, ...newPrograms];
           });
         } else {
-          setPrograms(data.data.programs);
+          setPrograms(programsData);
         }
 
         setCurrentPage(pageNum);
-        setTotal(data.data.total);
-        setHasMore(data.data.has_more);
+        setTotal(data.data?.total || 0);
+        setHasMore(data.data?.has_more || false);
 
         // Extract unique categories for filtering - only update on fresh fetch
         if (!append) {
           const uniqueCategories = Array.from(
-            new Set(data.data.programs.map((p) => p.category).filter(Boolean))
+            new Set(programsData.map((p) => p.category).filter(Boolean))
           ) as string[];
           setCategories(uniqueCategories);
         }
@@ -420,17 +422,16 @@ export default function EpgPage() {
       try {
         const epgSourcesResponse = await fetch('/api/v1/sources/epg');
         if (epgSourcesResponse.ok) {
-          const epgSourcesData: { success: boolean; data: { items: any[] } } =
-            await epgSourcesResponse.json();
-          if (epgSourcesData.success && epgSourcesData.data.items) {
-            const activeEpgSources = epgSourcesData.data.items.filter((source) => source.enabled);
+          const epgSourcesData: { sources: any[] } = await epgSourcesResponse.json();
+          if (epgSourcesData.sources && Array.isArray(epgSourcesData.sources)) {
+            const activeEpgSources = epgSourcesData.sources.filter((source) => source.enabled);
             setSources(activeEpgSources);
             activeEpgSources.forEach((source) => {
               options.push({
                 id: source.id,
                 name: source.name,
                 type: 'epg_source',
-                display_name: `${source.name} (${(source.source_type || 'epg').toUpperCase()})`,
+                display_name: `${source.name} (${(source.type || 'epg').toUpperCase()})`,
               });
             });
           }
@@ -610,9 +611,10 @@ export default function EpgPage() {
     logo?: string;
     stream_url?: string;
   }) => {
-    // Use stream_url directly if available (preferred), otherwise fall back to proxy endpoint
+    // Use stream_url directly if available (preferred), otherwise fall back to channel preview endpoint
+    // /proxy/{channelId} provides zero-transcode smart delivery (passthrough/repackage only)
     const streamUrl = channel.stream_url ||
-      (channel.database_id ? `${getBackendUrl()}/channel/${encodeURIComponent(channel.database_id)}/stream` : '');
+      (channel.database_id ? `${getBackendUrl()}/proxy/${encodeURIComponent(channel.database_id)}` : '');
 
     if (!streamUrl) {
       console.warn('No stream URL available for channel:', channel.id);
@@ -645,7 +647,7 @@ export default function EpgPage() {
 
   // All channels rendered - no virtualization, just filtering and sorting
   const getAllChannels = useMemo(() => {
-    if (!guideData) return [];
+    if (!guideData || !guideData.programs || !guideData.channels) return [];
 
     let channels = Object.entries(guideData.channels);
 

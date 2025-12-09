@@ -99,7 +99,7 @@ func (h *XMLTVHandler) Ingest(ctx context.Context, source *models.EpgSource, cal
 			}
 
 			// Convert XMLTV programme to EpgProgram model
-			program := h.convertProgramme(programme, source.ID)
+			program := h.convertProgramme(programme, source)
 
 			// Skip programs that fail validation (e.g., invalid time ranges)
 			if err := program.Validate(); err != nil {
@@ -123,12 +123,16 @@ func (h *XMLTVHandler) Ingest(ctx context.Context, source *models.EpgSource, cal
 }
 
 // convertProgramme converts an XMLTV Programme to an EpgProgram model.
-func (h *XMLTVHandler) convertProgramme(p *xmltv.Programme, sourceID models.ULID) *models.EpgProgram {
+func (h *XMLTVHandler) convertProgramme(p *xmltv.Programme, source *models.EpgSource) *models.EpgProgram {
+	// Apply time offset if configured
+	start := h.applyTimeOffset(p.Start, source)
+	stop := h.applyTimeOffset(p.Stop, source)
+
 	program := &models.EpgProgram{
-		SourceID:    sourceID,
+		SourceID:    source.ID,
 		ChannelID:   p.Channel,
-		Start:       p.Start,
-		Stop:        p.Stop,
+		Start:       start,
+		Stop:        stop,
 		Title:       p.Title,
 		SubTitle:    p.SubTitle,
 		Description: p.Description,
@@ -167,6 +171,61 @@ func (h *XMLTVHandler) convertProgramme(p *xmltv.Programme, sourceID models.ULID
 	}
 
 	return program
+}
+
+// applyTimeOffset applies the source's time offset to a time value.
+// The offset can be in formats like "+01:00", "-05:00", "+0100", "-0500".
+// If OriginalTimezone is set (e.g., "Europe/London"), it will be used to
+// convert times that don't have timezone info to the correct timezone first.
+func (h *XMLTVHandler) applyTimeOffset(t time.Time, source *models.EpgSource) time.Time {
+	if source == nil {
+		return t
+	}
+
+	// If time has no timezone info (UTC from parser default) and OriginalTimezone is set,
+	// treat the time as being in that timezone
+	if source.OriginalTimezone != "" && t.Location() == time.UTC {
+		loc, err := time.LoadLocation(source.OriginalTimezone)
+		if err == nil {
+			// The time value is correct but was interpreted as UTC.
+			// We need to treat it as if it were in the original timezone.
+			// Create a new time with the same wall clock but in the original timezone.
+			t = time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), loc)
+		}
+	}
+
+	// Apply manual time offset if configured
+	if source.TimeOffset == "" {
+		return t
+	}
+
+	// Parse offset in formats like "+01:00", "-05:00", "+0100", "-0500"
+	offset := source.TimeOffset
+	if len(offset) < 5 {
+		return t
+	}
+
+	sign := 1
+	if offset[0] == '-' {
+		sign = -1
+		offset = offset[1:]
+	} else if offset[0] == '+' {
+		offset = offset[1:]
+	}
+
+	var hours, minutes int
+	if len(offset) >= 5 && offset[2] == ':' {
+		// Format: "01:00"
+		fmt.Sscanf(offset, "%02d:%02d", &hours, &minutes)
+	} else if len(offset) >= 4 {
+		// Format: "0100"
+		fmt.Sscanf(offset, "%02d%02d", &hours, &minutes)
+	} else {
+		return t
+	}
+
+	duration := time.Duration(sign) * (time.Duration(hours)*time.Hour + time.Duration(minutes)*time.Minute)
+	return t.Add(duration)
 }
 
 // Ensure XMLTVHandler implements EpgHandler.
