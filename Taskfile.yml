@@ -52,6 +52,10 @@ vars:
   TREE_STATE:
     sh: if git diff --quiet 2>/dev/null; then echo "clean"; else echo "dirty"; fi
 
+  # Docker/OCI tag-safe version (replaces + with - since + is invalid in tags)
+  VERSION_TAG:
+    sh: echo "{{.VERSION}}" | tr '+' '-'
+
   # LDFLAGS for version injection (aligned with GitHub Actions)
   LDFLAGS: >-
     -s -w
@@ -62,6 +66,30 @@ vars:
     -X {{.VERSION_PKG}}.TreeState={{.TREE_STATE}}
 
   COVERAGE_FILE: coverage.out
+
+  # Container runtime detection (docker, podman, nerdctl)
+  CONTAINER_RUNTIME:
+    sh: |
+      if command -v podman >/dev/null 2>&1; then echo "podman"
+      elif command -v docker >/dev/null 2>&1; then echo "docker"
+      elif command -v nerdctl >/dev/null 2>&1; then echo "nerdctl"
+      else echo "docker"
+      fi
+
+  # Local architecture detection for container builds
+  LOCAL_ARCH:
+    sh: |
+      arch=$(uname -m)
+      case "$arch" in
+        x86_64|amd64) echo "linux/amd64" ;;
+        aarch64|arm64) echo "linux/arm64" ;;
+        armv7l) echo "linux/arm/v7" ;;
+        *) echo "linux/$arch" ;;
+      esac
+
+  # FFmpeg Dockerfile hash (first 8 chars of sha256) - matches CI workflow
+  FFMPEG_DOCKERFILE_HASH:
+    sh: sha256sum deployment/docker/Dockerfile.ffmpeg | cut -c1-8
 
 tasks:
   default:
@@ -158,32 +186,250 @@ tasks:
       - task: build:windows:arm64
 
   # ============================================
+  # Container Tasks (supports docker, podman, nerdctl)
+  # ============================================
+
+  container:build:
+    desc: Build all container images (FFmpeg base + tvarr app)
+    summary: |
+      Builds both the FFmpeg base image and the tvarr application image.
+      Auto-detects container runtime ({{.CONTAINER_RUNTIME}}) and platform ({{.LOCAL_ARCH}}).
+
+      Options:
+        - PLATFORM: Target platform (default: auto-detected {{.LOCAL_ARCH}})
+        - TAG: Image tag (default: latest)
+
+      For individual builds, use:
+        - task container:build:ffmpeg  (FFmpeg base image)
+        - task container:build:tvarr   (tvarr app image)
+    cmds:
+      - task: container:build:ffmpeg
+      - task: container:build:tvarr
+
+  container:build:tvarr:
+    desc: Build tvarr application container image
+    summary: |
+      Builds the tvarr container image using the local Dockerfile.
+      Requires the FFmpeg base image to exist (or will pull from GHCR).
+      Auto-detects container runtime ({{.CONTAINER_RUNTIME}}) and platform ({{.LOCAL_ARCH}}).
+
+      Options:
+        - PLATFORM: Target platform (default: auto-detected {{.LOCAL_ARCH}})
+        - TAG: Image tag (default: latest)
+        - FFMPEG_IMAGE: FFmpeg base image (default: ghcr.io/jmylchreest/tvarr-ffmpeg:latest)
+
+      Note: If you've built the FFmpeg image locally with container:build:ffmpeg,
+      it will be used automatically (Docker/Podman uses local images when available).
+      Local builds also create a version-tagged image ({{.VERSION}}).
+    vars:
+      TAG: '{{.TAG | default "latest"}}'
+      PLATFORM: '{{.PLATFORM | default .LOCAL_ARCH}}'
+      FFMPEG_IMAGE: '{{.FFMPEG_IMAGE | default "ghcr.io/jmylchreest/tvarr-ffmpeg:latest"}}'
+    cmds:
+      - |
+        {{.CONTAINER_RUNTIME}} build \
+          -f deployment/docker/Dockerfile \
+          --platform {{.PLATFORM}} \
+          --build-arg FFMPEG_IMAGE={{.FFMPEG_IMAGE}} \
+          --build-arg VERSION={{.VERSION}} \
+          --build-arg COMMIT={{.COMMIT}} \
+          --build-arg BUILD_DATE={{.BUILD_DATE}} \
+          --build-arg BRANCH={{.BRANCH}} \
+          --build-arg TREE_STATE={{.TREE_STATE}} \
+          -t ghcr.io/jmylchreest/tvarr:{{.TAG}} \
+          -t ghcr.io/jmylchreest/tvarr:{{.VERSION_TAG}} \
+          .
+
+  container:build:ffmpeg:
+    desc: Build FFmpeg base container image
+    summary: |
+      Builds the FFmpeg base image with hardware acceleration support.
+      This is typically done by CI, but can be built locally for testing.
+      Versions are defined in the Dockerfile.
+      Auto-detects container runtime ({{.CONTAINER_RUNTIME}}) and platform ({{.LOCAL_ARCH}}).
+
+      The image is tagged with a hash of the Dockerfile ({{.FFMPEG_DOCKERFILE_HASH}})
+      to match the CI workflow. If the image already exists locally or in GHCR,
+      it won't be rebuilt unless FORCE=true is set.
+
+      Options:
+        - PLATFORM: Target platform (default: auto-detected {{.LOCAL_ARCH}})
+        - TAG: Image tag override (default: hash-based {{.FFMPEG_DOCKERFILE_HASH}})
+        - FORCE: Force rebuild even if image exists (default: false)
+        - NO_CACHE: Build without using cache (default: false)
+
+      Use container:build:tvarr after this to build tvarr using the local FFmpeg image.
+    vars:
+      TAG: '{{.TAG | default .FFMPEG_DOCKERFILE_HASH}}'
+      PLATFORM: '{{.PLATFORM | default .LOCAL_ARCH}}'
+      FORCE: '{{.FORCE | default "false"}}'
+      NO_CACHE: '{{.NO_CACHE | default "false"}}'
+    cmds:
+      - |
+        IMAGE="ghcr.io/jmylchreest/tvarr-ffmpeg:{{.TAG}}"
+
+        # Check if image exists locally (skip check if NO_CACHE is set)
+        if [[ "{{.FORCE}}" != "true" && "{{.NO_CACHE}}" != "true" ]] && {{.CONTAINER_RUNTIME}} image inspect "$IMAGE" >/dev/null 2>&1; then
+          echo "Image $IMAGE already exists locally. Use FORCE=true to rebuild."
+          exit 0
+        fi
+
+        echo "Building FFmpeg image: $IMAGE"
+        {{.CONTAINER_RUNTIME}} build \
+          -f deployment/docker/Dockerfile.ffmpeg \
+          --target runtime \
+          --platform {{.PLATFORM}} \
+          $([ "{{.NO_CACHE}}" = "true" ] && echo "--no-cache") \
+          -t "$IMAGE" \
+          $([ "{{.TAG}}" = "{{.FFMPEG_DOCKERFILE_HASH}}" ] && echo "-t ghcr.io/jmylchreest/tvarr-ffmpeg:latest") \
+          .
+
+  container:run:
+    desc: Run tvarr container with normal entrypoint
+    summary: |
+      Runs the tvarr container with the normal entrypoint (starts the server).
+      Passes through DRI devices for hardware acceleration if available.
+      Use NVIDIA=true to enable NVIDIA GPU passthrough (requires nvidia-container-toolkit).
+
+      Environment Variables:
+        TAG                       - Container tag (default: latest)
+        PORT                      - Host port mapping (default: 8080)
+        NVIDIA                    - Enable NVIDIA GPU (default: false)
+        LOG_LEVEL                 - Log level (default: debug)
+        BASE_URL                  - External base URL for M3U proxy URLs (e.g., https://tvarr.example.com)
+        DATABASE_DSN              - Database connection string (optional)
+        TZ                        - Timezone (optional)
+
+      Example:
+        task container:run BASE_URL=https://tvarr.example.com TZ=America/New_York
+    vars:
+      TAG: '{{.TAG | default "latest"}}'
+      PORT: '{{.PORT | default "8080"}}'
+      NVIDIA: '{{.NVIDIA | default "false"}}'
+      LOG_LEVEL: '{{.LOG_LEVEL | default "debug"}}'
+      BASE_URL: '{{.BASE_URL | default ""}}'
+      DATABASE_DSN: '{{.DATABASE_DSN | default ""}}'
+      TZ: '{{.TZ | default ""}}'
+    cmds:
+      - |
+        {{.CONTAINER_RUNTIME}} run --rm -it \
+          -p {{.PORT}}:8080 \
+          -v tvarr-data:/data \
+          -e TVARR_LOGGING_LEVEL={{.LOG_LEVEL}} \
+          $([ -n "{{.BASE_URL}}" ] && echo "-e TVARR_SERVER_BASE_URL={{.BASE_URL}}") \
+          $([ -n "{{.DATABASE_DSN}}" ] && echo "-e TVARR_DATABASE_DSN={{.DATABASE_DSN}}") \
+          $([ -n "{{.TZ}}" ] && echo "-e TZ={{.TZ}}") \
+          $([ -d /dev/dri ] && echo "--device /dev/dri:/dev/dri") \
+          $([ "{{.NVIDIA}}" = "true" ] && echo "--gpus all") \
+          ghcr.io/jmylchreest/tvarr:{{.TAG}}
+
+  container:run:tvarr:
+    desc: Run tvarr container with interactive shell (for debugging)
+    summary: |
+      Starts the tvarr container with an interactive shell instead of the normal entrypoint.
+      Useful for debugging, inspecting the container environment, or testing FFmpeg manually.
+      Passes through DRI devices for hardware acceleration if available.
+      Use NVIDIA=true to enable NVIDIA GPU passthrough (requires nvidia-container-toolkit).
+    vars:
+      TAG: '{{.TAG | default "latest"}}'
+      NVIDIA: '{{.NVIDIA | default "false"}}'
+    cmds:
+      - |
+        {{.CONTAINER_RUNTIME}} run --rm -it \
+          -v tvarr-data:/data \
+          $([ -d /dev/dri ] && echo "--device /dev/dri:/dev/dri") \
+          $([ "{{.NVIDIA}}" = "true" ] && echo "--gpus all") \
+          --entrypoint /bin/bash \
+          ghcr.io/jmylchreest/tvarr:{{.TAG}}
+
+  container:run:ffmpeg:
+    desc: Run FFmpeg base container with interactive shell (for debugging)
+    summary: |
+      Starts the FFmpeg base container with an interactive shell.
+      Useful for testing FFmpeg/FFprobe commands, verifying hardware acceleration,
+      or debugging codec issues without tvarr overhead.
+      Passes through DRI devices for hardware acceleration if available.
+      Use NVIDIA=true to enable NVIDIA GPU passthrough (requires nvidia-container-toolkit).
+
+      Example commands once inside:
+        ffmpeg -version               # Check FFmpeg build info
+        ffmpeg -hwaccels              # List available hardware accelerators
+        vainfo                        # Check VAAPI support (Intel/AMD)
+        ffmpeg -encoders | grep nvenc # Check NVIDIA encoder support
+        check-hwaccel                 # Run full hardware acceleration test
+    vars:
+      TAG: '{{.TAG | default "latest"}}'
+      NVIDIA: '{{.NVIDIA | default "false"}}'
+    cmds:
+      - |
+        {{.CONTAINER_RUNTIME}} run --rm -it \
+          $([ -d /dev/dri ] && echo "--device /dev/dri:/dev/dri") \
+          $([ "{{.NVIDIA}}" = "true" ] && echo "--gpus all") \
+          --entrypoint /bin/bash \
+          ghcr.io/jmylchreest/tvarr-ffmpeg:{{.TAG}}
+
+  container:preflight:
+    desc: Run tvarr container in preflight mode to check HW acceleration
+    summary: |
+      Runs the hardware acceleration check script inside the container.
+      This tests what HW encoders/decoders are actually working.
+      Passes through DRI devices for VAAPI/Intel/AMD GPU support.
+      Use NVIDIA=true to enable NVIDIA GPU passthrough.
+    vars:
+      TAG: '{{.TAG | default "latest"}}'
+      NVIDIA: '{{.NVIDIA | default "false"}}'
+    cmds:
+      - |
+        {{.CONTAINER_RUNTIME}} run --rm \
+          $([ -d /dev/dri ] && echo "--device /dev/dri:/dev/dri") \
+          $([ "{{.NVIDIA}}" = "true" ] && echo "--gpus all") \
+          --entrypoint /usr/local/bin/check-hwaccel \
+          ghcr.io/jmylchreest/tvarr-ffmpeg:{{.TAG}}
+
+  container:hwaccel:
+    desc: Run hardware acceleration test (alias for container:preflight)
+    summary: |
+      Alias for container:preflight. Tests hardware acceleration support.
+
+      Options:
+        --quick, -q   Quick check (list available, skip encode tests)
+        --json, -j    Output results as JSON
+        --verbose, -v Show detailed FFmpeg output
+
+      GPU Support:
+        - Intel/AMD: Automatic via /dev/dri passthrough
+        - NVIDIA: Use NVIDIA=true (requires nvidia-container-toolkit)
+
+      Example:
+        task container:hwaccel                  # Test Intel/AMD
+        task container:hwaccel NVIDIA=true     # Test NVIDIA
+        task container:hwaccel -- --quick       # Quick check only
+
+      Inside container (interactive shell):
+        check-hwaccel              # Run the test script
+        check-hwaccel --quick      # Quick check
+        check-hwaccel --json       # JSON output
+    vars:
+      TAG: '{{.TAG | default "latest"}}'
+      NVIDIA: '{{.NVIDIA | default "false"}}'
+      ARGS: '{{.CLI_ARGS}}'
+    cmds:
+      - |
+        {{.CONTAINER_RUNTIME}} run --rm \
+          $([ -d /dev/dri ] && echo "--device /dev/dri:/dev/dri") \
+          $([ "{{.NVIDIA}}" = "true" ] && echo "--gpus all") \
+          --entrypoint /usr/local/bin/check-hwaccel \
+          ghcr.io/jmylchreest/tvarr-ffmpeg:{{.TAG}} {{.ARGS}}
+
+  # ============================================
   # UPX Compression Tasks
   # ============================================
 
-  upx:install:
-    desc: Install UPX if not present
-    cmds:
-      - |
-        if ! command -v upx &> /dev/null; then
-          echo "Installing UPX..."
-          if command -v apt-get &> /dev/null; then
-            sudo apt-get update && sudo apt-get install -y upx
-          elif command -v brew &> /dev/null; then
-            brew install upx
-          elif command -v pacman &> /dev/null; then
-            sudo pacman -S upx
-          else
-            echo "Please install UPX manually: https://github.com/upx/upx/releases"
-            exit 1
-          fi
-        fi
-    status:
-      - command -v upx
-
   upx:compress:
-    desc: Compress all release binaries with UPX
-    deps: [upx:install]
+    desc: Compress all release binaries with UPX (requires upx installed)
+    preconditions:
+      - sh: command -v upx
+        msg: "UPX not found. Install via: apt install upx / brew install upx / pacman -S upx"
     cmds:
       - |
         echo "Compressing binaries with UPX..."
@@ -201,6 +447,30 @@ tasks:
           fi
         done
 
+  upx:compress:file:
+    desc: Compress a single file with UPX (FILE variable required)
+    summary: |
+      Compresses a single binary file with UPX.
+      Used by the Dockerfile to compress the final tvarr binary.
+
+      Usage:
+        task upx:compress:file FILE=/path/to/binary
+    requires:
+      vars: [FILE]
+    preconditions:
+      - sh: command -v upx
+        msg: "UPX not found. Install via: apt install upx / brew install upx / pacman -S upx"
+      - sh: test -f "{{.FILE}}"
+        msg: "File not found: {{.FILE}}"
+    cmds:
+      - |
+        original_size=$(stat -c%s "{{.FILE}}" 2>/dev/null || stat -f%z "{{.FILE}}")
+        echo "Compressing {{.FILE}} ($(numfmt --to=iec $original_size 2>/dev/null || echo "${original_size} bytes"))..."
+        upx --best --lzma "{{.FILE}}" 2>/dev/null || upx --best "{{.FILE}}" || { echo "UPX compression failed"; exit 1; }
+        compressed_size=$(stat -c%s "{{.FILE}}" 2>/dev/null || stat -f%z "{{.FILE}}")
+        ratio=$((100 - (compressed_size * 100 / original_size)))
+        echo "Compressed: $(numfmt --to=iec $compressed_size 2>/dev/null || echo "${compressed_size} bytes") (${ratio}% reduction)"
+
   # ============================================
   # Frontend Tasks
   # ============================================
@@ -208,13 +478,20 @@ tasks:
   frontend:install:
     desc: Install frontend dependencies
     dir: "{{.FRONTEND_DIR}}"
+    preconditions:
+      - sh: command -v node
+        msg: "Node.js not found. Install Node.js 24+ via your preferred method (fnm, nvm, volta, or direct install)"
+      - sh: command -v pnpm
+        msg: "pnpm not found. Install via npm install -g pnpm"
+      - sh: 'node -e "process.exit(parseInt(process.version.slice(1)) >= 24 ? 0 : 1)"'
+        msg: "Node.js 24+ required. Use fnm/nvm to switch, e.g. fnm use 24"
     cmds:
       - pnpm install
     sources:
       - package.json
-      - package-lock.json
+      - pnpm-lock.yaml
     generates:
-      - node_modules/.package-lock.json
+      - node_modules/.pnpm
 
   frontend:dev:
     desc: Run frontend in development mode
@@ -295,16 +572,6 @@ tasks:
       - task: frontend:embed
       - task: build:all
       - task: upx:compress
-      - task: release:archive
-      - task: release:checksums
-      - echo "Release artifacts in {{.RELEASE_DIR}}/"
-
-  release:local:fast:
-    desc: Build local release without UPX compression (faster)
-    cmds:
-      - task: clean:release
-      - task: frontend:embed
-      - task: build:all
       - task: release:archive
       - task: release:checksums
       - echo "Release artifacts in {{.RELEASE_DIR}}/"
@@ -487,59 +754,50 @@ tasks:
       - go mod tidy
 
   deps:update:
-    desc: Update all Go dependencies to latest versions
+    desc: Update Go dependencies within compatible versions
+    cmds:
+      - go get -u=patch ./...
+      - go mod tidy
+
+  deps:upgrade:
+    desc: Upgrade Go dependencies to latest versions (may include breaking changes)
     cmds:
       - go get -u ./...
       - go mod tidy
 
   deps:update:all:
-    desc: Update all dependencies (Go + frontend)
+    desc: Update all dependencies within compatible versions (safe)
     cmds:
       - task: deps:update
       - task: frontend:deps:update
+      - task: deps:check:external
 
   deps:upgrade:all:
-    desc: Upgrade all dependencies to latest versions (Go + frontend, may have breaking changes)
+    desc: Upgrade all dependencies to latest versions (Go + frontend + external)
     cmds:
-      - task: deps:update
-      - task: frontend:deps:upgrade:apply
+      - task: deps:upgrade
+      - task: frontend:deps:upgrade
+      - task: deps:upgrade:external
 
-  deps:check:
-    desc: Check for available Go dependency updates (like cargo outdated)
+  deps:check:external:
+    desc: Check external dependencies (FFmpeg, gosu) for updates
     cmds:
-      - |
-        if ! command -v go-mod-upgrade &> /dev/null; then
-          echo "Installing go-mod-upgrade..."
-          go install github.com/oligot/go-mod-upgrade@latest
-        fi
-      - go-mod-upgrade
+      - ./scripts/update-dependencies.sh --check
 
-  deps:vuln:
-    desc: Check for vulnerabilities in dependencies (alias for security:vulncheck)
+  deps:upgrade:external:
+    desc: Upgrade external dependencies (FFmpeg, gosu) to latest versions
     cmds:
-      - task: security:vulncheck
+      - ./scripts/update-dependencies.sh --update
 
   # Frontend dependency tasks
   frontend:deps:update:
-    desc: Update frontend dependencies (npm)
+    desc: Update frontend dependencies within semver ranges (safe)
     dir: "{{.FRONTEND_DIR}}"
     cmds:
       - pnpm update
 
-  frontend:deps:check:
-    desc: Check for available frontend dependency updates (like cargo outdated)
-    dir: "{{.FRONTEND_DIR}}"
-    cmds:
-      - pnpm outdated || true
-
   frontend:deps:upgrade:
-    desc: Check available frontend dependency upgrades (use :apply to install)
-    dir: "{{.FRONTEND_DIR}}"
-    cmds:
-      - npx npm-check-updates
-
-  frontend:deps:upgrade:apply:
-    desc: Apply all frontend dependency upgrades (may have breaking changes)
+    desc: Upgrade frontend dependencies to latest versions (may include breaking changes)
     dir: "{{.FRONTEND_DIR}}"
     cmds:
       - npx npm-check-updates -u
@@ -702,28 +960,28 @@ tasks:
   # ============================================
 
   bump:major:
-    desc: Bump major version (X.0.0)
+    desc: Show next major version (X.0.0)
     cmds:
       - task: _bump
         vars:
           BUMP_TYPE: major
 
   bump:minor:
-    desc: Bump minor version (X.Y.0)
+    desc: Show next minor version (X.Y.0)
     cmds:
       - task: _bump
         vars:
           BUMP_TYPE: minor
 
   bump:patch:
-    desc: Bump patch version (X.Y.Z)
+    desc: Show next patch version (X.Y.Z)
     cmds:
       - task: _bump
         vars:
           BUMP_TYPE: patch
 
   bump:
-    desc: Bump patch version (alias for bump:patch)
+    desc: Show next patch version (alias for bump:patch)
     cmds:
       - task: bump:patch
 
@@ -731,36 +989,22 @@ tasks:
     internal: true
     cmds:
       - |
-        # Get current version from last tag
         LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
         CURRENT_VERSION="${LAST_TAG#v}"
-
-        # Parse version components
         IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
-        MAJOR=${MAJOR:-0}
-        MINOR=${MINOR:-0}
-        PATCH=${PATCH:-0}
+        MAJOR=${MAJOR:-0}; MINOR=${MINOR:-0}; PATCH=${PATCH:-0}
 
-        # Calculate new version based on bump type
         case "{{.BUMP_TYPE}}" in
-          major)
-            NEW_VERSION="$((MAJOR + 1)).0.0"
-            ;;
-          minor)
-            NEW_VERSION="${MAJOR}.$((MINOR + 1)).0"
-            ;;
-          patch|*)
-            NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
-            ;;
+          major) NEW_VERSION="$((MAJOR + 1)).0.0" ;;
+          minor) NEW_VERSION="${MAJOR}.$((MINOR + 1)).0" ;;
+          patch|*) NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))" ;;
         esac
 
-        echo "Current version: ${CURRENT_VERSION}"
-        echo "New version:     ${NEW_VERSION}"
-        echo ""
-        echo "To create a release, run: task release VERSION=${NEW_VERSION}"
+        echo "Current: ${CURRENT_VERSION} -> Next: ${NEW_VERSION}"
+        echo "To release: task release VERSION=${NEW_VERSION}"
 
   release:
-    desc: Create a release (VERSION required, e.g., task release VERSION=1.2.3)
+    desc: Create and push a release tag (VERSION required)
     requires:
       vars: [VERSION]
     cmds:
@@ -781,122 +1025,32 @@ tasks:
           exit 1
         fi
 
-        # Check for uncommitted changes (excluding package.json which we'll update)
-        DIRTY_FILES=$(git diff --name-only; git diff --cached --name-only)
-        DIRTY_NON_PKG=$(echo "$DIRTY_FILES" | grep -v "^${PKG_JSON}$" | grep -v "^$" || true)
-        if [ -n "$DIRTY_NON_PKG" ]; then
-          echo "Error: You have uncommitted changes:"
-          echo "$DIRTY_NON_PKG"
-          echo ""
-          echo "Please commit or stash them first."
-          exit 1
-        fi
-
-        # Sync frontend package.json version
-        echo "Syncing frontend version to ${VERSION}..."
+        # Sync frontend package.json version if needed
         CURRENT_PKG_VERSION=$(grep -o '"version": "[^"]*"' "$PKG_JSON" | cut -d'"' -f4)
         if [ "$CURRENT_PKG_VERSION" != "$VERSION" ]; then
           sed -i "s/\"version\": \"${CURRENT_PKG_VERSION}\"/\"version\": \"${VERSION}\"/" "$PKG_JSON"
           git add "$PKG_JSON"
-          git commit -m "chore: bump frontend version to ${VERSION}"
-          echo "Committed package.json version update"
-        else
-          echo "Frontend version already at ${VERSION}"
+          git commit -m "chore: bump version to ${VERSION}"
         fi
 
-        # Get the previous tag for changelog
+        # Get previous tag for changelog
         PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-
-        echo "Creating release ${VERSION}..."
-        echo ""
-
-        # Generate changelog
-        echo "## Changelog"
-        echo ""
-        if [ -n "$PREV_TAG" ]; then
-          echo "Changes since ${PREV_TAG}:"
-          echo ""
-          git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges
-        else
-          echo "Initial release"
-          echo ""
-          git log --pretty=format:"- %s (%h)" --no-merges
-        fi
-        echo ""
-        echo ""
-
-        # Confirm
-        read -p "Create tag ${TAG} and push? [y/N] " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-          echo "Aborted."
-          exit 1
-        fi
 
         # Create annotated tag with changelog
         CHANGELOG=$(
+          echo "Release ${VERSION}"
+          echo ""
           if [ -n "$PREV_TAG" ]; then
-            echo "Release ${VERSION}"
-            echo ""
             echo "Changes since ${PREV_TAG}:"
-            echo ""
-            git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges
+            git log "${PREV_TAG}..HEAD" --pretty=format:"- %s" --no-merges
           else
-            echo "Release ${VERSION}"
-            echo ""
             echo "Initial release"
           fi
         )
 
         git tag -a "${TAG}" -m "${CHANGELOG}"
-        echo ""
-        echo "Tag ${TAG} created locally."
-        echo ""
-        echo "To push the release:"
-        echo "  git push origin ${TAG}"
-
-  release:auto:
-    desc: Auto-release with patch bump if there are changes since last tag
-    cmds:
-      - |
-        # Get last tag
-        LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-
-        # Check if there are any commits since last tag
-        if [ -n "$LAST_TAG" ]; then
-          COMMITS_SINCE=$(git rev-list "${LAST_TAG}..HEAD" --count)
-          if [ "$COMMITS_SINCE" -eq 0 ]; then
-            echo "No commits since ${LAST_TAG}. Nothing to release."
-            exit 0
-          fi
-          echo "Found ${COMMITS_SINCE} commits since ${LAST_TAG}"
-        else
-          echo "No previous tags found. This will be the first release."
-        fi
-
-        # Check for uncommitted changes
-        if ! git diff --quiet || ! git diff --cached --quiet; then
-          echo "Error: You have uncommitted changes. Please commit or stash them first."
-          exit 1
-        fi
-
-        # Calculate next patch version
-        CURRENT_VERSION="${LAST_TAG#v}"
-        if [ -z "$CURRENT_VERSION" ]; then
-          CURRENT_VERSION="0.0.0"
-        fi
-
-        IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
-        MAJOR=${MAJOR:-0}
-        MINOR=${MINOR:-0}
-        PATCH=${PATCH:-0}
-        NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
-
-        echo "Will create release: ${NEW_VERSION}"
-        echo ""
-
-        # Call release task
-        task release VERSION="${NEW_VERSION}"
+        git push origin "${TAG}"
+        echo "Released ${TAG}"
 
   # ============================================
   # E2E Testing Tasks
@@ -909,50 +1063,7 @@ tasks:
       - mkdir -p {{.DEBUG_DIR}}
       - go build -o {{.DEBUG_DIR}}/e2e-runner ./cmd/e2e-runner
 
-  e2e:run:
-    desc: Run E2E tests against a running server (requires tvarr to be running)
-    deps: [e2e:build]
-    summary: |
-      Runs the E2E test suite against a running tvarr server.
-
-      Prerequisites:
-        - tvarr server must be running (task run:dev or task run)
-        - Clean database recommended for consistent results
-
-      By default, generates random test data (50 channels, 5000 programs) using
-      fictional broadcaster names. Test data is written to temp files and served
-      via file:// URLs.
-
-      Options via environment variables:
-        - BASE_URL: API base URL (default: http://localhost:8080)
-        - CHANNEL_COUNT: Number of channels to generate (default: 50)
-        - PROGRAM_COUNT: Total number of programs to generate (default: 5000)
-        - RANDOM_SEED: Seed for reproducible test data (default: time-based)
-        - REQUIRED_CHANNELS: Fail if generated channels don't match (default: 0, disabled)
-        - REQUIRED_PROGRAMS: Fail if generated programs don't match (default: 0, disabled)
-        - TIMEOUT: Overall timeout duration (default: 5m)
-        - CACHE_CHANNEL_LOGOS: Enable channel logo caching (default: false)
-        - CACHE_PROGRAM_LOGOS: Enable program logo caching (default: false)
-        - NO_RANDOM_TESTDATA: Set to disable random test data and use external URLs
-        - M3U_URL: Custom M3U source URL (only when NO_RANDOM_TESTDATA is set)
-        - EPG_URL: Custom EPG source URL (only when NO_RANDOM_TESTDATA is set)
-    cmds:
-      - |
-        ./{{.DEBUG_DIR}}/e2e-runner \
-          {{if .BASE_URL}}-base-url "{{.BASE_URL}}"{{end}} \
-          {{if .NO_RANDOM_TESTDATA}}-random-testdata=false{{end}} \
-          {{if .CHANNEL_COUNT}}-channel-count {{.CHANNEL_COUNT}}{{end}} \
-          {{if .PROGRAM_COUNT}}-program-count {{.PROGRAM_COUNT}}{{end}} \
-          {{if .RANDOM_SEED}}-random-seed {{.RANDOM_SEED}}{{end}} \
-          {{if .REQUIRED_CHANNELS}}-required-channels {{.REQUIRED_CHANNELS}}{{end}} \
-          {{if .REQUIRED_PROGRAMS}}-required-programs {{.REQUIRED_PROGRAMS}}{{end}} \
-          {{if .M3U_URL}}-m3u-url "{{.M3U_URL}}"{{end}} \
-          {{if .EPG_URL}}-epg-url "{{.EPG_URL}}"{{end}} \
-          {{if .TIMEOUT}}-timeout "{{.TIMEOUT}}"{{end}} \
-          {{if .CACHE_CHANNEL_LOGOS}}-cache-channel-logos{{end}} \
-          {{if .CACHE_PROGRAM_LOGOS}}-cache-program-logos{{end}}
-
-  e2e:full:
+  e2e:
     desc: Run full E2E test with in-memory database (no external dependencies)
     summary: |
       Runs E2E tests with the e2e-runner managing its own tvarr server.
