@@ -1063,14 +1063,11 @@ export function RelayProfileMappings() {
   );
 
   return (
-    <div className="container mx-auto p-4 space-y-6">
+    <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Client Detection</h1>
-          <p className="text-muted-foreground">
-            Configure automatic codec selection based on client properties
-          </p>
-        </div>
+        <p className="text-muted-foreground">
+          Configure automatic codec selection based on client properties
+        </p>
         <CreateMappingSheet
           onCreateMapping={handleCreateMapping}
           loading={loading.create}
