@@ -1,0 +1,197 @@
+# tvarr Kubernetes Manifests
+# Alternative to Helm for users who prefer raw YAML
+#
+# Usage:
+#   kubectl apply -f manifests.yaml
+#
+# Customize by editing values below or using kustomize overlays
+
+---
+# Namespace (optional - remove if deploying to existing namespace)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tvarr
+
+---
+# ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tvarr
+  namespace: tvarr
+
+---
+# PersistentVolumeClaim
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tvarr-data
+  namespace: tvarr
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  # storageClassName: "" # Uncomment and set if needed
+
+---
+# ConfigMap
+# NOTE: TVARR_ env vars map to viper config using TVARR_<SECTION>_<KEY> format
+# Example: TVARR_SERVER_PORT maps to config server.port
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tvarr-config
+  namespace: tvarr
+data:
+  PUID: "1000"
+  PGID: "1000"
+  TZ: "UTC"
+  # Server configuration
+  TVARR_SERVER_PORT: "8080"
+  # IMPORTANT: Set this to your external ingress URL for correct M3U playlist URLs
+  # Example: https://tvarr.example.com
+  # TVARR_SERVER_BASE_URL: ""
+  # Database configuration
+  TVARR_DATABASE_DSN: "file:/data/tvarr.db"
+  # Logging configuration
+  TVARR_LOGGING_LEVEL: "info"
+  # Storage configuration
+  TVARR_STORAGE_BASE_DIR: "/data"
+  # FFmpeg configuration
+  TVARR_FFMPEG_BINARY_PATH: "/usr/bin/ffmpeg"
+  TVARR_FFMPEG_PROBE_PATH: "/usr/bin/ffprobe"
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tvarr
+  namespace: tvarr
+  labels:
+    app.kubernetes.io/name: tvarr
+    app.kubernetes.io/instance: tvarr
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tvarr
+      app.kubernetes.io/instance: tvarr
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tvarr
+        app.kubernetes.io/instance: tvarr
+    spec:
+      serviceAccountName: tvarr
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: tvarr
+          image: ghcr.io/jmylchreest/tvarr:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: tvarr-config
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 2000m
+              memory: 2Gi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            # Uncomment for Intel/AMD GPU support
+            # - name: dri
+            #   mountPath: /dev/dri
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: tvarr-data
+        # Uncomment for Intel/AMD GPU support
+        # - name: dri
+        #   hostPath:
+        #     path: /dev/dri
+
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: tvarr
+  namespace: tvarr
+  labels:
+    app.kubernetes.io/name: tvarr
+    app.kubernetes.io/instance: tvarr
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: tvarr
+    app.kubernetes.io/instance: tvarr
+
+---
+# Ingress (optional - uncomment and customize)
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: tvarr
+#   namespace: tvarr
+#   labels:
+#     app.kubernetes.io/name: tvarr
+#     app.kubernetes.io/instance: tvarr
+#   annotations:
+#     # kubernetes.io/ingress.class: nginx
+#     # cert-manager.io/cluster-issuer: letsencrypt-prod
+# spec:
+#   ingressClassName: nginx
+#   tls:
+#     - hosts:
+#         - tvarr.example.com
+#       secretName: tvarr-tls
+#   rules:
+#     - host: tvarr.example.com
+#       http:
+#         paths:
+#           - path: /
+#             pathType: Prefix
+#             backend:
+#               service:
+#                 name: tvarr
+#                 port:
+#                   name: http

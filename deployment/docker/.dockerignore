@@ -1,0 +1,71 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+LICENSE
+docs/
+specs/
+
+# IDE/Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+dist/
+build/
+*.exe
+*.test
+*.out
+
+# Frontend build (handled separately)
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# Go
+vendor/
+*.mod.bak
+
+# Test files
+*_test.go
+testdata/
+coverage/
+*.cover
+*.coverprofile
+
+# Docker (avoid recursion)
+Dockerfile*
+.dockerignore
+docker-compose*.yml
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Environment files (should not be baked into image)
+.env*
+*.env
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Kubernetes/Helm (not needed in container build)
+deployment/kubernetes/

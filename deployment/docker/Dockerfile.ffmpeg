@@ -1,0 +1,120 @@
+# tvarr-ffmpeg: Minimal FFmpeg with hardware acceleration
+# AMD VAAPI (RDNA 3/4), Intel QSV/VAAPI, NVIDIA NVENC/NVDEC
+# Tags: YYYY.MM.DD-N, latest
+
+# Stage 1: Build tvarr-ffmpeg package
+FROM archlinux:base AS builder
+
+RUN pacman-key --init && pacman -Syu --noconfirm && \
+    pacman -S --noconfirm base-devel git sudo
+
+RUN useradd -m builder && \
+    echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+COPY deployment/docker/pkgbuild/ffmpeg /home/builder/pkgbuild
+RUN chown -R builder:builder /home/builder/pkgbuild
+
+USER builder
+WORKDIR /home/builder/pkgbuild
+
+RUN makepkg -s --noconfirm
+
+# Stage 2: Build minimal rootfs
+FROM archlinux:base AS rootfs-builder
+
+RUN echo -e '\n\
+NoExtract = usr/share/doc/*\n\
+NoExtract = usr/share/man/*\n\
+NoExtract = usr/share/info/*\n\
+NoExtract = usr/share/locale/*\n\
+NoExtract = usr/share/i18n/*\n\
+NoExtract = usr/share/help/*\n\
+NoExtract = usr/share/gtk-doc/*\n\
+NoExtract = usr/share/licenses/*\n\
+NoExtract = usr/share/gir-1.0/*\n\
+NoExtract = usr/share/terminfo/*\n\
+NoExtract = usr/share/file/*\n\
+NoExtract = usr/share/mime/*\n\
+NoExtract = usr/share/model/*\n\
+NoExtract = usr/share/iana-etc/*\n\
+NoExtract = usr/share/alsa/ucm*\n\
+NoExtract = usr/share/gtk-4.0/*\n\
+NoExtract = usr/lib/python*/*\n\
+NoExtract = usr/lib/*.a\n\
+NoExtract = usr/lib/gconv/*\n\
+NoExtract = usr/lib/glycin*/*' >> /etc/pacman.conf
+
+RUN pacman-key --init && pacman -Syu --noconfirm
+
+RUN mkdir -p /rootfs/var/lib/pacman /localrepo
+
+COPY --from=builder /home/builder/pkgbuild/*.pkg.tar.zst /localrepo/
+
+RUN repo-add /localrepo/localrepo.db.tar.gz /localrepo/*.pkg.tar.zst && \
+    echo -e '\n[localrepo]\nSigLevel = Optional TrustAll\nServer = file:///localrepo' >> /etc/pacman.conf
+
+# Install minimal base system + FFmpeg
+# - tzdata: timezone data for TZ environment variable
+# Note: curl/jq/yq are installed in the tvarr image, not here (keeps FFmpeg image minimal)
+RUN pacman -Sy --noconfirm --needed -r /rootfs \
+    --dbpath /rootfs/var/lib/pacman \
+    --cachedir /var/cache/pacman/pkg \
+    filesystem glibc gcc-libs bash coreutils shadow \
+    tzdata \
+    tvarr-ffmpeg
+
+RUN rm -rf /rootfs/var/cache/pacman/pkg/* /rootfs/var/lib/pacman/sync/*
+
+RUN chroot /rootfs /sbin/ldconfig || true
+
+# Stage 3: Minimal runtime image
+FROM scratch AS runtime
+
+LABEL org.opencontainers.image.title="tvarr-ffmpeg" \
+      org.opencontainers.image.description="FFmpeg with hardware acceleration for tvarr" \
+      org.opencontainers.image.source="https://github.com/jmylchreest/tvarr"
+
+COPY --from=rootfs-builder /rootfs/ /
+
+ENV LANG=C.UTF-8 \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+
+COPY scripts/check-hwaccel.sh /usr/local/bin/check-hwaccel
+
+RUN groupadd -g 1000 tvarr && \
+    useradd -u 1000 -g tvarr -d /data -s /bin/bash tvarr && \
+    mkdir -p /data /dev/dri /tmp && \
+    chown -R tvarr:tvarr /data && \
+    chmod +x /usr/local/bin/check-hwaccel
+
+CMD ["ffmpeg", "-version"]
+
+# Alternative: Full build with base system (for debugging)
+FROM archlinux:base AS full-build
+
+LABEL org.opencontainers.image.title="tvarr-ffmpeg" \
+      org.opencontainers.image.description="FFmpeg with hardware acceleration for tvarr (full Arch base)" \
+      org.opencontainers.image.source="https://github.com/jmylchreest/tvarr"
+
+RUN pacman-key --init && pacman -Syu --noconfirm
+
+COPY --from=builder /home/builder/pkgbuild/*.pkg.tar.zst /tmp/
+
+RUN repo-add /tmp/localrepo.db.tar.gz /tmp/*.pkg.tar.zst && \
+    echo -e '\n[localrepo]\nSigLevel = Optional TrustAll\nServer = file:///tmp' >> /etc/pacman.conf && \
+    pacman -Sy --noconfirm tvarr-ffmpeg && \
+    pacman -Scc --noconfirm
+
+ENV NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+
+COPY scripts/check-hwaccel.sh /usr/local/bin/check-hwaccel
+
+RUN groupadd -g 1000 tvarr && \
+    useradd -u 1000 -g tvarr -d /data -s /bin/bash tvarr && \
+    mkdir -p /data /dev/dri && \
+    chown -R tvarr:tvarr /data && \
+    chmod +x /usr/local/bin/check-hwaccel
+
+CMD ["ffmpeg", "-version"]
