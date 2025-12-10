@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/go-chi/chi/v5"
@@ -91,6 +92,15 @@ func (h *RelayStreamHandler) Register(api huma.API) {
 		Description: "Clears all cached codec information, forcing re-probe on next stream request",
 		Tags:        []string{"Stream Relay"},
 	}, h.ClearCodecCache)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "listRelaySessions",
+		Method:      "GET",
+		Path:        "/api/v1/relay/sessions",
+		Summary:     "List active relay sessions",
+		Description: "Returns all active relay sessions with their statistics for flow visualization",
+		Tags:        []string{"Stream Relay"},
+	}, h.ListRelaySessions)
 }
 
 // RegisterChiRoutes registers streaming routes as raw Chi handlers.
@@ -204,9 +214,48 @@ func (h *RelayStreamHandler) handleRawStreamOptions(w http.ResponseWriter, r *ht
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// validFormatValues contains valid ?format= query parameter values.
+var validFormatValues = map[string]bool{
+	relay.FormatValueHLS:    true,
+	relay.FormatValueDASH:   true,
+	relay.FormatValueMPEGTS: true,
+	relay.FormatValueFMP4:   true,
+	relay.FormatValueHLSFMP4: true,
+	relay.FormatValueHLSTS:   true,
+	relay.FormatValueAuto:   true,
+	"ts":                    true, // Alias for mpegts
+	"mpeg-ts":               true, // Alias for mpegts
+}
+
+// validateFormatParam validates the ?format= query parameter and returns 400 Bad Request for invalid values.
+// Returns true if format is valid (or empty), false if invalid format was detected and error response was sent.
+func (h *RelayStreamHandler) validateFormatParam(w http.ResponseWriter, r *http.Request) bool {
+	formatParam := r.URL.Query().Get(relay.QueryParamFormat)
+	if formatParam == "" {
+		return true // No format specified is valid
+	}
+
+	// Normalize to lowercase for comparison
+	formatLower := strings.ToLower(formatParam)
+	if !validFormatValues[formatLower] {
+		h.logger.Warn("Invalid format parameter",
+			"format", formatParam,
+			"remote_addr", r.RemoteAddr,
+		)
+		http.Error(w, fmt.Sprintf("invalid format parameter: %q (valid values: hls, dash, mpegts, fmp4, hls-fmp4, hls-ts, auto)", formatParam), http.StatusBadRequest)
+		return false
+	}
+	return true
+}
+
 // handleRawStream is the main raw HTTP handler for streaming.
 // It dispatches to mode-specific handlers based on proxy configuration.
 func (h *RelayStreamHandler) handleRawStream(w http.ResponseWriter, r *http.Request) {
+	// Validate format parameter early (T040/T041)
+	if !h.validateFormatParam(w, r) {
+		return
+	}
+
 	ctx := r.Context()
 
 	proxyIDStr := chi.URLParam(r, "proxyId")
@@ -257,6 +306,11 @@ func (h *RelayStreamHandler) handleRawStream(w http.ResponseWriter, r *http.Requ
 // This provides zero-transcode smart delivery for admin UI previews.
 // Unlike the full proxy endpoint, this only uses passthrough or repackage modes.
 func (h *RelayStreamHandler) handleChannelPreview(w http.ResponseWriter, r *http.Request) {
+	// Validate format parameter early (T040/T041)
+	if !h.validateFormatParam(w, r) {
+		return
+	}
+
 	ctx := r.Context()
 
 	channelIDStr := chi.URLParam(r, "channelId")
@@ -761,6 +815,7 @@ func (h *RelayStreamHandler) handleMultiFormatOutput(w http.ResponseWriter, r *h
 	// Parse request parameters
 	segmentStr := r.URL.Query().Get(relay.QueryParamSegment)
 	initStr := r.URL.Query().Get(relay.QueryParamInit)
+	formatOverride := r.URL.Query().Get(relay.QueryParamFormat)
 
 	// Get the format router
 	router := session.GetFormatRouter()
@@ -781,11 +836,13 @@ func (h *RelayStreamHandler) handleMultiFormatOutput(w http.ResponseWriter, r *h
 	}
 
 	outputReq := relay.OutputRequest{
-		Format:    string(clientFormat),
-		Segment:   segment,
-		InitType:  initStr,
-		UserAgent: r.Header.Get("User-Agent"),
-		Accept:    r.Header.Get("Accept"),
+		Format:         string(clientFormat),
+		Segment:        segment,
+		InitType:       initStr,
+		UserAgent:      r.Header.Get("User-Agent"),
+		Accept:         r.Header.Get("Accept"),
+		Headers:        r.Header,
+		FormatOverride: formatOverride,
 	}
 
 	// Get the appropriate handler
@@ -1282,4 +1339,33 @@ func (h *RelayStreamHandler) StreamChannelByProxyOptions(ctx context.Context, in
 	// CORS preflight response is handled by setting headers
 	// The actual CORS headers are set in the StreamChannelByProxy handler
 	return &StreamChannelByProxyOptionsOutput{}, nil
+}
+
+// ListRelaySessionsInput is the input for listing relay sessions.
+type ListRelaySessionsInput struct{}
+
+// ListRelaySessionsOutput is the output for listing relay sessions.
+// It returns the complete flow graph for visualization.
+type ListRelaySessionsOutput struct {
+	Body relay.RelayFlowGraph
+}
+
+// ListRelaySessions returns all active relay sessions as a flow graph for visualization.
+func (h *RelayStreamHandler) ListRelaySessions(ctx context.Context, input *ListRelaySessionsInput) (*ListRelaySessionsOutput, error) {
+	// Get manager stats which includes session information
+	stats := h.relayService.GetRelayStats()
+
+	// Convert SessionStats to RelaySessionInfo for flow visualization
+	sessions := make([]relay.RelaySessionInfo, 0, len(stats.Sessions))
+	for _, sessionStats := range stats.Sessions {
+		sessions = append(sessions, sessionStats.ToSessionInfo())
+	}
+
+	// Build the flow graph
+	builder := relay.NewFlowBuilder()
+	flowGraph := builder.BuildFlowGraph(sessions)
+
+	return &ListRelaySessionsOutput{
+		Body: flowGraph,
+	}, nil
 }

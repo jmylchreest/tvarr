@@ -160,6 +160,9 @@ func (s *RelayProfileMappingService) Reorder(ctx context.Context, requests []rep
 // EvaluateRequest evaluates client detection rules against an HTTP request.
 // It returns the codec decision based on the first matching rule.
 // If no rule matches, returns nil.
+//
+// This method supports dynamic field expressions like @header_req:X-Custom-Header
+// which allow expressions to access any HTTP header dynamically at evaluation time.
 func (s *RelayProfileMappingService) EvaluateRequest(ctx context.Context, r *http.Request, sourceCodecs *CodecInfo) (*CodecDecision, error) {
 	mappings, err := s.repo.GetEnabled(ctx)
 	if err != nil {
@@ -167,6 +170,11 @@ func (s *RelayProfileMappingService) EvaluateRequest(ctx context.Context, r *htt
 	}
 
 	accessor := expression.NewRequestContextAccessor(r)
+
+	// Create dynamic field registry with request header resolver
+	// This enables @header_req:<name> syntax in expressions for dynamic header access
+	registry := expression.NewDynamicFieldRegistry()
+	registry.Register(expression.NewRequestHeaderFieldResolver(r.Header))
 
 	for _, mapping := range mappings {
 		parsed, err := expression.Parse(mapping.Expression)
@@ -178,7 +186,7 @@ func (s *RelayProfileMappingService) EvaluateRequest(ctx context.Context, r *htt
 			continue
 		}
 
-		result, err := s.evaluator.Evaluate(parsed, accessor)
+		result, err := s.evaluator.EvaluateWithDynamicFields(parsed, accessor, registry)
 		if err != nil {
 			s.logger.Warn("failed to evaluate mapping expression",
 				"mapping_id", mapping.ID,

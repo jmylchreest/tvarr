@@ -88,6 +88,18 @@ func (r *channelRepo) GetByID(ctx context.Context, id models.ULID) (*models.Chan
 	return &channel, nil
 }
 
+// GetByIDWithSource retrieves a channel by ID with its Source relationship preloaded.
+func (r *channelRepo) GetByIDWithSource(ctx context.Context, id models.ULID) (*models.Channel, error) {
+	var channel models.Channel
+	if err := r.db.WithContext(ctx).Preload("Source").Where("id = ?", id).First(&channel).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("getting channel by ID with source: %w", err)
+	}
+	return &channel, nil
+}
+
 // GetBySourceID retrieves all channels for a source using a callback for streaming.
 // Uses GORM's Rows() iterator for reliable row-by-row processing without batch issues.
 func (r *channelRepo) GetBySourceID(ctx context.Context, sourceID models.ULID, callback func(*models.Channel) error) error {

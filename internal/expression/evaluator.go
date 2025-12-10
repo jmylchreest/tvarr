@@ -245,3 +245,42 @@ func compareNumeric(a, b string, cmp func(float64, float64) bool) (bool, error) 
 
 	return cmp(aNum, bNum), nil
 }
+
+// DynamicFieldAccessor wraps a base FieldValueAccessor and adds dynamic field resolution.
+// It first checks the dynamic registry for @prefix:param fields, then falls back to the base accessor.
+type DynamicFieldAccessor struct {
+	base     FieldValueAccessor
+	registry *DynamicFieldRegistry
+}
+
+// NewDynamicFieldAccessor creates an accessor that combines base field access with dynamic resolution.
+func NewDynamicFieldAccessor(base FieldValueAccessor, registry *DynamicFieldRegistry) *DynamicFieldAccessor {
+	return &DynamicFieldAccessor{
+		base:     base,
+		registry: registry,
+	}
+}
+
+// GetFieldValue returns the value of a field, checking dynamic fields first.
+func (a *DynamicFieldAccessor) GetFieldValue(name string) (string, bool) {
+	// Check dynamic fields first (e.g., @header_req:X-Custom-Player)
+	if a.registry != nil && IsDynamicField(name) {
+		if value, ok := a.registry.Resolve(name); ok {
+			return value, true
+		}
+	}
+
+	// Fall back to base accessor
+	if a.base != nil {
+		return a.base.GetFieldValue(name)
+	}
+
+	return "", false
+}
+
+// EvaluateWithDynamicFields evaluates an expression with dynamic field support.
+// This is a convenience method that wraps the accessor with dynamic field resolution.
+func (e *Evaluator) EvaluateWithDynamicFields(parsed *ParsedExpression, accessor FieldValueAccessor, registry *DynamicFieldRegistry) (*EvaluationResult, error) {
+	dynamicAccessor := NewDynamicFieldAccessor(accessor, registry)
+	return e.Evaluate(parsed, dynamicAccessor)
+}

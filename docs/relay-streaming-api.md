@@ -283,3 +283,153 @@ player.load('/api/v1/relay/stream/01ABC123DEF?format=dash');
 ```bash
 vlc "http://localhost:8080/api/v1/relay/stream/01ABC123DEF?format=mpegts"
 ```
+
+## Relay Profiles
+
+Relay profiles control transcoding settings and stream output behavior. Each profile includes a `detection_mode` field that controls how output format selection behaves.
+
+### GET /api/v1/relay/profiles
+
+Returns all relay profiles with their configuration.
+
+### GET /api/v1/relay/profiles/{id}
+
+Returns a specific relay profile by ID.
+
+### Relay Profile Fields
+
+#### detection_mode
+
+The `detection_mode` field controls client detection behavior for routing decisions.
+
+| Value | Description |
+|-------|-------------|
+| `auto` | Smart routing based on client detection (default) |
+| `hls` | Force HLS output regardless of client capabilities |
+| `mpegts` | Force MPEG-TS output regardless of client capabilities |
+| `dash` | Force DASH output regardless of client capabilities |
+
+**Auto Mode Behavior:**
+
+When `detection_mode` is `auto`, the system uses smart routing to detect the optimal output format:
+
+1. Checks `?format=` query parameter for explicit override
+2. Checks `X-Tvarr-Player` header for player identification
+3. Analyzes `User-Agent` and `Accept` headers
+4. Falls back to profile's `container_format` setting
+
+**Example Profile JSON:**
+
+```json
+{
+  "id": "01ABC123DEF",
+  "name": "Default Profile",
+  "detection_mode": "auto",
+  "container_format": "auto",
+  "video_codec": "libx264",
+  "audio_codec": "aac"
+}
+```
+
+## Profile Mappings
+
+Profile mappings allow routing requests to specific relay profiles based on expression matching.
+
+### GET /api/v1/relay/profile-mappings
+
+Returns all profile mappings ordered by priority.
+
+### Profile Mapping Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Mapping name for identification |
+| `priority` | int | Evaluation order (lower = higher priority) |
+| `expression` | string | Matching expression (see Expression Syntax) |
+| `profile_id` | ULID | Target relay profile ID |
+| `enabled` | bool | Whether mapping is active |
+
+### Expression Syntax
+
+Profile mapping expressions support comparison operators and dynamic field resolution.
+
+**Static Fields:**
+
+| Field | Description |
+|-------|-------------|
+| `user_agent` | Client User-Agent header |
+| `client_ip` | Client IP address (respects X-Forwarded-For) |
+| `accept` | Client Accept header |
+| `path` | Request URL path |
+| `method` | HTTP request method |
+
+**Dynamic Fields:**
+
+Dynamic fields use the `@prefix:parameter` syntax to resolve values at evaluation time:
+
+| Syntax | Description |
+|--------|-------------|
+| `@header_req:<name>` | HTTP request header value |
+
+**Operators:**
+
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `==` | Equals | `user_agent == "VLC"` |
+| `!=` | Not equals | `user_agent != "Safari"` |
+| `contains` | Contains substring | `user_agent contains "Android"` |
+| `!contains` | Does not contain | `user_agent !contains "Chrome"` |
+| `starts_with` | Starts with | `client_ip starts_with "192.168"` |
+| `ends_with` | Ends with | `user_agent ends_with "Safari"` |
+| `=~` | Regex match | `user_agent =~ "ExoPlayer/\\d+"` |
+| `!~` | Regex not match | `user_agent !~ "bot"` |
+
+**Logical Operators:**
+
+| Operator | Description |
+|----------|-------------|
+| `&&` | Logical AND |
+| `\|\|` | Logical OR |
+| `()` | Grouping |
+
+**Example Expressions:**
+
+```
+# Match Android ExoPlayer clients
+user_agent contains "ExoPlayer"
+
+# Match specific player header
+@header_req:X-Tvarr-Player == "hls.js"
+
+# Match Apple devices or HLS-requesting clients
+user_agent contains "Safari" || accept contains "mpegurl"
+
+# Complex expression with custom header
+@header_req:X-Custom-Device-Type == "AndroidTV" && @header_req:X-Tvarr-Player == "hls.js"
+
+# LAN clients with specific user agent
+client_ip starts_with "192.168" && user_agent contains "VLC"
+```
+
+## Player Header Detection
+
+The frontend players automatically inject the `X-Tvarr-Player` header for smart container routing:
+
+| Player | Header Value |
+|--------|-------------|
+| mpegts.js | `mpegts.js` |
+| hls.js | `hls.js` |
+
+This header can be used in profile mapping expressions:
+
+```
+@header_req:X-Tvarr-Player == "hls.js"
+```
+
+The header can also include a format override suffix:
+
+```
+X-Tvarr-Player: hls.js:mpegts
+```
+
+This would identify the player as hls.js but request MPEG-TS format output.

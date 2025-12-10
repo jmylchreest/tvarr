@@ -145,7 +145,7 @@ func (m *Manager) FallbackGenerator() *FallbackGenerator {
 
 // GetOrCreateSession gets an existing session for the channel or creates a new one.
 // channelUpdatedAt is used to invalidate stale codec cache entries.
-func (m *Manager) GetOrCreateSession(ctx context.Context, channelID uuid.UUID, channelName string, streamURL string, profile *models.RelayProfile, channelUpdatedAt time.Time) (*RelaySession, error) {
+func (m *Manager) GetOrCreateSession(ctx context.Context, channelID uuid.UUID, channelName string, streamSourceName string, streamURL string, profile *models.RelayProfile, channelUpdatedAt time.Time) (*RelaySession, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -170,7 +170,7 @@ func (m *Manager) GetOrCreateSession(ctx context.Context, channelID uuid.UUID, c
 	}
 
 	// Create new session
-	session, err := m.createSession(ctx, channelID, channelName, streamURL, profile, channelUpdatedAt)
+	session, err := m.createSession(ctx, channelID, channelName, streamSourceName, streamURL, profile, channelUpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -366,7 +366,7 @@ func (m *Manager) GetOrProbeCodecInfoWithFreshness(ctx context.Context, streamUR
 
 // createSession creates a new relay session.
 // channelUpdatedAt is used to invalidate stale codec cache entries.
-func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, channelName string, streamURL string, profile *models.RelayProfile, channelUpdatedAt time.Time) (*RelaySession, error) {
+func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, channelName string, streamSourceName string, streamURL string, profile *models.RelayProfile, channelUpdatedAt time.Time) (*RelaySession, error) {
 	// Check circuit breaker
 	cb := m.circuitBreakers.Get(streamURL)
 	if !cb.Allow() {
@@ -390,10 +390,11 @@ func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, channe
 	sessionCtx, sessionCancel := context.WithCancel(m.ctx)
 
 	session := &RelaySession{
-		ID:              uuid.New(),
-		ChannelID:       channelID,
-		ChannelName:     channelName,
-		StreamURL:       streamURL,
+		ID:               uuid.New(),
+		ChannelID:        channelID,
+		ChannelName:      channelName,
+		StreamSourceName: streamSourceName,
+		StreamURL:        streamURL,
 		Profile:         profile,
 		Classification:  classification,
 		CachedCodecInfo: codecInfo,

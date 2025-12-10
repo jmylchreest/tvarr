@@ -282,10 +282,13 @@ func (s *RelayService) ClearAllCodecCache(ctx context.Context) (int64, error) {
 
 // StartRelay starts a relay session for a channel.
 func (s *RelayService) StartRelay(ctx context.Context, channelID models.ULID, profileID *models.ULID) (*relay.RelaySession, error) {
-	// Get channel
-	channel, err := s.channelRepo.GetByID(ctx, channelID)
+	// Get channel with source preloaded
+	channel, err := s.channelRepo.GetByIDWithSource(ctx, channelID)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrChannelNotFound, err)
+	}
+	if channel == nil {
+		return nil, ErrChannelNotFound
 	}
 
 	// Get profile (use default if not specified)
@@ -309,8 +312,14 @@ func (s *RelayService) StartRelay(ctx context.Context, channelID models.ULID, pr
 	// Convert ULID to UUID for relay manager
 	channelUUID := uuid.UUID(channelID)
 
+	// Extract stream source name if available
+	var streamSourceName string
+	if channel.Source != nil {
+		streamSourceName = channel.Source.Name
+	}
+
 	// Start the relay session, passing channel's UpdatedAt to invalidate stale codec cache
-	session, err := s.relayManager.GetOrCreateSession(ctx, channelUUID, channel.ChannelName, channel.StreamURL, profile, time.Time(channel.UpdatedAt))
+	session, err := s.relayManager.GetOrCreateSession(ctx, channelUUID, channel.ChannelName, streamSourceName, channel.StreamURL, profile, time.Time(channel.UpdatedAt))
 	if err != nil {
 		return nil, fmt.Errorf("starting relay session: %w", err)
 	}
@@ -333,17 +342,26 @@ func (s *RelayService) StartRelay(ctx context.Context, channelID models.ULID, pr
 // StartRelayWithProfile starts a relay session for a channel using a specific profile.
 // This is used when the profile has been pre-resolved (e.g., auto codecs resolved).
 func (s *RelayService) StartRelayWithProfile(ctx context.Context, channelID models.ULID, profile *models.RelayProfile) (*relay.RelaySession, error) {
-	// Get channel
-	channel, err := s.channelRepo.GetByID(ctx, channelID)
+	// Get channel with source preloaded
+	channel, err := s.channelRepo.GetByIDWithSource(ctx, channelID)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrChannelNotFound, err)
+	}
+	if channel == nil {
+		return nil, ErrChannelNotFound
 	}
 
 	// Convert ULID to UUID for relay manager
 	channelUUID := uuid.UUID(channelID)
 
+	// Extract stream source name if available
+	var streamSourceName string
+	if channel.Source != nil {
+		streamSourceName = channel.Source.Name
+	}
+
 	// Start the relay session, passing channel's UpdatedAt to invalidate stale codec cache
-	session, err := s.relayManager.GetOrCreateSession(ctx, channelUUID, channel.ChannelName, channel.StreamURL, profile, time.Time(channel.UpdatedAt))
+	session, err := s.relayManager.GetOrCreateSession(ctx, channelUUID, channel.ChannelName, streamSourceName, channel.StreamURL, profile, time.Time(channel.UpdatedAt))
 	if err != nil {
 		return nil, fmt.Errorf("starting relay session: %w", err)
 	}

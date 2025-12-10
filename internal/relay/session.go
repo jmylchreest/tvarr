@@ -17,10 +17,11 @@ import (
 
 // RelaySession represents an active relay session.
 type RelaySession struct {
-	ID              uuid.UUID
-	ChannelID       uuid.UUID
-	ChannelName     string // Display name of the channel
-	StreamURL       string
+	ID               uuid.UUID
+	ChannelID        uuid.UUID
+	ChannelName      string // Display name of the channel
+	StreamSourceName string // Name of the stream source (e.g., "s8k")
+	StreamURL        string
 	Profile         *models.RelayProfile
 	Classification  ClassificationResult
 	CachedCodecInfo *models.LastKnownCodec // Pre-probed codec info for faster startup
@@ -46,13 +47,14 @@ type RelaySession struct {
 	hlsPassthrough  *HLSPassthroughHandler
 	dashPassthrough *DASHPassthroughHandler
 
-	mu           sync.RWMutex
-	ffmpegCmd    *ffmpeg.Command // Running FFmpeg command for stats access
-	hlsCollapser *HLSCollapser
-	inputReader  io.ReadCloser
-	closed       bool
-	err          error
-	inFallback   bool
+	mu            sync.RWMutex
+	ffmpegCmd     *ffmpeg.Command // Running FFmpeg command for stats access
+	hlsCollapser  *HLSCollapser
+	hlsRepackager *HLSRepackager // HLS-to-HLS repackaging (container format change)
+	inputReader   io.ReadCloser
+	closed        bool
+	err           error
+	inFallback    bool
 }
 
 // start begins the relay session.
@@ -136,10 +138,16 @@ func (s *RelaySession) runNormalPipeline() error {
 		case DeliveryTranscode:
 			return s.runFFmpegPipeline()
 		case DeliveryRepackage:
-			// Repackage means changing manifest format without re-encoding
-			// This is handled at the handler level, but if we're in a relay session,
-			// we need to serve the source with appropriate handlers
-			// For now, treat as passthrough and let handlers do the manifest conversion
+			// Repackage means changing container format without re-encoding
+			// Use HLSRepackager for HLS-to-HLS with different segment types
+			if s.Classification.SourceFormat == SourceFormatHLS {
+				slog.Info("Smart delivery: HLS repackage mode",
+					slog.String("session_id", s.ID.String()),
+					slog.String("source_format", string(s.DeliveryContext.Source.SourceFormat)),
+					slog.String("client_format", string(s.DeliveryContext.ClientFormat)))
+				return s.runHLSRepackagePipeline()
+			}
+			// For non-HLS sources, fall back to passthrough
 			slog.Info("Smart delivery: repackage mode (serving source with manifest conversion)",
 				slog.String("session_id", s.ID.String()),
 				slog.String("source_format", string(s.DeliveryContext.Source.SourceFormat)),
@@ -405,6 +413,11 @@ func (s *RelaySession) runFFmpegPipeline() error {
 	}
 	builder.Reconnect() // Enable auto-reconnect for network streams
 
+	// Set timeout for live streams - essential for HLS sources that may have gaps between segments
+	// FFmpeg's default HTTP timeout (5-30s depending on protocol) causes premature exits
+	// Use 300 seconds (5 minutes) to handle slow or irregular live streams
+	builder.InputArgs("-rw_timeout", "300000000") // 300 seconds in microseconds
+
 	// Apply custom input options (allows user overrides) - AFTER standard input flags
 	if s.Profile != nil && s.Profile.InputOptions != "" {
 		builder.ApplyCustomInputOptions(s.Profile.InputOptions)
@@ -653,6 +666,98 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 	}
 }
 
+// runHLSRepackagePipeline runs the HLS repackaging pipeline.
+// This uses HLSRepackager to convert HLS sources to HLS with potentially different
+// segment container formats (e.g., MPEG-TS to fMP4 or vice versa) without transcoding.
+func (s *RelaySession) runHLSRepackagePipeline() error {
+	// Determine the playlist URL (use selected media playlist if available)
+	playlistURL := s.StreamURL
+	if s.Classification.SelectedMediaPlaylist != "" {
+		playlistURL = s.Classification.SelectedMediaPlaylist
+	}
+
+	// Determine the output variant based on profile container format preference
+	// Default to MPEG-TS for maximum compatibility with legacy HLS clients
+	outputVariant := HLSMuxerVariantMPEGTS
+	if s.Profile != nil {
+		// Use the profile's container format setting to determine variant
+		container := s.Profile.DetermineContainer()
+		switch container {
+		case models.ContainerFormatFMP4:
+			outputVariant = HLSMuxerVariantFMP4
+		case models.ContainerFormatMPEGTS:
+			outputVariant = HLSMuxerVariantMPEGTS
+		}
+	}
+
+	// Configure segment settings from profile
+	segmentCount := 7
+	segmentDuration := 1 * time.Second
+	if s.Profile != nil {
+		if s.Profile.PlaylistSize > 0 {
+			segmentCount = s.Profile.PlaylistSize
+		}
+		if s.Profile.SegmentDuration > 0 {
+			segmentDuration = time.Duration(s.Profile.SegmentDuration) * time.Second
+		}
+	}
+
+	// Create the HLS repackager
+	repackager := NewHLSRepackager(HLSRepackagerConfig{
+		SourceURL:          playlistURL,
+		OutputVariant:      outputVariant,
+		SegmentCount:       segmentCount,
+		SegmentMinDuration: segmentDuration,
+		HTTPClient:         s.manager.config.HTTPClient,
+		Logger:             slog.Default(),
+	})
+
+	s.mu.Lock()
+	s.hlsRepackager = repackager
+	s.mu.Unlock()
+
+	// Start the repackager
+	if err := repackager.Start(); err != nil {
+		return fmt.Errorf("starting HLS repackager: %w", err)
+	}
+
+	slog.Info("Started HLS repackage pipeline",
+		slog.String("session_id", s.ID.String()),
+		slog.String("source_url", playlistURL),
+		slog.String("output_variant", outputVariant.String()))
+
+	// Wait for context cancellation or repackager error
+	for {
+		select {
+		case <-s.ctx.Done():
+			repackager.Close()
+			return s.ctx.Err()
+		default:
+		}
+
+		// Check for repackager error
+		if err := repackager.Error(); err != nil {
+			return fmt.Errorf("HLS repackager error: %w", err)
+		}
+
+		// Check if repackager closed unexpectedly
+		if repackager.IsClosed() {
+			if err := repackager.Error(); err != nil {
+				return fmt.Errorf("HLS repackager closed with error: %w", err)
+			}
+			return nil // Clean shutdown
+		}
+
+		// Update activity timestamp
+		s.mu.Lock()
+		s.LastActivity = time.Now()
+		s.mu.Unlock()
+
+		// Small sleep to avoid busy loop
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 // runPassthroughPipeline runs the direct passthrough pipeline.
 func (s *RelaySession) runPassthroughPipeline() error {
 	req, err := http.NewRequestWithContext(s.ctx, http.MethodGet, s.StreamURL, nil)
@@ -829,6 +934,10 @@ func (s *RelaySession) Close() {
 		s.hlsCollapser.Stop()
 	}
 
+	if s.hlsRepackager != nil {
+		s.hlsRepackager.Close()
+	}
+
 	if s.inputReader != nil {
 		s.inputReader.Close()
 	}
@@ -868,11 +977,12 @@ func (s *RelaySession) Stats() SessionStats {
 	}
 
 	stats := SessionStats{
-		ID:                s.ID.String(),
-		ChannelID:         s.ChannelID.String(),
-		ChannelName:       s.ChannelName,
-		ProfileName:       profileName,
-		StreamURL:         s.StreamURL,
+		ID:               s.ID.String(),
+		ChannelID:        s.ChannelID.String(),
+		ChannelName:      s.ChannelName,
+		StreamSourceName: s.StreamSourceName,
+		ProfileName:      profileName,
+		StreamURL:        s.StreamURL,
 		Classification:    s.Classification.Mode.String(),
 		StartedAt:         s.StartedAt,
 		LastActivity:      s.LastActivity,
@@ -891,6 +1001,17 @@ func (s *RelaySession) Stats() SessionStats {
 		stats.DeliveryDecision = s.DeliveryContext.Decision.String()
 		stats.ClientFormat = string(s.DeliveryContext.ClientFormat)
 		stats.SourceFormat = string(s.DeliveryContext.Source.SourceFormat)
+	}
+
+	// Fallback to Classification source format if DeliveryContext not available
+	if stats.SourceFormat == "" && s.Classification.SourceFormat != "" {
+		stats.SourceFormat = string(s.Classification.SourceFormat)
+	}
+
+	// Include codec info from cached codec data if available
+	if s.CachedCodecInfo != nil {
+		stats.VideoCodec = s.CachedCodecInfo.VideoCodec
+		stats.AudioCodec = s.CachedCodecInfo.AudioCodec
 	}
 
 	// Include fallback controller stats if available
@@ -939,11 +1060,12 @@ func (s *RelaySession) Stats() SessionStats {
 
 // SessionStats holds session statistics.
 type SessionStats struct {
-	ID                string    `json:"id"`
-	ChannelID         string    `json:"channel_id"`
-	ChannelName       string    `json:"channel_name,omitempty"`
-	ProfileName       string    `json:"profile_name,omitempty"`
-	StreamURL         string    `json:"stream_url"`
+	ID               string `json:"id"`
+	ChannelID        string `json:"channel_id"`
+	ChannelName      string `json:"channel_name,omitempty"`
+	StreamSourceName string `json:"stream_source_name,omitempty"` // Name of the stream source (e.g., "s8k")
+	ProfileName      string `json:"profile_name,omitempty"`
+	StreamURL        string `json:"stream_url"`
 	Classification    string    `json:"classification"`
 	StartedAt         time.Time `json:"started_at"`
 	LastActivity      time.Time `json:"last_activity"`
@@ -957,6 +1079,8 @@ type SessionStats struct {
 	DeliveryDecision string `json:"delivery_decision,omitempty"` // passthrough, repackage, or transcode
 	ClientFormat     string `json:"client_format,omitempty"`     // requested output format
 	SourceFormat     string `json:"source_format,omitempty"`     // detected source format
+	VideoCodec       string `json:"video_codec,omitempty"`       // video codec (h264, hevc, etc.)
+	AudioCodec       string `json:"audio_codec,omitempty"`       // audio codec (aac, ac3, etc.)
 	// Fallback information
 	InFallback               bool `json:"in_fallback"`
 	FallbackEnabled          bool `json:"fallback_enabled"`

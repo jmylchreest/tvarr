@@ -39,7 +39,7 @@ type OutputRequest struct {
 	Accept string
 
 	// Headers contains all HTTP request headers for flexible client detection.
-	// This allows expressions to access any header via @req_header:<name> syntax
+	// This allows expressions to access any header via @header_req:<name> syntax
 	// and enables detection of X-Tvarr-Player or any custom player headers.
 	Headers map[string][]string
 

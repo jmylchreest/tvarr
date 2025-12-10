@@ -78,15 +78,15 @@
 
 ### Implementation for User Story 1
 
-- [ ] T017 [US1] Create HLSMuxer wrapper for gohlslib Muxer in internal/relay/hls_muxer.go
-- [ ] T018 [US1] Implement HLSMuxer.Start() method accepting gohlslib track callbacks in internal/relay/hls_muxer.go
-- [ ] T019 [US1] Implement HLSMuxer.ServePlaylist() for m3u8 generation in internal/relay/hls_muxer.go
-- [ ] T020 [US1] Implement HLSMuxer.ServeSegment() for segment delivery in internal/relay/hls_muxer.go
-- [ ] T021 [US1] Implement segment caching/buffer in HLSMuxer for multi-client sharing in internal/relay/hls_muxer.go
-- [ ] T021a [US1] Implement subscriber reference counting for shared upstream connections per FR-008 in internal/relay/manager.go
-- [ ] T022 [US1] Add HLSMuxer as OutputHandler in FormatRouter registration in internal/relay/format_router.go
-- [ ] T023 [US1] Integrate RoutingDecider in session creation to choose Passthrough vs Transcode in internal/relay/session.go
-- [ ] T024 [US1] Add passthrough metrics tracking (CPU usage comparison) in internal/relay/session.go
+- [X] T017 [US1] Create HLSMuxer wrapper for gohlslib Muxer in internal/relay/hls_muxer.go
+- [X] T018 [US1] Implement HLSMuxer.Start() method accepting gohlslib track callbacks in internal/relay/hls_muxer.go
+- [X] T019 [US1] Implement HLSMuxer.ServePlaylist() for m3u8 generation in internal/relay/hls_muxer.go
+- [X] T020 [US1] Implement HLSMuxer.ServeSegment() for segment delivery in internal/relay/hls_muxer.go
+- [X] T021 [US1] Implement segment caching/buffer in HLSMuxer for multi-client sharing in internal/relay/hls_muxer.go
+- [X] T021a [US1] Implement subscriber reference counting for shared upstream connections per FR-008 in internal/relay/manager.go
+- [X] T022 [US1] Add HLSMuxer as OutputHandler in FormatRouter registration in internal/relay/format_router.go
+- [X] T023 [US1] Integrate RoutingDecider in session creation to choose Passthrough vs Transcode in internal/relay/session.go
+- [X] T024 [US1] Add passthrough metrics tracking (CPU usage comparison) in internal/relay/session.go
 
 **Checkpoint**: HLS-to-HLS passthrough works without FFmpeg for compatible streams
 
@@ -139,10 +139,10 @@
 
 ### Implementation for User Story 4
 
-- [ ] T038 [US4] Parse ?format= query parameter in stream handler and populate OutputRequest.FormatOverride in internal/handlers/stream_handler.go
-- [ ] T039 [US4] Update RoutingDecider to check FormatOverride first when detection_mode=auto in internal/relay/routing_decision.go
-- [ ] T040 [US4] Add validation for format parameter (mpegts, fmp4, hls, dash) in internal/handlers/stream_handler.go
-- [ ] T041 [US4] Return 400 error for invalid format parameter values in internal/handlers/stream_handler.go
+- [x] T038 [US4] Parse ?format= query parameter in stream handler and populate OutputRequest.FormatOverride in internal/http/handlers/relay_stream.go
+- [x] T039 [US4] Update RoutingDecider to check FormatOverride first when detection_mode=auto in internal/relay/default_client_detector.go (already implemented)
+- [x] T040 [US4] Add validation for format parameter (mpegts, fmp4, hls, dash, hls-fmp4, hls-ts, auto) in internal/http/handlers/relay_stream.go
+- [x] T041 [US4] Return 400 error for invalid format parameter values in internal/http/handlers/relay_stream.go
 
 **Checkpoint**: URL ?format= parameter overrides container format selection
 
@@ -175,13 +175,13 @@
 
 ### Implementation for User Story 7
 
-- [ ] T068 [US7] Create DynamicFieldResolver interface for parameterized field extraction in internal/expression/dynamic_field.go
-- [ ] T069 [US7] Implement RequestHeaderFieldResolver that extracts @req_header:<name> from HTTP request context in internal/expression/req_header_field.go
-- [ ] T070 [US7] Register RequestHeaderFieldResolver in expression evaluator to handle @req_header: prefix in internal/expression/eval_context.go
-- [ ] T071 [US7] Add http.Header to EvalContext for relay request expressions in internal/expression/eval_context.go
-- [ ] T072 [US7] Propagate request headers to expression evaluation in stream handler in internal/handlers/stream_handler.go
-- [ ] T073 [P] [US7] Add unit tests for @req_header:<name> field extraction in internal/expression/req_header_field_test.go
-- [ ] T074 [P] [US7] Add integration test for header-based routing expression in internal/relay/client_detector_test.go
+- [X] T068 [US7] Create DynamicFieldResolver interface for parameterized field extraction in internal/expression/dynamic_field.go
+- [X] T069 [US7] Implement RequestHeaderFieldResolver that extracts @req_header:<name> from HTTP request context in internal/expression/dynamic_field.go
+- [X] T070 [US7] Register RequestHeaderFieldResolver in expression evaluator to handle @req_header: prefix in internal/expression/evaluator.go
+- [X] T071 [US7] Add http.Header to EvalContext for relay request expressions in internal/expression/request_context.go
+- [X] T072 [US7] Propagate request headers to expression evaluation in stream handler in internal/http/handlers/relay_stream.go
+- [X] T073 [P] [US7] Add unit tests for @req_header:<name> field extraction in internal/expression/dynamic_field_test.go
+- [X] T074 [P] [US7] Add integration test for header-based routing expression in internal/expression/dynamic_field_test.go
 
 **Checkpoint**: Expressions can use @req_header:<name> to match any HTTP request header dynamically
 
@@ -233,14 +233,14 @@
 
 **Purpose**: Improvements that affect multiple user stories
 
-- [ ] T042 [P] Add routing decision tests in internal/relay/routing_decision_test.go
-- [ ] T043 [P] Add client detector tests in internal/relay/client_detector_test.go
-- [ ] T044 [P] Add HLS muxer tests in internal/relay/hls_muxer_test.go
-- [ ] T045 [P] Add MpegTsAdapter header injection tests in frontend/src/player/MpegTsAdapter.test.ts
-- [ ] T046 Run existing relay tests to verify no regressions: go test ./internal/relay/...
-- [ ] T047 Run frontend build and lint: pnpm --prefix frontend run build && pnpm --prefix frontend run lint
-- [ ] T048 Update API documentation for detection_mode field in relay profiles
-- [ ] T049 Add observability: ensure routing decision logged per FR-009
+- [X] T042 [P] Add routing decision tests in internal/relay/routing_decision_test.go
+- [X] T043 [P] Add client detector tests in internal/relay/default_client_detector_test.go
+- [X] T044 [P] Add HLS muxer tests in internal/relay/hls_muxer_test.go (tests embedded in hls_collapser_test.go)
+- [~] T045 [P] Add MpegTsAdapter header injection tests in frontend/src/player/MpegTsAdapter.test.ts (BLOCKED: no test framework configured in frontend)
+- [X] T046 Run existing relay tests to verify no regressions: go test ./internal/relay/...
+- [X] T047 Run frontend build and lint: pnpm --prefix frontend run build && pnpm --prefix frontend run lint
+- [X] T048 Update API documentation for detection_mode field in relay profiles (docs/relay-streaming-api.md)
+- [X] T049 Add observability: ensure routing decision logged per FR-009 (implemented at routing_decision.go:285-301)
 
 ---
 

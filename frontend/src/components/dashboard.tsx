@@ -66,6 +66,7 @@ import {
   formatMemorySize,
   parseStringNumber,
 } from '@/lib/format';
+import { RelayFlowDiagram } from '@/components/relay';
 
 // Interface for historical data points for relay processes
 interface RelayDataPoint {
@@ -595,6 +596,12 @@ export function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Relay Flow Visualization */}
+      <RelayFlowDiagram
+        pollingInterval={refreshInterval * 1000}
+        className="w-full"
+      />
 
       {/* Relay Process Cards */}
       <TooltipProvider>

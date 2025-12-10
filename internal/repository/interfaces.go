@@ -41,6 +41,8 @@ type ChannelRepository interface {
 	UpsertBatch(ctx context.Context, channels []*models.Channel) error
 	// GetByID retrieves a channel by ID.
 	GetByID(ctx context.Context, id models.ULID) (*models.Channel, error)
+	// GetByIDWithSource retrieves a channel by ID with its Source relationship preloaded.
+	GetByIDWithSource(ctx context.Context, id models.ULID) (*models.Channel, error)
 	// GetBySourceID retrieves all channels for a source using a callback for streaming.
 	GetBySourceID(ctx context.Context, sourceID models.ULID, callback func(*models.Channel) error) error
 	// GetBySourceIDPaginated retrieves channels for a source with pagination.

@@ -860,11 +860,24 @@ func (ub *UnifiedBuffer) cleanupLoop() {
 }
 
 func (ub *UnifiedBuffer) cleanupOldChunks() {
+	// First, get the minimum chunk sequence needed by active segments
+	ub.segmentMu.RLock()
+	var minNeededChunkSeq uint64
+	if len(ub.segments) > 0 {
+		// The oldest segment's StartChunk is the minimum chunk we need to keep
+		minNeededChunkSeq = ub.segments[0].StartChunk
+	}
+	ub.segmentMu.RUnlock()
+
 	ub.chunkMu.Lock()
 	defer ub.chunkMu.Unlock()
 
 	now := time.Now()
 	for len(ub.chunks) > 0 {
+		// Don't evict chunks that are still needed by active segments
+		if minNeededChunkSeq > 0 && ub.chunks[0].Sequence >= minNeededChunkSeq {
+			break
+		}
 		if now.Sub(ub.chunks[0].Timestamp) > ub.config.ChunkTimeout {
 			ub.chunks = ub.chunks[1:]
 		} else {
