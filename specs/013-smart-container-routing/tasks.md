@@ -27,11 +27,11 @@
 
 **Purpose**: Project initialization and schema changes
 
-- [ ] T001 Create feature branch `013-smart-container-routing` from current development branch
-- [ ] T002 Add DetectionMode type constant and field to RelayProfile model in internal/models/relay_profile.go
-- [ ] T003 Create database migration for detection_mode column in internal/database/migrations/xxx_add_detection_mode.go
-- [ ] T004 [P] Add HeaderXTvarrPlayer constant to internal/relay/constants.go
-- [ ] T005 [P] Add FormatValueHLSFMP4 and FormatValueHLSTS constants to internal/relay/constants.go
+- [X] T001 Create feature branch `013-smart-container-routing` from current development branch
+- [X] T002 Add DetectionMode type constant and field to RelayProfile model in internal/models/relay_profile.go
+- [X] T003 Create database migration for detection_mode column in internal/database/migrations/xxx_add_detection_mode.go
+- [X] T004 [P] Add HeaderXTvarrPlayer constant to internal/relay/constants.go
+- [X] T005 [P] Add FormatValueHLSFMP4 and FormatValueHLSTS constants to internal/relay/constants.go
 
 ---
 
@@ -41,11 +41,11 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T006 Create RoutingDecision enum type and RoutingResult struct in internal/relay/routing_decision.go
-- [ ] T007 [P] Create ClientCapabilities struct in internal/relay/client_detector.go
-- [ ] T008 [P] Create ClientDetector interface in internal/relay/client_detector.go
-- [ ] T009 Extend OutputRequest struct with XTvarrPlayer and FormatOverride fields in internal/relay/format_router.go
-- [ ] T010 Create RoutingDecider interface in internal/relay/routing_decision.go
+- [X] T006 Create RoutingDecision enum type and RoutingResult struct in internal/relay/routing_decision.go
+- [X] T007 [P] Create ClientCapabilities struct in internal/relay/client_detector.go
+- [X] T008 [P] Create ClientDetector interface in internal/relay/client_detector.go
+- [X] T009 Extend OutputRequest struct with XTvarrPlayer and FormatOverride fields in internal/relay/format_router.go
+- [X] T010 Create RoutingDecider interface in internal/relay/routing_decision.go
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
 
@@ -59,12 +59,12 @@
 
 ### Implementation for User Story 5
 
-- [ ] T011 [US5] Add DetectionMode field to RelayProfile struct in internal/models/relay_profile.go
-- [ ] T012 [US5] Add IsAutoDetection() method to RelayProfile in internal/models/relay_profile.go
-- [ ] T013 [US5] Create DefaultRoutingDecider implementation in internal/relay/routing_decision.go
-- [ ] T014 [US5] Implement Decide() method checking detection_mode first in internal/relay/routing_decision.go
-- [ ] T015 [US5] Add routing decision logging per FR-009 in internal/relay/routing_decision.go
-- [ ] T016 [US5] Update API profile handlers to expose detection_mode field in internal/handlers/relay_profile_handler.go
+- [X] T011 [US5] Add DetectionMode field to RelayProfile struct in internal/models/relay_profile.go
+- [X] T012 [US5] Add IsAutoDetection() method to RelayProfile in internal/models/relay_profile.go
+- [X] T013 [US5] Create DefaultRoutingDecider implementation in internal/relay/routing_decision.go
+- [X] T014 [US5] Implement Decide() method checking detection_mode first in internal/relay/routing_decision.go
+- [X] T015 [US5] Add routing decision logging per FR-009 in internal/relay/routing_decision.go
+- [X] T016 [US5] Update API profile handlers to expose detection_mode field in internal/handlers/relay_profile_handler.go
 
 **Checkpoint**: Profile detection_mode behavior complete - profiles with explicit modes bypass client detection
 
@@ -100,11 +100,11 @@
 
 ### Implementation for User Story 2
 
-- [ ] T025 [P] [US2] Create player-headers.ts constants file in frontend/src/lib/player-headers.ts
-- [ ] T026 [P] [US2] Define PLAYER_HEADER_NAME and buildPlayerHeader() utility in frontend/src/lib/player-headers.ts
-- [ ] T027 [US2] Add X-Tvarr-Player header to MpegTsAdapter mediaDataSource config in frontend/src/player/MpegTsAdapter.ts
-- [ ] T028 [US2] Create HlsAdapter.ts with xhrSetup header injection in frontend/src/player/HlsAdapter.ts
-- [ ] T029 [US2] Update video-player-modal.tsx to pass headers configuration to player adapters in frontend/src/components/video-player-modal.tsx
+- [X] T025 [P] [US2] Create player-headers.ts constants file in frontend/src/lib/player-headers.ts
+- [X] T026 [P] [US2] Define PLAYER_HEADER_NAME and buildPlayerHeader() utility in frontend/src/lib/player-headers.ts
+- [X] T027 [US2] Add X-Tvarr-Player header to MpegTsAdapter mediaDataSource config in frontend/src/player/MpegTsAdapter.ts
+- [X] T028 [US2] Create HlsAdapter.ts with xhrSetup header injection in frontend/src/player/HlsAdapter.ts
+- [X] T029 [US2] Update video-player-modal.tsx to pass headers configuration to player adapters in frontend/src/components/video-player-modal.tsx
 
 **Checkpoint**: All frontend player requests include X-Tvarr-Player header
 
@@ -118,14 +118,14 @@
 
 ### Implementation for User Story 3
 
-- [ ] T030 [US3] Implement DefaultClientDetector with header parsing logic in internal/relay/client_detector.go
-- [ ] T031 [US3] Add X-Tvarr-Player header parsing for player name/version extraction in internal/relay/client_detector.go
-- [ ] T032 [US3] Add Accept header parsing for format preference detection in internal/relay/client_detector.go
-- [ ] T033 [US3] Add User-Agent parsing for fallback player detection in internal/relay/client_detector.go
-- [ ] T034 [US3] Implement detection priority: FormatOverride > XTvarrPlayer > Accept > UserAgent in internal/relay/client_detector.go
-- [ ] T035 [US3] Implement codec compatibility check in RoutingDecider in internal/relay/routing_decision.go
-- [ ] T036 [US3] Update FormatRouter.ResolveFormat() to use ClientDetector when detection_mode=auto in internal/relay/format_router.go
-- [ ] T037 [US3] Add format routing decision to session logging in internal/relay/session.go
+- [X] T030 [US3] Implement DefaultClientDetector with header parsing logic in internal/relay/client_detector.go
+- [X] T031 [US3] Add X-Tvarr-Player header parsing for player name/version extraction in internal/relay/client_detector.go
+- [X] T032 [US3] Add Accept header parsing for format preference detection in internal/relay/client_detector.go
+- [X] T033 [US3] Add User-Agent parsing for fallback player detection in internal/relay/client_detector.go
+- [X] T034 [US3] Implement detection priority: FormatOverride > XTvarrPlayer > Accept > UserAgent in internal/relay/client_detector.go
+- [X] T035 [US3] Implement codec compatibility check in RoutingDecider in internal/relay/routing_decision.go
+- [X] T036 [US3] Update FormatRouter.ResolveFormat() to use ClientDetector when detection_mode=auto in internal/relay/format_router.go
+- [X] T037 [US3] Add format routing decision to session logging in internal/relay/session.go
 
 **Checkpoint**: Format negotiation selects optimal path based on source + client + codecs
 

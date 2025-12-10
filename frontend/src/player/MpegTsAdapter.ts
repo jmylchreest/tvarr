@@ -24,6 +24,7 @@ import type {
   PlayerMediaInfo,
   StreamKind,
 } from './PlayerAdapter';
+import { PLAYER_HEADER_NAME, PlayerNames } from '../lib/player-headers';
 
 export interface MpegTsAdapterConfig {
   enableWorker?: boolean;
@@ -31,6 +32,8 @@ export interface MpegTsAdapterConfig {
   stashBufferThreshold?: number;
   appendErrorMaxRetry?: number;
   disableLatencyChasing?: boolean;
+  /** Additional headers to send with stream requests */
+  headers?: Record<string, string>;
   overrides?: Record<string, any>;
 }
 
@@ -51,6 +54,7 @@ export class MpegTsAdapter implements PlayerAdapter {
       stashBufferThreshold: cfg?.stashBufferThreshold ?? 768 * 1024,
       appendErrorMaxRetry: cfg?.appendErrorMaxRetry ?? 6,
       disableLatencyChasing: cfg?.disableLatencyChasing ?? true,
+      headers: cfg?.headers ?? { [PLAYER_HEADER_NAME]: PlayerNames.MPEGTS_JS },
       overrides: cfg?.overrides ?? {},
     };
   }
@@ -143,6 +147,8 @@ export class MpegTsAdapter implements PlayerAdapter {
       hasAudio: true,
       hasVideo: true,
       url,
+      // X-Tvarr-Player header for smart container routing detection
+      headers: this.cfg.headers,
     };
 
     // Create player

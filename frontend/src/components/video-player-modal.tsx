@@ -64,6 +64,7 @@ import {
 
 import { SimpleTsPlayer } from '../player/SimpleTsPlayer';
 import type { PlayerMediaInfo } from '../player/PlayerAdapter';
+import { PLAYER_HEADER_NAME, PlayerNames } from '../lib/player-headers';
 import { Debug } from '@/utils/debug';
 
 /* ---------- Types ---------- */
@@ -149,7 +150,12 @@ export function VideoPlayerModal({ isOpen, onClose, channel, program }: VideoPla
 
     (async () => {
       try {
-        const res = await fetch(streamUrl, { method: 'HEAD', cache: 'no-cache' });
+        // Include X-Tvarr-Player header to inform smart container routing
+        const res = await fetch(streamUrl, {
+          method: 'HEAD',
+          cache: 'no-cache',
+          headers: { [PLAYER_HEADER_NAME]: PlayerNames.MPEGTS_JS },
+        });
         if (canceled) return;
         const kind = (res.headers.get('X-Stream-Origin-Kind') || '').toUpperCase();
         const decision = res.headers.get('X-Stream-Decision');
