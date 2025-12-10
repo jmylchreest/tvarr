@@ -356,10 +356,15 @@ func TestCMAFMuxer_ExtractSequenceNumber(t *testing.T) {
 func TestCMAFMuxer_ExtractTiming(t *testing.T) {
 	moof := makeMoof(1, 90000, 30)
 
-	decodeTime, duration, err := extractTiming(moof)
+	decodeTime, duration, trackID, err := extractTiming(moof)
 	require.NoError(t, err)
 	assert.Equal(t, uint64(90000), decodeTime)
-	assert.Equal(t, uint64(30), duration) // Sample count as simplified duration
+	// Duration is estimated when no per-sample durations are present.
+	// Formula: sampleCount * 1001 / 30 (assumes ~30fps video)
+	// 30 samples * 1001 / 30 = 1001 ticks
+	assert.Equal(t, uint64(1001), duration)
+	// Track ID is 0 because our test moof doesn't include a tfhd box
+	assert.Equal(t, uint32(0), trackID)
 }
 
 func TestCMAFMuxer_VideoAudioDetection(t *testing.T) {

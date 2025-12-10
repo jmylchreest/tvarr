@@ -709,7 +709,9 @@ func TestCommandBuilder_FMP4Args(t *testing.T) {
 			fragDuration: 6.0,
 			expected: []string{
 				"-f mp4",
-				"-movflags frag_keyframe+empty_moov+default_base_moof+skip_trailer+cmaf",
+				// NOTE: frag_keyframe is intentionally NOT included - it creates tiny
+				// fragments at every keyframe. We rely on frag_duration instead.
+				"-movflags empty_moov+default_base_moof+skip_trailer+cmaf",
 				"-frag_duration 6000000",
 			},
 		},
@@ -718,7 +720,7 @@ func TestCommandBuilder_FMP4Args(t *testing.T) {
 			fragDuration: 0,
 			expected: []string{
 				"-f mp4",
-				"-movflags frag_keyframe+empty_moov+default_base_moof+skip_trailer+cmaf",
+				"-movflags empty_moov+default_base_moof+skip_trailer+cmaf",
 			},
 			notExpected: []string{
 				"-frag_duration",
@@ -764,7 +766,9 @@ func TestCommandBuilder_FMP4ArgsWithMinFrag(t *testing.T) {
 
 	cmdStr := cmd.String()
 	assert.Contains(t, cmdStr, "-f mp4")
-	assert.Contains(t, cmdStr, "-movflags frag_keyframe+empty_moov+default_base_moof+skip_trailer+cmaf")
+	// NOTE: frag_keyframe is intentionally NOT included - it creates tiny
+	// fragments at every keyframe. We rely on frag_duration instead.
+	assert.Contains(t, cmdStr, "-movflags empty_moov+default_base_moof+skip_trailer+cmaf")
 	assert.Contains(t, cmdStr, "-frag_duration 6000000")
 	assert.Contains(t, cmdStr, "-min_frag_duration 2000000")
 }

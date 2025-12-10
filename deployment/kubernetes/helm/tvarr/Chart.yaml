@@ -1,0 +1,22 @@
+apiVersion: v2
+name: tvarr
+description: IPTV stream management with hardware-accelerated transcoding
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/jmylchreest/tvarr
+sources:
+  - https://github.com/jmylchreest/tvarr
+maintainers:
+  - name: jmylchreest
+    url: https://github.com/jmylchreest
+keywords:
+  - iptv
+  - streaming
+  - transcoding
+  - ffmpeg
+  - m3u
+  - epg
+annotations:
+  artifacthub.io/license: MIT
+  artifacthub.io/containsSecurityUpdates: "false"

@@ -1,0 +1,102 @@
+# tvarr-ffmpeg: Minimal FFmpeg for video transcoding with hardware acceleration
+# Maintainer: tvarr project
+
+pkgname=tvarr-ffmpeg
+pkgver=8.0.1
+pkgrel=1
+pkgdesc='Minimal FFmpeg for tvarr video transcoding'
+arch=(x86_64 aarch64)
+url=https://ffmpeg.org
+license=(GPL-3.0-only)
+
+depends=(
+  glibc
+  gmp
+  gnutls
+  libdrm
+  libva
+  libvorbis
+  libvpx
+  x264
+  x265
+  opus
+  zlib
+  mesa
+  libva-mesa-driver
+  libva-utils
+  vulkan-radeon
+  vulkan-intel
+  intel-media-driver
+)
+
+makedepends=(
+  clang
+  ffnvcodec-headers
+  git
+  nasm
+  vulkan-headers
+)
+
+provides=(
+  ffmpeg
+  libavcodec.so
+  libavdevice.so
+  libavfilter.so
+  libavformat.so
+  libavutil.so
+  libswresample.so
+  libswscale.so
+)
+
+conflicts=(ffmpeg)
+
+source=("git+https://git.ffmpeg.org/ffmpeg.git#tag=n${pkgver}")
+sha256sums=('SKIP')
+
+options=(!lto)
+
+build() {
+  cd ffmpeg
+
+  ./configure \
+    --prefix=/usr \
+    --disable-debug \
+    --disable-doc \
+    --disable-static \
+    --disable-stripping \
+    --enable-shared \
+    --enable-pic \
+    --enable-gpl \
+    --enable-version3 \
+    --enable-nonfree \
+    \
+    --enable-gmp \
+    --enable-gnutls \
+    --enable-libdrm \
+    --enable-libopus \
+    --enable-libvorbis \
+    --enable-libvpx \
+    --enable-libx264 \
+    --enable-libx265 \
+    \
+    --enable-vaapi \
+    --enable-vulkan \
+    --enable-ffnvcodec \
+    --enable-cuda-llvm \
+    --enable-nvdec \
+    --enable-nvenc \
+    \
+    --disable-programs \
+    --enable-ffmpeg \
+    --enable-ffprobe
+
+  make
+}
+
+package() {
+  cd ffmpeg
+  make DESTDIR="${pkgdir}" install
+
+  rm -rf "${pkgdir}/usr/include"
+  rm -rf "${pkgdir}/usr/lib/pkgconfig"
+}

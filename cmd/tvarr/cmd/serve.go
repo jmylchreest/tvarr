@@ -498,9 +498,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 	relayStreamHandler.Register(server.API())
 	relayStreamHandler.RegisterChiRoutes(server.Router())
 
-	channelHandler := handlers.NewChannelHandler(db, relayService).WithLogger(logger)
+	channelHandler := handlers.NewChannelHandler(db).WithLogger(logger)
 	channelHandler.Register(server.API())
-	channelHandler.RegisterChiRoutes(server.Router())
 
 	epgHandler := handlers.NewEpgHandler(db)
 	epgHandler.Register(server.API())

@@ -512,20 +512,25 @@ func (b *CommandBuilder) HLSArgs(segmentTime int, playlistSize int) *CommandBuil
 func (b *CommandBuilder) FMP4Args(fragDuration float64) *CommandBuilder {
 	// -f mp4: Use MP4 muxer
 	// -movflags: Control MP4 fragmentation behavior
-	//   - frag_keyframe: Start a new fragment at each keyframe (critical for seeking)
 	//   - empty_moov: Create an empty moov box and move atoms to moof/mdat pairs
 	//                 This is essential for streaming as it allows playback to start
 	//                 before the entire file is written
 	//   - default_base_moof: Use moof as base for data offsets (more compatible)
 	//   - skip_trailer: Don't write the trailer (not needed for live streaming)
 	//   - cmaf: Enable CMAF compliance mode for maximum compatibility
+	//
+	// NOTE: We intentionally DO NOT use frag_keyframe here because it creates
+	// tiny fragments at every keyframe (~30ms for 30fps with short GOP).
+	// Instead, we rely on frag_duration to create segments at the target duration.
+	// This trades keyframe alignment for predictable segment duration.
+	// For live streaming where users don't seek much, this is acceptable.
 	b.outputArgs = append(b.outputArgs,
 		"-f", "mp4",
-		"-movflags", "frag_keyframe+empty_moov+default_base_moof+skip_trailer+cmaf",
+		"-movflags", "empty_moov+default_base_moof+skip_trailer+cmaf",
 	)
 
-	// Set fragment duration if specified
-	// This creates fragments of approximately this duration
+	// Set fragment duration - this is now the primary fragmentation control
+	// Without frag_keyframe, fragments are created purely based on this duration
 	if fragDuration > 0 {
 		// frag_duration is in microseconds
 		fragDurationUs := int(fragDuration * 1000000)

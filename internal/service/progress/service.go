@@ -391,9 +391,14 @@ func (m *OperationManager) OperationID() string {
 
 // SetMessage updates the operation message with throttled broadcasting (ADR-001).
 // Updates are accumulated but only broadcast at most every DefaultProgressBroadcastInterval.
+// The message is also set on the current stage so it appears in the stage_step field.
 func (m *OperationManager) SetMessage(message string) {
 	_, _ = m.service.updateOperationThrottled(m.operationID, func(op *UniversalProgress) {
 		op.Message = message
+		// Also update the current stage's message so it appears in the API response
+		if op.CurrentStageIndex >= 0 && op.CurrentStageIndex < len(op.Stages) {
+			op.Stages[op.CurrentStageIndex].Message = message
+		}
 	})
 }
 

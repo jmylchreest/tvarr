@@ -1,0 +1,233 @@
+name: Build FFmpeg Base Image
+
+on:
+  schedule:
+    # Weekly rebuild on Sunday at midnight UTC (for rolling release updates)
+    - cron: '0 0 * * 0'
+  push:
+    branches:
+      - main
+    paths:
+      - 'deployment/docker/Dockerfile.ffmpeg'
+      - 'deployment/docker/pkgbuild/**'
+      - 'deployment/docker/scripts/**'
+      - 'scripts/check-hwaccel.sh'
+      - '.github/workflows/docker-ffmpeg.yml'
+  pull_request:
+    paths:
+      - 'deployment/docker/Dockerfile.ffmpeg'
+      - 'deployment/docker/pkgbuild/**'
+      - 'deployment/docker/scripts/**'
+      - 'scripts/check-hwaccel.sh'
+      - '.github/workflows/docker-ffmpeg.yml'
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: 'Force rebuild even if image exists'
+        required: false
+        default: 'false'
+        type: boolean
+      build_target:
+        description: 'Build target (runtime=minimal, full-build=with base system)'
+        required: false
+        default: 'runtime'
+        type: choice
+        options:
+          - runtime
+          - full-build
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/tvarr-ffmpeg
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      date_tag: ${{ steps.tags.outputs.date_tag }}
+      build_number: ${{ steps.tags.outputs.build_number }}
+      full_tag: ${{ steps.tags.outputs.full_tag }}
+      amd64_exists: ${{ steps.check_amd64.outputs.exists }}
+      arm64_exists: ${{ steps.check_arm64.outputs.exists }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate date-based tags
+        id: tags
+        run: |
+          # Date tag: YYYY.MM.DD
+          DATE_TAG=$(date -u +%Y.%m.%d)
+          echo "date_tag=${DATE_TAG}" >> $GITHUB_OUTPUT
+
+          # Find next build number for today
+          BUILD_NUM=1
+          while docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${DATE_TAG}-${BUILD_NUM} > /dev/null 2>&1; do
+            BUILD_NUM=$((BUILD_NUM + 1))
+          done
+          echo "build_number=${BUILD_NUM}" >> $GITHUB_OUTPUT
+          echo "full_tag=${DATE_TAG}-${BUILD_NUM}" >> $GITHUB_OUTPUT
+
+          echo "Date tag: ${DATE_TAG}"
+          echo "Build number: ${BUILD_NUM}"
+          echo "Full tag: ${DATE_TAG}-${BUILD_NUM}"
+
+      - name: Check if amd64 image exists for today
+        id: check_amd64
+        run: |
+          # Check if any build for today exists
+          DATE_TAG="${{ steps.tags.outputs.date_tag }}"
+          if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${DATE_TAG}-1-amd64 > /dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "amd64 image exists for today"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "amd64 image does not exist for today"
+          fi
+
+      - name: Check if arm64 image exists for today
+        id: check_arm64
+        run: |
+          DATE_TAG="${{ steps.tags.outputs.date_tag }}"
+          if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${DATE_TAG}-1-arm64 > /dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "arm64 image exists for today"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "arm64 image does not exist for today"
+          fi
+
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+            platform: linux/amd64
+            exists: ${{ needs.prepare.outputs.amd64_exists }}
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            platform: linux/arm64
+            exists: ${{ needs.prepare.outputs.arm64_exists }}
+
+    # Skip if image exists for today (unless force rebuild or scheduled)
+    if: |
+      github.event_name == 'schedule' ||
+      github.event.inputs.force_rebuild == 'true' ||
+      needs.prepare.outputs.amd64_exists == 'false' ||
+      needs.prepare.outputs.arm64_exists == 'false'
+
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Check if this arch needs building
+        id: should_build
+        run: |
+          if [[ "${{ github.event_name }}" == "schedule" ]] || \
+             [[ "${{ github.event.inputs.force_rebuild }}" == "true" ]] || \
+             [[ "${{ matrix.exists }}" == "false" ]]; then
+            echo "build=true" >> $GITHUB_OUTPUT
+          else
+            echo "build=false" >> $GITHUB_OUTPUT
+            echo "Skipping ${{ matrix.arch }} - image already exists for today"
+          fi
+
+      - name: Checkout repository
+        if: steps.should_build.outputs.build == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        if: steps.should_build.outputs.build == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        if: steps.should_build.outputs.build == 'true' && github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build FFmpeg image
+        if: steps.should_build.outputs.build == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deployment/docker/Dockerfile.ffmpeg
+          platforms: ${{ matrix.platform }}
+          target: ${{ github.event.inputs.build_target || 'runtime' }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.full_tag }}-${{ matrix.arch }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: |
+            org.opencontainers.image.title=tvarr-ffmpeg
+            org.opencontainers.image.description=FFmpeg with hardware acceleration for tvarr
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ needs.prepare.outputs.date_tag }}
+
+  manifest:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    needs: [prepare, build]
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push multi-arch manifests
+        env:
+          FULL_TAG: ${{ needs.prepare.outputs.full_tag }}
+          DATE_TAG: ${{ needs.prepare.outputs.date_tag }}
+        run: |
+          # Create manifest for full date+build tag
+          docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG} \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG}-amd64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG}-arm64
+          docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG}
+
+          # Create/update :latest manifest
+          docker manifest create --amend ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG}-amd64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG}-arm64
+          docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+          # Create date-only tag (points to latest build of that day)
+          docker manifest create --amend ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${DATE_TAG} \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG}-amd64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG}-arm64
+          docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${DATE_TAG}
+
+          # Arch-specific :latest aliases for tvarr build
+          docker manifest create --amend ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG}-amd64
+          docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64
+
+          docker manifest create --amend ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:arm64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG}-arm64
+          docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:arm64
+
+      - name: Inspect manifests
+        env:
+          FULL_TAG: ${{ needs.prepare.outputs.full_tag }}
+        run: |
+          echo "=== Full tag manifest (${FULL_TAG}) ==="
+          docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG}
+          echo ""
+          echo "=== Latest manifest ==="
+          docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest

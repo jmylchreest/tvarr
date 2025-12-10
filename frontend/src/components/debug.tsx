@@ -32,7 +32,12 @@ import {
   ChevronRight,
   Image,
   Hash,
+  Play,
+  Square,
+  Video,
 } from 'lucide-react';
+import Hls from 'hls.js';
+import { Input } from '@/components/ui/input';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid } from 'recharts';
 import {
   ChartContainer,
@@ -43,6 +48,7 @@ import {
   type ChartConfig,
 } from '@/components/ui/chart';
 import { ApiResponse, HealthData, LivezProbeResponse, ReadyzProbeResponse } from '@/types/api';
+import { formatUptimeFromSeconds } from '@/lib/format';
 import { getStatusIndicatorClasses, getStatusType } from '@/lib/status-colors';
 import { getBackendUrl } from '@/lib/config';
 import { useHealthData } from '@/hooks/use-health-data';
@@ -80,22 +86,6 @@ interface MemoryInfo {
 }
 
 
-function formatUptime(uptimeSeconds: number): string {
-  const days = Math.floor(uptimeSeconds / 86400);
-  const hours = Math.floor((uptimeSeconds % 86400) / 3600);
-  const minutes = Math.floor((uptimeSeconds % 3600) / 60);
-  const seconds = uptimeSeconds % 60;
-
-  if (days > 0) {
-    return `${days}d ${hours}h ${minutes}m ${seconds}s`;
-  } else if (hours > 0) {
-    return `${hours}h ${minutes}m ${seconds}s`;
-  } else if (minutes > 0) {
-    return `${minutes}m ${seconds}s`;
-  } else {
-    return `${seconds}s`;
-  }
-}
 
 function formatMemorySize(mb: number): string {
   if (mb >= 1024) {
@@ -556,6 +546,185 @@ function JobsCard() {
   );
 }
 
+function HLSTestPlayer() {
+  const [channelId, setChannelId] = useState('');
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string>('');
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
+  const backendUrl = getBackendUrl();
+
+  const stopPlayback = useCallback(() => {
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.pause();
+      videoRef.current.src = '';
+    }
+    setIsPlaying(false);
+    setStatus('');
+    setError(null);
+  }, []);
+
+  const startPlayback = useCallback(() => {
+    if (!channelId.trim()) {
+      setError('Please enter a channel ID');
+      return;
+    }
+
+    stopPlayback();
+    setError(null);
+    setStatus('Initializing...');
+
+    const streamUrl = `${backendUrl}/proxy/${channelId.trim()}?format=hls`;
+
+    if (videoRef.current) {
+      if (Hls.isSupported()) {
+        const hls = new Hls({
+          debug: false,
+          enableWorker: true,
+          lowLatencyMode: true,
+        });
+
+        hls.loadSource(streamUrl);
+        hls.attachMedia(videoRef.current);
+
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          setStatus('Manifest loaded, starting playback...');
+          videoRef.current?.play().catch((e) => {
+            setError(`Playback error: ${e.message}`);
+          });
+        });
+
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal) {
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                setError(`Network error: ${data.details}`);
+                hls.startLoad();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                setError(`Media error: ${data.details}`);
+                hls.recoverMediaError();
+                break;
+              default:
+                setError(`Fatal error: ${data.details}`);
+                stopPlayback();
+                break;
+            }
+          } else {
+            setStatus(`Warning: ${data.details}`);
+          }
+        });
+
+        hls.on(Hls.Events.FRAG_LOADED, () => {
+          setStatus('Playing');
+          setIsPlaying(true);
+        });
+
+        hlsRef.current = hls;
+      } else if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
+        videoRef.current.src = streamUrl;
+        videoRef.current.addEventListener('loadedmetadata', () => {
+          setStatus('Playing (native HLS)');
+          setIsPlaying(true);
+          videoRef.current?.play().catch((e) => {
+            setError(`Playback error: ${e.message}`);
+          });
+        });
+      } else {
+        setError('HLS is not supported in this browser');
+      }
+    }
+  }, [channelId, backendUrl, stopPlayback]);
+
+  useEffect(() => {
+    return () => {
+      stopPlayback();
+    };
+  }, [stopPlayback]);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Video className="h-5 w-5" />
+          HLS Test Player
+          <Badge variant="outline" className="text-xs">Debug</Badge>
+        </CardTitle>
+        <CardDescription>
+          Test HLS streaming via relay endpoint (/proxy/channelId?format=hls)
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex gap-2">
+          <Input
+            placeholder="Enter channel ULID (e.g., 01ABC123...)"
+            value={channelId}
+            onChange={(e) => setChannelId(e.target.value)}
+            className="flex-1"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !isPlaying) {
+                startPlayback();
+              }
+            }}
+          />
+          {!isPlaying ? (
+            <Button onClick={startPlayback} disabled={!channelId.trim()}>
+              <Play className="h-4 w-4 mr-1" />
+              Play
+            </Button>
+          ) : (
+            <Button onClick={stopPlayback} variant="destructive">
+              <Square className="h-4 w-4 mr-1" />
+              Stop
+            </Button>
+          )}
+        </div>
+
+        {error && (
+          <div className="flex items-center gap-2 text-destructive text-sm">
+            <XCircle className="h-4 w-4" />
+            {error}
+          </div>
+        )}
+
+        {status && !error && (
+          <div className="flex items-center gap-2 text-muted-foreground text-sm">
+            <Activity className="h-4 w-4" />
+            {status}
+          </div>
+        )}
+
+        <div className="relative bg-black rounded-lg overflow-hidden aspect-video">
+          <video
+            ref={videoRef}
+            className="w-full h-full"
+            controls
+            playsInline
+            muted
+          />
+          {!isPlaying && !status && (
+            <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
+              <div className="text-center">
+                <Video className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                <p className="text-sm">Enter a channel ID and click Play</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="text-xs text-muted-foreground">
+          <p>Stream URL: {backendUrl}/proxy/{channelId || '<channel-id>'}?format=hls</p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function Debug() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -829,7 +998,7 @@ export function Debug() {
               <Clock className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{formatUptime(healthData.uptime_seconds)}</div>
+              <div className="text-2xl font-bold">{formatUptimeFromSeconds(healthData.uptime_seconds)}</div>
             </CardContent>
           </Card>
 
@@ -1123,8 +1292,10 @@ export function Debug() {
       {/* System Components */}
       {healthData && (
         <div className="grid gap-4 md:grid-cols-2">
-          {/* Feature Flags Debug */}
-          <FeatureFlagsDebug />
+          {/* Feature Flags Debug - Full width */}
+          <div className="md:col-span-2">
+            <FeatureFlagsDebug />
+          </div>
 
           {/* Circuit Breakers - Enhanced Visualization */}
           {enhancedCBStats.length > 0 && (
@@ -1277,6 +1448,9 @@ export function Debug() {
 
           {/* Jobs Card - replaces old Scheduler component */}
           <JobsCard />
+
+          {/* HLS Test Player */}
+          <HLSTestPlayer />
 
           {/* Sandbox Manager Component - Enhanced */}
           {healthData?.components?.sandbox_manager && (

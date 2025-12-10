@@ -364,7 +364,7 @@ func (s *RelayService) StartRelayWithProfile(ctx context.Context, channelID mode
 }
 
 // AddRelayClient adds a client to a relay session and returns a reader.
-func (s *RelayService) AddRelayClient(sessionID uuid.UUID, userAgent, remoteAddr string) (*relay.BufferClient, *relay.StreamReader, error) {
+func (s *RelayService) AddRelayClient(sessionID uuid.UUID, userAgent, remoteAddr string) (*relay.UnifiedClient, *relay.UnifiedStreamReader, error) {
 	session, ok := s.relayManager.GetSession(sessionID)
 	if !ok {
 		return nil, nil, relay.ErrSessionNotFound

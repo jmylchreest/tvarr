@@ -373,8 +373,9 @@ export default function ChannelsPage() {
 
   const handlePlayChannel = async (channel: Channel) => {
     try {
-      // Construct proxied playback URL
-      const proxyUrl = `${getBackendUrl()}/channel/${channel.id}/stream`;
+      // Construct proxied playback URL using the new channel preview endpoint
+      // /proxy/{channelId} provides zero-transcode smart delivery (passthrough/repackage only)
+      const proxyUrl = `${getBackendUrl()}/proxy/${channel.id}`;
 
       setSelectedChannel({
         ...channel,
@@ -392,11 +393,12 @@ export default function ChannelsPage() {
     try {
       setProbingChannels((prev) => new Set(prev).add(channel.id));
 
-      const response = await fetch(`/api/v1/channels/${channel.id}/probe`, {
+      const response = await fetch('/api/v1/relay/probe', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
+        body: JSON.stringify({ channel_id: channel.id }),
       });
 
       if (!response.ok) {
@@ -404,32 +406,27 @@ export default function ChannelsPage() {
         throw new Error(`Failed to probe channel: ${response.status} ${text}`);
       }
 
-      // Backend now returns { success, data: { ...probeFields } } – map all provided detail fields
-      const raw = await response.json();
-      const probe = raw?.data ?? raw ?? {};
+      // Relay probe returns flat response with codec info
+      const probe = await response.json();
 
       const updated: Partial<Channel> = {
         video_codec: probe.video_codec,
         audio_codec: probe.audio_codec,
         resolution:
-          probe.resolution ||
-          (probe.video_width && probe.video_height
+          probe.video_width && probe.video_height
             ? `${probe.video_width}x${probe.video_height}`
-            : undefined),
-        last_probed_at: probe.detected_at || new Date().toISOString(),
-        probe_method: probe.probe_method,
-        container_format: probe.container_format,
+            : undefined,
+        last_probed_at: new Date().toISOString(),
+        probe_method: 'ffprobe',
         video_width: probe.video_width,
         video_height: probe.video_height,
-        framerate: probe.framerate,
-        bitrate: probe.bitrate ?? null,
+        framerate: probe.video_framerate ?? null,
         video_bitrate: probe.video_bitrate ?? null,
         audio_bitrate: probe.audio_bitrate ?? null,
         audio_channels: probe.audio_channels ?? null,
         audio_sample_rate: probe.audio_sample_rate ?? null,
-        probe_source: probe.probe_source,
-        // If backend responds with a (potentially updated) stream_url include it
-        stream_url: probe.stream_url || `${getBackendUrl()}/channel/${channel.id}/stream`,
+        // Always use proxy URL for playback - upstream URLs may not be directly accessible
+        stream_url: `${getBackendUrl()}/proxy/${channel.id}`,
       };
 
       setChannels((prev) =>
@@ -535,154 +532,180 @@ export default function ChannelsPage() {
     );
   };
 
-  const ChannelTableRow = ({ channel }: { channel: Channel }) => (
-    <TableRow className="hover:bg-muted/50">
-      <TableCell className="w-16">
-        <LogoWithPopover channel={channel} />
-      </TableCell>
-      <TableCell className="font-medium max-w-xs">
-        <button
-          type="button"
-          onClick={() => {
-            setDetailsChannel(channel);
-            setIsDetailsOpen(true);
-          }}
-          className="truncate text-left w-full hover:underline focus:outline-none focus:ring-2 focus:ring-ring rounded-sm"
-          title={channel.name || 'empty'}
-        >
-          {channel.name && channel.name.trim() !== '' ? (
-            channel.name
+  const ChannelTableRow = ({ channel }: { channel: Channel }) => {
+    // Build condensed probe info string: "h264/aac (1080p@30)"
+    const buildProbeInfo = () => {
+      if (!channel.video_codec && !channel.audio_codec) {
+        return null;
+      }
+      const videoCodec = channel.video_codec || '?';
+      const audioCodec = channel.audio_codec || '?';
+
+      // Format resolution (e.g., "1920x1080" -> "1080p", "1280x720" -> "720p")
+      let resolutionShort = '';
+      if (channel.resolution) {
+        const match = channel.resolution.match(/(\d+)x(\d+)/);
+        if (match) {
+          resolutionShort = `${match[2]}p`;
+        } else {
+          resolutionShort = channel.resolution;
+        }
+      }
+
+      // Format framerate
+      let fpsShort = '';
+      if (channel.framerate) {
+        const frStr = String(channel.framerate);
+        if (frStr.includes('/')) {
+          const [n, d] = frStr.split('/');
+          const v = parseFloat(d) ? Math.round(parseFloat(n) / parseFloat(d)) : frStr;
+          fpsShort = String(v);
+        } else {
+          fpsShort = String(Math.round(parseFloat(frStr)));
+        }
+      }
+
+      // Build the display string
+      const codecPart = `${videoCodec}/${audioCodec}`;
+      let detailPart = '';
+      if (resolutionShort && fpsShort) {
+        detailPart = ` (${resolutionShort}@${fpsShort})`;
+      } else if (resolutionShort) {
+        detailPart = ` (${resolutionShort})`;
+      } else if (fpsShort) {
+        detailPart = ` (@${fpsShort}fps)`;
+      }
+
+      return `${codecPart}${detailPart}`;
+    };
+
+    const probeInfo = buildProbeInfo();
+
+    return (
+      <TableRow className="hover:bg-muted/50">
+        <TableCell className="w-16">
+          <LogoWithPopover channel={channel} />
+        </TableCell>
+        <TableCell className="font-medium max-w-xs">
+          <button
+            type="button"
+            onClick={() => {
+              setDetailsChannel(channel);
+              setIsDetailsOpen(true);
+            }}
+            className="truncate text-left w-full hover:underline focus:outline-none focus:ring-2 focus:ring-ring rounded-sm"
+            title={channel.name || 'empty'}
+          >
+            {channel.name && channel.name.trim() !== '' ? (
+              channel.name
+            ) : (
+              <span className="text-muted-foreground italic">empty</span>
+            )}
+          </button>
+        </TableCell>
+        <TableCell>
+          {channel.group ? (
+            <Badge variant="secondary" className="text-xs">
+              {channel.group}
+            </Badge>
           ) : (
-            <span className="text-muted-foreground italic">empty</span>
+            <span className="text-muted-foreground">-</span>
           )}
-        </button>
-      </TableCell>
-      <TableCell className="text-sm">
-        {channel.tvg_chno || <span className="text-muted-foreground">-</span>}
-      </TableCell>
-      <TableCell>
-        {channel.group ? (
-          <Badge variant="secondary" className="text-xs">
-            {channel.group}
-          </Badge>
-        ) : (
-          <span className="text-muted-foreground">-</span>
-        )}
-      </TableCell>
-      <TableCell className="text-sm">{channel.source_name || channel.source_type}</TableCell>
-      <TableCell className="text-sm">
-        {channel.video_codec || <span className="text-muted-foreground">-</span>}
-      </TableCell>
-      <TableCell className="text-sm">
-        {channel.audio_codec || <span className="text-muted-foreground">-</span>}
-      </TableCell>
-      <TableCell className="text-sm">
-        {channel.resolution || <span className="text-muted-foreground">-</span>}
-      </TableCell>
-      <TableCell className="text-xs">
-        {channel.container_format ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="cursor-help">
-                {channel.framerate
-                  ? channel.framerate.includes('/')
-                    ? (() => {
-                        const [n, d] = channel.framerate.split('/');
-                        const v = parseFloat(d)
-                          ? (parseFloat(n) / parseFloat(d)).toFixed(2)
-                          : channel.framerate;
-                        return `${v} fps`;
-                      })()
-                    : `${channel.framerate} fps`
-                  : channel.container_format}
-              </span>
-            </TooltipTrigger>
-            <TooltipContent className="text-xs space-y-1">
-              <div>Container: {channel.container_format}</div>
-              {channel.framerate && <div>Framerate: {channel.framerate}</div>}
-              {channel.audio_channels != null && (
-                <div>Audio Channels: {channel.audio_channels}</div>
-              )}
-              {channel.audio_sample_rate != null && (
-                <div>Audio Sample Rate: {channel.audio_sample_rate} Hz</div>
-              )}
-              {(channel.video_bitrate || channel.audio_bitrate || channel.bitrate) && (
-                <div>
-                  Bitrate:
-                  <ul className="ml-3 list-disc">
-                    {channel.video_bitrate && (
-                      <li>Video: {Math.round(channel.video_bitrate / 1000)} kbps</li>
-                    )}
-                    {channel.audio_bitrate && (
-                      <li>Audio: {Math.round(channel.audio_bitrate / 1000)} kbps</li>
-                    )}
-                    {channel.bitrate && <li>Total: {Math.round(channel.bitrate / 1000)} kbps</li>}
-                  </ul>
-                </div>
-              )}
-              {channel.probe_source && <div>Source: {channel.probe_source}</div>}
-              {channel.probe_method && <div>Method: {channel.probe_method}</div>}
-            </TooltipContent>
-          </Tooltip>
-        ) : (
-          <span className="text-muted-foreground">-</span>
-        )}
-      </TableCell>
-      <TableCell className="text-sm">
-        {channel.last_probed_at ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="cursor-help text-xs">
-                {formatRelativeTime(channel.last_probed_at)}
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>
-              <div className="space-y-1">
-                <div>Method: {channel.probe_method || 'Unknown'}</div>
-                <div>Precise time: {formatPreciseTime(channel.last_probed_at)}</div>
-              </div>
-            </TooltipContent>
-          </Tooltip>
-        ) : (
-          <span className="text-muted-foreground">-</span>
-        )}
-      </TableCell>
-      <TableCell className="w-32">
-        <div className="flex gap-1">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button size="sm" onClick={() => handlePlayChannel(channel)} className="h-8 px-2">
-                <Play className="w-3 h-3" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>Play channel</p>
-            </TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => handleProbeChannel(channel)}
-                disabled={probingChannels.has(channel.id)}
-                className="h-8 px-2"
-              >
-                {probingChannels.has(channel.id) ? (
-                  <div className="w-3 h-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                ) : (
-                  <Zap className="w-3 h-3" />
+        </TableCell>
+        <TableCell className="text-xs">
+          {probeInfo ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="cursor-help font-mono">{probeInfo}</span>
+              </TooltipTrigger>
+              <TooltipContent className="text-xs space-y-1">
+                <div className="font-semibold border-b pb-1 mb-1">Stream Details</div>
+                {channel.video_codec && <div>Video Codec: {channel.video_codec}</div>}
+                {channel.audio_codec && <div>Audio Codec: {channel.audio_codec}</div>}
+                {channel.resolution && <div>Resolution: {channel.resolution}</div>}
+                {channel.container_format && <div>Container: {channel.container_format}</div>}
+                {channel.framerate != null && channel.framerate !== '' && (
+                  <div>Framerate: {channel.framerate}</div>
                 )}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>Probe codec information</p>
-            </TooltipContent>
-          </Tooltip>
-        </div>
-      </TableCell>
-    </TableRow>
-  );
+                {channel.audio_channels != null && (
+                  <div>Audio Channels: {channel.audio_channels}</div>
+                )}
+                {channel.audio_sample_rate != null && (
+                  <div>Audio Sample Rate: {channel.audio_sample_rate} Hz</div>
+                )}
+                {channel.video_bitrate != null && channel.video_bitrate > 0 && (
+                  <div>Video Bitrate: {Math.round(channel.video_bitrate / 1000)} kbps</div>
+                )}
+                {channel.audio_bitrate != null && channel.audio_bitrate > 0 && (
+                  <div>Audio Bitrate: {Math.round(channel.audio_bitrate / 1000)} kbps</div>
+                )}
+                {channel.bitrate != null && channel.bitrate > 0 && (
+                  <div>Total Bitrate: {Math.round(channel.bitrate / 1000)} kbps</div>
+                )}
+                {channel.probe_source && <div>Source: {channel.probe_source}</div>}
+                {channel.probe_method && <div>Method: {channel.probe_method}</div>}
+              </TooltipContent>
+            </Tooltip>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          )}
+        </TableCell>
+        <TableCell className="text-sm">
+          {channel.last_probed_at ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="cursor-help text-xs">
+                  {formatRelativeTime(channel.last_probed_at)}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                <div className="space-y-1">
+                  <div>Method: {channel.probe_method || 'Unknown'}</div>
+                  <div>Precise time: {formatPreciseTime(channel.last_probed_at)}</div>
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          )}
+        </TableCell>
+        <TableCell className="w-32">
+          <div className="flex gap-1">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button size="sm" onClick={() => handlePlayChannel(channel)} className="h-8 px-2">
+                  <Play className="w-3 h-3" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Play channel</p>
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleProbeChannel(channel)}
+                  disabled={probingChannels.has(channel.id)}
+                  className="h-8 px-2"
+                >
+                  {probingChannels.has(channel.id) ? (
+                    <div className="w-3 h-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                  ) : (
+                    <Zap className="w-3 h-3" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Probe codec information</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
+        </TableCell>
+      </TableRow>
+    );
+  };
 
   const ChannelCard = ({ channel }: { channel: Channel }) => (
     <Card className="transition-all duration-200 hover:shadow-lg hover:scale-105">
@@ -1050,12 +1073,8 @@ export default function ChannelsPage() {
                       <TableRow>
                         <TableHead className="w-16">Logo</TableHead>
                         <TableHead>Channel Name</TableHead>
-                        <TableHead>Channel #</TableHead>
                         <TableHead>Group</TableHead>
-                        <TableHead>Source</TableHead>
-                        <TableHead>Video Codec</TableHead>
-                        <TableHead>Audio Codec</TableHead>
-                        <TableHead>Resolution</TableHead>
+                        <TableHead>Probe Info</TableHead>
                         <TableHead>Last Probed</TableHead>
                         <TableHead className="w-32">Actions</TableHead>
                       </TableRow>

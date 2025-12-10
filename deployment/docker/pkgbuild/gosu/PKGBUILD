@@ -1,0 +1,29 @@
+# Maintainer: tvarr
+# Based on AUR gosu package by devome <evinedeng@hotmail.com>
+# https://aur.archlinux.org/packages/gosu
+
+pkgname=gosu
+pkgver=1.19
+pkgrel=1
+pkgdesc="Simple Go-based setuid+setgid+setgroups+exec for containers"
+arch=('x86_64')
+url="https://github.com/tianon/${pkgname}"
+license=("Apache-2.0")
+makedepends=("go")
+source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/${pkgver}.tar.gz")
+sha256sums=('cd9719b775dbfedae53923c9b0dc792b66d42c51e0b36652ed6f747fbadc0164')
+
+build() {
+    cd "${pkgname}-${pkgver}"
+
+    export CGO_ENABLED=0
+    export CGO_CPPFLAGS="${CPPFLAGS}"
+    export CGO_CFLAGS="${CFLAGS}"
+    export CGO_CXXFLAGS="${CXXFLAGS}"
+    go build -trimpath -ldflags="-s -w -extldflags '${LDFLAGS}'"
+}
+
+package() {
+    cd "${pkgname}-${pkgver}"
+    install -Dm755 "${pkgname}" "${pkgdir}/usr/bin/${pkgname}"
+}

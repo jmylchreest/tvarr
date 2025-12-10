@@ -106,7 +106,7 @@ interface EpgProgramsResponse {
 }
 
 interface EpgGuideResponse {
-  channels: Record<string, { id: string; name: string; logo?: string }>;
+  channels: Record<string, { id: string; database_id?: string; name: string; logo?: string; stream_url?: string }>;
   programs: Record<string, EpgProgram[]>;
   time_slots: string[];
   start_time: string;
@@ -376,25 +376,27 @@ export default function EpgPage() {
           throw new Error('API returned unsuccessful response');
         }
 
+        const programsData = data.data?.programs || [];
+
         if (append) {
           setPrograms((prev) => {
             // Deduplicate by ID
             const existing = new Set(prev.map((program) => program.id));
-            const newPrograms = data.data.programs.filter((program) => !existing.has(program.id));
+            const newPrograms = programsData.filter((program) => !existing.has(program.id));
             return [...prev, ...newPrograms];
           });
         } else {
-          setPrograms(data.data.programs);
+          setPrograms(programsData);
         }
 
         setCurrentPage(pageNum);
-        setTotal(data.data.total);
-        setHasMore(data.data.has_more);
+        setTotal(data.data?.total || 0);
+        setHasMore(data.data?.has_more || false);
 
         // Extract unique categories for filtering - only update on fresh fetch
         if (!append) {
           const uniqueCategories = Array.from(
-            new Set(data.data.programs.map((p) => p.category).filter(Boolean))
+            new Set(programsData.map((p) => p.category).filter(Boolean))
           ) as string[];
           setCategories(uniqueCategories);
         }
@@ -420,17 +422,16 @@ export default function EpgPage() {
       try {
         const epgSourcesResponse = await fetch('/api/v1/sources/epg');
         if (epgSourcesResponse.ok) {
-          const epgSourcesData: { success: boolean; data: { items: any[] } } =
-            await epgSourcesResponse.json();
-          if (epgSourcesData.success && epgSourcesData.data.items) {
-            const activeEpgSources = epgSourcesData.data.items.filter((source) => source.enabled);
+          const epgSourcesData: { sources: any[] } = await epgSourcesResponse.json();
+          if (epgSourcesData.sources && Array.isArray(epgSourcesData.sources)) {
+            const activeEpgSources = epgSourcesData.sources.filter((source) => source.enabled);
             setSources(activeEpgSources);
             activeEpgSources.forEach((source) => {
               options.push({
                 id: source.id,
                 name: source.name,
                 type: 'epg_source',
-                display_name: `${source.name} (${(source.source_type || 'epg').toUpperCase()})`,
+                display_name: `${source.name} (${(source.type || 'epg').toUpperCase()})`,
               });
             });
           }
@@ -603,12 +604,29 @@ export default function EpgPage() {
   };
 
   // Handle channel play (only for channel rows, not individual programs)
-  const handlePlayChannel = (channel: { id: string; name: string; logo?: string }) => {
+  const handlePlayChannel = (channel: {
+    id: string;
+    database_id?: string;
+    name: string;
+    logo?: string;
+    stream_url?: string;
+  }) => {
+    // Always use the proxy endpoint for playback - upstream stream_url may not be directly accessible
+    // /proxy/{channelId} provides zero-transcode smart delivery (passthrough/repackage only)
+    const streamUrl = channel.database_id
+      ? `${getBackendUrl()}/proxy/${encodeURIComponent(channel.database_id)}`
+      : '';
+
+    if (!streamUrl) {
+      console.warn('No stream URL available for channel:', channel.id);
+      return;
+    }
+
     const channelData: Channel = {
-      id: channel.id,
+      id: channel.database_id || channel.id,
       name: channel.name,
       logo_url: channel.logo,
-      stream_url: `${getBackendUrl()}/channel/${encodeURIComponent(channel.id)}/stream`,
+      stream_url: streamUrl,
       source_type: 'channel',
       group: '',
       source_name: 'EPG',
@@ -630,7 +648,7 @@ export default function EpgPage() {
 
   // All channels rendered - no virtualization, just filtering and sorting
   const getAllChannels = useMemo(() => {
-    if (!guideData) return [];
+    if (!guideData || !guideData.programs || !guideData.channels) return [];
 
     let channels = Object.entries(guideData.channels);
 

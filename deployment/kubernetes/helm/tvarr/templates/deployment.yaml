@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tvarr.fullname" . }}
+  labels:
+    {{- include "tvarr.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "tvarr.selectorLabels" . | nindent 6 }}
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "tvarr.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "tvarr.serviceAccountName" . }}
+      {{- if and .Values.gpu.enabled (eq .Values.gpu.type "nvidia") }}
+      runtimeClassName: {{ .Values.gpu.nvidia.runtimeClassName }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.env.TVARR_SERVER_PORT | default 8080 }}
+              protocol: TCP
+          env:
+            {{- range $key, $value := .Values.env }}
+            {{- if $value }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- if or .Values.resources (and .Values.gpu.enabled (or (eq .Values.gpu.type "nvidia") (eq .Values.gpu.type "intel"))) }}
+            {{- $resources := .Values.resources | default dict }}
+            {{- $limits := $resources.limits | default dict }}
+            {{- if and .Values.gpu.enabled (eq .Values.gpu.type "nvidia") }}
+            {{- $limits = merge $limits (dict "nvidia.com/gpu" 1) }}
+            {{- else if and .Values.gpu.enabled (eq .Values.gpu.type "intel") }}
+            {{- $limits = merge $limits (dict "gpu.intel.com/i915" 1) }}
+            {{- end }}
+            {{- if $limits }}
+            limits:
+              {{- toYaml $limits | nindent 14 }}
+            {{- end }}
+            {{- if $resources.requests }}
+            requests:
+              {{- toYaml $resources.requests | nindent 14 }}
+            {{- end }}
+            {{- else }}
+            {}
+            {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            {{- if and .Values.gpu.enabled (or (eq .Values.gpu.type "intel") (eq .Values.gpu.type "amd")) }}
+            - name: dri
+              mountPath: /dev/dri
+            {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "tvarr.pvcName" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if and .Values.gpu.enabled (or (eq .Values.gpu.type "intel") (eq .Values.gpu.type "amd")) }}
+        - name: dri
+          hostPath:
+            path: {{ .Values.gpu.intel.devicePath | default "/dev/dri" }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

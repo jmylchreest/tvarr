@@ -3,6 +3,7 @@ package ingestor
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -222,14 +223,29 @@ func (h *XtreamEpgHandler) convertListing(listing xtream.EPGListing, sourceID mo
 	program := &models.EpgProgram{
 		SourceID:    sourceID,
 		ChannelID:   channelID,
-		Title:       listing.Title,
-		Description: listing.Description,
+		Title:       decodeBase64OrOriginal(listing.Title),
+		Description: decodeBase64OrOriginal(listing.Description),
 		Language:    listing.Lang,
 		Start:       listing.StartTime(),
 		Stop:        listing.EndTime(),
 	}
 
 	return program
+}
+
+// decodeBase64OrOriginal attempts to decode a base64 string. If decoding fails
+// (the string is not valid base64), it returns the original string unchanged.
+// This handles Xtream APIs that return base64-encoded title and description fields.
+func decodeBase64OrOriginal(s string) string {
+	if s == "" {
+		return s
+	}
+	decoded, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		// Not valid base64, return original string
+		return s
+	}
+	return string(decoded)
 }
 
 // convertXMLTVProgramme converts an XMLTV Programme to an EpgProgram model.

@@ -42,17 +42,33 @@ type BoxHeader struct {
 type FMP4Fragment struct {
 	SequenceNumber uint32 // mfhd sequence number
 	DecodeTime     uint64 // Base decode time from tfdt
-	Duration       uint64 // Total duration of samples
+	Duration       uint64 // Total duration of samples (in track timescale units)
 	Data           []byte // Complete fragment data (moof+mdat)
 	IsKeyframe     bool   // True if contains sync sample (keyframe)
+	TrackID        uint32 // Track ID from tfhd (for timescale lookup)
 }
 
 // FMP4InitSegment represents the initialization segment (ftyp+moov).
 type FMP4InitSegment struct {
-	Data      []byte // Complete init segment data
-	HasVideo  bool   // Contains video track
-	HasAudio  bool   // Contains audio track
-	Timescale uint32 // Media timescale (from mvhd)
+	Data            []byte            // Complete init segment data
+	HasVideo        bool              // Contains video track
+	HasAudio        bool              // Contains audio track
+	Timescale       uint32            // Movie timescale (from mvhd) - used as fallback
+	TrackTimescales map[uint32]uint32 // Per-track timescales (track_id -> mdhd timescale)
+	VideoTrackID    uint32            // Track ID for video track (if present)
+	AudioTrackID    uint32            // Track ID for audio track (if present)
+}
+
+// GetTimescale returns the timescale for a given track ID.
+// Falls back to the movie timescale if track-specific timescale is not found.
+func (is *FMP4InitSegment) GetTimescale(trackID uint32) uint32 {
+	if is.TrackTimescales != nil {
+		if ts, ok := is.TrackTimescales[trackID]; ok {
+			return ts
+		}
+	}
+	// Fallback to movie timescale
+	return is.Timescale
 }
 
 // CMAFMuxer parses and segments fMP4/CMAF streams.
@@ -205,10 +221,11 @@ func (m *CMAFMuxer) processBox(header BoxHeader, data []byte) error {
 			IsKeyframe:     hasKeyframe(m.pendingMoof),
 		}
 
-		// Extract timing from moof
-		if dt, dur, err := extractTiming(m.pendingMoof); err == nil {
+		// Extract timing and track ID from moof
+		if dt, dur, tid, err := extractTiming(m.pendingMoof); err == nil {
 			fragment.DecodeTime = dt
 			fragment.Duration = dur
+			fragment.TrackID = tid
 		}
 
 		m.fragments = append(m.fragments, fragment)
@@ -243,6 +260,9 @@ func (m *CMAFMuxer) parseMoov(data []byte) error {
 		return ErrInvalidBoxHeader
 	}
 
+	// Initialize the per-track timescales map
+	m.initSegment.TrackTimescales = make(map[uint32]uint32)
+
 	// Skip moov header and search for tracks
 	offset := 8
 
@@ -263,18 +283,29 @@ func (m *CMAFMuxer) parseMoov(data []byte) error {
 
 		switch header.Type {
 		case "mvhd":
-			// Movie header - contains timescale
+			// Movie header - contains movie timescale (fallback)
 			if ts, err := extractTimescale(data[offset:boxEnd]); err == nil {
 				m.initSegment.Timescale = ts
 			}
 
 		case "trak":
-			// Track - check if video or audio
-			if isVideoTrack(data[offset:boxEnd]) {
-				m.initSegment.HasVideo = true
+			// Track - extract track ID and per-track timescale
+			trackData := data[offset:boxEnd]
+			trackID := extractTrackID(trackData)
+			trackTimescale := extractTrackTimescale(trackData)
+
+			if trackID > 0 && trackTimescale > 0 {
+				m.initSegment.TrackTimescales[trackID] = trackTimescale
 			}
-			if isAudioTrack(data[offset:boxEnd]) {
+
+			// Check if video or audio and store track ID
+			if isVideoTrack(trackData) {
+				m.initSegment.HasVideo = true
+				m.initSegment.VideoTrackID = trackID
+			}
+			if isAudioTrack(trackData) {
 				m.initSegment.HasAudio = true
+				m.initSegment.AudioTrackID = trackID
 			}
 		}
 
@@ -413,10 +444,10 @@ func extractSequenceNumber(moof []byte) (uint32, error) {
 	return 0, errors.New("mfhd not found in moof")
 }
 
-// extractTiming extracts decode time and duration from a moof box.
-func extractTiming(moof []byte) (decodeTime uint64, duration uint64, err error) {
+// extractTiming extracts decode time, duration, and track ID from a moof box.
+func extractTiming(moof []byte) (decodeTime uint64, duration uint64, trackID uint32, err error) {
 	if len(moof) < 8 {
-		return 0, 0, ErrInvalidBoxHeader
+		return 0, 0, 0, ErrInvalidBoxHeader
 	}
 
 	// Search for traf (track fragment) containing tfdt (track fragment decode time)
@@ -428,9 +459,9 @@ func extractTiming(moof []byte) (decodeTime uint64, duration uint64, err error) 
 		}
 
 		if header.Type == "traf" && offset+int(header.Size) <= len(moof) {
-			dt, dur := parseTraf(moof[offset : offset+int(header.Size)])
-			if dt > 0 {
-				return dt, dur, nil
+			dt, dur, tid := parseTraf(moof[offset : offset+int(header.Size)])
+			if dt > 0 || tid > 0 {
+				return dt, dur, tid, nil
 			}
 		}
 
@@ -440,14 +471,16 @@ func extractTiming(moof []byte) (decodeTime uint64, duration uint64, err error) 
 		}
 	}
 
-	return 0, 0, errors.New("timing info not found")
+	return 0, 0, 0, errors.New("timing info not found")
 }
 
-// parseTraf parses a traf box for decode time and duration.
-func parseTraf(traf []byte) (decodeTime uint64, duration uint64) {
+// parseTraf parses a traf box for decode time, duration, and track ID.
+func parseTraf(traf []byte) (decodeTime uint64, duration uint64, trackID uint32) {
 	if len(traf) < 8 {
-		return 0, 0
+		return 0, 0, 0
 	}
+
+	var defaultSampleDuration uint32
 
 	offset := 8
 	for offset+8 < len(traf) {
@@ -462,6 +495,28 @@ func parseTraf(traf []byte) (decodeTime uint64, duration uint64) {
 		}
 
 		switch header.Type {
+		case "tfhd":
+			// Track fragment header - contains track_id and may contain default sample duration
+			if boxEnd >= offset+16 {
+				flags := binary.BigEndian.Uint32(traf[offset+8:offset+12]) & 0x00FFFFFF
+				// track_id is at offset 12 (after version/flags)
+				trackID = binary.BigEndian.Uint32(traf[offset+12 : offset+16])
+				tfhdOffset := offset + 16 // After version/flags/track_id
+
+				// Check for optional fields based on flags
+				if flags&0x000001 != 0 { // base_data_offset present
+					tfhdOffset += 8
+				}
+				if flags&0x000002 != 0 { // sample_description_index present
+					tfhdOffset += 4
+				}
+				if flags&0x000008 != 0 { // default_sample_duration present
+					if tfhdOffset+4 <= boxEnd {
+						defaultSampleDuration = binary.BigEndian.Uint32(traf[tfhdOffset : tfhdOffset+4])
+					}
+				}
+			}
+
 		case "tfdt":
 			// Track fragment decode time
 			if boxEnd >= offset+16 {
@@ -474,19 +529,66 @@ func parseTraf(traf []byte) (decodeTime uint64, duration uint64) {
 			}
 
 		case "trun":
-			// Track run - contains sample count and durations
+			// Track run - contains sample count and per-sample durations
 			if boxEnd > offset+12 {
-				// Simple duration estimation from sample count
-				// Full parsing would require reading each sample duration
+				flags := binary.BigEndian.Uint32(traf[offset+8:offset+12]) & 0x00FFFFFF
 				sampleCount := binary.BigEndian.Uint32(traf[offset+12 : offset+16])
-				duration = uint64(sampleCount) // Simplified - would need timescale
+
+				trunOffset := offset + 16 // After version/flags and sample_count
+
+				// Check for optional fields before sample table
+				if flags&0x000001 != 0 { // data_offset present
+					trunOffset += 4
+				}
+				if flags&0x000004 != 0 { // first_sample_flags present
+					trunOffset += 4
+				}
+
+				// Calculate sample entry size based on flags
+				sampleEntrySize := 0
+				hasSampleDuration := flags&0x000100 != 0
+				hasSampleSize := flags&0x000200 != 0
+				hasSampleFlags := flags&0x000400 != 0
+				hasSampleCTO := flags&0x000800 != 0
+
+				if hasSampleDuration {
+					sampleEntrySize += 4
+				}
+				if hasSampleSize {
+					sampleEntrySize += 4
+				}
+				if hasSampleFlags {
+					sampleEntrySize += 4
+				}
+				if hasSampleCTO {
+					sampleEntrySize += 4
+				}
+
+				// Sum up all sample durations
+				if hasSampleDuration && sampleEntrySize > 0 {
+					for i := uint32(0); i < sampleCount; i++ {
+						sampleOffset := trunOffset + int(i)*sampleEntrySize
+						if sampleOffset+4 <= boxEnd {
+							sampleDuration := binary.BigEndian.Uint32(traf[sampleOffset : sampleOffset+4])
+							duration += uint64(sampleDuration)
+						}
+					}
+				} else if defaultSampleDuration > 0 {
+					// Use default sample duration from tfhd
+					duration = uint64(defaultSampleDuration) * uint64(sampleCount)
+				} else {
+					// No duration info available - estimate based on typical 30fps video
+					// Assume 1001 ticks per frame at 30000 timescale (29.97fps NTSC)
+					// or 1000 ticks at 30000 timescale (30fps)
+					duration = uint64(sampleCount) * 1001 / 30 // ~33ms per frame
+				}
 			}
 		}
 
 		offset = boxEnd
 	}
 
-	return decodeTime, duration
+	return decodeTime, duration, trackID
 }
 
 // hasKeyframe checks if a moof contains a sync sample (keyframe).
@@ -578,6 +680,116 @@ func isVideoTrack(trak []byte) bool {
 // isAudioTrack checks if a trak box contains an audio track.
 func isAudioTrack(trak []byte) bool {
 	return findHandler(trak) == "soun"
+}
+
+// extractTrackID extracts the track ID from a trak box (from tkhd sub-box).
+func extractTrackID(trak []byte) uint32 {
+	if len(trak) < 8 {
+		return 0
+	}
+
+	// Search for tkhd inside trak
+	offset := 8
+	for offset+8 < len(trak) {
+		header, err := peekBoxHeader(trak[offset:])
+		if err != nil || header.Size == 0 {
+			break
+		}
+
+		boxEnd := offset + int(header.Size)
+		if boxEnd > len(trak) {
+			break
+		}
+
+		if header.Type == "tkhd" {
+			// tkhd: version(1) + flags(3) + ...
+			// version 0: creation_time(4) + mod_time(4) + track_id(4)
+			// version 1: creation_time(8) + mod_time(8) + track_id(4)
+			if boxEnd < offset+20 {
+				break
+			}
+			version := trak[offset+8]
+			if version == 0 {
+				// track_id at offset 8+1+3+4+4 = 20
+				if boxEnd >= offset+24 {
+					return binary.BigEndian.Uint32(trak[offset+20 : offset+24])
+				}
+			} else {
+				// version 1: track_id at offset 8+1+3+8+8 = 28
+				if boxEnd >= offset+32 {
+					return binary.BigEndian.Uint32(trak[offset+28 : offset+32])
+				}
+			}
+		}
+
+		offset = boxEnd
+	}
+
+	return 0
+}
+
+// extractTrackTimescale extracts the timescale from a trak box (from mdia/mdhd sub-box).
+func extractTrackTimescale(trak []byte) uint32 {
+	if len(trak) < 8 {
+		return 0
+	}
+
+	// Search for mdia inside trak
+	offset := 8
+	for offset+8 < len(trak) {
+		header, err := peekBoxHeader(trak[offset:])
+		if err != nil || header.Size == 0 {
+			break
+		}
+
+		boxEnd := offset + int(header.Size)
+		if boxEnd > len(trak) {
+			break
+		}
+
+		if header.Type == "mdia" {
+			// Search inside mdia for mdhd
+			mdiaOffset := offset + 8
+			for mdiaOffset+8 < boxEnd {
+				innerHeader, err := peekBoxHeader(trak[mdiaOffset:])
+				if err != nil || innerHeader.Size == 0 {
+					break
+				}
+
+				innerEnd := mdiaOffset + int(innerHeader.Size)
+				if innerEnd > boxEnd {
+					break
+				}
+
+				if innerHeader.Type == "mdhd" {
+					// mdhd: version(1) + flags(3) + ...
+					// version 0: creation_time(4) + mod_time(4) + timescale(4)
+					// version 1: creation_time(8) + mod_time(8) + timescale(4)
+					if innerEnd < mdiaOffset+20 {
+						break
+					}
+					version := trak[mdiaOffset+8]
+					if version == 0 {
+						// timescale at offset 8+1+3+4+4 = 20
+						if innerEnd >= mdiaOffset+24 {
+							return binary.BigEndian.Uint32(trak[mdiaOffset+20 : mdiaOffset+24])
+						}
+					} else {
+						// version 1: timescale at offset 8+1+3+8+8 = 28
+						if innerEnd >= mdiaOffset+32 {
+							return binary.BigEndian.Uint32(trak[mdiaOffset+28 : mdiaOffset+32])
+						}
+					}
+				}
+
+				mdiaOffset = innerEnd
+			}
+		}
+
+		offset = boxEnd
+	}
+
+	return 0
 }
 
 // findHandler finds the handler type in a trak box.

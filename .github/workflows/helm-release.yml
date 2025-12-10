@@ -1,0 +1,98 @@
+name: Helm Chart Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'deployment/kubernetes/helm/**'
+      - '.github/workflows/helm-release.yml'
+    tags:
+      - 'v*'
+  pull_request:
+    paths:
+      - 'deployment/kubernetes/helm/**'
+      - '.github/workflows/helm-release.yml'
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - name: Lint Helm chart
+        run: |
+          helm lint deployment/kubernetes/helm/tvarr
+
+      - name: Template Helm chart
+        run: |
+          helm template tvarr deployment/kubernetes/helm/tvarr
+
+  release:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    needs: lint
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - name: Log in to OCI Registry
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Get chart version
+        id: chart_version
+        run: |
+          version=$(grep '^version:' deployment/kubernetes/helm/tvarr/Chart.yaml | awk '{print $2}')
+          echo "version=$version" >> $GITHUB_OUTPUT
+
+      - name: Package Helm chart
+        run: |
+          helm package deployment/kubernetes/helm/tvarr -d .helm-packages
+
+      - name: Push to OCI Registry
+        run: |
+          helm push .helm-packages/tvarr-${{ steps.chart_version.outputs.version }}.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
+
+      # Optional: Also publish to GitHub Pages for helm repo add
+      - name: Checkout gh-pages branch
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: gh-pages
+        continue-on-error: true
+
+      - name: Update Helm repo index
+        if: success()
+        run: |
+          mkdir -p gh-pages/charts
+          cp .helm-packages/*.tgz gh-pages/charts/
+          helm repo index gh-pages/charts --url https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/charts
+          cd gh-pages
+          git add .
+          git commit -m "Update Helm chart to ${{ steps.chart_version.outputs.version }}" || echo "No changes to commit"
+          git push || echo "gh-pages branch does not exist or push failed"
+        continue-on-error: true
