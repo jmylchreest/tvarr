@@ -546,11 +546,11 @@ type GetGuideInput struct {
 
 // GuideChannelInfo represents channel info in the guide response.
 type GuideChannelInfo struct {
-	ID         string `json:"id"`                     // The EPG channel ID (e.g., tvg_id)
-	DatabaseID string `json:"database_id,omitempty"`  // The database channel ID (ULID) for streaming
+	ID         string `json:"id"`                    // The EPG channel ID (e.g., tvg_id)
+	DatabaseID string `json:"database_id,omitempty"` // The database channel ID (ULID) for streaming
 	Name       string `json:"name"`
 	Logo       string `json:"logo,omitempty"`
-	StreamURL  string `json:"stream_url,omitempty"`   // The upstream stream URL for direct playback
+	StreamURL  string `json:"stream_url,omitempty"` // The upstream stream URL for direct playback
 }
 
 // GuideProgramInfo represents a program in the guide response.

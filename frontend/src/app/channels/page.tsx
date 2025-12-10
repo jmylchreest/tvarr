@@ -425,8 +425,8 @@ export default function ChannelsPage() {
         audio_bitrate: probe.audio_bitrate ?? null,
         audio_channels: probe.audio_channels ?? null,
         audio_sample_rate: probe.audio_sample_rate ?? null,
-        // If backend responds with a stream_url include it, otherwise use proxy URL
-        stream_url: probe.stream_url || `${getBackendUrl()}/proxy/${channel.id}`,
+        // Always use proxy URL for playback - upstream URLs may not be directly accessible
+        stream_url: `${getBackendUrl()}/proxy/${channel.id}`,
       };
 
       setChannels((prev) =>

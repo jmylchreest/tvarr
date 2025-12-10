@@ -611,10 +611,11 @@ export default function EpgPage() {
     logo?: string;
     stream_url?: string;
   }) => {
-    // Use stream_url directly if available (preferred), otherwise fall back to channel preview endpoint
+    // Always use the proxy endpoint for playback - upstream stream_url may not be directly accessible
     // /proxy/{channelId} provides zero-transcode smart delivery (passthrough/repackage only)
-    const streamUrl = channel.stream_url ||
-      (channel.database_id ? `${getBackendUrl()}/proxy/${encodeURIComponent(channel.database_id)}` : '');
+    const streamUrl = channel.database_id
+      ? `${getBackendUrl()}/proxy/${encodeURIComponent(channel.database_id)}`
+      : '';
 
     if (!streamUrl) {
       console.warn('No stream URL available for channel:', channel.id);

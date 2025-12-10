@@ -62,8 +62,30 @@ type InitSegment struct {
 	// HasAudio indicates if the stream contains audio.
 	HasAudio bool
 
-	// Timescale is the media timescale from mvhd.
+	// Timescale is the media timescale from mvhd (fallback).
 	Timescale uint32
+
+	// TrackTimescales maps track IDs to their timescales from mdhd boxes.
+	// Fragment durations are in track timescale units, not movie timescale.
+	TrackTimescales map[uint32]uint32
+
+	// VideoTrackID is the track ID for the video track (if present).
+	VideoTrackID uint32
+
+	// AudioTrackID is the track ID for the audio track (if present).
+	AudioTrackID uint32
+}
+
+// GetTimescale returns the timescale for a specific track.
+// Falls back to movie timescale if track-specific timescale is not available.
+func (i *InitSegment) GetTimescale(trackID uint32) uint32 {
+	if i.TrackTimescales != nil {
+		if ts, ok := i.TrackTimescales[trackID]; ok {
+			return ts
+		}
+	}
+	// Fallback to movie timescale
+	return i.Timescale
 }
 
 // Size returns the byte size of the segment.
@@ -113,14 +135,22 @@ func (s *Segment) ContentType() string {
 // Clone creates a copy of the init segment with its own data buffer.
 func (i *InitSegment) Clone() *InitSegment {
 	clone := &InitSegment{
-		Timestamp: i.Timestamp,
-		HasVideo:  i.HasVideo,
-		HasAudio:  i.HasAudio,
-		Timescale: i.Timescale,
+		Timestamp:    i.Timestamp,
+		HasVideo:     i.HasVideo,
+		HasAudio:     i.HasAudio,
+		Timescale:    i.Timescale,
+		VideoTrackID: i.VideoTrackID,
+		AudioTrackID: i.AudioTrackID,
 	}
 	if len(i.Data) > 0 {
 		clone.Data = make([]byte, len(i.Data))
 		copy(clone.Data, i.Data)
+	}
+	if len(i.TrackTimescales) > 0 {
+		clone.TrackTimescales = make(map[uint32]uint32, len(i.TrackTimescales))
+		for k, v := range i.TrackTimescales {
+			clone.TrackTimescales[k] = v
+		}
 	}
 	return clone
 }

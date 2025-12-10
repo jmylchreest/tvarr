@@ -48,6 +48,7 @@ import {
   type ChartConfig,
 } from '@/components/ui/chart';
 import { ApiResponse, HealthData, LivezProbeResponse, ReadyzProbeResponse } from '@/types/api';
+import { formatUptimeFromSeconds } from '@/lib/format';
 import { getStatusIndicatorClasses, getStatusType } from '@/lib/status-colors';
 import { getBackendUrl } from '@/lib/config';
 import { useHealthData } from '@/hooks/use-health-data';
@@ -85,22 +86,6 @@ interface MemoryInfo {
 }
 
 
-function formatUptime(uptimeSeconds: number): string {
-  const days = Math.floor(uptimeSeconds / 86400);
-  const hours = Math.floor((uptimeSeconds % 86400) / 3600);
-  const minutes = Math.floor((uptimeSeconds % 3600) / 60);
-  const seconds = uptimeSeconds % 60;
-
-  if (days > 0) {
-    return `${days}d ${hours}h ${minutes}m ${seconds}s`;
-  } else if (hours > 0) {
-    return `${hours}h ${minutes}m ${seconds}s`;
-  } else if (minutes > 0) {
-    return `${minutes}m ${seconds}s`;
-  } else {
-    return `${seconds}s`;
-  }
-}
 
 function formatMemorySize(mb: number): string {
   if (mb >= 1024) {
@@ -1013,7 +998,7 @@ export function Debug() {
               <Clock className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{formatUptime(healthData.uptime_seconds)}</div>
+              <div className="text-2xl font-bold">{formatUptimeFromSeconds(healthData.uptime_seconds)}</div>
             </CardContent>
           </Card>
 
@@ -1307,8 +1292,10 @@ export function Debug() {
       {/* System Components */}
       {healthData && (
         <div className="grid gap-4 md:grid-cols-2">
-          {/* Feature Flags Debug */}
-          <FeatureFlagsDebug />
+          {/* Feature Flags Debug - Full width */}
+          <div className="md:col-span-2">
+            <FeatureFlagsDebug />
+          </div>
 
           {/* Circuit Breakers - Enhanced Visualization */}
           {enhancedCBStats.length > 0 && (

@@ -31,9 +31,8 @@ type RelaySession struct {
 	// Smart delivery context (set when using smart mode)
 	DeliveryContext *DeliveryContext
 
-	manager            *Manager
-	buffer             *CyclicBuffer  // Legacy buffer for MPEG-TS streaming (deprecated, use unifiedBuffer)
-	unifiedBuffer      *UnifiedBuffer // Unified buffer for all streaming formats
+	manager       *Manager
+	unifiedBuffer *UnifiedBuffer // Unified buffer for all streaming formats
 	ctx                context.Context
 	cancel             context.CancelFunc
 	fallbackController *FallbackController
@@ -81,7 +80,7 @@ func (s *RelaySession) runPipeline() {
 		s.err = err
 		s.closed = true
 		s.mu.Unlock()
-		s.buffer.Close()
+		s.unifiedBuffer.Close()
 	}()
 
 	for {
@@ -188,7 +187,7 @@ func (s *RelaySession) runFallbackStream() error {
 	}
 
 	streamer := NewFallbackStreamer(s.fallbackGenerator, nil)
-	writer := NewStreamWriter(s.buffer)
+	writer := NewUnifiedStreamWriter(s.unifiedBuffer)
 
 	// Start a recovery check goroutine
 	recoveryDone := make(chan bool, 1)
@@ -595,7 +594,8 @@ func (s *RelaySession) runFFmpegPipeline() error {
 	s.mu.Unlock()
 
 	// Run FFmpeg with retry logic for startup failures
-	writer := NewStreamWriter(s.buffer)
+	// Create writer that writes to the unified buffer for all streaming formats
+	writer := s.createUnifiedWriter()
 	retryCfg := ffmpeg.DefaultRetryConfig()
 	err = cmd.StreamToWriterWithRetry(s.ctx, writer, retryCfg)
 
@@ -643,7 +643,7 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 		}
 
 		if n > 0 {
-			if err := s.buffer.WriteChunk(buf[:n]); err != nil {
+			if err := s.unifiedBuffer.WriteChunk(buf[:n]); err != nil {
 				return err
 			}
 			s.mu.Lock()
@@ -692,7 +692,7 @@ func (s *RelaySession) runPassthroughPipeline() error {
 		}
 
 		if n > 0 {
-			if err := s.buffer.WriteChunk(buf[:n]); err != nil {
+			if err := s.unifiedBuffer.WriteChunk(buf[:n]); err != nil {
 				return err
 			}
 			s.mu.Lock()
@@ -776,7 +776,7 @@ func (s *RelaySession) buildProxyBaseURL() string {
 }
 
 // AddClient adds a client to the session and returns a reader.
-func (s *RelaySession) AddClient(userAgent, remoteAddr string) (*BufferClient, *StreamReader, error) {
+func (s *RelaySession) AddClient(userAgent, remoteAddr string) (*UnifiedClient, *UnifiedStreamReader, error) {
 	s.mu.RLock()
 	if s.closed {
 		s.mu.RUnlock()
@@ -784,12 +784,12 @@ func (s *RelaySession) AddClient(userAgent, remoteAddr string) (*BufferClient, *
 	}
 	s.mu.RUnlock()
 
-	client, err := s.buffer.AddClient(userAgent, remoteAddr)
+	client, err := s.unifiedBuffer.AddClient(userAgent, remoteAddr)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	reader := NewStreamReader(s.buffer, client)
+	reader := NewUnifiedStreamReader(s.unifiedBuffer, client)
 
 	s.mu.Lock()
 	s.LastActivity = time.Now()
@@ -801,10 +801,10 @@ func (s *RelaySession) AddClient(userAgent, remoteAddr string) (*BufferClient, *
 
 // RemoveClient removes a client from the session.
 func (s *RelaySession) RemoveClient(clientID uuid.UUID) bool {
-	removed := s.buffer.RemoveClient(clientID)
+	removed := s.unifiedBuffer.RemoveClient(clientID)
 	if removed {
 		// Check if session is now idle (no clients)
-		if s.buffer.ClientCount() == 0 {
+		if s.unifiedBuffer.ClientCount() == 0 {
 			s.mu.Lock()
 			s.IdleSince = time.Now()
 			s.mu.Unlock()
@@ -833,7 +833,7 @@ func (s *RelaySession) Close() {
 		s.inputReader.Close()
 	}
 
-	s.buffer.Close()
+	s.unifiedBuffer.Close()
 }
 
 // Stats returns session statistics.
@@ -841,7 +841,7 @@ func (s *RelaySession) Stats() SessionStats {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	bufferStats := s.buffer.Stats()
+	bufferStats := s.unifiedBuffer.Stats()
 
 	var errStr string
 	if s.err != nil {
@@ -852,6 +852,19 @@ func (s *RelaySession) Stats() SessionStats {
 	profileName := "passthrough"
 	if s.Profile != nil {
 		profileName = s.Profile.Name
+	}
+
+	// Convert UnifiedClientStats to ClientStats for API compatibility
+	var clients []ClientStats
+	for _, c := range bufferStats.Clients {
+		clients = append(clients, ClientStats{
+			ID:           c.ID,
+			BytesRead:    c.BytesRead,
+			LastSequence: c.LastSequence,
+			ConnectedAt:  c.ConnectedAt,
+			UserAgent:    c.UserAgent,
+			RemoteAddr:   c.RemoteAddr,
+		})
 	}
 
 	stats := SessionStats{
@@ -866,11 +879,11 @@ func (s *RelaySession) Stats() SessionStats {
 		IdleSince:         s.IdleSince,
 		ClientCount:       bufferStats.ClientCount,
 		BytesWritten:      bufferStats.TotalBytesWritten,
-		BytesFromUpstream: bufferStats.BytesFromUpstream,
+		BytesFromUpstream: bufferStats.TotalBytesWritten, // Same as bytes written in unified buffer
 		Closed:            s.closed,
 		Error:             errStr,
 		InFallback:        s.inFallback,
-		Clients:           bufferStats.Clients,
+		Clients:           clients,
 	}
 
 	// Include smart delivery context if available
@@ -957,6 +970,17 @@ type SessionStats struct {
 	SegmentBufferStats *SessionSegmentBufferStats `json:"segment_buffer_stats,omitempty"`
 }
 
+// ClientStats holds statistics for a single connected client.
+type ClientStats struct {
+	ID           string    `json:"id"`
+	BytesRead    uint64    `json:"bytes_read"`
+	LastSequence uint64    `json:"last_sequence"`
+	ConnectedAt  time.Time `json:"connected_at"`
+	LastRead     time.Time `json:"last_read,omitempty"`
+	UserAgent    string    `json:"user_agent,omitempty"`
+	RemoteAddr   string    `json:"remote_addr,omitempty"`
+}
+
 // SessionSegmentBufferStats contains segment buffer statistics for a session.
 type SessionSegmentBufferStats struct {
 	ChunkCount        int    `json:"chunk_count" doc:"Number of chunks in buffer"`
@@ -987,9 +1011,15 @@ type FFmpegProcessStats struct {
 
 // InitMultiFormatOutput initializes the unified buffer and format router for multi-format output.
 // This should be called when the session's output format is HLS or DASH.
+// This is idempotent - calling it multiple times will not reset the buffer if already initialized.
 func (s *RelaySession) InitMultiFormatOutput() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Skip if format router already initialized (buffer and router are paired)
+	if s.formatRouter != nil {
+		return
+	}
 
 	// Determine unified buffer config from profile
 	config := DefaultUnifiedBufferConfig()
@@ -1008,8 +1038,10 @@ func (s *RelaySession) InitMultiFormatOutput() {
 		s.containerFormat = container
 	}
 
-	// Create unified buffer (replaces both CyclicBuffer and SegmentBuffer)
-	s.unifiedBuffer = NewUnifiedBuffer(config)
+	// Create unified buffer if not already created (may exist from previous initialization)
+	if s.unifiedBuffer == nil {
+		s.unifiedBuffer = NewUnifiedBuffer(config)
+	}
 
 	// Create format router with default format from profile
 	defaultFormat := models.ContainerFormatMPEGTS
@@ -1102,4 +1134,45 @@ func (s *RelaySession) GetDASHPassthrough() *DASHPassthroughHandler {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.dashPassthrough
+}
+
+// createUnifiedWriter creates a writer that writes to the unified buffer.
+// This feeds all streaming formats (MPEG-TS, HLS, DASH) through the unified buffer.
+// The writer dynamically checks for the unified buffer on each write, allowing it to be
+// initialized after FFmpeg has started (fixing the race condition between session.start() and
+// InitMultiFormatOutput()).
+func (s *RelaySession) createUnifiedWriter() io.Writer {
+	return &dynamicUnifiedWriter{
+		session: s,
+	}
+}
+
+// dynamicUnifiedWriter writes to the UnifiedBuffer, handling the case where the buffer
+// may not be initialized yet when FFmpeg starts.
+type dynamicUnifiedWriter struct {
+	session *RelaySession
+	writer  *UnifiedStreamWriter // Lazily initialized when UnifiedBuffer becomes available
+}
+
+// Write implements io.Writer, writing to the unified buffer.
+func (dw *dynamicUnifiedWriter) Write(p []byte) (int, error) {
+	// Lazily initialize writer when buffer becomes available
+	if dw.writer == nil {
+		dw.session.mu.RLock()
+		unifiedBuf := dw.session.unifiedBuffer
+		dw.session.mu.RUnlock()
+
+		if unifiedBuf != nil {
+			dw.writer = NewUnifiedStreamWriter(unifiedBuf)
+		}
+	}
+
+	// Write to unified buffer if available
+	if dw.writer != nil {
+		return dw.writer.Write(p)
+	}
+
+	// Buffer not yet initialized - return success but data is lost
+	// This should only happen briefly during startup
+	return len(p), nil
 }

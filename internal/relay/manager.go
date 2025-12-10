@@ -24,6 +24,12 @@ var ErrSessionClosed = errors.New("relay session closed")
 // ErrUpstreamFailed is returned when the upstream stream fails.
 var ErrUpstreamFailed = errors.New("upstream stream failed")
 
+// ErrBufferClosed is returned when the buffer has been closed.
+var ErrBufferClosed = errors.New("buffer closed")
+
+// ErrClientNotFound is returned when a client is not found in the buffer.
+var ErrClientNotFound = errors.New("client not found")
+
 // ManagerConfig holds configuration for the relay manager.
 type ManagerConfig struct {
 	// MaxSessions is the maximum number of concurrent relay sessions.
@@ -39,8 +45,8 @@ type ManagerConfig struct {
 	CircuitBreakerConfig CircuitBreakerConfig
 	// ConnectionPoolConfig for upstream connection limits.
 	ConnectionPoolConfig ConnectionPoolConfig
-	// CyclicBufferConfig for multi-client streaming.
-	CyclicBufferConfig CyclicBufferConfig
+	// UnifiedBufferConfig for multi-client streaming.
+	UnifiedBufferConfig UnifiedBufferConfig
 	// FallbackConfig for fallback stream generation.
 	FallbackConfig FallbackConfig
 	// HTTPClient for upstream requests.
@@ -60,7 +66,7 @@ func DefaultManagerConfig() ManagerConfig {
 		CleanupInterval:      1 * time.Second, // Check frequently for idle sessions
 		CircuitBreakerConfig: DefaultCircuitBreakerConfig(),
 		ConnectionPoolConfig: DefaultConnectionPoolConfig(),
-		CyclicBufferConfig:   DefaultCyclicBufferConfig(),
+		UnifiedBufferConfig:  DefaultUnifiedBufferConfig(),
 		FallbackConfig:       DefaultFallbackConfig(),
 		HTTPClient: &http.Client{
 			Timeout: 30 * time.Second,
@@ -394,7 +400,7 @@ func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, channe
 		StartedAt:       time.Now(),
 		LastActivity:    time.Now(),
 		manager:         m,
-		buffer:          NewCyclicBuffer(m.config.CyclicBufferConfig),
+		unifiedBuffer:   NewUnifiedBuffer(m.config.UnifiedBufferConfig),
 		ctx:             sessionCtx,
 		cancel:          sessionCancel,
 	}
@@ -447,7 +453,7 @@ func (m *Manager) cleanupStaleSessions() {
 
 	for id, session := range m.sessions {
 		session.mu.RLock()
-		clientCount := session.buffer.ClientCount()
+		clientCount := session.unifiedBuffer.ClientCount()
 		lastActivity := session.LastActivity
 		idleSince := session.IdleSince
 		closed := session.closed
