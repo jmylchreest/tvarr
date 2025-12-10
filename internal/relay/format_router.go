@@ -37,6 +37,15 @@ type OutputRequest struct {
 
 	// Accept is the client's Accept header.
 	Accept string
+
+	// Headers contains all HTTP request headers for flexible client detection.
+	// This allows expressions to access any header via @req_header:<name> syntax
+	// and enables detection of X-Tvarr-Player or any custom player headers.
+	Headers map[string][]string
+
+	// FormatOverride is the ?format= query parameter for explicit format override.
+	// Values: "mpegts", "fmp4", "hls", "dash"
+	FormatOverride string
 }
 
 // IsPlaylistRequest returns true if this is a playlist/manifest request.
@@ -52,6 +61,21 @@ func (r *OutputRequest) IsSegmentRequest() bool {
 // IsInitRequest returns true if this is a DASH initialization segment request.
 func (r *OutputRequest) IsInitRequest() bool {
 	return r.InitType != ""
+}
+
+// GetHeader returns the first value for the named header, or empty string if not present.
+// Header names are case-insensitive per HTTP specification.
+func (r *OutputRequest) GetHeader(name string) string {
+	if r.Headers == nil {
+		return ""
+	}
+	// HTTP headers are case-insensitive, check canonical form
+	for key, values := range r.Headers {
+		if strings.EqualFold(key, name) && len(values) > 0 {
+			return values[0]
+		}
+	}
+	return ""
 }
 
 // PassthroughHandler is the interface for passthrough proxy handlers.

@@ -1,6 +1,15 @@
 // Package relay provides streaming relay functionality for tvarr.
 package relay
 
+// Header constants for client identification.
+const (
+	// HeaderXTvarrPlayer is the custom header for player identification.
+	// Frontend players (hls.js, mpegts.js) send this header to identify themselves
+	// for optimal routing decisions.
+	// Format: "player-name/version" (e.g., "hls.js/1.5.8", "mpegts.js/1.7.3")
+	HeaderXTvarrPlayer = "X-Tvarr-Player"
+)
+
 // Content types for streaming formats.
 const (
 	// ContentTypeHLSPlaylist is the MIME type for HLS playlists (.m3u8).
@@ -55,6 +64,17 @@ const (
 
 	// FormatValueAuto requests auto-detection of optimal format.
 	FormatValueAuto = "auto"
+
+	// FormatValueHLSFMP4 is the sub-format value for HLS with fMP4 segments (CMAF).
+	// Modern browsers and players support this for better seeking and caching.
+	FormatValueHLSFMP4 = "hls-fmp4"
+
+	// FormatValueHLSTS is the sub-format value for HLS with MPEG-TS segments.
+	// Maximum compatibility with legacy devices and players.
+	FormatValueHLSTS = "hls-ts"
+
+	// FormatValueFMP4 is an alias for fMP4 container format selection.
+	FormatValueFMP4 = "fmp4"
 )
 
 // Default segment buffer configuration.

@@ -172,6 +172,30 @@ const (
 	HWAccelVT    HWAccelType = "videotoolbox" // macOS
 )
 
+// DetectionMode controls client detection behavior for routing decisions.
+// When "auto", the system uses client detection (headers, query params) to optimize delivery.
+// When set to any other value (e.g., "hls", "mpegts"), profile settings are used as-is.
+type DetectionMode string
+
+const (
+	// DetectionModeAuto enables smart routing based on client detection.
+	// The system analyzes X-Tvarr-Player headers, Accept headers, User-Agent,
+	// and format query parameters to choose optimal delivery path.
+	DetectionModeAuto DetectionMode = "auto"
+
+	// DetectionModeHLS forces HLS output regardless of client capabilities.
+	// Profile settings are used directly without client detection.
+	DetectionModeHLS DetectionMode = "hls"
+
+	// DetectionModeMPEGTS forces MPEG-TS output regardless of client capabilities.
+	// Profile settings are used directly without client detection.
+	DetectionModeMPEGTS DetectionMode = "mpegts"
+
+	// DetectionModeDASH forces DASH output regardless of client capabilities.
+	// Profile settings are used directly without client detection.
+	DetectionModeDASH DetectionMode = "dash"
+)
+
 // RelayProfile defines a transcoding profile for stream relay.
 type RelayProfile struct {
 	BaseModel
@@ -221,8 +245,14 @@ type RelayProfile struct {
 
 	// Output settings
 	ContainerFormat ContainerFormat `gorm:"size:20;default:'auto'" json:"container_format"`
-	SegmentDuration int             `gorm:"default:6" json:"segment_duration,omitempty"` // HLS/DASH segment duration (seconds), 2-10
-	PlaylistSize    int             `gorm:"default:5" json:"playlist_size,omitempty"`    // HLS/DASH playlist entries, 3-20
+
+	// DetectionMode controls client detection behavior for routing decisions.
+	// "auto" enables smart routing based on client detection (headers, query params).
+	// Other values ("hls", "mpegts", "dash") use profile settings directly without detection.
+	DetectionMode DetectionMode `gorm:"size:20;default:'auto'" json:"detection_mode"`
+
+	SegmentDuration int `gorm:"default:6" json:"segment_duration,omitempty"` // HLS/DASH segment duration (seconds), 2-10
+	PlaylistSize    int `gorm:"default:5" json:"playlist_size,omitempty"`    // HLS/DASH playlist entries, 3-20
 
 	// Buffer and timeout settings
 	InputBufferSize  int `gorm:"default:8192" json:"input_buffer_size"`   // KB
@@ -311,6 +341,13 @@ func (p *RelayProfile) BeforeUpdate(tx *gorm.DB) error {
 // IsPassthrough returns true if the profile uses copy for both video and audio.
 func (p *RelayProfile) IsPassthrough() bool {
 	return p.VideoCodec == VideoCodecCopy && p.AudioCodec == AudioCodecCopy
+}
+
+// IsAutoDetection returns true if the profile uses automatic client detection.
+// When true, the system analyzes request headers and parameters to choose optimal routing.
+// When false, profile settings are used directly without client detection.
+func (p *RelayProfile) IsAutoDetection() bool {
+	return p.DetectionMode == "" || p.DetectionMode == DetectionModeAuto
 }
 
 // UsesHardwareAccel returns true if hardware acceleration is configured.

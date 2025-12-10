@@ -217,6 +217,7 @@ type RelayProfileResponse struct {
 	FallbackRecoveryInterval int    `json:"fallback_recovery_interval"`
 	ForceVideoTranscode      bool   `json:"force_video_transcode"`
 	ForceAudioTranscode      bool   `json:"force_audio_transcode"`
+	DetectionMode            string `json:"detection_mode" doc:"Client detection mode: auto, hls, mpegts, dash"`
 	// Statistics
 	SuccessCount int64  `json:"success_count"`
 	FailureCount int64  `json:"failure_count"`
@@ -263,6 +264,7 @@ func RelayProfileFromModel(p *models.RelayProfile) RelayProfileResponse {
 		FallbackRecoveryInterval: p.FallbackRecoveryInterval,
 		ForceVideoTranscode:      p.ForceVideoTranscode,
 		ForceAudioTranscode:      p.ForceAudioTranscode,
+		DetectionMode:            string(p.DetectionMode),
 		SuccessCount:             p.SuccessCount,
 		FailureCount:             p.FailureCount,
 		LastErrorMsg:             p.LastErrorMsg,
@@ -391,6 +393,7 @@ type CreateRelayProfileInput struct {
 		FallbackRecoveryInterval int    `json:"fallback_recovery_interval,omitempty" doc:"Seconds between recovery attempts (5-300)"`
 		ForceVideoTranscode      bool   `json:"force_video_transcode,omitempty" doc:"Force video transcoding even when source matches target codec"`
 		ForceAudioTranscode      bool   `json:"force_audio_transcode,omitempty" doc:"Force audio transcoding even when source matches target codec"`
+		DetectionMode            string `json:"detection_mode,omitempty" doc:"Client detection mode: auto, hls, mpegts, dash (default: auto)"`
 	}
 }
 
@@ -445,6 +448,7 @@ func (h *RelayProfileHandler) Create(ctx context.Context, input *CreateRelayProf
 		FallbackRecoveryInterval: input.Body.FallbackRecoveryInterval,
 		ForceVideoTranscode:      input.Body.ForceVideoTranscode,
 		ForceAudioTranscode:      input.Body.ForceAudioTranscode,
+		DetectionMode:            models.DetectionMode(input.Body.DetectionMode),
 	}
 
 	// Handle fallback_enabled (defaults to true if not specified)
@@ -466,6 +470,10 @@ func (h *RelayProfileHandler) Create(ctx context.Context, input *CreateRelayProf
 	}
 	if profile.ContainerFormat == "" {
 		profile.ContainerFormat = models.ContainerFormatAuto
+	}
+	// Default detection mode to auto
+	if profile.DetectionMode == "" {
+		profile.DetectionMode = models.DetectionModeAuto
 	}
 	// Default GPU index to -1 (auto)
 	if profile.GpuIndex == 0 && input.Body.GpuIndex == 0 {
@@ -513,6 +521,7 @@ type UpdateRelayProfileInput struct {
 		FallbackRecoveryInterval *int    `json:"fallback_recovery_interval,omitempty" doc:"Seconds between recovery attempts (5-300)"`
 		ForceVideoTranscode      *bool   `json:"force_video_transcode,omitempty" doc:"Force video transcoding even when source matches target codec"`
 		ForceAudioTranscode      *bool   `json:"force_audio_transcode,omitempty" doc:"Force audio transcoding even when source matches target codec"`
+		DetectionMode            string  `json:"detection_mode,omitempty" doc:"Client detection mode: auto, hls, mpegts, dash"`
 	}
 }
 
@@ -641,6 +650,9 @@ func (h *RelayProfileHandler) Update(ctx context.Context, input *UpdateRelayProf
 		}
 		if input.Body.ForceAudioTranscode != nil {
 			profile.ForceAudioTranscode = *input.Body.ForceAudioTranscode
+		}
+		if input.Body.DetectionMode != "" {
+			profile.DetectionMode = models.DetectionMode(input.Body.DetectionMode)
 		}
 
 		// Validate custom flags if any were updated

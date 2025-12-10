@@ -45,6 +45,12 @@ const (
 	SourceFormatUnknown SourceFormat = "unknown"
 )
 
+// IsSegmented returns true if the source format is already segmented (HLS/DASH).
+// Segmented sources can be repackaged without FFmpeg, while raw TS needs segmentation.
+func (f SourceFormat) IsSegmented() bool {
+	return f == SourceFormatHLS || f == SourceFormatDASH
+}
+
 // ClassificationResult holds the result of stream classification.
 type ClassificationResult struct {
 	Mode                  StreamMode

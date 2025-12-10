@@ -31,8 +31,8 @@ type RelaySession struct {
 	// Smart delivery context (set when using smart mode)
 	DeliveryContext *DeliveryContext
 
-	manager       *Manager
-	unifiedBuffer *UnifiedBuffer // Unified buffer for all streaming formats
+	manager            *Manager
+	unifiedBuffer      *UnifiedBuffer // Unified buffer for all streaming formats
 	ctx                context.Context
 	cancel             context.CancelFunc
 	fallbackController *FallbackController
