@@ -45,23 +45,24 @@ interface LayoutConfig {
 
 const DEFAULT_CONFIG: LayoutConfig = {
   columnSpacing: 100, // Base gap between node edges
-  rowSpacing: 140, // Space between rows
-  transcoderOffset: 220, // How far above buffer the transcoder sits (increased for better separation)
+  rowSpacing: 180, // Space between rows (increased for better separation)
+  transcoderOffset: 300, // How far above buffer the transcoder sits (measured from top edges)
   startX: 50,
-  startY: 200, // Extra top margin for transcoder
+  startY: 320, // Extra top margin for transcoder (so it doesn't clip above viewport)
   nodeWidths: {
     origin: 256,
-    buffer: 224,
-    transcoder: 224,
-    processor: 256,
-    client: 192,
+    buffer: 288, // w-72 = 288px (was incorrectly 224)
+    transcoder: 224, // w-56 = 224px
+    processor: 256, // w-64 = 256px
+    client: 192, // w-48 = 192px
   },
   nodeHeights: {
-    origin: 200,
-    buffer: 180,
-    transcoder: 180,
-    processor: 100,
-    client: 120,
+    // These are estimated maximums - actual height varies with content
+    origin: 220, // Includes all stats, codecs, resolution
+    buffer: 200, // With multiple variants and progress bars
+    transcoder: 240, // With sparklines, speed dial, bytes processed
+    processor: 140, // With codecs, sparkline, bytes sent
+    client: 130, // With all client info
   },
 };
 
@@ -218,9 +219,10 @@ export function calculateLayout<T extends FlowNode>(
     // The "main row" Y is where the top of origin/buffer/first-processor/first-client align
     const mainRowY = sessionYOffset;
 
-    // Vertical spacing for stacked nodes
-    const processorSpacing = cfg.nodeHeights.processor + 20;
-    const clientSpacing = cfg.nodeHeights.client + 15;
+    // Vertical spacing for stacked nodes - add significant gap between them
+    // This ensures nodes don't overlap even when content is at maximum
+    const processorSpacing = cfg.nodeHeights.processor + 40; // 140 + 40 = 180px between processor tops
+    const clientSpacing = cfg.nodeHeights.client + 30; // 130 + 30 = 160px between client tops
 
     // Position origin nodes (column 0) - top-aligned, stack downward
     for (let i = 0; i < originNodes.length; i++) {
