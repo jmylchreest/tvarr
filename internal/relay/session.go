@@ -1792,10 +1792,18 @@ func (s *RelaySession) Stats() SessionStats {
 	}
 
 	// Collect clients from all processors across all variants (separate lock scope)
+	// Also collect active formats in the same lock section to avoid double lock acquisition
 	var clientCount int
 	var clients []ClientStats
+	activeFormats := make([]string, 0, 4)
 
 	s.processorsMu.RLock()
+
+	// Track which format types have active processors
+	hasMpegts := len(s.mpegtsProcessors) > 0
+	hasHlsTS := len(s.hlsTSProcessors) > 0
+	hasHlsFMP4 := len(s.hlsFMP4Processors) > 0
+	hasDash := len(s.dashProcessors) > 0
 
 	// MPEG-TS processor clients (all variants)
 	for _, processor := range s.mpegtsProcessors {
@@ -1867,6 +1875,21 @@ func (s *RelaySession) Stats() SessionStats {
 
 	s.processorsMu.RUnlock()
 
+	// Build active formats list (outside lock since we captured the bools)
+	if hasMpegts {
+		activeFormats = append(activeFormats, "mpegts")
+	}
+	if hasHlsTS {
+		activeFormats = append(activeFormats, "hls")
+	}
+	if hasHlsFMP4 && !hasHlsTS {
+		// Only add hls-fmp4 if hlsTS isn't already there (avoid duplicate HLS entries)
+		activeFormats = append(activeFormats, "hls")
+	}
+	if hasDash {
+		activeFormats = append(activeFormats, "dash")
+	}
+
 	// Build stats from immutable fields (set at creation, no lock needed)
 	stats := SessionStats{
 		ID:                s.ID.String(),
@@ -1900,33 +1923,7 @@ func (s *RelaySession) Stats() SessionStats {
 		stats.SourceFormat = string(classification.SourceFormat)
 	}
 
-	// Collect active processor formats - already collected above with processorsMu
-	// Rebuild from the processor maps we already iterated
-	s.processorsMu.RLock()
-	activeFormats := make([]string, 0, 4)
-	if len(s.mpegtsProcessors) > 0 {
-		activeFormats = append(activeFormats, "mpegts")
-	}
-	if len(s.hlsTSProcessors) > 0 {
-		activeFormats = append(activeFormats, "hls")
-	}
-	if len(s.hlsFMP4Processors) > 0 {
-		// Only add hls-fmp4 if hlsTS isn't already there (avoid duplicate HLS entries)
-		hasHLS := false
-		for _, f := range activeFormats {
-			if f == "hls" {
-				hasHLS = true
-				break
-			}
-		}
-		if !hasHLS {
-			activeFormats = append(activeFormats, "hls")
-		}
-	}
-	if len(s.dashProcessors) > 0 {
-		activeFormats = append(activeFormats, "dash")
-	}
-	s.processorsMu.RUnlock()
+	// Active processor formats already collected above with processorsMu
 	stats.ActiveProcessorFormats = activeFormats
 
 	// Determine output format from active processors if ClientFormat not set

@@ -1283,26 +1283,41 @@ func (b *SharedESBuffer) HasProcessors() bool {
 }
 
 // Stats returns current buffer statistics.
+// This method is optimized to minimize lock hold time by copying variant pointers
+// first, then releasing the variants lock before collecting stats from each variant.
+// This prevents blocking other operations during stats collection.
 func (b *SharedESBuffer) Stats() ESBufferStats {
+	// Copy variant pointers and immutable fields while holding the lock briefly
 	b.variantsMu.RLock()
-	defer b.variantsMu.RUnlock()
-
-	var totalBytes uint64
-	variantStats := make([]ESVariantStats, 0, len(b.variants))
+	variantCount := len(b.variants)
+	channelID := b.channelID
+	sourceVariant := b.sourceVariant
+	startTime := b.startTime
+	variantList := make([]*ESVariant, 0, variantCount)
 	for _, v := range b.variants {
+		variantList = append(variantList, v)
+	}
+	b.variantsMu.RUnlock()
+
+	// Collect stats from each variant WITHOUT holding the variants lock.
+	// Each variant.Stats() call acquires its own locks internally.
+	var totalBytes uint64
+	variantStats := make([]ESVariantStats, 0, variantCount)
+	for _, v := range variantList {
 		vs := v.Stats()
 		variantStats = append(variantStats, vs)
 		totalBytes += vs.BytesIngested
 	}
 
+	// ProcessorCount() acquires its own lock - safe to call outside variantsMu
 	return ESBufferStats{
-		ChannelID:      b.channelID,
-		VariantCount:   len(b.variants),
-		SourceVariant:  b.sourceVariant,
+		ChannelID:      channelID,
+		VariantCount:   variantCount,
+		SourceVariant:  sourceVariant,
 		Variants:       variantStats,
 		ProcessorCount: b.ProcessorCount(),
 		TotalBytes:     totalBytes,
-		Duration:       time.Since(b.startTime),
+		Duration:       time.Since(startTime),
 	}
 }
 
