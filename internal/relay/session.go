@@ -1627,44 +1627,67 @@ func (s *RelaySession) Close() {
 		s.inputReader.Close()
 	}
 
-	// Clean up ES-based processing resources
+	// Collect transcoders to stop WITHOUT holding the lock during Stop calls
+	// This prevents blocking other goroutines that need the lock
 	s.esTranscodersMu.Lock()
-	for _, transcoder := range s.esTranscoders {
-		transcoder.Stop()
-	}
+	transcodersToStop := make([]*FFmpegTranscoder, len(s.esTranscoders))
+	copy(transcodersToStop, s.esTranscoders)
 	s.esTranscoders = nil
 	s.esTranscodersMu.Unlock()
 
-	// Stop all processors across all variants
+	// Stop transcoders outside the lock - Stop() has its own timeout handling
+	for _, transcoder := range transcodersToStop {
+		transcoder.Stop()
+	}
+
+	// Collect processors to stop WITHOUT holding the lock during Stop calls
 	s.processorsMu.Lock()
+	var hlsTSToStop []*HLSTSProcessor
 	for _, processor := range s.hlsTSProcessors {
 		if processor != nil {
-			processor.Stop()
+			hlsTSToStop = append(hlsTSToStop, processor)
 		}
 	}
 	s.hlsTSProcessors = nil
 
+	var hlsFMP4ToStop []*HLSfMP4Processor
 	for _, processor := range s.hlsFMP4Processors {
 		if processor != nil {
-			processor.Stop()
+			hlsFMP4ToStop = append(hlsFMP4ToStop, processor)
 		}
 	}
 	s.hlsFMP4Processors = nil
 
+	var dashToStop []*DASHProcessor
 	for _, processor := range s.dashProcessors {
 		if processor != nil {
-			processor.Stop()
+			dashToStop = append(dashToStop, processor)
 		}
 	}
 	s.dashProcessors = nil
 
+	var mpegtsToStop []*MPEGTSProcessor
 	for _, processor := range s.mpegtsProcessors {
 		if processor != nil {
-			processor.Stop()
+			mpegtsToStop = append(mpegtsToStop, processor)
 		}
 	}
 	s.mpegtsProcessors = nil
 	s.processorsMu.Unlock()
+
+	// Stop all processors outside the lock
+	for _, processor := range hlsTSToStop {
+		processor.Stop()
+	}
+	for _, processor := range hlsFMP4ToStop {
+		processor.Stop()
+	}
+	for _, processor := range dashToStop {
+		processor.Stop()
+	}
+	for _, processor := range mpegtsToStop {
+		processor.Stop()
+	}
 
 	// Close the TS demuxer to stop its reader goroutine
 	if s.tsDemuxer != nil {

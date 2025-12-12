@@ -208,6 +208,8 @@ func (t *FFmpegTranscoder) Start(ctx context.Context) error {
 }
 
 // Stop stops the transcoder.
+// This method is non-blocking - it signals the process to stop and waits
+// with a timeout, forcefully killing if necessary.
 func (t *FFmpegTranscoder) Stop() {
 	if t.closed.CompareAndSwap(false, true) {
 		if t.cancel != nil {
@@ -219,13 +221,26 @@ func (t *FFmpegTranscoder) Stop() {
 			t.stdin.Close()
 		}
 
-		// Wait for process to exit - ignore error as process may already be dead
+		// Wait for process to exit with timeout - don't block forever
 		if t.cmd != nil && t.cmd.Process != nil {
-			_ = t.cmd.Wait()
+			t.waitWithTimeout(3 * time.Second)
 		}
 
 		close(t.closedCh)
-		t.wg.Wait()
+
+		// Wait for goroutines with timeout to avoid blocking
+		done := make(chan struct{})
+		go func() {
+			t.wg.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+			// Goroutines finished cleanly
+		case <-time.After(2 * time.Second):
+			t.config.Logger.Warn("FFmpeg transcoder goroutines did not finish in time",
+				slog.String("id", t.id))
+		}
 
 		// Log any captured stderr on stop for debugging
 		stderrLines := t.GetStderrLines()
@@ -237,6 +252,54 @@ func (t *FFmpegTranscoder) Stop() {
 			t.config.Logger.Info("FFmpeg transcoder stopped",
 				slog.String("id", t.id))
 		}
+	}
+}
+
+// waitWithTimeout waits for the FFmpeg process to exit, killing it if it
+// doesn't exit within the timeout. This prevents blocking forever on hung processes.
+func (t *FFmpegTranscoder) waitWithTimeout(timeout time.Duration) {
+	if t.cmd == nil || t.cmd.Process == nil {
+		return
+	}
+
+	// Create a channel to signal process exit
+	done := make(chan error, 1)
+	go func() {
+		done <- t.cmd.Wait()
+	}()
+
+	// Wait for process to exit or timeout
+	select {
+	case <-done:
+		// Process exited cleanly
+		return
+	case <-time.After(timeout):
+		// Process didn't exit in time, send SIGTERM first
+		t.config.Logger.Warn("FFmpeg process did not exit in time, sending SIGTERM",
+			slog.String("id", t.id),
+			slog.Int("pid", t.cmd.Process.Pid))
+		_ = t.cmd.Process.Signal(os.Interrupt)
+	}
+
+	// Give it a short grace period after SIGTERM
+	select {
+	case <-done:
+		return
+	case <-time.After(500 * time.Millisecond):
+		// Still not dead, force kill
+		t.config.Logger.Warn("FFmpeg process did not respond to SIGTERM, killing",
+			slog.String("id", t.id),
+			slog.Int("pid", t.cmd.Process.Pid))
+		_ = t.cmd.Process.Kill()
+	}
+
+	// Final wait with short timeout - if still stuck, just move on
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.config.Logger.Error("FFmpeg process could not be killed, abandoning",
+			slog.String("id", t.id),
+			slog.Int("pid", t.cmd.Process.Pid))
 	}
 }
 
