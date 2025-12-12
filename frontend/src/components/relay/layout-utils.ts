@@ -44,11 +44,11 @@ interface LayoutConfig {
 }
 
 const DEFAULT_CONFIG: LayoutConfig = {
-  columnSpacing: 220, // Base spacing between columns
+  columnSpacing: 280, // Base spacing between columns (increased for longer edge lines)
   rowSpacing: 180, // Space between rows
-  transcoderOffset: 200, // How far above buffer the transcoder sits
+  transcoderOffset: 220, // How far above buffer the transcoder sits
   startX: 50,
-  startY: 180, // Extra top margin for transcoder
+  startY: 200, // Extra top margin for transcoder
   nodeWidths: {
     origin: 256,
     buffer: 224,
@@ -186,13 +186,13 @@ export function calculateLayout<T extends FlowNode>(
     const sessionCenterY = sessionYOffset + (maxNodesInColumn * cfg.rowSpacing) / 2;
 
     // Column X positions (variable spacing for better visual balance)
-    // Origin -> Buffer: wider gap for the FFmpeg node above
-    // Buffer -> Processor: standard gap
-    // Processor -> Client: narrower gap (clients are smaller nodes)
+    // Origin -> Buffer: wider gap for the FFmpeg node above and longer visible edge
+    // Buffer -> Processor: standard gap with visible edge
+    // Processor -> Client: closer gap (clients are smaller nodes)
     const originX = cfg.startX;
-    const bufferX = cfg.startX + cfg.columnSpacing + 60; // Extra space for origin-to-buffer (transcoder sits between)
-    const processorX = bufferX + cfg.columnSpacing;
-    const clientX = processorX + cfg.columnSpacing - 40; // Closer gap for clients
+    const bufferX = cfg.startX + cfg.columnSpacing + 80; // Extra space for origin-to-buffer (transcoder sits between)
+    const processorX = bufferX + cfg.columnSpacing + 40; // Standard gap for buffer-to-processor
+    const clientX = processorX + cfg.columnSpacing - 80; // Closer gap for processor-to-client
 
     // Position origin nodes (column 0)
     for (let i = 0; i < originNodes.length; i++) {

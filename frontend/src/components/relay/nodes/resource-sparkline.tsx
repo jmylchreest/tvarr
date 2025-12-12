@@ -9,7 +9,6 @@ interface ResourceSparklineProps {
   currentCpu?: number;
   currentMemoryMb?: number;
   className?: string;
-  compact?: boolean;
 }
 
 // Format memory in human-readable form
@@ -71,20 +70,20 @@ function ResourceSparkline({
   currentCpu,
   currentMemoryMb,
   className = '',
-  compact = false,
 }: ResourceSparklineProps) {
-  // Generate CPU sparkline paths
+  // Generate CPU sparkline paths - use viewBox width of 100 for better resolution
   const cpuPaths = useMemo(() => {
-    return generateSparklinePath(cpuHistory || [], 60, 16, 100); // CPU max is 100%
+    return generateSparklinePath(cpuHistory || [], 100, 16, 100); // CPU max is 100%
   }, [cpuHistory]);
 
   // Generate memory sparkline paths
   const memPaths = useMemo(() => {
     // For memory, use dynamic max based on history
-    const maxMem = memoryHistory && memoryHistory.length > 0
-      ? Math.max(...memoryHistory) * 1.2 // Add 20% headroom
-      : undefined;
-    return generateSparklinePath(memoryHistory || [], 60, 16, maxMem);
+    const maxMem =
+      memoryHistory && memoryHistory.length > 0
+        ? Math.max(...memoryHistory) * 1.2 // Add 20% headroom
+        : undefined;
+    return generateSparklinePath(memoryHistory || [], 100, 16, maxMem);
   }, [memoryHistory]);
 
   const hasCpuHistory = cpuHistory && cpuHistory.length > 0;
@@ -96,85 +95,17 @@ function ResourceSparkline({
     return null;
   }
 
-  if (compact) {
-    // Compact mode: just the sparklines side by side
-    return (
-      <div className={`flex gap-2 ${className}`}>
-        {/* CPU Sparkline */}
-        {(hasCpuHistory || hasCpu) && (
-          <div className="flex items-center gap-1">
-            <Cpu className="h-3 w-3 text-blue-500 shrink-0" />
-            {hasCpuHistory && (
-              <svg
-                viewBox="0 0 60 16"
-                className="w-[60px] h-4"
-                preserveAspectRatio="none"
-              >
-                <path d={cpuPaths.areaPath} className="fill-blue-500/20" />
-                <path
-                  d={cpuPaths.linePath}
-                  fill="none"
-                  className="stroke-blue-500"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            )}
-            {hasCpu && (
-              <span className="text-[10px] text-blue-600 dark:text-blue-400 tabular-nums">
-                {currentCpu.toFixed(0)}%
-              </span>
-            )}
-          </div>
-        )}
-
-        {/* Memory Sparkline */}
-        {(hasMemHistory || hasMem) && (
-          <div className="flex items-center gap-1">
-            <MemoryStick className="h-3 w-3 text-green-500 shrink-0" />
-            {hasMemHistory && (
-              <svg
-                viewBox="0 0 60 16"
-                className="w-[60px] h-4"
-                preserveAspectRatio="none"
-              >
-                <path d={memPaths.areaPath} className="fill-green-500/20" />
-                <path
-                  d={memPaths.linePath}
-                  fill="none"
-                  className="stroke-green-500"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            )}
-            {hasMem && (
-              <span className="text-[10px] text-green-600 dark:text-green-400 tabular-nums">
-                {formatMemory(currentMemoryMb)}
-              </span>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // Full mode: stacked sparklines with labels
+  // Stacked layout: CPU row on top, Memory row below
+  // Each row has: icon | sparkline (fills space) | value label
   return (
     <div className={`space-y-1 ${className}`}>
       {/* CPU Row */}
       {(hasCpuHistory || hasCpu) && (
         <div className="flex items-center gap-1.5">
           <Cpu className="h-3 w-3 text-blue-500 shrink-0" />
-          <div className="flex-1 flex items-center gap-1">
-            {hasCpuHistory && (
-              <svg
-                viewBox="0 0 60 16"
-                className="flex-1 h-4 max-w-[80px]"
-                preserveAspectRatio="none"
-              >
+          <div className="flex-1 min-w-0">
+            {hasCpuHistory ? (
+              <svg viewBox="0 0 100 16" className="w-full h-4" preserveAspectRatio="none">
                 <path d={cpuPaths.areaPath} className="fill-blue-500/20" />
                 <path
                   d={cpuPaths.linePath}
@@ -185,13 +116,15 @@ function ResourceSparkline({
                   strokeLinejoin="round"
                 />
               </svg>
-            )}
-            {hasCpu && (
-              <span className="text-xs text-blue-600 dark:text-blue-400 tabular-nums min-w-[32px]">
-                {currentCpu.toFixed(1)}%
-              </span>
+            ) : (
+              <div className="h-4" /> // Placeholder for alignment
             )}
           </div>
+          {hasCpu && (
+            <span className="text-[10px] text-blue-600 dark:text-blue-400 tabular-nums shrink-0 w-8 text-right">
+              {currentCpu.toFixed(0)}%
+            </span>
+          )}
         </div>
       )}
 
@@ -199,13 +132,9 @@ function ResourceSparkline({
       {(hasMemHistory || hasMem) && (
         <div className="flex items-center gap-1.5">
           <MemoryStick className="h-3 w-3 text-green-500 shrink-0" />
-          <div className="flex-1 flex items-center gap-1">
-            {hasMemHistory && (
-              <svg
-                viewBox="0 0 60 16"
-                className="flex-1 h-4 max-w-[80px]"
-                preserveAspectRatio="none"
-              >
+          <div className="flex-1 min-w-0">
+            {hasMemHistory ? (
+              <svg viewBox="0 0 100 16" className="w-full h-4" preserveAspectRatio="none">
                 <path d={memPaths.areaPath} className="fill-green-500/20" />
                 <path
                   d={memPaths.linePath}
@@ -216,13 +145,15 @@ function ResourceSparkline({
                   strokeLinejoin="round"
                 />
               </svg>
-            )}
-            {hasMem && (
-              <span className="text-xs text-green-600 dark:text-green-400 tabular-nums min-w-[40px]">
-                {formatMemory(currentMemoryMb)}
-              </span>
+            ) : (
+              <div className="h-4" /> // Placeholder for alignment
             )}
           </div>
+          {hasMem && (
+            <span className="text-[10px] text-green-600 dark:text-green-400 tabular-nums shrink-0 min-w-[40px] text-right">
+              {formatMemory(currentMemoryMb)}
+            </span>
+          )}
         </div>
       )}
     </div>

@@ -57,6 +57,9 @@ function TranscoderNode({ data }: TranscoderNodeProps) {
   // Build output codec string
   const outputCodecs = [data.targetVideoCodec, data.targetAudioCodec].filter(Boolean).join('/');
 
+  // Check if there's an actual transformation (different codecs)
+  const hasTransformation = inputCodecs && outputCodecs && inputCodecs !== outputCodecs;
+
   return (
     <>
       {/* Input handle from buffer (bottom right) - receives source data from buffer */}
@@ -85,26 +88,18 @@ function TranscoderNode({ data }: TranscoderNodeProps) {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
-          {/* Input/Output codec transformation */}
-          {(inputCodecs || outputCodecs) && (
-            <div className="space-y-1">
-              {inputCodecs && (
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-muted-foreground w-6">in:</span>
-                  <span className="font-mono text-foreground">{inputCodecs}</span>
-                </div>
-              )}
-              {outputCodecs && (
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-muted-foreground w-6">out:</span>
-                  <span className="font-mono text-foreground flex items-center gap-1">
-                    <ArrowRight className="h-3 w-3 text-red-500" />
-                    {outputCodecs}
-                  </span>
-                </div>
-              )}
+          {/* Codec transformation - single line with arrow */}
+          {hasTransformation ? (
+            <div className="flex items-center gap-1.5 text-xs">
+              <span className="font-mono text-muted-foreground">{inputCodecs}</span>
+              <ArrowRight className="h-3 w-3 text-red-500 shrink-0" />
+              <span className="font-mono text-foreground">{outputCodecs}</span>
             </div>
-          )}
+          ) : outputCodecs ? (
+            <div className="text-xs">
+              <span className="font-mono text-foreground">{outputCodecs}</span>
+            </div>
+          ) : null}
 
           {/* CPU and Memory sparklines */}
           {(hasStats || hasHistory) && (
@@ -113,7 +108,6 @@ function TranscoderNode({ data }: TranscoderNodeProps) {
               memoryHistory={data.transcoderMemHistory}
               currentCpu={data.transcoderCpu}
               currentMemoryMb={data.transcoderMemMb}
-              compact={true}
             />
           )}
 
