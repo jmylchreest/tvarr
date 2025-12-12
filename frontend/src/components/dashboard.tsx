@@ -10,14 +10,11 @@ import {
   Activity,
   Users,
   Zap,
-  TrendingUp,
   Clock,
   HardDrive,
   Cpu,
   MemoryStick,
   Monitor,
-  ArrowUp,
-  ArrowDown,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -46,10 +43,7 @@ import {
 import { Debug } from '@/utils/debug';
 import { apiClient } from '@/lib/api-client';
 import {
-  formatBytes,
-  formatBitrate,
   formatMemorySize,
-  parseStringNumber,
 } from '@/lib/format';
 import { RelayFlowDiagram } from '@/components/relay';
 
@@ -279,7 +273,7 @@ export function Dashboard() {
       </div>
 
       {/* Overview Cards - REAL DATA */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Connected Clients</CardTitle>
@@ -309,44 +303,6 @@ export function Dashboard() {
             <p className="text-xs text-muted-foreground">
               {relayHealth ? `${relayHealth.unhealthy_processes} unhealthy` : 'Loading...'}
             </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Bandwidth</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-1">
-              <div className="flex items-center gap-2 text-lg font-bold">
-                <ArrowUp className="h-3 w-3 text-blue-500" />
-                <span>
-                  {relayHealth
-                    ? formatBytes(
-                        relayHealth.processes?.reduce(
-                          (acc, p) => acc + parseStringNumber(p.bytes_received_upstream),
-                          0
-                        ) ?? 0
-                      )
-                    : '–'}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 text-lg font-bold">
-                <ArrowDown className="h-3 w-3 text-green-500" />
-                <span>
-                  {relayHealth
-                    ? formatBytes(
-                        relayHealth.processes?.reduce(
-                          (acc, p) => acc + parseStringNumber(p.bytes_delivered_downstream),
-                          0
-                        ) ?? 0
-                      )
-                    : '–'}
-                </span>
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground">Ingress / Egress totals</p>
           </CardContent>
         </Card>
 

@@ -77,9 +77,12 @@ type HLSTSProcessor struct {
 	nextSequence  uint64
 	segmentNotify chan struct{} // Notifies waiters when new segment is added
 
+	// Persistent muxer - shared across all segments to maintain continuity counters
+	muxer          *TSMuxer
+	swappableWriter *SwappableWriter
+
 	// Current segment accumulator
 	currentSegment struct {
-		muxer     *TSMuxer
 		buf       bytes.Buffer
 		startPTS  int64
 		hasVideo  bool
@@ -90,6 +93,12 @@ type HLSTSProcessor struct {
 	// ES reading state
 	lastVideoSeq uint64
 	lastAudioSeq uint64
+
+	// Reference to the ES variant for consumer tracking
+	esVariant *ESVariant
+
+	// Video parameter helper - persists across segments to retain SPS/PPS
+	videoParams *VideoParamHelper
 
 	// Lifecycle
 	ctx     context.Context
@@ -118,6 +127,7 @@ func NewHLSTSProcessor(
 		variant:       variant,
 		segments:      make([]*hlsTSSegment, 0, config.MaxSegments),
 		segmentNotify: make(chan struct{}, 1),
+		videoParams:   NewVideoParamHelper(), // Persists across segments
 	}
 
 	return p
@@ -142,6 +152,10 @@ func (p *HLSTSProcessor) Start(ctx context.Context) error {
 	// Register with buffer
 	p.esBuffer.RegisterProcessor(p.id)
 
+	// Store variant reference and register as a consumer to prevent eviction of unread samples
+	p.esVariant = esVariant
+	esVariant.RegisterConsumer(p.id)
+
 	// Initialize TS muxer for current segment
 	p.initNewSegment()
 
@@ -165,6 +179,11 @@ func (p *HLSTSProcessor) Stop() {
 		p.cancel()
 	}
 	p.wg.Wait()
+
+	// Unregister as a consumer to allow eviction of our unread samples
+	if p.esVariant != nil {
+		p.esVariant.UnregisterConsumer(p.id)
+	}
 
 	p.esBuffer.UnregisterProcessor(p.id)
 	p.BaseProcessor.Close()
@@ -375,12 +394,20 @@ func (p *HLSTSProcessor) initNewSegment() {
 	p.currentSegment.hasAudio = false
 	p.currentSegment.startTime = time.Now()
 
-	// Create new TS muxer with the correct codec types from the variant
-	p.currentSegment.muxer = NewTSMuxer(&p.currentSegment.buf, TSMuxerConfig{
-		Logger:     p.config.Logger,
-		VideoCodec: p.variant.VideoCodec(),
-		AudioCodec: p.variant.AudioCodec(),
-	})
+	// Create the persistent muxer on first call, reuse thereafter
+	// This maintains continuity counters across segments
+	if p.muxer == nil {
+		p.swappableWriter = NewSwappableWriter(&p.currentSegment.buf)
+		p.muxer = NewTSMuxer(p.swappableWriter, TSMuxerConfig{
+			Logger:      p.config.Logger,
+			VideoCodec:  p.variant.VideoCodec(),
+			AudioCodec:  p.variant.AudioCodec(),
+			VideoParams: p.videoParams,
+		})
+	} else {
+		// Just redirect the muxer to the new segment buffer
+		p.swappableWriter.SetBuffer(&p.currentSegment.buf)
+	}
 }
 
 // runProcessingLoop is the main processing loop.
@@ -437,6 +464,11 @@ func (p *HLSTSProcessor) processAvailableSamples(videoTrack, audioTrack *ESTrack
 		p.lastAudioSeq = sample.Sequence
 	}
 
+	// Update consumer position to allow eviction of samples we've processed
+	if p.esVariant != nil && (len(videoSamples) > 0 || len(audioSamples) > 0) {
+		p.esVariant.UpdateConsumerPosition(p.id, p.lastVideoSeq, p.lastAudioSeq)
+	}
+
 	// Check if we should finalize current segment
 	if p.shouldFinalizeSegment() {
 		p.flushSegment()
@@ -458,9 +490,9 @@ func (p *HLSTSProcessor) processVideoSample(sample ESSample) {
 	}
 
 	// Write to muxer
-	if p.currentSegment.muxer != nil {
+	if p.muxer != nil {
 		// Ignore muxer errors - continue streaming on failures
-		_ = p.currentSegment.muxer.WriteVideo(sample.PTS, sample.DTS, sample.Data, sample.IsKeyframe)
+		_ = p.muxer.WriteVideo(sample.PTS, sample.DTS, sample.Data, sample.IsKeyframe)
 		p.currentSegment.hasVideo = true
 	}
 }
@@ -471,9 +503,9 @@ func (p *HLSTSProcessor) processAudioSample(sample ESSample) {
 		p.currentSegment.startPTS = sample.PTS
 	}
 
-	if p.currentSegment.muxer != nil {
+	if p.muxer != nil {
 		// Ignore muxer errors - continue streaming on failures
-		_ = p.currentSegment.muxer.WriteAudio(sample.PTS, sample.Data)
+		_ = p.muxer.WriteAudio(sample.PTS, sample.Data)
 		p.currentSegment.hasAudio = true
 	}
 }
@@ -506,8 +538,8 @@ func (p *HLSTSProcessor) flushSegment() {
 	}
 
 	// Flush muxer
-	if p.currentSegment.muxer != nil {
-		p.currentSegment.muxer.Flush()
+	if p.muxer != nil {
+		p.muxer.Flush()
 	}
 
 	duration := time.Since(p.currentSegment.startTime).Seconds()

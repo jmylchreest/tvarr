@@ -2,6 +2,7 @@
 package relay
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,6 +12,36 @@ import (
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts"
 )
+
+// SwappableWriter is an io.Writer that can be redirected to different underlying buffers.
+// This allows a single TSMuxer to write to different segment buffers while maintaining
+// continuity counters across segments.
+type SwappableWriter struct {
+	mu  sync.Mutex
+	buf *bytes.Buffer
+}
+
+// NewSwappableWriter creates a new SwappableWriter with an initial buffer.
+func NewSwappableWriter(buf *bytes.Buffer) *SwappableWriter {
+	return &SwappableWriter{buf: buf}
+}
+
+// Write implements io.Writer.
+func (w *SwappableWriter) Write(p []byte) (n int, err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.buf == nil {
+		return 0, io.ErrClosedPipe
+	}
+	return w.buf.Write(p)
+}
+
+// SetBuffer switches the underlying buffer.
+func (w *SwappableWriter) SetBuffer(buf *bytes.Buffer) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.buf = buf
+}
 
 // MPEG-TS constants.
 const (
@@ -45,6 +76,10 @@ type TSMuxerConfig struct {
 
 	// AAC configuration (required for AAC audio)
 	AACConfig *mpeg4audio.Config
+
+	// VideoParams is an optional shared VideoParamHelper for persistent SPS/PPS across segments.
+	// If nil, a new one will be created.
+	VideoParams *VideoParamHelper
 }
 
 // TSMuxer muxes elementary streams into MPEG-TS format using mediacommon.
@@ -90,12 +125,18 @@ func NewTSMuxer(w io.Writer, config TSMuxerConfig) *TSMuxer {
 		config.AudioCodec = "aac" // Default to AAC
 	}
 
+	// Use provided VideoParams or create a new one
+	videoParams := config.VideoParams
+	if videoParams == nil {
+		videoParams = NewVideoParamHelper()
+	}
+
 	m := &TSMuxer{
 		writer:      w,
 		config:      config,
 		videoCodec:  config.VideoCodec,
 		audioCodec:  config.AudioCodec,
-		videoParams: NewVideoParamHelper(),
+		videoParams: videoParams,
 	}
 
 	return m

@@ -56,7 +56,7 @@ type DatabaseConfigData struct {
 type StorageConfigData struct {
 	BaseDir       string `json:"base_dir"`
 	LogoRetention string `json:"logo_retention"`
-	MaxLogoSize   int64  `json:"max_logo_size"`
+	MaxLogoSize   string `json:"max_logo_size"` // Human-readable format, e.g., "5 MB"
 }
 
 // PipelineConfigData represents pipeline configuration.

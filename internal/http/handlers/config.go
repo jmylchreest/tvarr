@@ -7,6 +7,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/jmylchreest/tvarr/internal/observability"
+	"github.com/jmylchreest/tvarr/pkg/bytesize"
 	"github.com/jmylchreest/tvarr/pkg/httpclient"
 	"github.com/spf13/viper"
 )
@@ -297,7 +298,7 @@ func (h *ConfigHandler) getStartupConfig() StartupConfig {
 		Storage: StorageConfigData{
 			BaseDir:       viper.GetString("storage.base_dir"),
 			LogoRetention: viper.GetDuration("storage.logo_retention").String(),
-			MaxLogoSize:   viper.GetInt64("storage.max_logo_size"),
+			MaxLogoSize:   bytesize.Format(bytesize.Size(viper.GetInt64("storage.max_logo_size"))),
 		},
 		Pipeline: PipelineConfigData{
 			LogoConcurrency:    viper.GetInt("pipeline.logo_concurrency"),

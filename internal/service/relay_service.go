@@ -87,26 +87,25 @@ func (s *RelayService) WithHTTPClient(client *http.Client) *RelayService {
 }
 
 // WithBufferConfig configures the relay buffer settings from application config.
-// This converts config.BufferConfig to relay.SharedESBufferConfig and recreates the manager.
+// Only applies settings that are explicitly set (non-nil), otherwise uses package defaults.
 func (s *RelayService) WithBufferConfig(bufferCfg config.BufferConfig) *RelayService {
+	// Only reconfigure if MaxVariantBytes is explicitly set
+	if bufferCfg.MaxVariantBytes == nil {
+		return s
+	}
+
 	managerConfig := relay.DefaultManagerConfig()
 	managerConfig.CodecRepo = s.lastKnownCodecRepo
 
-	// Convert application config to relay buffer config
+	// Apply the configured value (ByteSize.Bytes() returns int64)
 	bufferConfig := relay.DefaultSharedESBufferConfig()
-	if bufferCfg.MaxDuration > 0 {
-		bufferConfig.MaxDuration = bufferCfg.MaxDuration
-	}
-	if bufferCfg.MaxVariantBytes > 0 {
-		bufferConfig.MaxVariantBytes = uint64(bufferCfg.MaxVariantBytes)
-	}
+	bufferConfig.MaxVariantBytes = uint64(bufferCfg.MaxVariantBytes.Bytes())
 
 	managerConfig.BufferConfig = bufferConfig
 	s.relayManager.Close()
 	s.relayManager = relay.NewManager(managerConfig)
 
 	s.logger.Info("Relay buffer config applied",
-		"max_duration", bufferConfig.MaxDuration,
 		"max_variant_bytes", bufferConfig.MaxVariantBytes,
 	)
 

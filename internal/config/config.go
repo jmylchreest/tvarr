@@ -36,9 +36,7 @@ const (
 	defaultCircuitBreakerThresh  = 3
 	defaultCircuitBreakerTimeout = 30 * time.Second
 	defaultConnectionPoolSize    = 100
-	defaultStreamTimeout         = 5 * time.Minute
-	defaultBufferMaxDuration     = 2 * time.Minute
-	defaultBufferMaxVariantBytes = 30 * 1024 * 1024 // 30MB per variant (combined video + audio)
+	defaultStreamTimeout = 5 * time.Minute
 )
 
 // Config holds all configuration for the application.
@@ -81,7 +79,9 @@ type StorageConfig struct {
 	OutputDir     string        `mapstructure:"output_dir"`
 	TempDir       string        `mapstructure:"temp_dir"`
 	LogoRetention time.Duration `mapstructure:"logo_retention"`
-	MaxLogoSize   int64         `mapstructure:"max_logo_size"`
+	// MaxLogoSize is the maximum allowed size for logo files.
+	// Supports human-readable values like "5MB", "1GB", or raw byte counts.
+	MaxLogoSize ByteSize `mapstructure:"max_logo_size"`
 }
 
 // LoggingConfig holds logging configuration.
@@ -126,8 +126,9 @@ type RelayConfig struct {
 
 // BufferConfig holds elementary stream buffer configuration.
 type BufferConfig struct {
-	MaxDuration     time.Duration `mapstructure:"max_duration"`      // Maximum buffer duration (default 2 minutes)
-	MaxVariantBytes int64         `mapstructure:"max_variant_bytes"` // Maximum bytes per variant (combined video+audio, default 30MB)
+	// MaxVariantBytes is the maximum bytes per codec variant (0 = unlimited, uses consumer position for eviction only).
+	// Supports human-readable values like "100MB", "1GB", or raw byte counts.
+	MaxVariantBytes *ByteSize `mapstructure:"max_variant_bytes"`
 }
 
 // FFmpegConfig holds FFmpeg binary configuration.
@@ -244,8 +245,6 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("relay.circuit_breaker_timeout", defaultCircuitBreakerTimeout)
 	v.SetDefault("relay.connection_pool_size", defaultConnectionPoolSize)
 	v.SetDefault("relay.stream_timeout", defaultStreamTimeout)
-	v.SetDefault("relay.buffer.max_duration", defaultBufferMaxDuration)
-	v.SetDefault("relay.buffer.max_variant_bytes", defaultBufferMaxVariantBytes)
 
 	// FFmpeg defaults
 	v.SetDefault("ffmpeg.binary_path", "")

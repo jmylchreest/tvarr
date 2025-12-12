@@ -336,8 +336,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		channelRepo,
 		proxyRepo,
 	).WithLogger(logger).WithBufferConfig(config.BufferConfig{
-		MaxDuration:     viper.GetDuration("relay.buffer.max_duration"),
-		MaxVariantBytes: viper.GetInt64("relay.buffer.max_variant_bytes"),
+		MaxVariantBytes: viperGetByteSizePtr("relay.buffer.max_variant_bytes"),
 	})
 
 	relayProfileMappingService := service.NewRelayProfileMappingService(relayProfileMappingRepo).
@@ -595,4 +594,25 @@ func runMigrations(db *gorm.DB, logger *slog.Logger) error {
 	migrator := migrations.NewMigrator(db, logger)
 	migrator.RegisterAll(migrations.AllMigrations())
 	return migrator.Up(context.Background())
+}
+
+// viperGetByteSizePtr returns a pointer to a ByteSize if the key is set, nil otherwise.
+// This allows distinguishing between "not set" and "set to 0".
+// Supports human-readable values like "100MB", "1GB", or raw byte counts.
+func viperGetByteSizePtr(key string) *config.ByteSize {
+	if !viper.IsSet(key) {
+		return nil
+	}
+	// Get as string first to support human-readable format
+	s := viper.GetString(key)
+	if s == "" {
+		return nil
+	}
+	bs, err := config.ParseByteSize(s)
+	if err != nil {
+		// Fall back to numeric value for backwards compatibility
+		v := viper.GetInt64(key)
+		bs = config.ByteSize(v)
+	}
+	return &bs
 }

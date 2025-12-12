@@ -31,25 +31,18 @@ type ESSample struct {
 }
 
 // ESTrack stores elementary stream samples for a single track (video or audio).
+// Uses a dynamic slice that grows as needed - no fixed capacity limit.
+// Eviction is controlled externally by the ESVariant via EvictOldestSample().
 type ESTrack struct {
 	codec    string // h264, h265, aac, ac3, mp3, etc.
 	initData []byte // SPS/PPS for H.264, AudioSpecificConfig for AAC, etc.
 
-	samples  []ESSample // Ring buffer of samples
-	head     int        // Write position
-	tail     int        // Read position (oldest sample)
-	count    int        // Current number of samples
-	capacity int        // Max samples in buffer (safety bound, not primary limit)
+	samples []ESSample // Dynamic slice of samples (oldest at index 0)
 
 	lastSeq uint64 // Last sequence number assigned
 
 	// Byte-based size tracking - atomic for lock-free reads by eviction logic
 	currentBytes atomic.Uint64 // Current total bytes in buffer
-	// Note: Per-track byte limits are deprecated - use variant-level limits instead
-
-	// Time-based duration limit (in 90kHz PTS ticks)
-	// Buffer will evict samples older than (newest PTS - maxDurationPTS)
-	maxDurationPTS int64 // Maximum duration in PTS ticks (0 = unlimited)
 
 	// Eviction tracking - atomic for lock-free stats reads
 	evictedSamples atomic.Uint64 // Total number of samples evicted
@@ -61,52 +54,27 @@ type ESTrack struct {
 	mu sync.RWMutex
 }
 
-// DefaultMaxTrackBytes is the default maximum bytes per track (deprecated - use variant limits)
-// Kept for backwards compatibility but not used for eviction decisions.
-const DefaultMaxTrackBytes uint64 = 15 * 1024 * 1024
-
-// DefaultMaxTrackDuration is the default maximum duration per track (2 minutes)
-// This is stored in 90kHz PTS ticks for direct comparison with sample timestamps
-const DefaultMaxTrackDuration = 2 * 60 * time.Second
-const DefaultMaxTrackDurationPTS int64 = 2 * 60 * 90000 // 2 minutes in 90kHz ticks
-
-// DefaultVideoCapacity is the max video samples (2 min at 60fps = 7200, add headroom)
-const DefaultVideoCapacity = 8000
-
-// DefaultAudioCapacity is the max audio samples (2 min at ~47fps AAC, add headroom)
-const DefaultAudioCapacity = 8000
-
-// NewESTrack creates a new elementary stream track with the specified capacity.
-// Note: Per-track byte limits are no longer used - eviction is controlled at the variant level.
-func NewESTrack(codec string, capacity int) *ESTrack {
-	return NewESTrackWithDuration(codec, capacity, DefaultMaxTrackDurationPTS)
+// NewESTrack creates a new elementary stream track.
+// The track uses a dynamic slice with no fixed capacity - it grows as needed.
+// Eviction is controlled at the variant level via EvictOldestSample().
+func NewESTrack(codec string) *ESTrack {
+	return &ESTrack{
+		codec:   codec,
+		samples: make([]ESSample, 0, 1000), // Initial capacity hint
+		notify:  make(chan struct{}, 1),    // Buffered to avoid blocking writers
+	}
 }
 
-// NewESTrackWithMaxBytes creates a new elementary stream track with specified capacity and max bytes.
-// Deprecated: Per-track byte limits are no longer used. Use variant-level limits instead.
-func NewESTrackWithMaxBytes(codec string, capacity int, _ uint64) *ESTrack {
-	return NewESTrackWithDuration(codec, capacity, DefaultMaxTrackDurationPTS)
-}
-
-// NewESTrackWithLimits creates a new elementary stream track.
-// Deprecated: Per-track byte limits are no longer used. Use variant-level limits instead.
-func NewESTrackWithLimits(codec string, capacity int, _ uint64, maxDurationPTS int64) *ESTrack {
-	return NewESTrackWithDuration(codec, capacity, maxDurationPTS)
-}
-
-// NewESTrackWithDuration creates a new elementary stream track with specified capacity and max duration.
-// The sample capacity is a safety bound - actual eviction is controlled at the variant level
-// using byte limits and time limits with paired video/audio eviction.
-func NewESTrackWithDuration(codec string, capacity int, maxDurationPTS int64) *ESTrack {
-	if capacity <= 0 {
-		capacity = 1000 // Default capacity
+// NewESTrackWithCapacity creates a new elementary stream track with an initial capacity hint.
+// The capacity is just a hint for initial allocation - the slice grows as needed.
+func NewESTrackWithCapacity(codec string, initialCapacity int) *ESTrack {
+	if initialCapacity <= 0 {
+		initialCapacity = 1000
 	}
 	return &ESTrack{
-		codec:          codec,
-		samples:        make([]ESSample, capacity),
-		capacity:       capacity,
-		maxDurationPTS: maxDurationPTS,
-		notify:         make(chan struct{}, 1), // Buffered to avoid blocking writers
+		codec:   codec,
+		samples: make([]ESSample, 0, initialCapacity),
+		notify:  make(chan struct{}, 1),
 	}
 }
 
@@ -145,8 +113,7 @@ func (t *ESTrack) SetCodec(codec string) {
 }
 
 // Write adds a new sample to the track.
-// Note: Byte-based eviction is handled at the variant level for paired video/audio eviction.
-// Track-level eviction only handles time limits and sample capacity overflow.
+// The track grows dynamically - eviction is controlled externally by the variant.
 func (t *ESTrack) Write(pts, dts int64, data []byte, isKeyframe bool) uint64 {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -169,23 +136,9 @@ func (t *ESTrack) Write(pts, dts int64, data []byte, isKeyframe bool) uint64 {
 		Timestamp:  time.Now(),
 	}
 
-	// Write to ring buffer
-	t.samples[t.head] = sample
-	t.head = (t.head + 1) % t.capacity
+	// Append to dynamic slice
+	t.samples = append(t.samples, sample)
 	t.currentBytes.Add(sampleSize)
-
-	if t.count < t.capacity {
-		t.count++
-	} else {
-		// Buffer is full by sample count (safety bound), advance tail
-		oldSample := t.samples[t.tail]
-		evictedSize := uint64(len(oldSample.Data))
-		t.currentBytes.Add(^(evictedSize - 1)) // Atomic subtract
-		t.evictedSamples.Add(1)
-		t.evictedBytes.Add(evictedSize)
-		t.samples[t.tail].Data = nil // Help GC
-		t.tail = (t.tail + 1) % t.capacity
-	}
 
 	// Notify waiters of new sample (non-blocking)
 	select {
@@ -203,20 +156,22 @@ func (t *ESTrack) EvictOldestSample() (pts int64, bytesFreed uint64, ok bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if t.count == 0 {
+	if len(t.samples) == 0 {
 		return 0, 0, false
 	}
 
-	oldSample := t.samples[t.tail]
+	oldSample := t.samples[0]
 	evictedPTS := oldSample.PTS
 	evictedSize := uint64(len(oldSample.Data))
 
-	t.currentBytes.Add(^(evictedSize - 1)) // Atomic subtract
+	// Subtract from current bytes (atomic subtract via two's complement)
+	t.currentBytes.Add(^(evictedSize - 1))
 	t.evictedSamples.Add(1)
 	t.evictedBytes.Add(evictedSize)
-	t.samples[t.tail].Data = nil // Help GC
-	t.tail = (t.tail + 1) % t.capacity
-	t.count--
+
+	// Remove first element by slicing
+	t.samples[0].Data = nil // Help GC
+	t.samples = t.samples[1:]
 
 	return evictedPTS, evictedSize, true
 }
@@ -227,37 +182,22 @@ func (t *ESTrack) OldestPTS() int64 {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	if t.count == 0 {
+	if len(t.samples) == 0 {
 		return 0
 	}
-	return t.samples[t.tail].PTS
+	return t.samples[0].PTS
 }
 
-// evictByPTS removes all samples with PTS older than the specified threshold.
-// Used for time-based eviction. Must be called with appropriate locking.
-func (t *ESTrack) evictByPTS(oldestAllowedPTS int64) (samplesEvicted int, bytesEvicted uint64) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+// OldestSequence returns the sequence number of the oldest sample in the track.
+// Returns 0 if the track is empty.
+func (t *ESTrack) OldestSequence() uint64 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 
-	for t.count > 0 {
-		oldSample := t.samples[t.tail]
-		if oldSample.PTS >= oldestAllowedPTS {
-			break
-		}
-
-		evictedSize := uint64(len(oldSample.Data))
-		t.currentBytes.Add(^(evictedSize - 1)) // Atomic subtract
-		t.evictedSamples.Add(1)
-		t.evictedBytes.Add(evictedSize)
-		t.samples[t.tail].Data = nil // Help GC
-		t.tail = (t.tail + 1) % t.capacity
-		t.count--
-
-		samplesEvicted++
-		bytesEvicted += evictedSize
+	if len(t.samples) == 0 {
+		return 0
 	}
-
-	return samplesEvicted, bytesEvicted
+	return t.samples[0].Sequence
 }
 
 // NotifyChan returns a channel that receives notifications when new samples arrive.
@@ -272,19 +212,18 @@ func (t *ESTrack) ReadFrom(afterSeq uint64, maxSamples int) []ESSample {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	if t.count == 0 {
+	if len(t.samples) == 0 {
 		return nil
 	}
 
 	// Fast path: if afterSeq is before our oldest sample, start from the beginning
-	oldestSeq := t.samples[t.tail].Sequence
+	oldestSeq := t.samples[0].Sequence
 	if afterSeq < oldestSeq {
 		return t.collectSamplesLocked(0, maxSamples)
 	}
 
 	// Fast path: if afterSeq is at or after our newest sample, nothing new
-	newestIdx := (t.head - 1 + t.capacity) % t.capacity
-	newestSeq := t.samples[newestIdx].Sequence
+	newestSeq := t.samples[len(t.samples)-1].Sequence
 	if afterSeq >= newestSeq {
 		return nil
 	}
@@ -302,12 +241,11 @@ func (t *ESTrack) ReadFrom(afterSeq uint64, maxSamples int) []ESSample {
 // binarySearchSequenceLocked finds the index of the first sample with Sequence > afterSeq.
 // Returns -1 if no such sample exists. Must be called with t.mu held.
 func (t *ESTrack) binarySearchSequenceLocked(afterSeq uint64) int {
-	low, high := 0, t.count-1
+	low, high := 0, len(t.samples)-1
 
 	for low < high {
 		mid := (low + high) / 2
-		idx := (t.tail + mid) % t.capacity
-		if t.samples[idx].Sequence <= afterSeq {
+		if t.samples[mid].Sequence <= afterSeq {
 			low = mid + 1
 		} else {
 			high = mid
@@ -315,8 +253,7 @@ func (t *ESTrack) binarySearchSequenceLocked(afterSeq uint64) int {
 	}
 
 	// Check if we found a valid sample
-	idx := (t.tail + low) % t.capacity
-	if t.samples[idx].Sequence > afterSeq {
+	if low < len(t.samples) && t.samples[low].Sequence > afterSeq {
 		return low
 	}
 	return -1
@@ -325,9 +262,9 @@ func (t *ESTrack) binarySearchSequenceLocked(afterSeq uint64) int {
 // collectSamplesLocked collects up to maxSamples starting from startIdx.
 // Must be called with t.mu held.
 // IMPORTANT: This makes deep copies of sample Data to prevent corruption when
-// the buffer evicts or overwrites samples while processors are still using them.
+// the buffer evicts samples while processors are still using them.
 func (t *ESTrack) collectSamplesLocked(startIdx, maxSamples int) []ESSample {
-	available := t.count - startIdx
+	available := len(t.samples) - startIdx
 	if maxSamples > 0 && available > maxSamples {
 		available = maxSamples
 	}
@@ -337,9 +274,8 @@ func (t *ESTrack) collectSamplesLocked(startIdx, maxSamples int) []ESSample {
 
 	result := make([]ESSample, available)
 	for i := 0; i < available; i++ {
-		idx := (t.tail + startIdx + i) % t.capacity
-		src := t.samples[idx]
-		// Deep copy the Data slice to prevent corruption from buffer reuse
+		src := t.samples[startIdx+i]
+		// Deep copy the Data slice to prevent corruption from buffer eviction
 		dataCopy := make([]byte, len(src.Data))
 		copy(dataCopy, src.Data)
 		result[i] = ESSample{
@@ -362,7 +298,7 @@ func (t *ESTrack) ReadFromKeyframe(afterSeq uint64, maxSamples int) []ESSample {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	if t.count == 0 {
+	if len(t.samples) == 0 {
 		return nil
 	}
 
@@ -370,7 +306,7 @@ func (t *ESTrack) ReadFromKeyframe(afterSeq uint64, maxSamples int) []ESSample {
 	searchStart := 0
 
 	// Fast path: check bounds first
-	oldestSeq := t.samples[t.tail].Sequence
+	oldestSeq := t.samples[0].Sequence
 	if afterSeq >= oldestSeq {
 		// Use binary search to find approximate starting position
 		// This avoids scanning samples we know are before afterSeq
@@ -384,9 +320,8 @@ func (t *ESTrack) ReadFromKeyframe(afterSeq uint64, maxSamples int) []ESSample {
 	// This is unavoidable since keyframes aren't indexed, but we've skipped
 	// earlier samples using binary search
 	startIdx := -1
-	for i := searchStart; i < t.count; i++ {
-		idx := (t.tail + i) % t.capacity
-		sample := t.samples[idx]
+	for i := searchStart; i < len(t.samples); i++ {
+		sample := t.samples[i]
 		if sample.Sequence > afterSeq && sample.IsKeyframe {
 			startIdx = i
 			break
@@ -411,31 +346,23 @@ func (t *ESTrack) LastSequence() uint64 {
 func (t *ESTrack) FirstSequence() uint64 {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	if t.count == 0 {
+	if len(t.samples) == 0 {
 		return 0
 	}
-	return t.samples[t.tail].Sequence
+	return t.samples[0].Sequence
 }
 
 // Count returns the number of samples currently in the track.
 func (t *ESTrack) Count() int {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	return t.count
+	return len(t.samples)
 }
 
 // CurrentBytes returns the current total bytes in the track.
 // This is lock-free using atomic operations.
 func (t *ESTrack) CurrentBytes() uint64 {
 	return t.currentBytes.Load()
-}
-
-// MaxDuration returns the maximum duration limit for the track.
-func (t *ESTrack) MaxDuration() time.Duration {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	// Convert from 90kHz PTS ticks to time.Duration
-	return time.Duration(t.maxDurationPTS) * time.Second / 90000
 }
 
 // EvictionStats returns the total number of samples and bytes evicted from this track.
@@ -449,16 +376,13 @@ func (t *ESTrack) EvictionStats() (samples uint64, bytes uint64) {
 func (t *ESTrack) BufferDuration() time.Duration {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	if t.count < 2 {
+	if len(t.samples) < 2 {
 		return 0
 	}
 
 	// Get oldest and newest sample timestamps
-	oldestIdx := t.tail
-	newestIdx := (t.head - 1 + t.capacity) % t.capacity
-
-	oldestPTS := t.samples[oldestIdx].PTS
-	newestPTS := t.samples[newestIdx].PTS
+	oldestPTS := t.samples[0].PTS
+	newestPTS := t.samples[len(t.samples)-1].PTS
 
 	// PTS is in 90kHz timescale
 	if newestPTS <= oldestPTS {
@@ -466,13 +390,6 @@ func (t *ESTrack) BufferDuration() time.Duration {
 	}
 	ptsDiff := newestPTS - oldestPTS
 	return time.Duration(ptsDiff) * time.Second / 90000
-}
-
-// IsAtCapacity returns true if the track is at sample capacity.
-func (t *ESTrack) IsAtCapacity() bool {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return t.count >= t.capacity
 }
 
 // CodecVariant identifies a specific video+audio codec combination.
@@ -543,6 +460,13 @@ func (v CodecVariant) String() string {
 	return string(v)
 }
 
+// ConsumerPosition tracks a consumer's read position for safe eviction.
+type ConsumerPosition struct {
+	VideoSeq uint64    // Last video sequence read by this consumer
+	AudioSeq uint64    // Last audio sequence read by this consumer
+	Updated  time.Time // When this position was last updated
+}
+
 // ESVariant holds the elementary stream tracks for a specific codec variant.
 type ESVariant struct {
 	variant    CodecVariant
@@ -553,50 +477,37 @@ type ESVariant struct {
 	lastAccess atomic.Value // time.Time - last time a processor read from this variant
 
 	// Variant-level byte limit (combined video + audio)
-	maxBytes       uint64 // Maximum total bytes for this variant (0 = unlimited)
-	maxDurationPTS int64  // Maximum duration in PTS ticks
+	maxBytes uint64 // Maximum total bytes for this variant (0 = unlimited)
 
 	// Statistics
 	bytesIngested atomic.Uint64
+
+	// Consumer tracking for safe eviction
+	// Map from consumer ID to their read position
+	consumers   map[string]*ConsumerPosition
+	consumersMu sync.RWMutex
 
 	// Mutex for coordinated eviction
 	evictMu sync.Mutex
 }
 
-// NewESVariant creates a new elementary stream variant with default limits.
-func NewESVariant(variant CodecVariant, videoCapacity, audioCapacity int, isSource bool) *ESVariant {
-	return NewESVariantWithConfig(variant, videoCapacity, audioCapacity, DefaultMaxVariantBytes, DefaultMaxTrackDurationPTS, isSource)
+// NewESVariant creates a new elementary stream variant.
+// The variant uses dynamic slices with no fixed capacity - eviction is controlled by maxBytes.
+func NewESVariant(variant CodecVariant, isSource bool) *ESVariant {
+	return NewESVariantWithMaxBytes(variant, DefaultMaxVariantBytes, isSource)
 }
 
-// NewESVariantWithMaxBytes creates a new elementary stream variant with byte limits.
-// Deprecated: Use NewESVariantWithConfig instead. The per-track byte limits are combined into a single variant limit.
-func NewESVariantWithMaxBytes(variant CodecVariant, videoCapacity, audioCapacity int, maxVideoBytes, maxAudioBytes uint64, isSource bool) *ESVariant {
-	// Combine per-track limits into variant-level limit
-	maxVariantBytes := maxVideoBytes + maxAudioBytes
-	return NewESVariantWithConfig(variant, videoCapacity, audioCapacity, maxVariantBytes, DefaultMaxTrackDurationPTS, isSource)
-}
-
-// NewESVariantWithLimits creates a new elementary stream variant.
-// Deprecated: Use NewESVariantWithConfig instead. The per-track byte limits are combined into a single variant limit.
-func NewESVariantWithLimits(variant CodecVariant, videoCapacity, audioCapacity int, maxVideoBytes, maxAudioBytes uint64, maxDurationPTS int64, isSource bool) *ESVariant {
-	// Combine per-track limits into variant-level limit
-	maxVariantBytes := maxVideoBytes + maxAudioBytes
-	return NewESVariantWithConfig(variant, videoCapacity, audioCapacity, maxVariantBytes, maxDurationPTS, isSource)
-}
-
-// NewESVariantWithConfig creates a new elementary stream variant with specified configuration.
-// The maxBytes limit applies to the combined video + audio data in the variant.
-// When the limit is exceeded, video and audio samples are evicted together (paired eviction)
-// to maintain A/V sync.
-func NewESVariantWithConfig(variant CodecVariant, videoCapacity, audioCapacity int, maxBytes uint64, maxDurationPTS int64, isSource bool) *ESVariant {
+// NewESVariantWithMaxBytes creates a new elementary stream variant with a byte limit.
+// Set maxBytes to 0 for unlimited (eviction controlled only by consumer positions).
+func NewESVariantWithMaxBytes(variant CodecVariant, maxBytes uint64, isSource bool) *ESVariant {
 	v := &ESVariant{
-		variant:        variant,
-		videoTrack:     NewESTrackWithDuration(variant.VideoCodec(), videoCapacity, maxDurationPTS),
-		audioTrack:     NewESTrackWithDuration(variant.AudioCodec(), audioCapacity, maxDurationPTS),
-		isSource:       isSource,
-		createdAt:      time.Now(),
-		maxBytes:       maxBytes,
-		maxDurationPTS: maxDurationPTS,
+		variant:    variant,
+		videoTrack: NewESTrack(variant.VideoCodec()),
+		audioTrack: NewESTrack(variant.AudioCodec()),
+		isSource:   isSource,
+		createdAt:  time.Now(),
+		maxBytes:   maxBytes,
+		consumers:  make(map[string]*ConsumerPosition),
 	}
 	v.lastAccess.Store(time.Now())
 	return v
@@ -620,6 +531,90 @@ func (v *ESVariant) AudioTrack() *ESTrack {
 // IsSource returns true if this is the original source variant.
 func (v *ESVariant) IsSource() bool {
 	return v.isSource
+}
+
+// RegisterConsumer registers a consumer (processor) that will read from this variant.
+// The consumer ID should be unique and stable for the processor's lifetime.
+// Returns the consumer's initial position (current buffer state).
+func (v *ESVariant) RegisterConsumer(consumerID string) {
+	v.consumersMu.Lock()
+	defer v.consumersMu.Unlock()
+
+	// Initialize at sequence 0 - consumer hasn't read anything yet
+	v.consumers[consumerID] = &ConsumerPosition{
+		VideoSeq: 0,
+		AudioSeq: 0,
+		Updated:  time.Now(),
+	}
+}
+
+// UnregisterConsumer removes a consumer when it's done reading.
+// This allows eviction of samples that were held for this consumer.
+func (v *ESVariant) UnregisterConsumer(consumerID string) {
+	v.consumersMu.Lock()
+	defer v.consumersMu.Unlock()
+	delete(v.consumers, consumerID)
+}
+
+// UpdateConsumerPosition updates the read position for a consumer.
+// Call this after successfully reading samples to allow eviction of older data.
+func (v *ESVariant) UpdateConsumerPosition(consumerID string, videoSeq, audioSeq uint64) {
+	v.consumersMu.Lock()
+	defer v.consumersMu.Unlock()
+
+	pos, ok := v.consumers[consumerID]
+	if !ok {
+		// Consumer not registered - register it now with this position
+		v.consumers[consumerID] = &ConsumerPosition{
+			VideoSeq: videoSeq,
+			AudioSeq: audioSeq,
+			Updated:  time.Now(),
+		}
+		return
+	}
+
+	// Only update if new position is ahead (consumers only move forward)
+	if videoSeq > pos.VideoSeq {
+		pos.VideoSeq = videoSeq
+	}
+	if audioSeq > pos.AudioSeq {
+		pos.AudioSeq = audioSeq
+	}
+	pos.Updated = time.Now()
+}
+
+// getMinConsumerSeq returns the minimum video and audio sequence that any consumer
+// has read. Samples at or before these sequences are safe to evict.
+// Returns (0, 0) if no consumers are registered (all samples safe to evict).
+func (v *ESVariant) getMinConsumerSeq() (minVideoSeq, minAudioSeq uint64) {
+	v.consumersMu.RLock()
+	defer v.consumersMu.RUnlock()
+
+	if len(v.consumers) == 0 {
+		return 0, 0 // No consumers - eviction unrestricted
+	}
+
+	// Start with max values
+	minVideoSeq = ^uint64(0)
+	minAudioSeq = ^uint64(0)
+
+	for _, pos := range v.consumers {
+		if pos.VideoSeq < minVideoSeq {
+			minVideoSeq = pos.VideoSeq
+		}
+		if pos.AudioSeq < minAudioSeq {
+			minAudioSeq = pos.AudioSeq
+		}
+	}
+
+	return minVideoSeq, minAudioSeq
+}
+
+// ConsumerCount returns the number of registered consumers.
+func (v *ESVariant) ConsumerCount() int {
+	v.consumersMu.RLock()
+	defer v.consumersMu.RUnlock()
+	return len(v.consumers)
 }
 
 // WriteVideo writes a video sample to this variant.
@@ -654,36 +649,102 @@ func (v *ESVariant) MaxBytes() uint64 {
 
 // evictIfNeeded performs paired video/audio eviction if the variant exceeds its byte limit.
 // This evicts from whichever track has the older PTS, maintaining A/V sync.
+// IMPORTANT: Eviction respects consumer read positions to prevent removing samples
+// that consumers haven't read yet. This prevents decoder errors from missing reference frames.
 func (v *ESVariant) evictIfNeeded(incomingBytes uint64) {
+	// Always do consumer-position-based eviction first
+	// This ensures samples that all consumers have read are cleaned up
+	v.evictReadSamples()
+
 	if v.maxBytes == 0 {
-		return // No byte limit
+		return // No byte limit - consumer position eviction only
 	}
 
 	v.evictMu.Lock()
 	defer v.evictMu.Unlock()
 
+	// Get the minimum sequence that all consumers have read
+	// We can only evict samples that ALL consumers have already processed
+	minVideoSeq, minAudioSeq := v.getMinConsumerSeq()
+
 	// Keep evicting until we have room for the incoming data
 	for v.CurrentBytes()+incomingBytes > v.maxBytes {
-		// Get oldest PTS from each track
+		// Get oldest PTS and sequence from each track
 		videoPTS := v.videoTrack.OldestPTS()
 		audioPTS := v.audioTrack.OldestPTS()
+		videoSeq := v.videoTrack.OldestSequence()
+		audioSeq := v.audioTrack.OldestSequence()
 
-		// Evict from the track with the older sample
+		// Check if we can evict video (oldest video seq must be <= min consumer video seq)
+		canEvictVideo := videoPTS > 0 && (minVideoSeq == 0 || videoSeq <= minVideoSeq)
+		// Check if we can evict audio (oldest audio seq must be <= min consumer audio seq)
+		canEvictAudio := audioPTS > 0 && (minAudioSeq == 0 || audioSeq <= minAudioSeq)
+
+		// Evict from the track with the older sample, but only if safe
 		// This keeps video and audio roughly in sync
-		if videoPTS > 0 && (audioPTS == 0 || videoPTS <= audioPTS) {
-			// Video is older or audio is empty - evict video
+		if canEvictVideo && (audioPTS == 0 || videoPTS <= audioPTS || !canEvictAudio) {
+			// Video is older or audio is empty or can't evict audio - evict video
 			_, _, ok := v.videoTrack.EvictOldestSample()
 			if !ok {
 				break // No more samples to evict
 			}
-		} else if audioPTS > 0 {
-			// Audio is older - evict audio
+		} else if canEvictAudio {
+			// Audio is older and can be evicted - evict audio
 			_, _, ok := v.audioTrack.EvictOldestSample()
 			if !ok {
 				break // No more samples to evict
 			}
 		} else {
-			// Both tracks empty
+			// Cannot evict any samples - consumers are too far behind
+			// This is a backpressure situation - we accept the buffer overflow
+			// rather than corrupt streams by evicting unread samples
+			break
+		}
+	}
+}
+
+// evictReadSamples evicts all samples that have been read by ALL consumers.
+// This is the primary eviction mechanism when maxBytes=0 (unlimited).
+// Evicts samples where the sequence number is <= the minimum consumer position.
+func (v *ESVariant) evictReadSamples() {
+	v.evictMu.Lock()
+	defer v.evictMu.Unlock()
+
+	// Get the minimum sequence that all consumers have read
+	minVideoSeq, minAudioSeq := v.getMinConsumerSeq()
+
+	// If no consumers are registered, we can't safely evict
+	// (we don't know if something will read the data later)
+	if minVideoSeq == 0 && minAudioSeq == 0 {
+		// Check if there are actually consumers - if none, keep all data
+		if v.ConsumerCount() == 0 {
+			return
+		}
+		// If there are consumers but they're at position 0, they haven't read anything yet
+		// Don't evict in this case
+		return
+	}
+
+	// Evict all video samples that have been read by all consumers
+	for {
+		videoSeq := v.videoTrack.OldestSequence()
+		if videoSeq == 0 || videoSeq > minVideoSeq {
+			break // No more video to evict or reached unread samples
+		}
+		_, _, ok := v.videoTrack.EvictOldestSample()
+		if !ok {
+			break
+		}
+	}
+
+	// Evict all audio samples that have been read by all consumers
+	for {
+		audioSeq := v.audioTrack.OldestSequence()
+		if audioSeq == 0 || audioSeq > minAudioSeq {
+			break // No more audio to evict or reached unread samples
+		}
+		_, _, ok := v.audioTrack.EvictOldestSample()
+		if !ok {
 			break
 		}
 	}
@@ -768,12 +829,10 @@ func (v *ESVariant) Stats() ESVariantStats {
 	}
 
 	// Consider evicting if we're close to the byte limit (>95%)
+	// With unlimited bytes (maxBytes=0), we never consider ourselves "evicting" based on capacity
 	var isEvicting bool
 	if maxBytes > 0 {
 		isEvicting = float64(currentBytes)/float64(maxBytes) > 0.95
-	} else {
-		// No byte limit - check sample capacity
-		isEvicting = v.videoTrack.IsAtCapacity() || v.audioTrack.IsAtCapacity()
 	}
 
 	return ESVariantStats{
@@ -819,55 +878,32 @@ type ESBufferStats struct {
 
 // SharedESBufferConfig configures the shared ES buffer.
 type SharedESBufferConfig struct {
-	VideoCapacity   int           // Samples per variant video track (safety bound)
-	AudioCapacity   int           // Samples per variant audio track (safety bound)
-	MaxVariantBytes uint64        // Maximum total bytes per variant (combined video + audio, 0 = use default 30MB)
-	MaxDuration     time.Duration // Maximum buffer duration (0 = use default 2 minutes)
+	// MaxVariantBytes is the maximum total bytes per variant (combined video + audio).
+	// Set to 0 to disable byte-based eviction (default).
+	// When disabled, eviction is controlled only by consumer position tracking.
+	MaxVariantBytes uint64
 	Logger          *slog.Logger
-
-	// Deprecated: Per-track byte limits are no longer used. Use MaxVariantBytes instead.
-	MaxVideoBytes uint64
-	MaxAudioBytes uint64
 }
 
-// DefaultMaxVariantBytes is the default maximum bytes per variant (30MB)
-const DefaultMaxVariantBytes uint64 = 30 * 1024 * 1024
-
-// DurationToPTS converts a time.Duration to 90kHz PTS ticks.
-func DurationToPTS(d time.Duration) int64 {
-	return int64(d.Seconds() * 90000)
-}
-
-// getMaxDurationPTS returns the max duration in PTS ticks from config, or default if not set.
-func (c SharedESBufferConfig) getMaxDurationPTS() int64 {
-	if c.MaxDuration > 0 {
-		return DurationToPTS(c.MaxDuration)
-	}
-	return DefaultMaxTrackDurationPTS
-}
+// DefaultMaxVariantBytes is the default maximum bytes per variant.
+// Set to 0 to disable byte-based eviction entirely.
+// Eviction is then controlled only by consumer position tracking,
+// which prevents eviction of samples that haven't been read by all consumers.
+const DefaultMaxVariantBytes uint64 = 0
 
 // getMaxVariantBytes returns the variant byte limit from config, or default if not set.
 func (c SharedESBufferConfig) getMaxVariantBytes() uint64 {
-	if c.MaxVariantBytes > 0 {
-		return c.MaxVariantBytes
-	}
-	// Fall back to sum of deprecated per-track limits if set
-	if c.MaxVideoBytes > 0 || c.MaxAudioBytes > 0 {
-		return c.MaxVideoBytes + c.MaxAudioBytes
-	}
-	return DefaultMaxVariantBytes
+	// MaxVariantBytes of 0 means unlimited (no byte-based eviction)
+	return c.MaxVariantBytes
 }
 
 // DefaultSharedESBufferConfig returns sensible defaults.
 func DefaultSharedESBufferConfig() SharedESBufferConfig {
 	return SharedESBufferConfig{
-		// Sample capacity is a safety bound - actual eviction is controlled
-		// by the variant byte limit with paired video/audio eviction.
-		// 8000 samples supports 2+ minutes at 60fps.
-		VideoCapacity:   DefaultVideoCapacity, // 8000 samples (~2+ min at 60fps)
-		AudioCapacity:   DefaultAudioCapacity, // 8000 samples (~2+ min at ~47fps AAC)
-		MaxVariantBytes: DefaultMaxVariantBytes, // 30MB per variant (combined video + audio)
-		MaxDuration:     DefaultMaxTrackDuration, // 2 minutes max buffer duration
+		// Eviction is controlled by:
+		// 1. MaxVariantBytes (byte limit per variant, 0 = disabled/unlimited)
+		// 2. Consumer position tracking (won't evict unread samples)
+		MaxVariantBytes: DefaultMaxVariantBytes, // 0 = no byte limit
 		Logger:          slog.Default(),
 	}
 }
@@ -905,12 +941,6 @@ type SharedESBuffer struct {
 
 // NewSharedESBuffer creates a new shared elementary stream buffer.
 func NewSharedESBuffer(channelID, proxyID string, config SharedESBufferConfig) *SharedESBuffer {
-	if config.VideoCapacity <= 0 {
-		config.VideoCapacity = DefaultSharedESBufferConfig().VideoCapacity
-	}
-	if config.AudioCapacity <= 0 {
-		config.AudioCapacity = DefaultSharedESBufferConfig().AudioCapacity
-	}
 	if config.Logger == nil {
 		config.Logger = slog.Default()
 	}
@@ -956,8 +986,7 @@ func (b *SharedESBuffer) CreateSourceVariant(videoCodec, audioCodec string) *ESV
 
 	// Create the source variant with configured limits
 	maxVariantBytes := b.config.getMaxVariantBytes()
-	maxDurationPTS := b.config.getMaxDurationPTS()
-	v := NewESVariantWithConfig(variant, b.config.VideoCapacity, b.config.AudioCapacity, maxVariantBytes, maxDurationPTS, true)
+	v := NewESVariantWithMaxBytes(variant, maxVariantBytes, true)
 	b.variants[variant] = v
 	b.sourceVariant = variant
 
@@ -1085,8 +1114,7 @@ func (b *SharedESBuffer) GetOrCreateVariantWithContext(ctx context.Context, vari
 	}
 
 	maxVariantBytes := b.config.getMaxVariantBytes()
-	maxDurationPTS := b.config.getMaxDurationPTS()
-	v = NewESVariantWithConfig(variant, b.config.VideoCapacity, b.config.AudioCapacity, maxVariantBytes, maxDurationPTS, false)
+	v = NewESVariantWithMaxBytes(variant, maxVariantBytes, false)
 	b.variants[variant] = v
 	b.variantsMu.Unlock()
 
@@ -1162,8 +1190,7 @@ func (b *SharedESBuffer) SetVideoCodec(codec string, initData []byte) {
 	if source == nil {
 		// Create a placeholder source variant - audio codec will be set later
 		maxVariantBytes := b.config.getMaxVariantBytes()
-		maxDurationPTS := b.config.getMaxDurationPTS()
-		source = NewESVariantWithConfig(NewCodecVariant(codec, ""), b.config.VideoCapacity, b.config.AudioCapacity, maxVariantBytes, maxDurationPTS, true)
+		source = NewESVariantWithMaxBytes(NewCodecVariant(codec, ""), maxVariantBytes, true)
 		b.sourceVariant = source.variant
 		b.variants[b.sourceVariant] = source
 		created = true
@@ -1197,8 +1224,7 @@ func (b *SharedESBuffer) SetAudioCodec(codec string, initData []byte) {
 	if source == nil {
 		// Create a placeholder source variant - video codec will be set later
 		maxVariantBytes := b.config.getMaxVariantBytes()
-		maxDurationPTS := b.config.getMaxDurationPTS()
-		source = NewESVariantWithConfig(NewCodecVariant("", codec), b.config.VideoCapacity, b.config.AudioCapacity, maxVariantBytes, maxDurationPTS, true)
+		source = NewESVariantWithMaxBytes(NewCodecVariant("", codec), maxVariantBytes, true)
 		b.sourceVariant = source.variant
 		b.variants[b.sourceVariant] = source
 		created = true
@@ -1279,8 +1305,7 @@ func (b *SharedESBuffer) CreateVariant(variant CodecVariant) (*ESVariant, error)
 
 	// Create new variant with configured limits
 	maxVariantBytes := b.config.getMaxVariantBytes()
-	maxDurationPTS := b.config.getMaxDurationPTS()
-	v := NewESVariantWithConfig(variant, b.config.VideoCapacity, b.config.AudioCapacity, maxVariantBytes, maxDurationPTS, false)
+	v := NewESVariantWithMaxBytes(variant, maxVariantBytes, false)
 	b.variants[variant] = v
 
 	b.config.Logger.Info("Created codec variant",
