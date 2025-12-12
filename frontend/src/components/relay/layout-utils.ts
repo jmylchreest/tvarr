@@ -44,11 +44,11 @@ interface LayoutConfig {
 }
 
 const DEFAULT_CONFIG: LayoutConfig = {
-  columnSpacing: 120, // Gap between node edges (not centers)
-  rowSpacing: 180, // Space between rows
-  transcoderOffset: 180, // How far above buffer the transcoder sits
+  columnSpacing: 80, // Base gap between node edges (minimum)
+  rowSpacing: 140, // Space between rows (reduced for compactness)
+  transcoderOffset: 160, // How far above buffer the transcoder sits
   startX: 50,
-  startY: 160, // Extra top margin for transcoder
+  startY: 140, // Extra top margin for transcoder
   nodeWidths: {
     origin: 256,
     buffer: 224,
@@ -63,6 +63,13 @@ const DEFAULT_CONFIG: LayoutConfig = {
     processor: 100,
     client: 120,
   },
+};
+
+// Edge length constraints for adaptive layout
+const EDGE_CONSTRAINTS = {
+  minLength: 60, // Minimum visible edge line length
+  maxLength: 120, // Maximum edge line length (keeps things compact)
+  targetLength: 80, // Ideal edge length
 };
 
 /**
@@ -185,9 +192,26 @@ export function calculateLayout<T extends FlowNode>(
     // Calculate center Y for this session's main row
     const sessionCenterY = sessionYOffset + (maxNodesInColumn * cfg.rowSpacing) / 2;
 
+    // Adaptive gap calculation based on node complexity
+    // More nodes = tighter gaps to keep layout compact
+    const totalNodes =
+      originNodes.length +
+      bufferNodes.length +
+      transcoderNodes.length +
+      processorNodes.length +
+      clientNodes.length;
+
+    // Scale gap inversely with node count, but stay within constraints
+    const baseGap = EDGE_CONSTRAINTS.targetLength;
+    const scaleFactor = Math.max(0.7, Math.min(1.2, 8 / Math.max(totalNodes, 4)));
+    const adaptiveGap = Math.max(
+      EDGE_CONSTRAINTS.minLength,
+      Math.min(EDGE_CONSTRAINTS.maxLength, baseGap * scaleFactor)
+    );
+
     // Column X positions - consistent gaps between all nodes
     // Each column is: previous column X + previous node width + gap
-    const gap = cfg.columnSpacing; // Consistent gap between all node edges
+    const gap = adaptiveGap;
     const originX = cfg.startX;
     const bufferX = originX + cfg.nodeWidths.origin + gap;
     const processorX = bufferX + cfg.nodeWidths.buffer + gap;
@@ -233,6 +257,12 @@ export function calculateLayout<T extends FlowNode>(
     // Position processor nodes (column 2)
     const processorPositions: Map<string, { x: number; y: number }> = new Map();
 
+    // Adaptive row spacing for processors - tighter when there are many
+    const processorRowSpacing =
+      processorNodes.length > 2
+        ? Math.max(cfg.nodeHeights.processor + 20, cfg.rowSpacing * 0.6)
+        : cfg.rowSpacing;
+
     if (processorNodes.length === 1) {
       // Single processor - center it
       processorPositions.set(processorNodes[0].id, {
@@ -244,12 +274,12 @@ export function calculateLayout<T extends FlowNode>(
         position: { x: processorX, y: sessionCenterY },
       });
     } else if (processorNodes.length > 1) {
-      // Multiple processors - spread vertically
-      const totalProcessorSpan = (processorNodes.length - 1) * cfg.rowSpacing;
+      // Multiple processors - spread vertically with adaptive spacing
+      const totalProcessorSpan = (processorNodes.length - 1) * processorRowSpacing;
       const processorStartY = sessionCenterY - totalProcessorSpan / 2;
 
       for (let i = 0; i < processorNodes.length; i++) {
-        const y = processorStartY + i * cfg.rowSpacing;
+        const y = processorStartY + i * processorRowSpacing;
         processorPositions.set(processorNodes[i].id, { x: processorX, y });
         layoutedNodes.push({
           ...processorNodes[i],
@@ -259,7 +289,12 @@ export function calculateLayout<T extends FlowNode>(
     }
 
     // Position client nodes - grouped by processor
-    const clientVerticalSpacing = Math.min(cfg.nodeHeights.client + 20, 140);
+    // Adaptive spacing based on client count
+    const baseClientSpacing = cfg.nodeHeights.client + 15;
+    const clientVerticalSpacing =
+      clientNodes.length > 4
+        ? Math.max(baseClientSpacing * 0.8, cfg.nodeHeights.client + 5)
+        : Math.min(baseClientSpacing, 120);
 
     for (const [processorId, clients] of clientsByProcessor) {
       const processorPos = processorPositions.get(processorId);

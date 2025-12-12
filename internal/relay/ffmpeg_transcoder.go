@@ -482,6 +482,23 @@ func (t *FFmpegTranscoder) startFFmpeg() error {
 		if t.config.VideoPreset != "" {
 			builder.VideoPreset(t.config.VideoPreset)
 		}
+
+		// Memory optimization for software encoders
+		// These settings reduce memory usage significantly for live streaming
+		if t.config.VideoCodec == "libx265" {
+			// x265 specific optimizations:
+			// - pools=1: Use single thread pool (reduces memory)
+			// - frame-threads=2: Limit frame parallelism
+			// - lookahead-slices=2: Reduce lookahead memory
+			// - rc-lookahead=20: Shorter lookahead (default is 20-40 frames)
+			// - bframes=2: Fewer B-frames reduces memory
+			builder.OutputArgs("-x265-params", "pools=1:frame-threads=2:lookahead-slices=2:rc-lookahead=20:bframes=2")
+		} else if t.config.VideoCodec == "libx264" {
+			// x264 specific optimizations:
+			// - threads=4: Limit threads
+			// - rc-lookahead=20: Shorter lookahead
+			builder.OutputArgs("-x264-params", "threads=4:rc-lookahead=20")
+		}
 	} else {
 		builder.VideoCodec("copy")
 	}
