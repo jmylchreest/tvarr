@@ -9,6 +9,7 @@ import {
   useNodesState,
   useEdgesState,
   useReactFlow,
+  useNodesInitialized,
   ReactFlowProvider,
   type Node,
   type Edge,
@@ -51,12 +52,17 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: Relay
     enabled: true,
   });
 
-  const { fitView } = useReactFlow();
+  const { fitView, getNodes } = useReactFlow();
+
+  // useNodesInitialized returns true when React Flow has measured all node dimensions
+  const nodesInitialized = useNodesInitialized();
 
   // Track if this is the initial load (for fitView and layout)
   const isInitialLoad = useRef(true);
   // Track if we've applied initial layout (force clean positions on mount)
   const hasAppliedInitialLayout = useRef(false);
+  // Track if we've done the measured layout pass
+  const hasDoneMeasuredLayout = useRef(false);
   // Track known node IDs to detect new nodes
   const knownNodeIds = useRef<Set<string>>(new Set());
   // Track manually moved nodes (don't auto-position these)
@@ -123,6 +129,7 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: Relay
     // On first mount, force clean layout and clear any stale tracking
     if (!hasAppliedInitialLayout.current) {
       hasAppliedInitialLayout.current = true;
+      hasDoneMeasuredLayout.current = false; // Reset for measured pass
       knownNodeIds.current.clear();
       manuallyMovedNodes.current.clear();
 
@@ -155,6 +162,8 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: Relay
         if (!knownNodeIds.current.has(node.id)) {
           newNodeIds.add(node.id);
           knownNodeIds.current.add(node.id);
+          // New nodes need measurement
+          hasDoneMeasuredLayout.current = false;
         }
       }
 
@@ -185,6 +194,44 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: Relay
 
     setEdges(edges);
   }, [layoutedNodes, edges, setNodes, setEdges, fitView]);
+
+  // Re-layout with measured dimensions after React Flow measures the nodes
+  // This is the second pass that uses actual DOM dimensions for accurate spacing
+  useEffect(() => {
+    if (!nodesInitialized || hasDoneMeasuredLayout.current) return;
+    if (nodesState.length === 0) return;
+
+    // Get nodes with their measured dimensions from React Flow
+    const measuredNodes = getNodes();
+    if (measuredNodes.length === 0) return;
+
+    // Check if any nodes have been measured
+    const hasMeasuredNodes = measuredNodes.some((n) => n.measured?.width || n.measured?.height);
+    if (!hasMeasuredNodes) return;
+
+    hasDoneMeasuredLayout.current = true;
+
+    // Re-calculate layout using measured dimensions
+    const reLayoutedNodes = calculateLayout(measuredNodes, edges);
+
+    // Apply the new layout, respecting manually moved nodes
+    setNodes((currentNodes) => {
+      return reLayoutedNodes.map((layoutedNode) => {
+        const wasManuallyMoved = manuallyMovedNodes.current.has(layoutedNode.id);
+        const currentNode = currentNodes.find((n) => n.id === layoutedNode.id);
+
+        if (wasManuallyMoved && currentNode) {
+          return { ...layoutedNode, position: currentNode.position };
+        }
+        return layoutedNode;
+      });
+    });
+
+    // Fit view after measured layout
+    setTimeout(() => {
+      fitView({ padding: 0.1, duration: 200 });
+    }, 50);
+  }, [nodesInitialized, nodesState.length, edges, getNodes, setNodes, fitView]);
 
   const onInit = useCallback(() => {
     // Fit view on initial load

@@ -2,7 +2,7 @@
  * Layout utilities for ReactFlow relay pipeline visualization.
  *
  * This module handles automatic node positioning based on node types and relationships.
- * Layout is calculated entirely on the frontend to adapt to viewport and node counts.
+ * Layout is calculated entirely on the frontend using MEASURED node dimensions from React Flow.
  *
  * Layout Structure:
  * - Column 0: Origin (source stream)
@@ -11,70 +11,89 @@
  * - Column 2: Processor (output format processors)
  * - Column 3: Client (connected clients)
  *
- * All columns use consistent spacing for visual clarity.
+ * The layout uses actual measured node dimensions when available, falling back to
+ * estimates only for unmeasured nodes.
  */
 
 import type { Edge } from '@xyflow/react';
 
 // Generic node type that works with our flow data
+// This is compatible with React Flow's Node type
 interface FlowNode {
   id: string;
   type?: string;
   position: { x: number; y: number };
-  data?: Record<string, unknown>;
+  data: Record<string, unknown>; // Required to match React Flow's Node type
   parentId?: string;
+  // React Flow adds these after measurement (dimensions may be undefined)
+  measured?: { width?: number; height?: number };
+  width?: number;
+  height?: number;
 }
 
 // Layout configuration
 interface LayoutConfig {
-  /** Base horizontal spacing between columns */
-  columnSpacing: number;
-  /** Vertical spacing between nodes in the same column */
-  rowSpacing: number;
-  /** Vertical offset for transcoder above buffer */
-  transcoderOffset: number;
+  /** Minimum horizontal gap between node edges */
+  columnGap: number;
+  /** Minimum vertical gap between node edges */
+  rowGap: number;
+  /** Additional vertical gap above buffer for transcoder */
+  transcoderGap: number;
   /** Starting X position */
   startX: number;
-  /** Starting Y position */
+  /** Starting Y position (must leave room for transcoder above) */
   startY: number;
-  /** Node widths by type (for centering calculations) */
-  nodeWidths: Record<string, number>;
-  /** Node heights by type (for vertical spacing) */
-  nodeHeights: Record<string, number>;
+  /** Fallback widths when nodes aren't measured yet */
+  fallbackWidths: Record<string, number>;
+  /** Fallback heights when nodes aren't measured yet */
+  fallbackHeights: Record<string, number>;
 }
 
 const DEFAULT_CONFIG: LayoutConfig = {
-  columnSpacing: 100, // Base gap between node edges
-  rowSpacing: 180, // Space between rows (increased for better separation)
-  transcoderOffset: 300, // How far above buffer the transcoder sits (measured from top edges)
+  columnGap: 80, // Horizontal gap between node edges
+  rowGap: 40, // Vertical gap between node edges
+  transcoderGap: 60, // Gap between transcoder bottom and buffer top
   startX: 50,
-  startY: 320, // Extra top margin for transcoder (so it doesn't clip above viewport)
-  nodeWidths: {
+  startY: 350, // Leave room for transcoder above
+  fallbackWidths: {
     origin: 256,
-    buffer: 288, // w-72 = 288px (was incorrectly 224)
-    transcoder: 224, // w-56 = 224px
-    processor: 256, // w-64 = 256px
-    client: 192, // w-48 = 192px
+    buffer: 288,
+    transcoder: 224,
+    processor: 256,
+    client: 192,
   },
-  nodeHeights: {
-    // These are estimated maximums - actual height varies with content
-    origin: 220, // Includes all stats, codecs, resolution
-    buffer: 200, // With multiple variants and progress bars
-    transcoder: 240, // With sparklines, speed dial, bytes processed
-    processor: 140, // With codecs, sparkline, bytes sent
-    client: 130, // With all client info
+  fallbackHeights: {
+    origin: 220,
+    buffer: 200,
+    transcoder: 240,
+    processor: 140,
+    client: 130,
   },
 };
 
-// Edge length constraints for adaptive layout
-const EDGE_CONSTRAINTS = {
-  minGap: 60, // Minimum gap between node edges
-  maxGap: 100, // Maximum gap between node edges
-  targetGap: 80, // Ideal gap between node edges
-};
+/**
+ * Gets the width of a node, preferring measured dimensions.
+ */
+function getNodeWidth(node: FlowNode, config: LayoutConfig): number {
+  // React Flow v12+ uses node.measured.width
+  if (node.measured?.width) return node.measured.width;
+  // Older versions or direct setting
+  if (node.width) return node.width;
+  // Fallback to estimates
+  return config.fallbackWidths[node.type || 'origin'] || 200;
+}
 
-// Client-specific gap (smaller to keep clients close to their processor)
-const CLIENT_GAP = 60;
+/**
+ * Gets the height of a node, preferring measured dimensions.
+ */
+function getNodeHeight(node: FlowNode, config: LayoutConfig): number {
+  // React Flow v12+ uses node.measured.height
+  if (node.measured?.height) return node.measured.height;
+  // Older versions or direct setting
+  if (node.height) return node.height;
+  // Fallback to estimates
+  return config.fallbackHeights[node.type || 'origin'] || 150;
+}
 
 /**
  * Groups nodes by their session ID to handle multi-session layouts.
@@ -130,29 +149,14 @@ function getClientProcessorMap(nodes: FlowNode[], edges: Edge[]): Map<string, st
 }
 
 /**
- * Calculate adaptive gap based on total node count.
- * More nodes = tighter gaps to keep layout compact.
- * Fewer nodes = larger gaps for better readability.
- */
-function calculateAdaptiveGap(totalNodes: number): number {
-  // Scale factor: fewer nodes get more space
-  // 5 nodes = 1.2x, 10 nodes = 1.0x, 20 nodes = 0.8x
-  const scaleFactor = Math.max(0.8, Math.min(1.2, 10 / Math.max(totalNodes, 5)));
-  const gap = EDGE_CONSTRAINTS.targetGap * scaleFactor;
-
-  // Clamp to min/max
-  return Math.max(EDGE_CONSTRAINTS.minGap, Math.min(EDGE_CONSTRAINTS.maxGap, gap));
-}
-
-/**
- * Calculates optimal layout for relay flow nodes.
+ * Calculates optimal layout for relay flow nodes using measured dimensions.
  *
  * Layout strategy:
  * 1. Group nodes by session
- * 2. Sessions stack vertically, each top-aligned
+ * 2. Sessions stack vertically
  * 3. Within each session: Origin, Buffer, Processors, Clients are TOP-ALIGNED
- * 4. Transcoder positioned above buffer
- * 5. Additional processors/clients stack downward from the top row
+ * 4. Transcoder positioned above buffer with guaranteed gap
+ * 5. Node spacing uses actual measured heights + gap to prevent overlap
  */
 export function calculateLayout<T extends FlowNode>(
   nodes: T[],
@@ -176,7 +180,7 @@ export function calculateLayout<T extends FlowNode>(
     // Group nodes by type within this session
     const typeGroups = groupNodesByType(sessionNodes);
 
-    // Get nodes by column (cast back to T for proper typing)
+    // Get nodes by column
     const originNodes = (typeGroups.get('origin') || []) as T[];
     const bufferNodes = (typeGroups.get('buffer') || []) as T[];
     const transcoderNodes = (typeGroups.get('transcoder') || []) as T[];
@@ -193,122 +197,117 @@ export function calculateLayout<T extends FlowNode>(
       clientsByProcessor.get(processorId)!.push(client);
     }
 
-    // Find max clients per processor to calculate session height
-    let maxClientsPerProcessor = 0;
-    for (const clients of clientsByProcessor.values()) {
-      maxClientsPerProcessor = Math.max(maxClientsPerProcessor, clients.length);
-    }
+    // Calculate column X positions based on actual node widths
+    // Each column starts where the previous one ends + gap
+    const originWidth = originNodes.length > 0 ? Math.max(...originNodes.map((n) => getNodeWidth(n, cfg))) : 0;
+    const bufferWidth = bufferNodes.length > 0 ? Math.max(...bufferNodes.map((n) => getNodeWidth(n, cfg))) : 0;
+    const processorWidth =
+      processorNodes.length > 0 ? Math.max(...processorNodes.map((n) => getNodeWidth(n, cfg))) : 0;
 
-    // Calculate adaptive gap based on total node count in this session
-    const totalNodes =
-      originNodes.length +
-      bufferNodes.length +
-      transcoderNodes.length +
-      processorNodes.length +
-      clientNodes.length;
-
-    const gap = calculateAdaptiveGap(totalNodes);
-
-    // Column X positions - edge-to-edge spacing
     const originX = cfg.startX;
-    const bufferX = originX + cfg.nodeWidths.origin + gap;
-    const processorX = bufferX + cfg.nodeWidths.buffer + gap;
-    const clientX = processorX + cfg.nodeWidths.processor + CLIENT_GAP;
+    const bufferX = originX + originWidth + cfg.columnGap;
+    const processorX = bufferX + bufferWidth + cfg.columnGap;
+    const clientX = processorX + processorWidth + cfg.columnGap;
 
-    // TOP-ALIGNED layout: all main nodes start at the same Y
-    // The "main row" Y is where the top of origin/buffer/first-processor/first-client align
+    // The main row Y is where the top of origin/buffer/first-processor align
     const mainRowY = sessionYOffset;
 
-    // Vertical spacing for stacked nodes - add significant gap between them
-    // This ensures nodes don't overlap even when content is at maximum
-    const processorSpacing = cfg.nodeHeights.processor + 40; // 140 + 40 = 180px between processor tops
-    const clientSpacing = cfg.nodeHeights.client + 30; // 130 + 30 = 160px between client tops
-
-    // Position origin nodes (column 0) - top-aligned, stack downward
-    for (let i = 0; i < originNodes.length; i++) {
+    // Position origin nodes - stack vertically with measured heights
+    let originY = mainRowY;
+    for (const node of originNodes) {
       layoutedNodes.push({
-        ...originNodes[i],
-        position: { x: originX, y: mainRowY + i * cfg.rowSpacing },
+        ...node,
+        position: { x: originX, y: originY },
       });
+      originY += getNodeHeight(node, cfg) + cfg.rowGap;
     }
 
-    // Position buffer nodes (column 1) - top-aligned, stack downward
-    for (let i = 0; i < bufferNodes.length; i++) {
+    // Position buffer nodes - stack vertically with measured heights
+    let bufferY = mainRowY;
+    for (const node of bufferNodes) {
       layoutedNodes.push({
-        ...bufferNodes[i],
-        position: { x: bufferX, y: mainRowY + i * cfg.rowSpacing },
+        ...node,
+        position: { x: bufferX, y: bufferY },
       });
+      bufferY += getNodeHeight(node, cfg) + cfg.rowGap;
     }
 
     // Position transcoder nodes ABOVE buffer
+    // Calculate position so transcoder bottom is transcoderGap above buffer top
     if (transcoderNodes.length > 0) {
-      const bufferWidth = cfg.nodeWidths.buffer || 224;
-      const transcoderWidth = cfg.nodeWidths.transcoder || 224;
+      const transcoderWidth = getNodeWidth(transcoderNodes[0], cfg);
       const transcoderX = bufferX + (bufferWidth - transcoderWidth) / 2;
-      // Position above the main row
-      const transcoderY = mainRowY - cfg.transcoderOffset;
 
-      for (let i = 0; i < transcoderNodes.length; i++) {
+      let transcoderY = mainRowY;
+      for (let i = transcoderNodes.length - 1; i >= 0; i--) {
+        const node = transcoderNodes[i];
+        const height = getNodeHeight(node, cfg);
+        // Position above the main row
+        transcoderY -= height + cfg.transcoderGap;
         layoutedNodes.push({
-          ...transcoderNodes[i],
-          position: {
-            x: transcoderX + i * (transcoderWidth + 20),
-            y: transcoderY,
-          },
+          ...node,
+          position: { x: transcoderX, y: transcoderY },
         });
       }
     }
 
-    // Position processor nodes (column 2) - top-aligned, stack downward
-    const processorPositions: Map<string, { x: number; y: number }> = new Map();
+    // Position processor nodes - stack vertically with measured heights
+    // Track Y position for each processor so clients can align with them
+    const processorPositions: Map<string, { x: number; y: number; height: number }> = new Map();
+    let processorY = mainRowY;
 
-    for (let i = 0; i < processorNodes.length; i++) {
-      const y = mainRowY + i * processorSpacing;
-      processorPositions.set(processorNodes[i].id, { x: processorX, y });
+    for (const node of processorNodes) {
+      const height = getNodeHeight(node, cfg);
+      processorPositions.set(node.id, { x: processorX, y: processorY, height });
       layoutedNodes.push({
-        ...processorNodes[i],
-        position: { x: processorX, y },
+        ...node,
+        position: { x: processorX, y: processorY },
       });
+      processorY += height + cfg.rowGap;
     }
 
-    // Position client nodes - aligned with their processor, stack downward
+    // Position client nodes - align with their processor, stack vertically
     for (const [processorId, clients] of clientsByProcessor) {
       const processorPos = processorPositions.get(processorId);
-      const baseY = processorPos?.y ?? mainRowY;
+      let clientY = processorPos?.y ?? mainRowY;
 
-      for (let i = 0; i < clients.length; i++) {
+      for (const node of clients) {
+        const height = getNodeHeight(node, cfg);
         layoutedNodes.push({
-          ...clients[i],
-          position: { x: clientX, y: baseY + i * clientSpacing },
+          ...node,
+          position: { x: clientX, y: clientY },
         });
+        clientY += height + cfg.rowGap;
       }
     }
 
     // Handle clients not connected to any processor
     const unconnectedClients = clientNodes.filter((c) => !clientToProcessor.has(c.id));
     if (unconnectedClients.length > 0) {
-      for (let i = 0; i < unconnectedClients.length; i++) {
+      let clientY = mainRowY;
+      for (const node of unconnectedClients) {
+        const height = getNodeHeight(node, cfg);
         layoutedNodes.push({
-          ...unconnectedClients[i],
-          position: { x: clientX, y: mainRowY + i * clientSpacing },
+          ...node,
+          position: { x: clientX, y: clientY },
         });
+        clientY += height + cfg.rowGap;
       }
     }
 
     // Calculate session height for next session offset
-    const maxVerticalNodes = Math.max(
-      originNodes.length,
-      bufferNodes.length,
-      processorNodes.length,
-      maxClientsPerProcessor,
-      1
-    );
-    const sessionHeight = maxVerticalNodes * Math.max(processorSpacing, clientSpacing, cfg.rowSpacing);
-    // Add space for transcoder above if present
-    const transcoderSpace = transcoderNodes.length > 0 ? cfg.transcoderOffset + cfg.nodeHeights.transcoder : 0;
+    // Find the maximum Y extent of all nodes in this session
+    const sessionNodeIds = new Set(sessionNodes.map((n) => n.id));
+    let maxY = mainRowY;
+    for (const node of layoutedNodes) {
+      if (sessionNodeIds.has(node.id)) {
+        const bottom = node.position.y + getNodeHeight(node as FlowNode, cfg);
+        maxY = Math.max(maxY, bottom);
+      }
+    }
 
-    // Next session starts below this one with some padding
-    sessionYOffset += sessionHeight + transcoderSpace + cfg.rowSpacing;
+    // Next session starts below this one with extra padding
+    sessionYOffset = maxY + cfg.rowGap * 2;
   }
 
   return layoutedNodes;
@@ -336,8 +335,8 @@ export function getNodesBounds(nodes: FlowNode[]): {
 
   for (const node of nodes) {
     const { x, y } = node.position;
-    const width = DEFAULT_CONFIG.nodeWidths[node.type || 'origin'] || 200;
-    const height = DEFAULT_CONFIG.nodeHeights[node.type || 'origin'] || 100;
+    const width = getNodeWidth(node, DEFAULT_CONFIG);
+    const height = getNodeHeight(node, DEFAULT_CONFIG);
 
     minX = Math.min(minX, x);
     minY = Math.min(minY, y);
