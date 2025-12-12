@@ -64,6 +64,10 @@ type Processor interface {
 }
 
 // ProcessorClient represents a connected client.
+// Note: The mutex protects mutable fields like writer and LastActivity.
+// BytesRead is atomic for lock-free updates.
+// IMPORTANT: The mutex should NOT be held during HTTP I/O operations
+// as they can block indefinitely.
 type ProcessorClient struct {
 	ID           string
 	UserAgent    string
@@ -74,7 +78,7 @@ type ProcessorClient struct {
 	writer       io.Writer
 	flusher      http.Flusher
 	done         chan struct{}
-	mu           sync.Mutex
+	mu           sync.Mutex // Protects writer, flusher, LastActivity - NOT for I/O
 }
 
 // NewProcessorClient creates a new processor client.
@@ -94,10 +98,10 @@ func NewProcessorClient(id string, w http.ResponseWriter, r *http.Request) *Proc
 }
 
 // Write writes data to the client.
+// Note: This method does NOT hold locks during I/O to prevent blocking.
+// BytesRead is atomic, so no lock is needed for the counter update.
 func (c *ProcessorClient) Write(data []byte) (int, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+	// Perform I/O without holding any locks - HTTP writes can block indefinitely
 	n, err := c.writer.Write(data)
 	if n > 0 {
 		c.BytesRead.Add(uint64(n))

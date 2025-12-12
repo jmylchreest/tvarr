@@ -78,8 +78,8 @@ type mpegtsStreamClient struct {
 	writer          http.ResponseWriter
 	flusher         http.Flusher
 	done            chan struct{}
-	mu              sync.Mutex
-	bytesWritten    uint64
+	mu              sync.Mutex     // Protects waitForKeyframe only
+	bytesWritten    atomic.Uint64  // Atomic for lock-free updates
 	startedAt       time.Time
 	waitForKeyframe bool // True if client is waiting for next keyframe before receiving data
 }
@@ -366,6 +366,7 @@ func (p *MPEGTSProcessor) processAvailableSamples(videoTrack, audioTrack *ESTrac
 
 // broadcastToExistingClients sends data only to clients that are already receiving
 // (not waiting for a keyframe). Used to send pre-keyframe data.
+// IMPORTANT: This method does NOT hold locks during HTTP I/O to prevent blocking.
 func (p *MPEGTSProcessor) broadcastToExistingClients(data []byte) {
 	if len(data) == 0 {
 		return
@@ -385,20 +386,29 @@ func (p *MPEGTSProcessor) broadcastToExistingClients(data []byte) {
 		default:
 		}
 
+		// Check waitForKeyframe under lock, get I/O references
 		client.mu.Lock()
-		// Only send to clients NOT waiting for a keyframe
-		if !client.waitForKeyframe {
-			_, err := client.writer.Write(data)
-			if err != nil {
-				client.mu.Unlock()
-				p.UnregisterClient(client.id)
-				continue
-			}
-			client.flusher.Flush()
-			client.bytesWritten += uint64(len(data))
-			p.UpdateClientBytes(client.id, uint64(len(data)))
-		}
+		shouldSkip := client.waitForKeyframe
+		writer := client.writer
+		flusher := client.flusher
+		clientID := client.id
 		client.mu.Unlock()
+
+		if shouldSkip {
+			continue
+		}
+
+		// Perform HTTP I/O WITHOUT holding any locks
+		_, err := writer.Write(data)
+		if err != nil {
+			p.UnregisterClient(clientID)
+			continue
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+		client.bytesWritten.Add(uint64(len(data)))
+		p.UpdateClientBytes(clientID, uint64(len(data)))
 	}
 
 	p.RecordBytesWritten(uint64(len(data)))
@@ -407,6 +417,7 @@ func (p *MPEGTSProcessor) broadcastToExistingClients(data []byte) {
 // broadcastToClients sends data to all connected streaming clients.
 // New clients wait for the next keyframe before receiving data.
 // This ensures they can start decoding immediately.
+// IMPORTANT: This method does NOT hold locks during HTTP I/O to prevent blocking.
 func (p *MPEGTSProcessor) broadcastToClients(data []byte, hasKeyframe bool) {
 	if len(data) == 0 {
 		return
@@ -427,9 +438,9 @@ func (p *MPEGTSProcessor) broadcastToClients(data []byte, hasKeyframe bool) {
 		default:
 		}
 
+		// Check and update waitForKeyframe state under lock
 		client.mu.Lock()
-
-		// If client is waiting for keyframe, check if this data has one
+		shouldSkip := false
 		if client.waitForKeyframe {
 			if hasKeyframe {
 				// Keyframe found - start sending data to this client
@@ -438,25 +449,35 @@ func (p *MPEGTSProcessor) broadcastToClients(data []byte, hasKeyframe bool) {
 					slog.String("client_id", client.id))
 			} else {
 				// No keyframe yet - skip this client
-				client.mu.Unlock()
-				continue
+				shouldSkip = true
 			}
 		}
-
-		// Send data
-		_, err := client.writer.Write(data)
-		if err != nil {
-			client.mu.Unlock()
-			// Client write failed, unregister
-			p.UnregisterClient(client.id)
-			continue
-		}
-		client.flusher.Flush()
-		client.bytesWritten += uint64(len(data))
+		// Get references we need for I/O
+		writer := client.writer
+		flusher := client.flusher
+		clientID := client.id
 		client.mu.Unlock()
 
+		if shouldSkip {
+			continue
+		}
+
+		// Perform HTTP I/O WITHOUT holding any locks - writes can block indefinitely
+		_, err := writer.Write(data)
+		if err != nil {
+			// Client write failed, unregister
+			p.UnregisterClient(clientID)
+			continue
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+
+		// Update stats atomically (no lock needed)
+		client.bytesWritten.Add(uint64(len(data)))
+
 		// Sync bytes to base processor client for stats reporting
-		p.UpdateClientBytes(client.id, uint64(len(data)))
+		p.UpdateClientBytes(clientID, uint64(len(data)))
 	}
 
 	// Update stats
@@ -470,14 +491,13 @@ func (p *MPEGTSProcessor) GetStreamStats() []StreamClientStats {
 
 	stats := make([]StreamClientStats, 0, len(p.streamClients))
 	for _, client := range p.streamClients {
-		client.mu.Lock()
+		// bytesWritten is atomic, no lock needed for reading it
 		stats = append(stats, StreamClientStats{
 			ID:           client.id,
-			BytesWritten: client.bytesWritten,
+			BytesWritten: client.bytesWritten.Load(),
 			StartedAt:    client.startedAt,
 			Duration:     time.Since(client.startedAt),
 		})
-		client.mu.Unlock()
 	}
 	return stats
 }
