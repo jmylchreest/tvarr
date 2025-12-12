@@ -324,6 +324,8 @@ func (t *ESTrack) binarySearchSequenceLocked(afterSeq uint64) int {
 
 // collectSamplesLocked collects up to maxSamples starting from startIdx.
 // Must be called with t.mu held.
+// IMPORTANT: This makes deep copies of sample Data to prevent corruption when
+// the buffer evicts or overwrites samples while processors are still using them.
 func (t *ESTrack) collectSamplesLocked(startIdx, maxSamples int) []ESSample {
 	available := t.count - startIdx
 	if maxSamples > 0 && available > maxSamples {
@@ -336,7 +338,18 @@ func (t *ESTrack) collectSamplesLocked(startIdx, maxSamples int) []ESSample {
 	result := make([]ESSample, available)
 	for i := 0; i < available; i++ {
 		idx := (t.tail + startIdx + i) % t.capacity
-		result[i] = t.samples[idx]
+		src := t.samples[idx]
+		// Deep copy the Data slice to prevent corruption from buffer reuse
+		dataCopy := make([]byte, len(src.Data))
+		copy(dataCopy, src.Data)
+		result[i] = ESSample{
+			PTS:        src.PTS,
+			DTS:        src.DTS,
+			Data:       dataCopy,
+			IsKeyframe: src.IsKeyframe,
+			Sequence:   src.Sequence,
+			Timestamp:  src.Timestamp,
+		}
 	}
 
 	return result
