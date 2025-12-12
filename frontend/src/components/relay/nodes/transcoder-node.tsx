@@ -6,8 +6,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import type { FlowNodeData } from '@/types/relay-flow';
 import { formatBytes } from '@/types/relay-flow';
-import { Cog, Gauge, ArrowRight, Zap } from 'lucide-react';
+import { Cog, ArrowRight, Zap } from 'lucide-react';
 import { ResourceSparkline } from './resource-sparkline';
+import { SpeedDial } from './speed-dial';
 
 interface TranscoderNodeProps {
   data: FlowNodeData;
@@ -18,12 +19,6 @@ function TranscoderNode({ data }: TranscoderNodeProps) {
   const hasHistory =
     (data.transcoderCpuHistory && data.transcoderCpuHistory.length > 0) ||
     (data.transcoderMemHistory && data.transcoderMemHistory.length > 0);
-
-  // Format encoding speed as a multiplier (e.g., "1.2x realtime")
-  const formatSpeed = (speed?: number) => {
-    if (speed === undefined) return null;
-    return `${speed.toFixed(1)}x`;
-  };
 
   // Determine hardware acceleration display
   const getHWAccelInfo = () => {
@@ -111,12 +106,9 @@ function TranscoderNode({ data }: TranscoderNodeProps) {
             />
           )}
 
-          {/* Encoding speed */}
+          {/* Encoding speed dial */}
           {data.encodingSpeed !== undefined && (
-            <div className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
-              <Gauge className="h-3 w-3" />
-              <span>{formatSpeed(data.encodingSpeed)} realtime</span>
-            </div>
+            <SpeedDial speed={data.encodingSpeed} />
           )}
 
           {/* Bytes processed */}

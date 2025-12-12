@@ -326,6 +326,8 @@ func (p *MPEGTSProcessor) runProcessingLoop(esVariant *ESVariant) {
 }
 
 // processAvailableSamples reads and muxes available ES samples.
+// When a keyframe is encountered, it flushes pre-keyframe data to existing clients only,
+// then signals that new clients can start receiving from the keyframe.
 // Returns true if a keyframe was processed (to trigger keyframe buffer update).
 func (p *MPEGTSProcessor) processAvailableSamples(videoTrack, audioTrack *ESTrack) bool {
 	hasKeyframe := false
@@ -334,6 +336,16 @@ func (p *MPEGTSProcessor) processAvailableSamples(videoTrack, audioTrack *ESTrac
 	videoSamples := videoTrack.ReadFrom(p.lastVideoSeq, 100)
 	for _, sample := range videoSamples {
 		if sample.IsKeyframe {
+			// Before writing the keyframe, flush any buffered data to EXISTING clients only.
+			// This ensures new clients start exactly at the keyframe boundary.
+			p.muxer.Flush()
+			if p.muxerBuf.Len() > 0 {
+				preKeyframeData := make([]byte, p.muxerBuf.Len())
+				copy(preKeyframeData, p.muxerBuf.Bytes())
+				p.muxerBuf.Reset()
+				// Send pre-keyframe data only to clients already receiving (not waiting)
+				p.broadcastToExistingClients(preKeyframeData)
+			}
 			hasKeyframe = true
 		}
 		// Ignore muxer errors - continue streaming on failures
@@ -350,6 +362,46 @@ func (p *MPEGTSProcessor) processAvailableSamples(videoTrack, audioTrack *ESTrac
 	}
 
 	return hasKeyframe
+}
+
+// broadcastToExistingClients sends data only to clients that are already receiving
+// (not waiting for a keyframe). Used to send pre-keyframe data.
+func (p *MPEGTSProcessor) broadcastToExistingClients(data []byte) {
+	if len(data) == 0 {
+		return
+	}
+
+	p.streamClientsMu.RLock()
+	clients := make([]*mpegtsStreamClient, 0, len(p.streamClients))
+	for _, c := range p.streamClients {
+		clients = append(clients, c)
+	}
+	p.streamClientsMu.RUnlock()
+
+	for _, client := range clients {
+		select {
+		case <-client.done:
+			continue
+		default:
+		}
+
+		client.mu.Lock()
+		// Only send to clients NOT waiting for a keyframe
+		if !client.waitForKeyframe {
+			_, err := client.writer.Write(data)
+			if err != nil {
+				client.mu.Unlock()
+				p.UnregisterClient(client.id)
+				continue
+			}
+			client.flusher.Flush()
+			client.bytesWritten += uint64(len(data))
+			p.UpdateClientBytes(client.id, uint64(len(data)))
+		}
+		client.mu.Unlock()
+	}
+
+	p.RecordBytesWritten(uint64(len(data)))
 }
 
 // broadcastToClients sends data to all connected streaming clients.

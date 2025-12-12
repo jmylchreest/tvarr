@@ -38,8 +38,7 @@ const (
 	defaultConnectionPoolSize    = 100
 	defaultStreamTimeout         = 5 * time.Minute
 	defaultBufferMaxDuration     = 2 * time.Minute
-	defaultBufferMaxTrackBytes   = 15 * 1024 * 1024 // 15MB per track
-	defaultBufferMaxVariantBytes = 30 * 1024 * 1024 // 30MB per variant (video + audio)
+	defaultBufferMaxVariantBytes = 30 * 1024 * 1024 // 30MB per variant (combined video + audio)
 )
 
 // Config holds all configuration for the application.
@@ -128,8 +127,7 @@ type RelayConfig struct {
 // BufferConfig holds elementary stream buffer configuration.
 type BufferConfig struct {
 	MaxDuration     time.Duration `mapstructure:"max_duration"`      // Maximum buffer duration (default 2 minutes)
-	MaxTrackBytes   int64         `mapstructure:"max_track_bytes"`   // Maximum bytes per track (default 15MB)
-	MaxVariantBytes int64         `mapstructure:"max_variant_bytes"` // Maximum bytes per variant (default 30MB)
+	MaxVariantBytes int64         `mapstructure:"max_variant_bytes"` // Maximum bytes per variant (combined video+audio, default 30MB)
 }
 
 // FFmpegConfig holds FFmpeg binary configuration.
@@ -247,7 +245,6 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("relay.connection_pool_size", defaultConnectionPoolSize)
 	v.SetDefault("relay.stream_timeout", defaultStreamTimeout)
 	v.SetDefault("relay.buffer.max_duration", defaultBufferMaxDuration)
-	v.SetDefault("relay.buffer.max_track_bytes", defaultBufferMaxTrackBytes)
 	v.SetDefault("relay.buffer.max_variant_bytes", defaultBufferMaxVariantBytes)
 
 	// FFmpeg defaults

@@ -337,7 +337,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 		proxyRepo,
 	).WithLogger(logger).WithBufferConfig(config.BufferConfig{
 		MaxDuration:     viper.GetDuration("relay.buffer.max_duration"),
-		MaxTrackBytes:   viper.GetInt64("relay.buffer.max_track_bytes"),
 		MaxVariantBytes: viper.GetInt64("relay.buffer.max_variant_bytes"),
 	})
 

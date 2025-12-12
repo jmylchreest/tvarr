@@ -97,10 +97,6 @@ func (s *RelayService) WithBufferConfig(bufferCfg config.BufferConfig) *RelaySer
 	if bufferCfg.MaxDuration > 0 {
 		bufferConfig.MaxDuration = bufferCfg.MaxDuration
 	}
-	if bufferCfg.MaxTrackBytes > 0 {
-		bufferConfig.MaxVideoBytes = uint64(bufferCfg.MaxTrackBytes)
-		bufferConfig.MaxAudioBytes = uint64(bufferCfg.MaxTrackBytes)
-	}
 	if bufferCfg.MaxVariantBytes > 0 {
 		bufferConfig.MaxVariantBytes = uint64(bufferCfg.MaxVariantBytes)
 	}
@@ -111,7 +107,6 @@ func (s *RelayService) WithBufferConfig(bufferCfg config.BufferConfig) *RelaySer
 
 	s.logger.Info("Relay buffer config applied",
 		"max_duration", bufferConfig.MaxDuration,
-		"max_track_bytes", bufferConfig.MaxVideoBytes,
 		"max_variant_bytes", bufferConfig.MaxVariantBytes,
 	)
 

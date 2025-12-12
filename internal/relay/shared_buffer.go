@@ -39,13 +39,13 @@ type ESTrack struct {
 	head     int        // Write position
 	tail     int        // Read position (oldest sample)
 	count    int        // Current number of samples
-	capacity int        // Max samples in buffer
+	capacity int        // Max samples in buffer (safety bound, not primary limit)
 
 	lastSeq uint64 // Last sequence number assigned
 
 	// Byte-based size tracking
 	currentBytes uint64 // Current total bytes in buffer
-	maxBytes     uint64 // Maximum bytes allowed (0 = unlimited, use sample count only)
+	// Note: Per-track byte limits are deprecated - use variant-level limits instead
 
 	// Time-based duration limit (in 90kHz PTS ticks)
 	// Buffer will evict samples older than (newest PTS - maxDurationPTS)
@@ -61,7 +61,8 @@ type ESTrack struct {
 	mu sync.RWMutex
 }
 
-// DefaultMaxTrackBytes is the default maximum bytes per track (15MB per track = ~30MB per variant)
+// DefaultMaxTrackBytes is the default maximum bytes per track (deprecated - use variant limits)
+// Kept for backwards compatibility but not used for eviction decisions.
 const DefaultMaxTrackBytes uint64 = 15 * 1024 * 1024
 
 // DefaultMaxTrackDuration is the default maximum duration per track (2 minutes)
@@ -69,20 +70,34 @@ const DefaultMaxTrackBytes uint64 = 15 * 1024 * 1024
 const DefaultMaxTrackDuration = 2 * 60 * time.Second
 const DefaultMaxTrackDurationPTS int64 = 2 * 60 * 90000 // 2 minutes in 90kHz ticks
 
+// DefaultVideoCapacity is the max video samples (2 min at 60fps = 7200, add headroom)
+const DefaultVideoCapacity = 8000
+
+// DefaultAudioCapacity is the max audio samples (2 min at ~47fps AAC, add headroom)
+const DefaultAudioCapacity = 8000
+
 // NewESTrack creates a new elementary stream track with the specified capacity.
+// Note: Per-track byte limits are no longer used - eviction is controlled at the variant level.
 func NewESTrack(codec string, capacity int) *ESTrack {
-	return NewESTrackWithLimits(codec, capacity, DefaultMaxTrackBytes, DefaultMaxTrackDurationPTS)
+	return NewESTrackWithDuration(codec, capacity, DefaultMaxTrackDurationPTS)
 }
 
 // NewESTrackWithMaxBytes creates a new elementary stream track with specified capacity and max bytes.
-// Deprecated: Use NewESTrackWithLimits instead.
-func NewESTrackWithMaxBytes(codec string, capacity int, maxBytes uint64) *ESTrack {
-	return NewESTrackWithLimits(codec, capacity, maxBytes, DefaultMaxTrackDurationPTS)
+// Deprecated: Per-track byte limits are no longer used. Use variant-level limits instead.
+func NewESTrackWithMaxBytes(codec string, capacity int, _ uint64) *ESTrack {
+	return NewESTrackWithDuration(codec, capacity, DefaultMaxTrackDurationPTS)
 }
 
-// NewESTrackWithLimits creates a new elementary stream track with specified capacity, max bytes, and max duration.
-// The buffer will evict samples when EITHER the byte limit OR time limit is exceeded (whichever is smaller).
-func NewESTrackWithLimits(codec string, capacity int, maxBytes uint64, maxDurationPTS int64) *ESTrack {
+// NewESTrackWithLimits creates a new elementary stream track.
+// Deprecated: Per-track byte limits are no longer used. Use variant-level limits instead.
+func NewESTrackWithLimits(codec string, capacity int, _ uint64, maxDurationPTS int64) *ESTrack {
+	return NewESTrackWithDuration(codec, capacity, maxDurationPTS)
+}
+
+// NewESTrackWithDuration creates a new elementary stream track with specified capacity and max duration.
+// The sample capacity is a safety bound - actual eviction is controlled at the variant level
+// using byte limits and time limits with paired video/audio eviction.
+func NewESTrackWithDuration(codec string, capacity int, maxDurationPTS int64) *ESTrack {
 	if capacity <= 0 {
 		capacity = 1000 // Default capacity
 	}
@@ -90,7 +105,6 @@ func NewESTrackWithLimits(codec string, capacity int, maxBytes uint64, maxDurati
 		codec:          codec,
 		samples:        make([]ESSample, capacity),
 		capacity:       capacity,
-		maxBytes:       maxBytes,
 		maxDurationPTS: maxDurationPTS,
 		notify:         make(chan struct{}, 1), // Buffered to avoid blocking writers
 	}
@@ -131,6 +145,8 @@ func (t *ESTrack) SetCodec(codec string) {
 }
 
 // Write adds a new sample to the track.
+// Note: Byte-based eviction is handled at the variant level for paired video/audio eviction.
+// Track-level eviction only handles time limits and sample capacity overflow.
 func (t *ESTrack) Write(pts, dts int64, data []byte, isKeyframe bool) uint64 {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -153,10 +169,6 @@ func (t *ESTrack) Write(pts, dts int64, data []byte, isKeyframe bool) uint64 {
 		Timestamp:  time.Now(),
 	}
 
-	// Evict samples based on byte limit OR time limit (whichever is exceeded first)
-	// This ensures we keep no more than X bytes OR Y duration, whichever is smaller
-	t.evictOldSamples(pts, sampleSize)
-
 	// Write to ring buffer
 	t.samples[t.head] = sample
 	t.head = (t.head + 1) % t.capacity
@@ -165,7 +177,7 @@ func (t *ESTrack) Write(pts, dts int64, data []byte, isKeyframe bool) uint64 {
 	if t.count < t.capacity {
 		t.count++
 	} else {
-		// Buffer is full by sample count, advance tail (lose oldest sample)
+		// Buffer is full by sample count (safety bound), advance tail
 		oldSample := t.samples[t.tail]
 		evictedSize := uint64(len(oldSample.Data))
 		t.currentBytes -= evictedSize
@@ -184,31 +196,55 @@ func (t *ESTrack) Write(pts, dts int64, data []byte, isKeyframe bool) uint64 {
 	return seq
 }
 
-// evictOldSamples removes samples that exceed either the byte limit or time limit.
-// Must be called with t.mu held.
-func (t *ESTrack) evictOldSamples(newSamplePTS int64, newSampleSize uint64) {
-	// Calculate the oldest PTS we should keep (if time limit is set)
-	var oldestAllowedPTS int64
-	if t.maxDurationPTS > 0 {
-		oldestAllowedPTS = newSamplePTS - t.maxDurationPTS
+// EvictOldestSample removes the oldest sample from the track.
+// Returns the PTS of the evicted sample, the bytes freed, and whether eviction occurred.
+// This is called by the variant for coordinated eviction.
+func (t *ESTrack) EvictOldestSample() (pts int64, bytesFreed uint64, ok bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.count == 0 {
+		return 0, 0, false
 	}
+
+	oldSample := t.samples[t.tail]
+	evictedPTS := oldSample.PTS
+	evictedSize := uint64(len(oldSample.Data))
+
+	t.currentBytes -= evictedSize
+	t.evictedSamples++
+	t.evictedBytes += evictedSize
+	t.samples[t.tail].Data = nil // Help GC
+	t.tail = (t.tail + 1) % t.capacity
+	t.count--
+
+	return evictedPTS, evictedSize, true
+}
+
+// OldestPTS returns the PTS of the oldest sample in the track.
+// Returns 0 if the track is empty.
+func (t *ESTrack) OldestPTS() int64 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if t.count == 0 {
+		return 0
+	}
+	return t.samples[t.tail].PTS
+}
+
+// evictByPTS removes all samples with PTS older than the specified threshold.
+// Used for time-based eviction. Must be called with appropriate locking.
+func (t *ESTrack) evictByPTS(oldestAllowedPTS int64) (samplesEvicted int, bytesEvicted uint64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	for t.count > 0 {
 		oldSample := t.samples[t.tail]
-
-		// Check if we need to evict based on byte limit
-		byteEvict := t.maxBytes > 0 && t.currentBytes+newSampleSize > t.maxBytes
-
-		// Check if we need to evict based on time limit
-		// Evict if the oldest sample's PTS is older than our allowed window
-		timeEvict := t.maxDurationPTS > 0 && oldSample.PTS < oldestAllowedPTS
-
-		// Only evict if at least one limit is exceeded
-		if !byteEvict && !timeEvict {
+		if oldSample.PTS >= oldestAllowedPTS {
 			break
 		}
 
-		// Remove oldest sample
 		evictedSize := uint64(len(oldSample.Data))
 		t.currentBytes -= evictedSize
 		t.evictedSamples++
@@ -216,7 +252,12 @@ func (t *ESTrack) evictOldSamples(newSamplePTS int64, newSampleSize uint64) {
 		t.samples[t.tail].Data = nil // Help GC
 		t.tail = (t.tail + 1) % t.capacity
 		t.count--
+
+		samplesEvicted++
+		bytesEvicted += evictedSize
 	}
+
+	return samplesEvicted, bytesEvicted
 }
 
 // NotifyChan returns a channel that receives notifications when new samples arrive.
@@ -334,29 +375,12 @@ func (t *ESTrack) CurrentBytes() uint64 {
 	return t.currentBytes
 }
 
-// MaxBytes returns the maximum bytes limit for the track.
-func (t *ESTrack) MaxBytes() uint64 {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return t.maxBytes
-}
-
 // MaxDuration returns the maximum duration limit for the track.
 func (t *ESTrack) MaxDuration() time.Duration {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	// Convert from 90kHz PTS ticks to time.Duration
 	return time.Duration(t.maxDurationPTS) * time.Second / 90000
-}
-
-// ByteUtilization returns the percentage of max bytes used (0-100).
-func (t *ESTrack) ByteUtilization() float64 {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	if t.maxBytes == 0 {
-		return 0
-	}
-	return float64(t.currentBytes) / float64(t.maxBytes) * 100
 }
 
 // EvictionStats returns the total number of samples and bytes evicted from this track.
@@ -390,15 +414,10 @@ func (t *ESTrack) BufferDuration() time.Duration {
 	return time.Duration(ptsDiff) * time.Second / 90000
 }
 
-// IsEvicting returns true if the buffer is currently at capacity and evicting old samples.
-func (t *ESTrack) IsEvicting() bool {
+// IsAtCapacity returns true if the track is at sample capacity.
+func (t *ESTrack) IsAtCapacity() bool {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	if t.maxBytes > 0 {
-		// Check if we're close to the byte limit (>95%)
-		return float64(t.currentBytes)/float64(t.maxBytes) > 0.95
-	}
-	// Check if we're at sample capacity
 	return t.count >= t.capacity
 }
 
@@ -479,29 +498,51 @@ type ESVariant struct {
 	createdAt  time.Time
 	lastAccess atomic.Value // time.Time - last time a processor read from this variant
 
+	// Variant-level byte limit (combined video + audio)
+	maxBytes       uint64 // Maximum total bytes for this variant (0 = unlimited)
+	maxDurationPTS int64  // Maximum duration in PTS ticks
+
 	// Statistics
 	bytesIngested atomic.Uint64
+
+	// Mutex for coordinated eviction
+	evictMu sync.Mutex
 }
 
-// NewESVariant creates a new elementary stream variant.
+// NewESVariant creates a new elementary stream variant with default limits.
 func NewESVariant(variant CodecVariant, videoCapacity, audioCapacity int, isSource bool) *ESVariant {
-	return NewESVariantWithLimits(variant, videoCapacity, audioCapacity, DefaultMaxTrackBytes, DefaultMaxTrackBytes, DefaultMaxTrackDurationPTS, isSource)
+	return NewESVariantWithConfig(variant, videoCapacity, audioCapacity, DefaultMaxVariantBytes, DefaultMaxTrackDurationPTS, isSource)
 }
 
 // NewESVariantWithMaxBytes creates a new elementary stream variant with byte limits.
-// Deprecated: Use NewESVariantWithLimits instead.
+// Deprecated: Use NewESVariantWithConfig instead. The per-track byte limits are combined into a single variant limit.
 func NewESVariantWithMaxBytes(variant CodecVariant, videoCapacity, audioCapacity int, maxVideoBytes, maxAudioBytes uint64, isSource bool) *ESVariant {
-	return NewESVariantWithLimits(variant, videoCapacity, audioCapacity, maxVideoBytes, maxAudioBytes, DefaultMaxTrackDurationPTS, isSource)
+	// Combine per-track limits into variant-level limit
+	maxVariantBytes := maxVideoBytes + maxAudioBytes
+	return NewESVariantWithConfig(variant, videoCapacity, audioCapacity, maxVariantBytes, DefaultMaxTrackDurationPTS, isSource)
 }
 
-// NewESVariantWithLimits creates a new elementary stream variant with byte and time limits.
+// NewESVariantWithLimits creates a new elementary stream variant.
+// Deprecated: Use NewESVariantWithConfig instead. The per-track byte limits are combined into a single variant limit.
 func NewESVariantWithLimits(variant CodecVariant, videoCapacity, audioCapacity int, maxVideoBytes, maxAudioBytes uint64, maxDurationPTS int64, isSource bool) *ESVariant {
+	// Combine per-track limits into variant-level limit
+	maxVariantBytes := maxVideoBytes + maxAudioBytes
+	return NewESVariantWithConfig(variant, videoCapacity, audioCapacity, maxVariantBytes, maxDurationPTS, isSource)
+}
+
+// NewESVariantWithConfig creates a new elementary stream variant with specified configuration.
+// The maxBytes limit applies to the combined video + audio data in the variant.
+// When the limit is exceeded, video and audio samples are evicted together (paired eviction)
+// to maintain A/V sync.
+func NewESVariantWithConfig(variant CodecVariant, videoCapacity, audioCapacity int, maxBytes uint64, maxDurationPTS int64, isSource bool) *ESVariant {
 	v := &ESVariant{
-		variant:    variant,
-		videoTrack: NewESTrackWithLimits(variant.VideoCodec(), videoCapacity, maxVideoBytes, maxDurationPTS),
-		audioTrack: NewESTrackWithLimits(variant.AudioCodec(), audioCapacity, maxAudioBytes, maxDurationPTS),
-		isSource:   isSource,
-		createdAt:  time.Now(),
+		variant:        variant,
+		videoTrack:     NewESTrackWithDuration(variant.VideoCodec(), videoCapacity, maxDurationPTS),
+		audioTrack:     NewESTrackWithDuration(variant.AudioCodec(), audioCapacity, maxDurationPTS),
+		isSource:       isSource,
+		createdAt:      time.Now(),
+		maxBytes:       maxBytes,
+		maxDurationPTS: maxDurationPTS,
 	}
 	v.lastAccess.Store(time.Now())
 	return v
@@ -528,15 +569,70 @@ func (v *ESVariant) IsSource() bool {
 }
 
 // WriteVideo writes a video sample to this variant.
+// Performs paired eviction if the variant exceeds its byte limit.
 func (v *ESVariant) WriteVideo(pts, dts int64, data []byte, isKeyframe bool) uint64 {
+	// Perform paired eviction before writing
+	v.evictIfNeeded(uint64(len(data)))
+
 	v.bytesIngested.Add(uint64(len(data)))
 	return v.videoTrack.Write(pts, dts, data, isKeyframe)
 }
 
 // WriteAudio writes an audio sample to this variant.
+// Performs paired eviction if the variant exceeds its byte limit.
 func (v *ESVariant) WriteAudio(pts int64, data []byte) uint64 {
+	// Perform paired eviction before writing
+	v.evictIfNeeded(uint64(len(data)))
+
 	v.bytesIngested.Add(uint64(len(data)))
 	return v.audioTrack.Write(pts, pts, data, false) // Audio has no keyframes
+}
+
+// CurrentBytes returns the current total bytes across both tracks.
+func (v *ESVariant) CurrentBytes() uint64 {
+	return v.videoTrack.CurrentBytes() + v.audioTrack.CurrentBytes()
+}
+
+// MaxBytes returns the maximum bytes limit for this variant.
+func (v *ESVariant) MaxBytes() uint64 {
+	return v.maxBytes
+}
+
+// evictIfNeeded performs paired video/audio eviction if the variant exceeds its byte limit.
+// This evicts from whichever track has the older PTS, maintaining A/V sync.
+func (v *ESVariant) evictIfNeeded(incomingBytes uint64) {
+	if v.maxBytes == 0 {
+		return // No byte limit
+	}
+
+	v.evictMu.Lock()
+	defer v.evictMu.Unlock()
+
+	// Keep evicting until we have room for the incoming data
+	for v.CurrentBytes()+incomingBytes > v.maxBytes {
+		// Get oldest PTS from each track
+		videoPTS := v.videoTrack.OldestPTS()
+		audioPTS := v.audioTrack.OldestPTS()
+
+		// Evict from the track with the older sample
+		// This keeps video and audio roughly in sync
+		if videoPTS > 0 && (audioPTS == 0 || videoPTS <= audioPTS) {
+			// Video is older or audio is empty - evict video
+			_, _, ok := v.videoTrack.EvictOldestSample()
+			if !ok {
+				break // No more samples to evict
+			}
+		} else if audioPTS > 0 {
+			// Audio is older - evict audio
+			_, _, ok := v.audioTrack.EvictOldestSample()
+			if !ok {
+				break // No more samples to evict
+			}
+		} else {
+			// Both tracks empty
+			break
+		}
+	}
 }
 
 // RecordAccess updates the last access time.
@@ -598,9 +694,9 @@ func (v *ESVariant) Stats() ESVariantStats {
 		audioCodec = v.variant.AudioCodec()
 	}
 
-	// Calculate current bytes and max bytes
-	currentBytes := v.videoTrack.CurrentBytes() + v.audioTrack.CurrentBytes()
-	maxBytes := v.videoTrack.MaxBytes() + v.audioTrack.MaxBytes()
+	// Calculate current bytes and max bytes (using variant-level values)
+	currentBytes := v.CurrentBytes()
+	maxBytes := v.MaxBytes()
 	var byteUtilization float64
 	if maxBytes > 0 {
 		byteUtilization = float64(currentBytes) / float64(maxBytes) * 100
@@ -617,8 +713,14 @@ func (v *ESVariant) Stats() ESVariantStats {
 		bufferDuration = v.audioTrack.BufferDuration()
 	}
 
-	// Consider evicting if either track is at capacity
-	isEvicting := v.videoTrack.IsEvicting() || v.audioTrack.IsEvicting()
+	// Consider evicting if we're close to the byte limit (>95%)
+	var isEvicting bool
+	if maxBytes > 0 {
+		isEvicting = float64(currentBytes)/float64(maxBytes) > 0.95
+	} else {
+		// No byte limit - check sample capacity
+		isEvicting = v.videoTrack.IsAtCapacity() || v.audioTrack.IsAtCapacity()
+	}
 
 	return ESVariantStats{
 		Variant:          v.variant,
@@ -663,13 +765,15 @@ type ESBufferStats struct {
 
 // SharedESBufferConfig configures the shared ES buffer.
 type SharedESBufferConfig struct {
-	VideoCapacity   int           // Samples per variant video track
-	AudioCapacity   int           // Samples per variant audio track
-	MaxVideoBytes   uint64        // Maximum bytes per video track (0 = use default 15MB)
-	MaxAudioBytes   uint64        // Maximum bytes per audio track (0 = use default 15MB)
-	MaxVariantBytes uint64        // Maximum total bytes per variant (video + audio, 0 = use default 30MB)
+	VideoCapacity   int           // Samples per variant video track (safety bound)
+	AudioCapacity   int           // Samples per variant audio track (safety bound)
+	MaxVariantBytes uint64        // Maximum total bytes per variant (combined video + audio, 0 = use default 30MB)
 	MaxDuration     time.Duration // Maximum buffer duration (0 = use default 2 minutes)
 	Logger          *slog.Logger
+
+	// Deprecated: Per-track byte limits are no longer used. Use MaxVariantBytes instead.
+	MaxVideoBytes uint64
+	MaxAudioBytes uint64
 }
 
 // DefaultMaxVariantBytes is the default maximum bytes per variant (30MB)
@@ -688,17 +792,28 @@ func (c SharedESBufferConfig) getMaxDurationPTS() int64 {
 	return DefaultMaxTrackDurationPTS
 }
 
+// getMaxVariantBytes returns the variant byte limit from config, or default if not set.
+func (c SharedESBufferConfig) getMaxVariantBytes() uint64 {
+	if c.MaxVariantBytes > 0 {
+		return c.MaxVariantBytes
+	}
+	// Fall back to sum of deprecated per-track limits if set
+	if c.MaxVideoBytes > 0 || c.MaxAudioBytes > 0 {
+		return c.MaxVideoBytes + c.MaxAudioBytes
+	}
+	return DefaultMaxVariantBytes
+}
+
 // DefaultSharedESBufferConfig returns sensible defaults.
 func DefaultSharedESBufferConfig() SharedESBufferConfig {
 	return SharedESBufferConfig{
-		// Sample capacity is kept high as a safety net - actual eviction is controlled
-		// by byte limits and time limits (whichever is hit first)
-		VideoCapacity:   3600, // ~2 minutes at 30fps as upper bound
-		AudioCapacity:   6000, // ~2 minutes at ~47fps (AAC) as upper bound
-		MaxVideoBytes:   DefaultMaxTrackBytes,     // 15MB per video track
-		MaxAudioBytes:   DefaultMaxTrackBytes,     // 15MB per audio track
-		MaxVariantBytes: DefaultMaxVariantBytes,   // 30MB per variant total
-		MaxDuration:     DefaultMaxTrackDuration,  // 2 minutes max buffer duration
+		// Sample capacity is a safety bound - actual eviction is controlled
+		// by the variant byte limit with paired video/audio eviction.
+		// 8000 samples supports 2+ minutes at 60fps.
+		VideoCapacity:   DefaultVideoCapacity, // 8000 samples (~2+ min at 60fps)
+		AudioCapacity:   DefaultAudioCapacity, // 8000 samples (~2+ min at ~47fps AAC)
+		MaxVariantBytes: DefaultMaxVariantBytes, // 30MB per variant (combined video + audio)
+		MaxDuration:     DefaultMaxTrackDuration, // 2 minutes max buffer duration
 		Logger:          slog.Default(),
 	}
 }
@@ -785,17 +900,10 @@ func (b *SharedESBuffer) CreateSourceVariant(videoCodec, audioCodec string) *ESV
 	b.variantsMu.Lock()
 	defer b.variantsMu.Unlock()
 
-	// Create the source variant with configured byte limits
-	maxVideoBytes := b.config.MaxVideoBytes
-	if maxVideoBytes == 0 {
-		maxVideoBytes = DefaultMaxTrackBytes
-	}
-	maxAudioBytes := b.config.MaxAudioBytes
-	if maxAudioBytes == 0 {
-		maxAudioBytes = DefaultMaxTrackBytes
-	}
+	// Create the source variant with configured limits
+	maxVariantBytes := b.config.getMaxVariantBytes()
 	maxDurationPTS := b.config.getMaxDurationPTS()
-	v := NewESVariantWithLimits(variant, b.config.VideoCapacity, b.config.AudioCapacity, maxVideoBytes, maxAudioBytes, maxDurationPTS, true)
+	v := NewESVariantWithConfig(variant, b.config.VideoCapacity, b.config.AudioCapacity, maxVariantBytes, maxDurationPTS, true)
 	b.variants[variant] = v
 	b.sourceVariant = variant
 
@@ -922,16 +1030,9 @@ func (b *SharedESBuffer) GetOrCreateVariantWithContext(ctx context.Context, vari
 		return v, nil
 	}
 
-	maxVideoBytes := b.config.MaxVideoBytes
-	if maxVideoBytes == 0 {
-		maxVideoBytes = DefaultMaxTrackBytes
-	}
-	maxAudioBytes := b.config.MaxAudioBytes
-	if maxAudioBytes == 0 {
-		maxAudioBytes = DefaultMaxTrackBytes
-	}
+	maxVariantBytes := b.config.getMaxVariantBytes()
 	maxDurationPTS := b.config.getMaxDurationPTS()
-	v = NewESVariantWithLimits(variant, b.config.VideoCapacity, b.config.AudioCapacity, maxVideoBytes, maxAudioBytes, maxDurationPTS, false)
+	v = NewESVariantWithConfig(variant, b.config.VideoCapacity, b.config.AudioCapacity, maxVariantBytes, maxDurationPTS, false)
 	b.variants[variant] = v
 	b.variantsMu.Unlock()
 
@@ -1006,16 +1107,9 @@ func (b *SharedESBuffer) SetVideoCodec(codec string, initData []byte) {
 	created := false
 	if source == nil {
 		// Create a placeholder source variant - audio codec will be set later
-		maxVideoBytes := b.config.MaxVideoBytes
-		if maxVideoBytes == 0 {
-			maxVideoBytes = DefaultMaxTrackBytes
-		}
-		maxAudioBytes := b.config.MaxAudioBytes
-		if maxAudioBytes == 0 {
-			maxAudioBytes = DefaultMaxTrackBytes
-		}
+		maxVariantBytes := b.config.getMaxVariantBytes()
 		maxDurationPTS := b.config.getMaxDurationPTS()
-		source = NewESVariantWithLimits(NewCodecVariant(codec, ""), b.config.VideoCapacity, b.config.AudioCapacity, maxVideoBytes, maxAudioBytes, maxDurationPTS, true)
+		source = NewESVariantWithConfig(NewCodecVariant(codec, ""), b.config.VideoCapacity, b.config.AudioCapacity, maxVariantBytes, maxDurationPTS, true)
 		b.sourceVariant = source.variant
 		b.variants[b.sourceVariant] = source
 		created = true
@@ -1048,16 +1142,9 @@ func (b *SharedESBuffer) SetAudioCodec(codec string, initData []byte) {
 	created := false
 	if source == nil {
 		// Create a placeholder source variant - video codec will be set later
-		maxVideoBytes := b.config.MaxVideoBytes
-		if maxVideoBytes == 0 {
-			maxVideoBytes = DefaultMaxTrackBytes
-		}
-		maxAudioBytes := b.config.MaxAudioBytes
-		if maxAudioBytes == 0 {
-			maxAudioBytes = DefaultMaxTrackBytes
-		}
+		maxVariantBytes := b.config.getMaxVariantBytes()
 		maxDurationPTS := b.config.getMaxDurationPTS()
-		source = NewESVariantWithLimits(NewCodecVariant("", codec), b.config.VideoCapacity, b.config.AudioCapacity, maxVideoBytes, maxAudioBytes, maxDurationPTS, true)
+		source = NewESVariantWithConfig(NewCodecVariant("", codec), b.config.VideoCapacity, b.config.AudioCapacity, maxVariantBytes, maxDurationPTS, true)
 		b.sourceVariant = source.variant
 		b.variants[b.sourceVariant] = source
 		created = true
@@ -1136,17 +1223,10 @@ func (b *SharedESBuffer) CreateVariant(variant CodecVariant) (*ESVariant, error)
 		return v, nil
 	}
 
-	// Create new variant with configured byte limits
-	maxVideoBytes := b.config.MaxVideoBytes
-	if maxVideoBytes == 0 {
-		maxVideoBytes = DefaultMaxTrackBytes
-	}
-	maxAudioBytes := b.config.MaxAudioBytes
-	if maxAudioBytes == 0 {
-		maxAudioBytes = DefaultMaxTrackBytes
-	}
+	// Create new variant with configured limits
+	maxVariantBytes := b.config.getMaxVariantBytes()
 	maxDurationPTS := b.config.getMaxDurationPTS()
-	v := NewESVariantWithLimits(variant, b.config.VideoCapacity, b.config.AudioCapacity, maxVideoBytes, maxAudioBytes, maxDurationPTS, false)
+	v := NewESVariantWithConfig(variant, b.config.VideoCapacity, b.config.AudioCapacity, maxVariantBytes, maxDurationPTS, false)
 	b.variants[variant] = v
 
 	b.config.Logger.Info("Created codec variant",

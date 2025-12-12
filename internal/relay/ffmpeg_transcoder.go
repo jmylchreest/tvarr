@@ -547,31 +547,72 @@ func (t *FFmpegTranscoder) startFFmpeg() error {
 
 // readStderr reads FFmpeg stderr and stores recent lines for debugging.
 // Also parses encoding speed from FFmpeg progress output.
+// Note: FFmpeg uses carriage returns (\r) for progress updates, so we need a custom scanner.
 func (t *FFmpegTranscoder) readStderr() {
 	scanner := bufio.NewScanner(t.stderr)
+	// Custom split function to handle both \r and \n as line delimiters
+	// FFmpeg progress output uses \r to update the same line (like a terminal progress bar)
+	scanner.Split(scanLinesWithCR)
+
 	for scanner.Scan() {
-		line := scanner.Text()
-
-		t.stderrMu.Lock()
-		t.stderrLines = append(t.stderrLines, line)
-		// Keep only the last N lines
-		if len(t.stderrLines) > t.maxStderrLines {
-			t.stderrLines = t.stderrLines[1:]
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
 		}
-		t.stderrMu.Unlock()
 
-		// Parse encoding speed from FFmpeg output (e.g., "speed=1.2x" or "speed= 0.95x")
+		// Parse encoding speed from FFmpeg output (e.g., "frame= 1234 fps= 30 ... speed=1.2x")
 		if speed := t.parseEncodingSpeed(line); speed > 0 {
 			t.encodingSpeed.Store(speed)
 		}
 
-		// Log FFmpeg errors at warning level (but not progress lines)
-		if line != "" && !strings.Contains(line, "frame=") && !strings.Contains(line, "speed=") {
-			t.config.Logger.Warn("FFmpeg stderr",
-				slog.String("transcoder_id", t.id),
-				slog.String("line", line))
+		// Only store non-progress lines to avoid filling buffer with repeated progress updates
+		if !strings.Contains(line, "frame=") {
+			t.stderrMu.Lock()
+			t.stderrLines = append(t.stderrLines, line)
+			// Keep only the last N lines
+			if len(t.stderrLines) > t.maxStderrLines {
+				t.stderrLines = t.stderrLines[1:]
+			}
+			t.stderrMu.Unlock()
+
+			// Log FFmpeg errors at warning level (but not progress lines)
+			if !strings.Contains(line, "speed=") {
+				t.config.Logger.Warn("FFmpeg stderr",
+					slog.String("transcoder_id", t.id),
+					slog.String("line", line))
+			}
 		}
 	}
+}
+
+// scanLinesWithCR is a custom split function for bufio.Scanner that treats both
+// carriage return (\r) and newline (\n) as line delimiters. This is needed because
+// FFmpeg uses \r for progress updates to overwrite the same line in terminals.
+func scanLinesWithCR(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+
+	// Look for either \r or \n
+	for i := 0; i < len(data); i++ {
+		if data[i] == '\r' || data[i] == '\n' {
+			// Found a delimiter - return the line up to it
+			// Skip any trailing \r or \n (handles \r\n sequences)
+			advance = i + 1
+			for advance < len(data) && (data[advance] == '\r' || data[advance] == '\n') {
+				advance++
+			}
+			return advance, data[0:i], nil
+		}
+	}
+
+	// If at EOF and we have data, return it
+	if atEOF {
+		return len(data), data, nil
+	}
+
+	// Request more data
+	return 0, nil, nil
 }
 
 // parseEncodingSpeed extracts the encoding speed from FFmpeg stderr output.

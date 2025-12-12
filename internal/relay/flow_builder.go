@@ -24,27 +24,38 @@ type FlowBuilder struct {
 // NewFlowBuilder creates a new flow builder with default layout settings.
 func NewFlowBuilder() *FlowBuilder {
 	// Node widths (Tailwind): Origin=w-64(256px), Buffer=w-56(224px), Processor=w-64(256px), Client=w-48(192px)
-	// With 120px gaps between main nodes for better visual separation:
+	// With increased gaps for better visual separation:
 	// Origin: 50 to 306 (50 + 256)
 	// Buffer: 426 to 650 (306 + 120 = 426, 426 + 224 = 650)
-	// Processor: 770 to 1026 (650 + 120 = 770, 770 + 256 = 1026)
-	// Client: 1106 to 1298 (1026 + 80 = 1106, 1106 + 192 = 1298)
+	// Processor: 850 to 1106 (650 + 200 = 850, 850 + 256 = 1106) - increased gap from buffer
+	// Client: 1206 to 1398 (1106 + 100 = 1206, 1206 + 192 = 1398) - increased gap from processor
 	return &FlowBuilder{
 		originX:         50,
-		processorX:      770,
-		clientX:         1106, // 1026 (processor end) + 80px gap
+		processorX:      850,  // Moved further from buffer (was 770)
+		clientX:         1206, // Adjusted for new processor position
 		verticalStart:   80,
-		verticalSpacing: 280,
-		clientSpacing:   100, // Reduced from 160 for tighter client grouping
+		verticalSpacing: 400,  // Increased for more space between sessions
+		clientSpacing:   160,  // Vertical spacing between client nodes
 	}
 }
+
+// processorSpacing is the minimum vertical gap between processor groups.
+const processorSpacing = 200
+
+// clientNodeHeight is the approximate height of a client node for layout calculations.
+const clientNodeHeight = 140
+
+// processorNodeHeight is the approximate height of a processor node for layout calculations.
+const processorNodeHeight = 160
 
 // bufferX is the X position for buffer nodes (between origin and processor)
 // Origin ends at 306 (50 + 256), so buffer starts at 426 (120px gap)
 const bufferX = 426
 
-// transcoderYOffset is how far above the main flow line transcoders are placed
-const transcoderYOffset = -120
+// transcoderYOffset is how far above the main flow line transcoders are placed.
+// This should account for the FFmpeg node height (~220px with speed dial) plus a gap (~60px).
+// The transcoder's bottom edge should be at least 60px above the buffer's top edge.
+const transcoderYOffset = -280
 
 // transcoderSpacing is horizontal spacing between multiple transcoders
 const transcoderSpacing = 180
@@ -146,17 +157,76 @@ func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph
 			}
 		}
 
-		// Create a processor node for each active format
-		totalFormats := len(activeFormats)
-		processorPositions := make(map[string]float64) // Track Y position of each processor
+		// Calculate vertical space needed for each processor and its clients.
+		// Each processor-client group needs space for:
+		// - The processor node itself
+		// - All clients connected to that processor (spread vertically around the processor)
+		// We need to ensure groups don't overlap.
 
-		for formatIndex, format := range activeFormats {
-			// Position processors vertically if multiple formats
-			processorY := yOffset
-			if totalFormats > 1 {
-				processorY = yOffset - float64(totalFormats-1)*b.clientSpacing/2 + float64(formatIndex)*b.clientSpacing
+		type processorGroup struct {
+			format     string
+			clients    []RelayClientInfo
+			height     float64 // Total vertical space needed
+			processorY float64 // Calculated Y position for processor
+		}
+
+		groups := make([]processorGroup, 0, len(activeFormats))
+		for _, format := range activeFormats {
+			clients := clientsByFormat[format]
+			numClients := len(clients)
+
+			// Calculate the height needed for this group
+			// If multiple clients, they spread around the processor
+			var groupHeight float64
+			if numClients <= 1 {
+				// Single client or no clients: just need processor height
+				groupHeight = processorNodeHeight
+			} else {
+				// Multiple clients spread vertically
+				// Total span = (numClients - 1) * clientSpacing
+				// But we also need to account for the top and bottom client heights
+				groupHeight = float64(numClients-1)*b.clientSpacing + clientNodeHeight
 			}
-			processorPositions[format] = processorY
+
+			groups = append(groups, processorGroup{
+				format:  format,
+				clients: clients,
+				height:  groupHeight,
+			})
+		}
+
+		// Calculate total height needed and starting Y position
+		totalHeight := 0.0
+		for i, g := range groups {
+			totalHeight += g.height
+			if i < len(groups)-1 {
+				totalHeight += processorSpacing // Gap between groups
+			}
+		}
+
+		// Center the entire processor/client layout around yOffset
+		currentY := yOffset - totalHeight/2
+
+		// Position each group
+		for i := range groups {
+			// The processor Y is at the center of this group's client spread
+			numClients := len(groups[i].clients)
+			if numClients <= 1 {
+				groups[i].processorY = currentY + processorNodeHeight/2
+			} else {
+				// Processor at center of client spread
+				groups[i].processorY = currentY + groups[i].height/2
+			}
+			currentY += groups[i].height
+			if i < len(groups)-1 {
+				currentY += processorSpacing
+			}
+		}
+
+		// Now create nodes and edges for each group
+		for _, group := range groups {
+			format := group.format
+			processorY := group.processorY
 
 			processorNode := b.buildProcessorNodeForFormat(session, processorY, format)
 			graph.Nodes = append(graph.Nodes, processorNode)
@@ -177,7 +247,7 @@ func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph
 			bufferToProcessor := b.buildEdge(
 				bufferNode.ID,
 				processorNode.ID,
-				session.EgressRateBps/uint64(max(totalFormats, 1)), // Divide egress among formats
+				session.EgressRateBps/uint64(max(len(groups), 1)), // Divide egress among formats
 				edgeVideoCodec,
 				edgeAudioCodec,
 				format,
@@ -185,10 +255,9 @@ func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph
 			graph.Edges = append(graph.Edges, bufferToProcessor)
 
 			// Create client nodes connected to this processor
-			clients := clientsByFormat[format]
-			numClients := len(clients)
-			for j, client := range clients {
-				// Position clients relative to their processor
+			numClients := len(group.clients)
+			for j, client := range group.clients {
+				// Position clients centered around their processor
 				clientY := processorY
 				if numClients > 1 {
 					clientY = processorY - float64(numClients-1)*b.clientSpacing/2 + float64(j)*b.clientSpacing
