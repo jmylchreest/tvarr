@@ -43,17 +43,17 @@ type ESTrack struct {
 
 	lastSeq uint64 // Last sequence number assigned
 
-	// Byte-based size tracking
-	currentBytes uint64 // Current total bytes in buffer
+	// Byte-based size tracking - atomic for lock-free reads by eviction logic
+	currentBytes atomic.Uint64 // Current total bytes in buffer
 	// Note: Per-track byte limits are deprecated - use variant-level limits instead
 
 	// Time-based duration limit (in 90kHz PTS ticks)
 	// Buffer will evict samples older than (newest PTS - maxDurationPTS)
 	maxDurationPTS int64 // Maximum duration in PTS ticks (0 = unlimited)
 
-	// Eviction tracking
-	evictedSamples uint64 // Total number of samples evicted
-	evictedBytes   uint64 // Total bytes evicted
+	// Eviction tracking - atomic for lock-free stats reads
+	evictedSamples atomic.Uint64 // Total number of samples evicted
+	evictedBytes   atomic.Uint64 // Total bytes evicted
 
 	// Notification channel for new samples (non-blocking)
 	notify chan struct{}
@@ -172,7 +172,7 @@ func (t *ESTrack) Write(pts, dts int64, data []byte, isKeyframe bool) uint64 {
 	// Write to ring buffer
 	t.samples[t.head] = sample
 	t.head = (t.head + 1) % t.capacity
-	t.currentBytes += sampleSize
+	t.currentBytes.Add(sampleSize)
 
 	if t.count < t.capacity {
 		t.count++
@@ -180,9 +180,9 @@ func (t *ESTrack) Write(pts, dts int64, data []byte, isKeyframe bool) uint64 {
 		// Buffer is full by sample count (safety bound), advance tail
 		oldSample := t.samples[t.tail]
 		evictedSize := uint64(len(oldSample.Data))
-		t.currentBytes -= evictedSize
-		t.evictedSamples++
-		t.evictedBytes += evictedSize
+		t.currentBytes.Add(^(evictedSize - 1)) // Atomic subtract
+		t.evictedSamples.Add(1)
+		t.evictedBytes.Add(evictedSize)
 		t.samples[t.tail].Data = nil // Help GC
 		t.tail = (t.tail + 1) % t.capacity
 	}
@@ -211,9 +211,9 @@ func (t *ESTrack) EvictOldestSample() (pts int64, bytesFreed uint64, ok bool) {
 	evictedPTS := oldSample.PTS
 	evictedSize := uint64(len(oldSample.Data))
 
-	t.currentBytes -= evictedSize
-	t.evictedSamples++
-	t.evictedBytes += evictedSize
+	t.currentBytes.Add(^(evictedSize - 1)) // Atomic subtract
+	t.evictedSamples.Add(1)
+	t.evictedBytes.Add(evictedSize)
 	t.samples[t.tail].Data = nil // Help GC
 	t.tail = (t.tail + 1) % t.capacity
 	t.count--
@@ -246,9 +246,9 @@ func (t *ESTrack) evictByPTS(oldestAllowedPTS int64) (samplesEvicted int, bytesE
 		}
 
 		evictedSize := uint64(len(oldSample.Data))
-		t.currentBytes -= evictedSize
-		t.evictedSamples++
-		t.evictedBytes += evictedSize
+		t.currentBytes.Add(^(evictedSize - 1)) // Atomic subtract
+		t.evictedSamples.Add(1)
+		t.evictedBytes.Add(evictedSize)
 		t.samples[t.tail].Data = nil // Help GC
 		t.tail = (t.tail + 1) % t.capacity
 		t.count--
@@ -267,6 +267,7 @@ func (t *ESTrack) NotifyChan() <-chan struct{} {
 
 // ReadFrom returns samples starting from the given sequence number.
 // Returns up to maxSamples samples, or all available if maxSamples <= 0.
+// Uses binary search for O(log n) lookup instead of O(n) linear scan.
 func (t *ESTrack) ReadFrom(afterSeq uint64, maxSamples int) []ESSample {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -275,24 +276,61 @@ func (t *ESTrack) ReadFrom(afterSeq uint64, maxSamples int) []ESSample {
 		return nil
 	}
 
-	// Find starting position
-	startIdx := -1
-	for i := 0; i < t.count; i++ {
-		idx := (t.tail + i) % t.capacity
-		if t.samples[idx].Sequence > afterSeq {
-			startIdx = i
-			break
-		}
+	// Fast path: if afterSeq is before our oldest sample, start from the beginning
+	oldestSeq := t.samples[t.tail].Sequence
+	if afterSeq < oldestSeq {
+		return t.collectSamplesLocked(0, maxSamples)
 	}
 
+	// Fast path: if afterSeq is at or after our newest sample, nothing new
+	newestIdx := (t.head - 1 + t.capacity) % t.capacity
+	newestSeq := t.samples[newestIdx].Sequence
+	if afterSeq >= newestSeq {
+		return nil
+	}
+
+	// Binary search to find the first sample with Sequence > afterSeq
+	// Since sequences are monotonically increasing, this is O(log n)
+	startIdx := t.binarySearchSequenceLocked(afterSeq)
 	if startIdx < 0 {
 		return nil
 	}
 
-	// Collect samples
+	return t.collectSamplesLocked(startIdx, maxSamples)
+}
+
+// binarySearchSequenceLocked finds the index of the first sample with Sequence > afterSeq.
+// Returns -1 if no such sample exists. Must be called with t.mu held.
+func (t *ESTrack) binarySearchSequenceLocked(afterSeq uint64) int {
+	low, high := 0, t.count-1
+
+	for low < high {
+		mid := (low + high) / 2
+		idx := (t.tail + mid) % t.capacity
+		if t.samples[idx].Sequence <= afterSeq {
+			low = mid + 1
+		} else {
+			high = mid
+		}
+	}
+
+	// Check if we found a valid sample
+	idx := (t.tail + low) % t.capacity
+	if t.samples[idx].Sequence > afterSeq {
+		return low
+	}
+	return -1
+}
+
+// collectSamplesLocked collects up to maxSamples starting from startIdx.
+// Must be called with t.mu held.
+func (t *ESTrack) collectSamplesLocked(startIdx, maxSamples int) []ESSample {
 	available := t.count - startIdx
 	if maxSamples > 0 && available > maxSamples {
 		available = maxSamples
+	}
+	if available <= 0 {
+		return nil
 	}
 
 	result := make([]ESSample, available)
@@ -306,6 +344,7 @@ func (t *ESTrack) ReadFrom(afterSeq uint64, maxSamples int) []ESSample {
 
 // ReadFromKeyframe returns samples starting from the first keyframe after the given sequence.
 // This is useful for clients joining mid-stream who need to start from a keyframe.
+// Uses binary search to find approximate starting position, then linear scan for keyframe.
 func (t *ESTrack) ReadFromKeyframe(afterSeq uint64, maxSamples int) []ESSample {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -314,9 +353,25 @@ func (t *ESTrack) ReadFromKeyframe(afterSeq uint64, maxSamples int) []ESSample {
 		return nil
 	}
 
-	// Find first keyframe after afterSeq
+	// Determine starting point for keyframe search
+	searchStart := 0
+
+	// Fast path: check bounds first
+	oldestSeq := t.samples[t.tail].Sequence
+	if afterSeq >= oldestSeq {
+		// Use binary search to find approximate starting position
+		// This avoids scanning samples we know are before afterSeq
+		searchStart = t.binarySearchSequenceLocked(afterSeq)
+		if searchStart < 0 {
+			return nil
+		}
+	}
+
+	// Linear scan from searchStart to find first keyframe
+	// This is unavoidable since keyframes aren't indexed, but we've skipped
+	// earlier samples using binary search
 	startIdx := -1
-	for i := 0; i < t.count; i++ {
+	for i := searchStart; i < t.count; i++ {
 		idx := (t.tail + i) % t.capacity
 		sample := t.samples[idx]
 		if sample.Sequence > afterSeq && sample.IsKeyframe {
@@ -329,19 +384,7 @@ func (t *ESTrack) ReadFromKeyframe(afterSeq uint64, maxSamples int) []ESSample {
 		return nil
 	}
 
-	// Collect samples
-	available := t.count - startIdx
-	if maxSamples > 0 && available > maxSamples {
-		available = maxSamples
-	}
-
-	result := make([]ESSample, available)
-	for i := 0; i < available; i++ {
-		idx := (t.tail + startIdx + i) % t.capacity
-		result[i] = t.samples[idx]
-	}
-
-	return result
+	return t.collectSamplesLocked(startIdx, maxSamples)
 }
 
 // LastSequence returns the sequence number of the most recent sample.
@@ -369,10 +412,9 @@ func (t *ESTrack) Count() int {
 }
 
 // CurrentBytes returns the current total bytes in the track.
+// This is lock-free using atomic operations.
 func (t *ESTrack) CurrentBytes() uint64 {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return t.currentBytes
+	return t.currentBytes.Load()
 }
 
 // MaxDuration returns the maximum duration limit for the track.
@@ -384,10 +426,9 @@ func (t *ESTrack) MaxDuration() time.Duration {
 }
 
 // EvictionStats returns the total number of samples and bytes evicted from this track.
+// This is lock-free using atomic operations.
 func (t *ESTrack) EvictionStats() (samples uint64, bytes uint64) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return t.evictedSamples, t.evictedBytes
+	return t.evictedSamples.Load(), t.evictedBytes.Load()
 }
 
 // BufferDuration returns the approximate duration of content in the buffer based on timestamps.
