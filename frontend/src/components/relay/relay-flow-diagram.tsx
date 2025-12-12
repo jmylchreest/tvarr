@@ -138,6 +138,12 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: Relay
         knownNodeIds.current.add(node.id);
       }
 
+      // Debug: log initial client positions
+      const initialClients = layoutedNodes.filter((n) => n.type === 'client');
+      if (initialClients.length > 0) {
+        console.log('[Initial Layout] Client positions:', initialClients.map((n) => ({ id: n.id, pos: n.position })));
+      }
+
       // Use layout positions directly - no position preservation on initial load
       setNodes(layoutedNodes);
       setEdges(edges);
@@ -213,6 +219,12 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: Relay
 
     // Re-calculate layout using measured dimensions
     const reLayoutedNodes = calculateLayout(measuredNodes, edges);
+
+    // Debug: log client positions from layout
+    const clientNodes = reLayoutedNodes.filter((n) => n.type === 'client');
+    if (clientNodes.length > 0) {
+      console.log('[Measured Layout] Client positions:', clientNodes.map((n) => ({ id: n.id, pos: n.position })));
+    }
 
     // Apply the new layout, respecting manually moved nodes
     setNodes((currentNodes) => {

@@ -190,14 +190,16 @@ export function calculateLayout<T extends FlowNode>(
     const processorNodes = (typeGroups.get('processor') || []) as T[];
     const clientNodes = (typeGroups.get('client') || []) as T[];
 
-    // Group clients by their processor
+    // Group clients by their processor (only clients that have a known processor connection)
     const clientsByProcessor = new Map<string, T[]>();
     for (const client of clientNodes) {
-      const processorId = clientToProcessor.get(client.id) || 'default';
-      if (!clientsByProcessor.has(processorId)) {
-        clientsByProcessor.set(processorId, []);
+      const processorId = clientToProcessor.get(client.id);
+      if (processorId) {
+        if (!clientsByProcessor.has(processorId)) {
+          clientsByProcessor.set(processorId, []);
+        }
+        clientsByProcessor.get(processorId)!.push(client);
       }
-      clientsByProcessor.get(processorId)!.push(client);
     }
 
     // Calculate column X positions based on actual node widths
@@ -282,14 +284,30 @@ export function calculateLayout<T extends FlowNode>(
     const unconnectedClients = clientNodes.filter((c) => !clientToProcessor.has(c.id));
     allClients.push(...unconnectedClients);
 
+    // Debug: log client positioning
+    console.log('[Layout] Client debug:', {
+      mainRowY,
+      clientX,
+      clientNodesCount: clientNodes.length,
+      clientsByProcessorSize: clientsByProcessor.size,
+      allClientsCount: allClients.length,
+      clientIds: allClients.map((c) => c.id),
+      unconnectedClientsCount: unconnectedClients.length,
+    });
+
     // Position all clients compactly with smaller gap
+    const clientPositions: Array<{ id: string; y: number }> = [];
     for (const node of allClients) {
       const height = getNodeHeight(node, cfg);
+      clientPositions.push({ id: node.id, y: clientY });
       layoutedNodes.push({
         ...node,
         position: { x: clientX, y: clientY },
       });
       clientY += height + cfg.clientGap;
+    }
+    if (clientPositions.length > 0) {
+      console.log('[Layout] Final client Y positions:', clientPositions);
     }
 
     // Calculate session height for next session offset

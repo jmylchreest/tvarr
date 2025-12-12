@@ -134,7 +134,7 @@ type BufferVariantInfo struct {
 	VideoSamples   int     `json:"videoSamples"`
 	AudioSamples   int     `json:"audioSamples"`
 	BytesIngested  uint64  `json:"bytesIngested"`
-	MaxBytes       uint64  `json:"maxBytes"`       // Maximum bytes for this variant (e.g., 30MB)
+	MaxBytes       uint64  `json:"maxBytes"`       // Maximum bytes for this variant (0 = unlimited)
 	Utilization    float64 `json:"utilization"`    // 0-100 percentage of max used
 	IsSource       bool    `json:"isSource"`       // True if this is the original source variant
 	IsEvicting     bool    `json:"isEvicting"`     // True if buffer is at capacity and evicting

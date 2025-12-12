@@ -61,6 +61,9 @@ type MPEGTSProcessor struct {
 	lastVideoSeq uint64
 	lastAudioSeq uint64
 
+	// Reference to the ES variant for consumer tracking
+	esVariant *ESVariant
+
 	// Streaming clients
 	streamClients   map[string]*mpegtsStreamClient
 	streamClientsMu sync.RWMutex
@@ -127,6 +130,10 @@ func (p *MPEGTSProcessor) Start(ctx context.Context) error {
 	// Register with buffer
 	p.esBuffer.RegisterProcessor(p.id)
 
+	// Store variant reference and register as a consumer to prevent eviction of unread samples
+	p.esVariant = esVariant
+	esVariant.RegisterConsumer(p.id)
+
 	// Initialize TS muxer with the correct codec types from the variant
 	p.muxer = NewTSMuxer(&p.muxerBuf, TSMuxerConfig{
 		Logger:     p.config.Logger,
@@ -166,6 +173,11 @@ func (p *MPEGTSProcessor) Stop() {
 	}
 	p.streamClients = make(map[string]*mpegtsStreamClient)
 	p.streamClientsMu.Unlock()
+
+	// Unregister as a consumer to allow eviction of our unread samples
+	if p.esVariant != nil {
+		p.esVariant.UnregisterConsumer(p.id)
+	}
 
 	p.esBuffer.UnregisterProcessor(p.id)
 	p.BaseProcessor.Close()
@@ -361,6 +373,11 @@ func (p *MPEGTSProcessor) processAvailableSamples(videoTrack, audioTrack *ESTrac
 		p.lastAudioSeq = sample.Sequence
 	}
 
+	// Update consumer position to allow eviction of samples we've processed
+	if p.esVariant != nil && (len(videoSamples) > 0 || len(audioSamples) > 0) {
+		p.esVariant.UpdateConsumerPosition(p.id, p.lastVideoSeq, p.lastAudioSeq)
+	}
+
 	return hasKeyframe
 }
 
@@ -399,8 +416,31 @@ func (p *MPEGTSProcessor) broadcastToExistingClients(data []byte) {
 		}
 
 		// Perform HTTP I/O WITHOUT holding any locks
-		_, err := writer.Write(data)
-		if err != nil {
+		// Use a channel-based timeout to prevent blocking the processing loop
+		writeDone := make(chan error, 1)
+		go func() {
+			_, err := writer.Write(data)
+			writeDone <- err
+		}()
+
+		// Wait for write to complete with timeout
+		select {
+		case err := <-writeDone:
+			if err != nil {
+				p.config.Logger.Debug("Client write failed",
+					slog.String("client_id", clientID),
+					slog.String("error", err.Error()))
+				p.UnregisterClient(clientID)
+				continue
+			}
+		case <-time.After(5 * time.Second):
+			// Write timed out - client is too slow, disconnect them
+			p.config.Logger.Warn("Client write timeout (pre-keyframe), disconnecting slow client",
+				slog.String("client_id", clientID),
+				slog.String("processor_id", p.id),
+				slog.Uint64("bytes_written", client.bytesWritten.Load()),
+				slog.Duration("connected_duration", time.Since(client.startedAt)),
+				slog.Int("pending_write_bytes", len(data)))
 			p.UnregisterClient(clientID)
 			continue
 		}
@@ -462,10 +502,33 @@ func (p *MPEGTSProcessor) broadcastToClients(data []byte, hasKeyframe bool) {
 			continue
 		}
 
-		// Perform HTTP I/O WITHOUT holding any locks - writes can block indefinitely
-		_, err := writer.Write(data)
-		if err != nil {
-			// Client write failed, unregister
+		// Perform HTTP I/O WITHOUT holding any locks
+		// Use a channel-based timeout to prevent blocking the processing loop
+		writeDone := make(chan error, 1)
+		go func() {
+			_, err := writer.Write(data)
+			writeDone <- err
+		}()
+
+		// Wait for write to complete with timeout
+		select {
+		case err := <-writeDone:
+			if err != nil {
+				// Client write failed, unregister
+				p.config.Logger.Debug("Client write failed",
+					slog.String("client_id", clientID),
+					slog.String("error", err.Error()))
+				p.UnregisterClient(clientID)
+				continue
+			}
+		case <-time.After(5 * time.Second):
+			// Write timed out - client is too slow, disconnect them
+			p.config.Logger.Warn("Client write timeout, disconnecting slow client",
+				slog.String("client_id", clientID),
+				slog.String("processor_id", p.id),
+				slog.Uint64("bytes_written", client.bytesWritten.Load()),
+				slog.Duration("connected_duration", time.Since(client.startedAt)),
+				slog.Int("pending_write_bytes", len(data)))
 			p.UnregisterClient(clientID)
 			continue
 		}

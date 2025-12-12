@@ -94,6 +94,9 @@ type FFmpegTranscoder struct {
 	lastVideoSeq uint64
 	lastAudioSeq uint64
 
+	// Reference to the source ES variant for consumer tracking
+	sourceESVariant *ESVariant
+
 	// Lifecycle
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -157,6 +160,10 @@ func (t *FFmpegTranscoder) Start(ctx context.Context) error {
 		return fmt.Errorf("creating target variant: %w", err)
 	}
 
+	// Store source variant reference and register as a consumer to prevent eviction of unread samples
+	t.sourceESVariant = sourceVariant
+	sourceVariant.RegisterConsumer(t.id)
+
 	// Initialize TS muxer for FFmpeg input with source codec information
 	// Use the source variant's codec types (e.g., "h264/aac" -> video="h264", audio="aac")
 	t.inputMuxer = NewTSMuxer(&t.inputBuf, TSMuxerConfig{
@@ -215,6 +222,11 @@ func (t *FFmpegTranscoder) Stop() {
 	if t.closed.CompareAndSwap(false, true) {
 		if t.cancel != nil {
 			t.cancel()
+		}
+
+		// Unregister as a consumer to allow eviction of our unread samples
+		if t.sourceESVariant != nil {
+			t.sourceESVariant.UnregisterConsumer(t.id)
 		}
 
 		// Close FFmpeg stdin to signal end of input
@@ -708,6 +720,11 @@ func (t *FFmpegTranscoder) processSourceSamples(videoTrack, audioTrack *ESTrack)
 		t.lastAudioSeq = sample.Sequence
 		t.samplesIn.Add(1)
 		t.bytesIn.Add(uint64(len(sample.Data)))
+	}
+
+	// Update consumer position to allow eviction of samples we've processed
+	if t.sourceESVariant != nil && (len(videoSamples) > 0 || len(audioSamples) > 0) {
+		t.sourceESVariant.UpdateConsumerPosition(t.id, t.lastVideoSeq, t.lastAudioSeq)
 	}
 
 	// Flush muxer and write to FFmpeg stdin

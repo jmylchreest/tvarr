@@ -88,13 +88,13 @@ function BufferNode({ data }: BufferNodeProps) {
                   <HardDrive className="h-3 w-3" />
                   <span>{formatBytes(data.bufferMemoryBytes)}</span>
                 </div>
-                {data.maxBufferBytes !== undefined && data.maxBufferBytes > 0 && (
+                {data.maxBufferBytes !== undefined && (
                   <span className="text-muted-foreground">
-                    / {formatBytes(data.maxBufferBytes)}
+                    / {data.maxBufferBytes > 0 ? formatBytes(data.maxBufferBytes) : '∞'}
                   </span>
                 )}
               </div>
-              {data.bufferUtilization !== undefined && (
+              {data.bufferUtilization !== undefined && data.maxBufferBytes !== undefined && data.maxBufferBytes > 0 && (
                 <Progress value={data.bufferUtilization} className="h-1.5" />
               )}
             </div>
@@ -144,15 +144,13 @@ function BufferNode({ data }: BufferNodeProps) {
                         <span className="text-muted-foreground/40">|</span>
                         <span>
                           {formatBytes(v.bytesIngested)}
-                          {v.maxBytes > 0 && (
-                            <span className="text-muted-foreground/50">
-                              /{formatBytes(v.maxBytes)}
-                            </span>
-                          )}
+                          <span className="text-muted-foreground/50">
+                            /{v.maxBytes > 0 ? formatBytes(v.maxBytes) : '∞'}
+                          </span>
                         </span>
                       </span>
                     </div>
-                    {v.utilization > 0 && (
+                    {v.maxBytes > 0 && v.utilization > 0 && (
                       <Progress value={v.utilization} className={cn('h-1', progressColorClass)} />
                     )}
                   </div>

@@ -94,6 +94,9 @@ type DASHProcessor struct {
 	lastVideoSeq uint64
 	lastAudioSeq uint64
 
+	// Reference to the ES variant for consumer tracking
+	esVariant *ESVariant
+
 	// fMP4 muxer using mediacommon
 	writer  *FMP4Writer
 	adapter *ESSampleAdapter
@@ -181,6 +184,10 @@ func (p *DASHProcessor) Start(ctx context.Context) error {
 	// Register with buffer
 	p.esBuffer.RegisterProcessor(p.id)
 
+	// Store variant reference and register as a consumer to prevent eviction of unread samples
+	p.esVariant = esVariant
+	esVariant.RegisterConsumer(p.id)
+
 	// Initialize segment accumulator
 	p.initNewSegment()
 
@@ -204,6 +211,11 @@ func (p *DASHProcessor) Stop() {
 		p.cancel()
 	}
 	p.wg.Wait()
+
+	// Unregister as a consumer to allow eviction of our unread samples
+	if p.esVariant != nil {
+		p.esVariant.UnregisterConsumer(p.id)
+	}
 
 	p.esBuffer.UnregisterProcessor(p.id)
 	p.BaseProcessor.Close()
@@ -526,6 +538,11 @@ func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
 				if p.currentSegment.startPTS < 0 {
 					p.currentSegment.startPTS = sample.PTS
 				}
+			}
+
+			// Update consumer position to allow eviction of samples we've processed
+			if p.esVariant != nil && (len(newVideoSamples) > 0 || len(newAudioSamples) > 0) {
+				p.esVariant.UpdateConsumerPosition(p.id, p.lastVideoSeq, p.lastAudioSeq)
 			}
 
 			// Check if we should finalize current segment (timeout)
