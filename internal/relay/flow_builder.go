@@ -11,56 +11,18 @@ import (
 )
 
 // FlowBuilder builds a flow graph from relay session information.
-type FlowBuilder struct {
-	// Layout configuration
-	originX         float64
-	processorX      float64
-	clientX         float64
-	verticalStart   float64
-	verticalSpacing float64
-	clientSpacing   float64
-}
+// Note: Node positioning is handled entirely by the frontend using React Flow's
+// measured dimensions. The backend only provides graph structure (nodes, edges, data).
+type FlowBuilder struct{}
 
-// NewFlowBuilder creates a new flow builder with default layout settings.
+// NewFlowBuilder creates a new flow builder.
 func NewFlowBuilder() *FlowBuilder {
-	// Node widths (Tailwind): Origin=w-64(256px), Buffer=w-56(224px), Processor=w-64(256px), Client=w-48(192px)
-	// With increased gaps for better visual separation:
-	// Origin: 50 to 306 (50 + 256)
-	// Buffer: 426 to 650 (306 + 120 = 426, 426 + 224 = 650)
-	// Processor: 850 to 1106 (650 + 200 = 850, 850 + 256 = 1106) - increased gap from buffer
-	// Client: 1206 to 1398 (1106 + 100 = 1206, 1206 + 192 = 1398) - increased gap from processor
-	return &FlowBuilder{
-		originX:         50,
-		processorX:      850,  // Moved further from buffer (was 770)
-		clientX:         1206, // Adjusted for new processor position
-		verticalStart:   80,
-		verticalSpacing: 400,  // Increased for more space between sessions
-		clientSpacing:   160,  // Vertical spacing between client nodes
-	}
+	return &FlowBuilder{}
 }
-
-// processorSpacing is the minimum vertical gap between processor groups.
-const processorSpacing = 200
-
-// clientNodeHeight is the approximate height of a client node for layout calculations.
-const clientNodeHeight = 140
-
-// processorNodeHeight is the approximate height of a processor node for layout calculations.
-const processorNodeHeight = 160
-
-// bufferX is the X position for buffer nodes (between origin and processor)
-// Origin ends at 306 (50 + 256), so buffer starts at 426 (120px gap)
-const bufferX = 426
-
-// transcoderYOffset is how far above the main flow line transcoders are placed.
-// This should account for the FFmpeg node height (~220px with speed dial) plus a gap (~60px).
-// The transcoder's bottom edge should be at least 60px above the buffer's top edge.
-const transcoderYOffset = -280
-
-// transcoderSpacing is horizontal spacing between multiple transcoders
-const transcoderSpacing = 180
 
 // BuildFlowGraph builds a complete flow graph from session information.
+// Positions are set to zero - the frontend calculates actual layout using
+// measured node dimensions.
 func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph {
 	graph := RelayFlowGraph{
 		Nodes: make([]RelayFlowNode, 0),
@@ -75,19 +37,16 @@ func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph
 
 	var totalIngressBps, totalEgressBps uint64
 
-	for i, session := range sessions {
-		yOffset := b.verticalStart + float64(i)*b.verticalSpacing
-
+	for _, session := range sessions {
 		// Create origin node
-		originNode := b.buildOriginNode(session, yOffset)
+		originNode := b.buildOriginNode(session)
 		graph.Nodes = append(graph.Nodes, originNode)
 
-		// Create buffer node (between origin and processor)
-		bufferNode := b.buildBufferNode(session, yOffset)
+		// Create buffer node
+		bufferNode := b.buildBufferNode(session)
 		graph.Nodes = append(graph.Nodes, bufferNode)
 
 		// Create edge from origin to buffer
-		// Frontend determines handle IDs based on node types
 		originToBuffer := b.buildEdge(
 			originNode.ID,
 			bufferNode.ID,
@@ -99,22 +58,18 @@ func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph
 		graph.Edges = append(graph.Edges, originToBuffer)
 
 		// Check if there's a transcoder (for transcode mode)
-		// Transcoders appear above the buffer node
 		if session.RouteType == RouteTypeTranscode && session.FFmpegStats != nil {
-			// Position transcoder above the buffer
-			transcoderY := yOffset + transcoderYOffset
-			transcoderNode := b.buildTranscoderNode(session, transcoderY)
+			transcoderNode := b.buildTranscoderNode(session)
 			graph.Nodes = append(graph.Nodes, transcoderNode)
 
 			// Create bidirectional edges: buffer <-> transcoder
-			// Frontend determines handle IDs based on node types
 			bufferToTranscoder := b.buildEdge(
 				bufferNode.ID,
 				transcoderNode.ID,
 				session.IngressRateBps,
 				session.VideoCodec,
 				session.AudioCodec,
-				"es", // Elementary stream from buffer
+				"es",
 			)
 			graph.Edges = append(graph.Edges, bufferToTranscoder)
 
@@ -142,13 +97,9 @@ func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph
 		// Group clients by their format for connecting to the right processor
 		clientsByFormat := b.groupClientsByFormat(session.Clients)
 
-		// Determine which processors to show:
-		// 1. Use ActiveProcessorFormats if available (actual running processors)
-		// 2. Fall back to client formats if no active processors reported
-		// 3. Fall back to session's output format as last resort
+		// Determine which processors to show
 		activeFormats := session.ActiveProcessorFormats
 		if len(activeFormats) == 0 {
-			// No active processors reported - infer from clients or output format
 			for format := range clientsByFormat {
 				activeFormats = append(activeFormats, format)
 			}
@@ -157,82 +108,12 @@ func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph
 			}
 		}
 
-		// Calculate vertical space needed for each processor and its clients.
-		// Each processor-client group needs space for:
-		// - The processor node itself
-		// - All clients connected to that processor (spread vertically around the processor)
-		// We need to ensure groups don't overlap.
-
-		type processorGroup struct {
-			format     string
-			clients    []RelayClientInfo
-			height     float64 // Total vertical space needed
-			processorY float64 // Calculated Y position for processor
-		}
-
-		groups := make([]processorGroup, 0, len(activeFormats))
+		// Create processor and client nodes
 		for _, format := range activeFormats {
-			clients := clientsByFormat[format]
-			numClients := len(clients)
-
-			// Calculate the height needed for this group
-			// If multiple clients, they spread around the processor
-			var groupHeight float64
-			if numClients <= 1 {
-				// Single client or no clients: just need processor height
-				groupHeight = processorNodeHeight
-			} else {
-				// Multiple clients spread vertically
-				// Total span = (numClients - 1) * clientSpacing
-				// But we also need to account for the top and bottom client heights
-				groupHeight = float64(numClients-1)*b.clientSpacing + clientNodeHeight
-			}
-
-			groups = append(groups, processorGroup{
-				format:  format,
-				clients: clients,
-				height:  groupHeight,
-			})
-		}
-
-		// Calculate total height needed and starting Y position
-		totalHeight := 0.0
-		for i, g := range groups {
-			totalHeight += g.height
-			if i < len(groups)-1 {
-				totalHeight += processorSpacing // Gap between groups
-			}
-		}
-
-		// Center the entire processor/client layout around yOffset
-		currentY := yOffset - totalHeight/2
-
-		// Position each group
-		for i := range groups {
-			// The processor Y is at the center of this group's client spread
-			numClients := len(groups[i].clients)
-			if numClients <= 1 {
-				groups[i].processorY = currentY + processorNodeHeight/2
-			} else {
-				// Processor at center of client spread
-				groups[i].processorY = currentY + groups[i].height/2
-			}
-			currentY += groups[i].height
-			if i < len(groups)-1 {
-				currentY += processorSpacing
-			}
-		}
-
-		// Now create nodes and edges for each group
-		for _, group := range groups {
-			format := group.format
-			processorY := group.processorY
-
-			processorNode := b.buildProcessorNodeForFormat(session, processorY, format)
+			processorNode := b.buildProcessorNode(session, format)
 			graph.Nodes = append(graph.Nodes, processorNode)
 
-			// Create edge from buffer to this processor
-			// For transcode sessions, the data going to processors uses target codecs
+			// Create edge from buffer to processor
 			edgeVideoCodec := session.VideoCodec
 			edgeAudioCodec := session.AudioCodec
 			if session.RouteType == RouteTypeTranscode {
@@ -247,7 +128,7 @@ func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph
 			bufferToProcessor := b.buildEdge(
 				bufferNode.ID,
 				processorNode.ID,
-				session.EgressRateBps/uint64(max(len(groups), 1)), // Divide egress among formats
+				session.EgressRateBps/uint64(max(len(activeFormats), 1)),
 				edgeVideoCodec,
 				edgeAudioCodec,
 				format,
@@ -255,25 +136,19 @@ func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph
 			graph.Edges = append(graph.Edges, bufferToProcessor)
 
 			// Create client nodes connected to this processor
-			numClients := len(group.clients)
-			for j, client := range group.clients {
-				// Position clients centered around their processor
-				clientY := processorY
-				if numClients > 1 {
-					clientY = processorY - float64(numClients-1)*b.clientSpacing/2 + float64(j)*b.clientSpacing
-				}
-				clientNode := b.buildClientNode(session, client, clientY)
+			clients := clientsByFormat[format]
+			for _, client := range clients {
+				clientNode := b.buildClientNode(session, client, format)
 				graph.Nodes = append(graph.Nodes, clientNode)
 
 				// Calculate per-client egress rate
 				var clientEgressBps uint64
 				if client.ConnectedSecs > 0 && client.BytesRead > 0 {
 					clientEgressBps = uint64(float64(client.BytesRead) / client.ConnectedSecs)
-				} else if session.EgressRateBps > 0 && numClients > 0 {
+				} else if session.EgressRateBps > 0 && len(session.Clients) > 0 {
 					clientEgressBps = session.EgressRateBps / uint64(len(session.Clients))
 				}
 
-				// Create edge from processor to client with correct format and codecs
 				processorToClient := b.buildEdge(
 					processorNode.ID,
 					clientNode.ID,
@@ -301,12 +176,10 @@ func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph
 
 // collectSystemStats gathers system CPU and memory information.
 func (b *FlowBuilder) collectSystemStats(metadata *FlowGraphMetadata) {
-	// Get CPU usage (non-blocking, returns immediately with last sample)
 	if cpuPercent, err := cpu.Percent(0, false); err == nil && len(cpuPercent) > 0 {
 		metadata.SystemCPUPercent = cpuPercent[0]
 	}
 
-	// Get memory usage
 	if memStats, err := mem.VirtualMemory(); err == nil {
 		metadata.SystemMemoryPercent = memStats.UsedPercent
 		metadata.SystemMemoryUsedMB = memStats.Used / (1024 * 1024)
@@ -314,15 +187,12 @@ func (b *FlowBuilder) collectSystemStats(metadata *FlowGraphMetadata) {
 	}
 }
 
-// buildOriginNode creates an origin node for a session.
 // groupClientsByFormat groups clients by their output format.
-// Returns a map of format -> clients. If client has no format set, uses session's OutputFormat.
 func (b *FlowBuilder) groupClientsByFormat(clients []RelayClientInfo) map[string][]RelayClientInfo {
 	result := make(map[string][]RelayClientInfo)
 	for _, client := range clients {
 		format := client.ClientFormat
 		if format == "" {
-			// Skip clients without format - they'll be handled by the default processor
 			continue
 		}
 		result[format] = append(result[format], client)
@@ -330,20 +200,16 @@ func (b *FlowBuilder) groupClientsByFormat(clients []RelayClientInfo) map[string
 	return result
 }
 
-func (b *FlowBuilder) buildOriginNode(session RelaySessionInfo, yOffset float64) RelayFlowNode {
-	// Use stream source name as label if available, otherwise fall back to truncated URL
+func (b *FlowBuilder) buildOriginNode(session RelaySessionInfo) RelayFlowNode {
 	label := session.StreamSourceName
 	if label == "" {
 		label = truncateURL(session.SourceURL, 40)
 	}
 
 	return RelayFlowNode{
-		ID:   fmt.Sprintf("origin-%s", session.SessionID),
-		Type: FlowNodeTypeOrigin,
-		Position: FlowPosition{
-			X: b.originX,
-			Y: yOffset,
-		},
+		ID:       fmt.Sprintf("origin-%s", session.SessionID),
+		Type:     FlowNodeTypeOrigin,
+		Position: FlowPosition{X: 0, Y: 0}, // Frontend calculates layout
 		Data: FlowNodeData{
 			Label:        label,
 			SessionID:    session.SessionID,
@@ -364,8 +230,7 @@ func (b *FlowBuilder) buildOriginNode(session RelaySessionInfo, yOffset float64)
 	}
 }
 
-// buildBufferNode creates a shared buffer node for a session.
-func (b *FlowBuilder) buildBufferNode(session RelaySessionInfo, yOffset float64) RelayFlowNode {
+func (b *FlowBuilder) buildBufferNode(session RelaySessionInfo) RelayFlowNode {
 	data := FlowNodeData{
 		Label:       "Buffer",
 		SessionID:   session.SessionID,
@@ -373,10 +238,8 @@ func (b *FlowBuilder) buildBufferNode(session RelaySessionInfo, yOffset float64)
 		ChannelName: session.ChannelName,
 	}
 
-	// Add buffer variant information if available
 	if len(session.BufferVariants) > 0 {
 		data.BufferVariants = session.BufferVariants
-		// Calculate total memory and max from all variants
 		var totalMemory, totalMaxBytes uint64
 		var totalVideoSamples, totalAudioSamples int
 		for _, v := range session.BufferVariants {
@@ -389,25 +252,20 @@ func (b *FlowBuilder) buildBufferNode(session RelaySessionInfo, yOffset float64)
 		data.MaxBufferBytes = totalMaxBytes
 		data.VideoSampleCount = totalVideoSamples
 		data.AudioSampleCount = totalAudioSamples
-		// Calculate utilization percentage
 		if totalMaxBytes > 0 {
 			data.BufferUtilization = float64(totalMemory) / float64(totalMaxBytes) * 100
 		}
 	}
 
 	return RelayFlowNode{
-		ID:   fmt.Sprintf("buffer-%s", session.SessionID),
-		Type: FlowNodeTypeBuffer,
-		Position: FlowPosition{
-			X: bufferX,
-			Y: yOffset,
-		},
-		Data: data,
+		ID:       fmt.Sprintf("buffer-%s", session.SessionID),
+		Type:     FlowNodeTypeBuffer,
+		Position: FlowPosition{X: 0, Y: 0}, // Frontend calculates layout
+		Data:     data,
 	}
 }
 
-// buildTranscoderNode creates an FFmpeg transcoder node for a session.
-func (b *FlowBuilder) buildTranscoderNode(session RelaySessionInfo, yOffset float64) RelayFlowNode {
+func (b *FlowBuilder) buildTranscoderNode(session RelaySessionInfo) RelayFlowNode {
 	data := FlowNodeData{
 		Label:       "FFmpeg",
 		SessionID:   session.SessionID,
@@ -415,21 +273,16 @@ func (b *FlowBuilder) buildTranscoderNode(session RelaySessionInfo, yOffset floa
 		ChannelName: session.ChannelName,
 	}
 
-	// Add transcoder stats if available
 	if session.FFmpegStats != nil {
 		data.TranscoderCPU = session.CPUPercent
 		if session.MemoryBytes != nil {
 			memMB := float64(*session.MemoryBytes) / (1024 * 1024)
 			data.TranscoderMemMB = &memMB
 		}
-		// Add bytes processed
 		data.TranscoderBytesIn = session.FFmpegStats.BytesWritten
-
-		// Add resource history for sparklines
 		data.TranscoderCPUHistory = session.CPUHistory
 		data.TranscoderMemHistory = session.MemoryHistory
 
-		// Add encoding speed
 		if session.FFmpegStats.EncodingSpeed > 0 {
 			data.EncodingSpeed = &session.FFmpegStats.EncodingSpeed
 		} else if session.EncodingSpeed != nil && *session.EncodingSpeed > 0 {
@@ -437,51 +290,34 @@ func (b *FlowBuilder) buildTranscoderNode(session RelaySessionInfo, yOffset floa
 		}
 	}
 
-	// Source codecs - the original input codec (e.g., "h264", "aac")
 	data.SourceVideoCodec = session.VideoCodec
 	data.SourceAudioCodec = session.AudioCodec
 
-	// Target codecs - the codec names (e.g., "h265", "aac")
-	// These are what the stream IS after transcoding
 	if session.TargetVideoCodec != "" {
 		data.TargetVideoCodec = session.TargetVideoCodec
 	} else {
-		data.TargetVideoCodec = session.VideoCodec // Fallback to source if not set
+		data.TargetVideoCodec = session.VideoCodec
 	}
 	if session.TargetAudioCodec != "" {
 		data.TargetAudioCodec = session.TargetAudioCodec
 	} else {
-		data.TargetAudioCodec = session.AudioCodec // Fallback to source if not set
+		data.TargetAudioCodec = session.AudioCodec
 	}
 
-	// Encoder names - the FFmpeg encoders used (e.g., "libx265", "h264_nvenc")
-	// These show what FFmpeg uses to produce the codec
 	data.VideoEncoder = session.VideoEncoder
 	data.AudioEncoder = session.AudioEncoder
-
-	// Hardware acceleration info
 	data.HWAccelType = session.HWAccelType
 	data.HWAccelDevice = session.HWAccelDevice
 
 	return RelayFlowNode{
-		ID:   fmt.Sprintf("transcoder-%s", session.SessionID),
-		Type: FlowNodeTypeTranscoder,
-		Position: FlowPosition{
-			X: bufferX, // Position above buffer (same X)
-			Y: yOffset,
-		},
-		Data: data,
+		ID:       fmt.Sprintf("transcoder-%s", session.SessionID),
+		Type:     FlowNodeTypeTranscoder,
+		Position: FlowPosition{X: 0, Y: 0}, // Frontend calculates layout
+		Data:     data,
 	}
 }
 
-// buildProcessorNode creates a processor node for a session with the session's default output format.
-func (b *FlowBuilder) buildProcessorNode(session RelaySessionInfo, yOffset float64, format string) RelayFlowNode {
-	return b.buildProcessorNodeForFormat(session, yOffset, format)
-}
-
-// buildProcessorNodeForFormat creates a processor node for a specific output format.
-func (b *FlowBuilder) buildProcessorNodeForFormat(session RelaySessionInfo, yOffset float64, format string) RelayFlowNode {
-	// For transcode sessions, use target codecs; otherwise use source codecs
+func (b *FlowBuilder) buildProcessorNode(session RelaySessionInfo, format string) RelayFlowNode {
 	outputVideoCodec := session.VideoCodec
 	outputAudioCodec := session.AudioCodec
 	if session.RouteType == RouteTypeTranscode {
@@ -493,54 +329,43 @@ func (b *FlowBuilder) buildProcessorNodeForFormat(session RelaySessionInfo, yOff
 		}
 	}
 
-	data := FlowNodeData{
-		Label:            b.getProcessorLabelForFormat(format),
-		SessionID:        session.SessionID,
-		ChannelID:        session.ChannelID,
-		ChannelName:      session.ChannelName,
-		RouteType:        session.RouteType,
-		ProfileName:      session.ProfileName,
-		OutputFormat:     format,
-		OutputVideoCodec: outputVideoCodec,
-		OutputAudioCodec: outputAudioCodec,
-		ProcessingBps:    session.EgressRateBps,
-		TotalBytesOut:    session.BytesOut,
-		InFallback:       session.InFallback,
-		Error:            session.Error,
-	}
-
 	return RelayFlowNode{
-		ID:   fmt.Sprintf("processor-%s-%s", session.SessionID, format),
-		Type: FlowNodeTypeProcessor,
-		Position: FlowPosition{
-			X: b.processorX,
-			Y: yOffset,
+		ID:       fmt.Sprintf("processor-%s-%s", session.SessionID, format),
+		Type:     FlowNodeTypeProcessor,
+		Position: FlowPosition{X: 0, Y: 0}, // Frontend calculates layout
+		Data: FlowNodeData{
+			Label:            b.getProcessorLabel(format),
+			SessionID:        session.SessionID,
+			ChannelID:        session.ChannelID,
+			ChannelName:      session.ChannelName,
+			RouteType:        session.RouteType,
+			ProfileName:      session.ProfileName,
+			OutputFormat:     format,
+			OutputVideoCodec: outputVideoCodec,
+			OutputAudioCodec: outputAudioCodec,
+			ProcessingBps:    session.EgressRateBps,
+			TotalBytesOut:    session.BytesOut,
+			InFallback:       session.InFallback,
+			Error:            session.Error,
 		},
-		Data: data,
 	}
 }
 
-// buildClientNode creates a client node.
-func (b *FlowBuilder) buildClientNode(session RelaySessionInfo, client RelayClientInfo, yOffset float64) RelayFlowNode {
-	// Calculate egress rate from bytes and connection time
+func (b *FlowBuilder) buildClientNode(session RelaySessionInfo, client RelayClientInfo, format string) RelayFlowNode {
 	var egressBps uint64
 	if client.ConnectedSecs > 0 {
 		egressBps = uint64(float64(client.BytesRead) / client.ConnectedSecs)
 	}
 
-	// Determine the processor ID this client is connected to
 	clientFormat := client.ClientFormat
 	if clientFormat == "" {
 		clientFormat = session.OutputFormat
 	}
 
 	return RelayFlowNode{
-		ID:   fmt.Sprintf("client-%s-%s", session.SessionID, client.ClientID),
-		Type: FlowNodeTypeClient,
-		Position: FlowPosition{
-			X: b.clientX,
-			Y: yOffset,
-		},
+		ID:       fmt.Sprintf("client-%s-%s", session.SessionID, client.ClientID),
+		Type:     FlowNodeTypeClient,
+		Position: FlowPosition{X: 0, Y: 0}, // Frontend calculates layout
 		Data: FlowNodeData{
 			Label:         b.getClientLabel(client),
 			SessionID:     session.SessionID,
@@ -558,25 +383,13 @@ func (b *FlowBuilder) buildClientNode(session RelaySessionInfo, client RelayClie
 	}
 }
 
-// buildEdge creates an edge between two nodes.
 func (b *FlowBuilder) buildEdge(sourceID, targetID string, bandwidthBps uint64, videoCodec, audioCodec, format string) RelayFlowEdge {
-	return b.buildEdgeWithHandles(sourceID, targetID, "", "", bandwidthBps, videoCodec, audioCodec, format)
-}
-
-// buildEdgeWithHandles creates an edge between two nodes with specific handle IDs.
-func (b *FlowBuilder) buildEdgeWithHandles(sourceID, targetID, sourceHandle, targetHandle string, bandwidthBps uint64, videoCodec, audioCodec, format string) RelayFlowEdge {
-	edgeID := fmt.Sprintf("edge-%s-%s", sourceID, targetID)
-	if sourceHandle != "" || targetHandle != "" {
-		edgeID = fmt.Sprintf("edge-%s-%s-%s-%s", sourceID, sourceHandle, targetID, targetHandle)
-	}
 	return RelayFlowEdge{
-		ID:           edgeID,
-		Source:       sourceID,
-		Target:       targetID,
-		SourceHandle: sourceHandle,
-		TargetHandle: targetHandle,
-		Type:         "animated",
-		Animated:     bandwidthBps > 0,
+		ID:       fmt.Sprintf("edge-%s-%s", sourceID, targetID),
+		Source:   sourceID,
+		Target:   targetID,
+		Type:     "animated",
+		Animated: bandwidthBps > 0,
 		Data: FlowEdgeData{
 			BandwidthBps: bandwidthBps,
 			VideoCodec:   videoCodec,
@@ -586,18 +399,7 @@ func (b *FlowBuilder) buildEdgeWithHandles(sourceID, targetID, sourceHandle, tar
 	}
 }
 
-// getProcessorLabel returns a descriptive label for the processor node.
-// Shows the output format type (HLS, DASH, MPEG-TS, etc.)
-func (b *FlowBuilder) getProcessorLabel(session RelaySessionInfo) string {
-	format := session.OutputFormat
-	if format == "" {
-		format = session.SourceFormat
-	}
-	return b.getProcessorLabelForFormat(format)
-}
-
-// getProcessorLabelForFormat returns a descriptive label for a specific format.
-func (b *FlowBuilder) getProcessorLabelForFormat(format string) string {
+func (b *FlowBuilder) getProcessorLabel(format string) string {
 	switch format {
 	case "hls":
 		return "HLS"
@@ -615,7 +417,6 @@ func (b *FlowBuilder) getProcessorLabelForFormat(format string) string {
 	}
 }
 
-// getClientLabel returns a descriptive label for the client node.
 func (b *FlowBuilder) getClientLabel(client RelayClientInfo) string {
 	if client.PlayerType != "" {
 		return client.PlayerType
@@ -626,16 +427,9 @@ func (b *FlowBuilder) getClientLabel(client RelayClientInfo) string {
 	return "Client"
 }
 
-// truncateURL shortens a URL for display.
 func truncateURL(url string, maxLen int) string {
 	if len(url) <= maxLen {
 		return url
 	}
-	// Try to show the domain and end
-	if len(url) > maxLen {
-		return url[:maxLen-3] + "..."
-	}
-	return url
+	return url[:maxLen-3] + "..."
 }
-
-// truncateString is defined in fallback.go and reused here.
