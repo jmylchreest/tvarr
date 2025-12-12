@@ -103,13 +103,14 @@ type FFmpegTranscoder struct {
 	closedCh chan struct{}
 
 	// Stats
-	samplesIn    atomic.Uint64
-	samplesOut   atomic.Uint64
-	bytesIn      atomic.Uint64
-	bytesOut     atomic.Uint64
-	errorCount   atomic.Uint64
-	startedAt    time.Time
-	lastActivity atomic.Value // time.Time
+	samplesIn     atomic.Uint64
+	samplesOut    atomic.Uint64
+	bytesIn       atomic.Uint64
+	bytesOut      atomic.Uint64
+	errorCount    atomic.Uint64
+	startedAt     time.Time
+	lastActivity  atomic.Value // time.Time
+	encodingSpeed atomic.Value // float64 - realtime encoding speed (1.0 = realtime)
 }
 
 // NewFFmpegTranscoder creates a new FFmpeg transcoder.
@@ -306,6 +307,7 @@ func (t *FFmpegTranscoder) waitWithTimeout(timeout time.Duration) {
 // Stats returns current transcoder statistics.
 func (t *FFmpegTranscoder) Stats() TranscoderStats {
 	lastActivity, _ := t.lastActivity.Load().(time.Time)
+	encodingSpeed, _ := t.encodingSpeed.Load().(float64)
 	return TranscoderStats{
 		ID:            t.id,
 		SourceVariant: t.config.SourceVariant,
@@ -325,6 +327,8 @@ func (t *FFmpegTranscoder) Stats() TranscoderStats {
 		AudioEncoder:  t.config.AudioCodec,
 		HWAccel:       t.config.HWAccel,
 		HWAccelDevice: t.config.HWAccelDevice,
+		// Encoding speed
+		EncodingSpeed: encodingSpeed,
 	}
 }
 
@@ -340,14 +344,16 @@ type TranscoderStats struct {
 	BytesIn       uint64
 	BytesOut      uint64
 	Errors        uint64
-	// Codec names (e.g., "h264", "h265", "aac") - what the stream IS
+	// Codec names (e.g., "h265", "aac") - what the stream IS
 	VideoCodec string
 	AudioCodec string
-	// Encoder names (e.g., "libx264", "h264_nvenc", "libopus") - what FFmpeg uses
+	// Encoder names (e.g., "libx265", "h264_nvenc") - what FFmpeg uses
 	VideoEncoder  string
 	AudioEncoder  string
 	HWAccel       string
 	HWAccelDevice string
+	// Encoding speed (1.0 = realtime, 2.0 = 2x realtime, 0.5 = half realtime)
+	EncodingSpeed float64
 }
 
 // ProcessStats returns CPU and memory stats for the FFmpeg process.
@@ -482,23 +488,6 @@ func (t *FFmpegTranscoder) startFFmpeg() error {
 		if t.config.VideoPreset != "" {
 			builder.VideoPreset(t.config.VideoPreset)
 		}
-
-		// Memory optimization for software encoders
-		// These settings reduce memory usage significantly for live streaming
-		if t.config.VideoCodec == "libx265" {
-			// x265 specific optimizations:
-			// - pools=1: Use single thread pool (reduces memory)
-			// - frame-threads=2: Limit frame parallelism
-			// - lookahead-slices=2: Reduce lookahead memory
-			// - rc-lookahead=20: Shorter lookahead (default is 20-40 frames)
-			// - bframes=2: Fewer B-frames reduces memory
-			builder.OutputArgs("-x265-params", "pools=1:frame-threads=2:lookahead-slices=2:rc-lookahead=20:bframes=2")
-		} else if t.config.VideoCodec == "libx264" {
-			// x264 specific optimizations:
-			// - threads=4: Limit threads
-			// - rc-lookahead=20: Shorter lookahead
-			builder.OutputArgs("-x264-params", "threads=4:rc-lookahead=20")
-		}
 	} else {
 		builder.VideoCodec("copy")
 	}
@@ -556,6 +545,7 @@ func (t *FFmpegTranscoder) startFFmpeg() error {
 }
 
 // readStderr reads FFmpeg stderr and stores recent lines for debugging.
+// Also parses encoding speed from FFmpeg progress output.
 func (t *FFmpegTranscoder) readStderr() {
 	scanner := bufio.NewScanner(t.stderr)
 	for scanner.Scan() {
@@ -569,13 +559,47 @@ func (t *FFmpegTranscoder) readStderr() {
 		}
 		t.stderrMu.Unlock()
 
-		// Log FFmpeg errors at warning level
-		if line != "" {
+		// Parse encoding speed from FFmpeg output (e.g., "speed=1.2x" or "speed= 0.95x")
+		if speed := t.parseEncodingSpeed(line); speed > 0 {
+			t.encodingSpeed.Store(speed)
+		}
+
+		// Log FFmpeg errors at warning level (but not progress lines)
+		if line != "" && !strings.Contains(line, "frame=") && !strings.Contains(line, "speed=") {
 			t.config.Logger.Warn("FFmpeg stderr",
 				slog.String("transcoder_id", t.id),
 				slog.String("line", line))
 		}
 	}
+}
+
+// parseEncodingSpeed extracts the encoding speed from FFmpeg stderr output.
+// FFmpeg outputs lines like: "frame= 1234 fps= 30 ... speed=1.2x" or "speed= 0.95x"
+func (t *FFmpegTranscoder) parseEncodingSpeed(line string) float64 {
+	// Look for "speed=" pattern
+	idx := strings.Index(line, "speed=")
+	if idx == -1 {
+		return 0
+	}
+
+	// Extract the speed value after "speed="
+	speedStr := line[idx+6:]
+	// Trim leading spaces
+	speedStr = strings.TrimLeft(speedStr, " ")
+
+	// Find the end of the number (before 'x' or space)
+	endIdx := strings.IndexAny(speedStr, "x \t")
+	if endIdx > 0 {
+		speedStr = speedStr[:endIdx]
+	}
+
+	// Parse the float value
+	speed, err := strconv.ParseFloat(strings.TrimSpace(speedStr), 64)
+	if err != nil {
+		return 0
+	}
+
+	return speed
 }
 
 // GetStderrLines returns the recent stderr lines from FFmpeg.

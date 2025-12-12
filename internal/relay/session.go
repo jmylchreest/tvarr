@@ -1996,6 +1996,7 @@ func (s *RelaySession) Stats() SessionStats {
 				CPUPercent:    cpuPercent,
 				MemoryRSSMB:   memoryRSSMB,
 				MemoryPercent: memoryPercent,
+				EncodingSpeed: tStats.EncodingSpeed,
 			})
 		}
 
@@ -2032,6 +2033,8 @@ func (s *RelaySession) Stats() SessionStats {
 				AudioEncoder:  firstStats.AudioEncoder,
 				HWAccel:       firstStats.HWAccel,
 				HWAccelDevice: firstStats.HWAccelDevice,
+				// Encoding speed from first transcoder
+				EncodingSpeed: firstStats.EncodingSpeed,
 			}
 
 			// Include resource history
@@ -2148,6 +2151,8 @@ type FFmpegProcessStats struct {
 	AudioEncoder  string `json:"audio_encoder,omitempty"`
 	HWAccel       string `json:"hwaccel,omitempty"`
 	HWAccelDevice string `json:"hwaccel_device,omitempty"`
+	// Encoding speed (1.0 = realtime, 2.0 = 2x realtime, 0.5 = half realtime)
+	EncodingSpeed float64 `json:"encoding_speed,omitempty"`
 	// Resource history for sparkline graphs (last 30 samples, ~1 sample/sec)
 	CPUHistory    []float64 `json:"cpu_history,omitempty"`
 	MemoryHistory []float64 `json:"memory_history,omitempty"`
@@ -2187,6 +2192,8 @@ type ESTranscoderStats struct {
 	CPUPercent    float64 `json:"cpu_percent,omitempty"`
 	MemoryRSSMB   float64 `json:"memory_rss_mb,omitempty"`
 	MemoryPercent float64 `json:"memory_percent,omitempty"`
+	// Encoding speed (1.0 = realtime, 2.0 = 2x realtime, 0.5 = half realtime)
+	EncodingSpeed float64 `json:"encoding_speed,omitempty"`
 }
 
 // GetFormatRouter returns the format router for handling output format requests.

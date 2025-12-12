@@ -359,6 +359,13 @@ func (b *FlowBuilder) buildTranscoderNode(session RelaySessionInfo, yOffset floa
 		// Add resource history for sparklines
 		data.TranscoderCPUHistory = session.CPUHistory
 		data.TranscoderMemHistory = session.MemoryHistory
+
+		// Add encoding speed
+		if session.FFmpegStats.EncodingSpeed > 0 {
+			data.EncodingSpeed = &session.FFmpegStats.EncodingSpeed
+		} else if session.EncodingSpeed != nil && *session.EncodingSpeed > 0 {
+			data.EncodingSpeed = session.EncodingSpeed
+		}
 	}
 
 	// Source codecs - the original input codec (e.g., "h264", "aac")

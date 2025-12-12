@@ -80,6 +80,9 @@ type RelaySessionInfo struct {
 	MemoryBytes   *uint64  `json:"memory_bytes,omitempty"`
 	MemoryPercent *float64 `json:"memory_percent,omitempty"`
 
+	// Encoding speed (1.0 = realtime, 2.0 = 2x realtime, 0.5 = half realtime)
+	EncodingSpeed *float64 `json:"encoding_speed,omitempty"`
+
 	// Resource history for sparkline graphs (last 30 samples, ~1 sample/sec)
 	CPUHistory    []float64 `json:"cpu_history,omitempty"`    // Historical CPU percentage values
 	MemoryHistory []float64 `json:"memory_history,omitempty"` // Historical memory MB values
@@ -107,6 +110,9 @@ type FFmpegStatsInfo struct {
 	BytesWritten  uint64  `json:"bytes_written"`
 	WriteRateMbps float64 `json:"write_rate_mbps"`
 	DurationSecs  float64 `json:"duration_secs"`
+
+	// Encoding speed (1.0 = realtime, 2.0 = 2x realtime, 0.5 = half realtime)
+	EncodingSpeed float64 `json:"encoding_speed,omitempty"`
 
 	// Resource history for sparkline graphs (last 30 samples, ~1 sample/sec)
 	CPUHistory    []float64 `json:"cpu_history,omitempty"`    // Historical CPU percentage values
@@ -214,8 +220,14 @@ func (s *SessionStats) ToSessionInfo() RelaySessionInfo {
 			BytesWritten:  s.FFmpegStats.BytesWritten,
 			WriteRateMbps: s.FFmpegStats.WriteRateMbps,
 			DurationSecs:  s.FFmpegStats.DurationSecs,
+			EncodingSpeed: s.FFmpegStats.EncodingSpeed,
 			CPUHistory:    s.FFmpegStats.CPUHistory,
 			MemoryHistory: s.FFmpegStats.MemoryHistory,
+		}
+
+		// Copy encoding speed to session info level
+		if s.FFmpegStats.EncodingSpeed > 0 {
+			info.EncodingSpeed = &s.FFmpegStats.EncodingSpeed
 		}
 
 		// Copy resource history to session info level as well
