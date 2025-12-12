@@ -441,6 +441,8 @@ func TestTSMuxer_RoundTrip(t *testing.T) {
 
 	videoReceived := make(chan struct{}, 1)
 	audioReceived := make(chan struct{}, 1)
+	writerDone := make(chan struct{})
+	readerDone := make(chan struct{})
 
 	demuxer := NewTSDemuxer(buffer, TSDemuxerConfig{
 		OnVideoSample: func(pts, dts int64, data []byte, isKeyframe bool) {
@@ -458,32 +460,47 @@ func TestTSMuxer_RoundTrip(t *testing.T) {
 	})
 	defer demuxer.Close()
 
-	// Write some data
+	// Write some data - use a channel to signal errors instead of t.Errorf
+	// to avoid race condition with test completion
+	writeErr := make(chan error, 1)
 	go func() {
 		defer pw.Close()
+		defer close(writerDone)
 
 		// Write video frame
 		videoData := []byte{0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84, 0x00, 0x33, 0xff}
 		if err := muxer.WriteVideo(0, 0, videoData, true); err != nil {
-			t.Errorf("WriteVideo failed: %v", err)
+			select {
+			case writeErr <- err:
+			default:
+			}
 			return
 		}
 
 		// Write audio frame
 		audioData := []byte{0x21, 0x10, 0x04, 0x60, 0x8c, 0x1c}
 		if err := muxer.WriteAudio(3600, audioData); err != nil {
-			t.Errorf("WriteAudio failed: %v", err)
+			select {
+			case writeErr <- err:
+			default:
+			}
 			return
 		}
 
 		// Write more frames to ensure we have enough data
 		for i := 0; i < 10; i++ {
 			if err := muxer.WriteVideo(int64((i+1)*3000), int64((i+1)*3000), videoData, false); err != nil {
-				t.Errorf("WriteVideo failed: %v", err)
+				select {
+				case writeErr <- err:
+				default:
+				}
 				return
 			}
 			if err := muxer.WriteAudio(int64((i+1)*3600), audioData); err != nil {
-				t.Errorf("WriteAudio failed: %v", err)
+				select {
+				case writeErr <- err:
+				default:
+				}
 				return
 			}
 		}
@@ -491,6 +508,7 @@ func TestTSMuxer_RoundTrip(t *testing.T) {
 
 	// Read from pipe and write to demuxer
 	go func() {
+		defer close(readerDone)
 		buf := make([]byte, 188*10)
 		for {
 			n, err := pr.Read(buf)
@@ -522,4 +540,16 @@ func TestTSMuxer_RoundTrip(t *testing.T) {
 		// Timeout is acceptable
 		t.Log("Timeout waiting for audio - may need more data for initialization")
 	}
+
+	// Check for write errors
+	select {
+	case err := <-writeErr:
+		t.Errorf("Write error: %v", err)
+	default:
+	}
+
+	// Wait for goroutines to finish before test exits
+	pr.Close() // Signal reader to exit
+	<-writerDone
+	<-readerDone
 }

@@ -63,6 +63,9 @@ type TSMuxer struct {
 	videoCodec string
 	audioCodec string
 
+	// Video parameter set helper for ensuring VPS/SPS/PPS are present on keyframes
+	videoParams *VideoParamHelper
+
 	// Initialization state
 	mu          sync.Mutex
 	initialized bool
@@ -88,10 +91,11 @@ func NewTSMuxer(w io.Writer, config TSMuxerConfig) *TSMuxer {
 	}
 
 	m := &TSMuxer{
-		writer:     w,
-		config:     config,
-		videoCodec: config.VideoCodec,
-		audioCodec: config.AudioCodec,
+		writer:      w,
+		config:      config,
+		videoCodec:  config.VideoCodec,
+		audioCodec:  config.AudioCodec,
+		videoParams: NewVideoParamHelper(),
 	}
 
 	return m
@@ -262,11 +266,21 @@ func (m *TSMuxer) WriteVideo(pts, dts int64, data []byte, isKeyframe bool) error
 		return nil
 	}
 
+	// Extract parameter sets from all frames (they might appear in any frame)
+	isH265 := m.videoCodec == "h265" || m.videoCodec == "hevc"
+	m.videoParams.ExtractFromNALUs(au, isH265)
+
+	// For keyframes, prepend VPS/SPS/PPS (H.265) or SPS/PPS (H.264) if not already present
+	// This ensures decoders can always decode keyframes even after buffer eviction
+	if isKeyframe {
+		au = m.videoParams.PrependParamsToKeyframeNALUs(au, isH265)
+	}
+
 	// Write based on video codec
 	switch m.videoCodec {
 	case "h264":
 		return m.muxer.WriteH264(m.videoTrack, pts, dts, au)
-	case "h265":
+	case "h265", "hevc":
 		return m.muxer.WriteH265(m.videoTrack, pts, dts, au)
 	default:
 		return m.muxer.WriteH264(m.videoTrack, pts, dts, au)
@@ -333,6 +347,7 @@ func (m *TSMuxer) Reset() {
 	m.videoTrack = nil
 	m.audioTrack = nil
 	m.tracks = nil
+	m.videoParams = NewVideoParamHelper() // Reset parameter sets
 }
 
 // dataToAccessUnit converts raw video data to access unit format using mediacommon.
@@ -421,9 +436,10 @@ func TSMuxerWithTracks(w io.Writer, tracks []*mpegts.Track, logger *slog.Logger)
 	}
 
 	m := &TSMuxer{
-		writer: w,
-		config: TSMuxerConfig{Logger: logger},
-		tracks: tracks,
+		writer:      w,
+		config:      TSMuxerConfig{Logger: logger},
+		tracks:      tracks,
+		videoParams: NewVideoParamHelper(),
 	}
 
 	// Find video and audio tracks

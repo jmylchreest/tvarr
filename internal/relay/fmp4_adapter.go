@@ -456,18 +456,30 @@ type ESSampleAdapter struct {
 	videoParams  *VideoCodecParams
 	audioParams  *AudioCodecParams
 	paramsLocked bool
+
+	// Video parameter set helper for ensuring VPS/SPS/PPS are present on keyframes
+	videoParamHelper *VideoParamHelper
 }
 
 // NewESSampleAdapter creates a new adapter.
 func NewESSampleAdapter(config ESSampleAdapterConfig) *ESSampleAdapter {
 	return &ESSampleAdapter{
-		config: config,
+		config:           config,
+		videoParamHelper: NewVideoParamHelper(),
 	}
 }
 
 // UpdateVideoParams updates video codec params from samples.
 // Only updates if params haven't been locked.
+// Also extracts and stores VPS/SPS/PPS for prepending to keyframes.
 func (a *ESSampleAdapter) UpdateVideoParams(samples []ESSample) bool {
+	// Always extract parameter sets for the helper (even if main params are locked)
+	// This ensures we have the latest VPS/SPS/PPS for prepending to keyframes
+	for _, sample := range samples {
+		isH265 := a.videoParams != nil && a.videoParams.Codec == "h265"
+		a.videoParamHelper.ExtractFromAnnexB(sample.Data, isH265)
+	}
+
 	if a.paramsLocked && a.videoParams != nil {
 		return false
 	}
@@ -475,6 +487,13 @@ func (a *ESSampleAdapter) UpdateVideoParams(samples []ESSample) bool {
 	params := ExtractVideoCodecParams(samples)
 	if params != nil && (params.H264SPS != nil || params.H265SPS != nil) {
 		a.videoParams = params
+
+		// Also set params in the helper for use when prepending
+		if params.Codec == "h265" {
+			a.videoParamHelper.SetH265Params(params.H265VPS, params.H265SPS, params.H265PPS)
+		} else {
+			a.videoParamHelper.SetH264Params(params.H264SPS, params.H264PPS)
+		}
 		return true
 	}
 	return false
@@ -511,8 +530,21 @@ func (a *ESSampleAdapter) AudioParams() *AudioCodecParams {
 }
 
 // ConvertVideoSamples converts ES video samples to fmp4 format.
+// For keyframes, it prepends VPS/SPS/PPS if not already present.
 func (a *ESSampleAdapter) ConvertVideoSamples(samples []ESSample) ([]*fmp4.Sample, uint64) {
-	return ConvertESSamplesToFMP4Video(samples, a.config.VideoTimescale)
+	// Prepend VPS/SPS/PPS to keyframes before conversion
+	isH265 := a.videoParams != nil && a.videoParams.Codec == "h265"
+	processedSamples := make([]ESSample, len(samples))
+
+	for i, sample := range samples {
+		processedSamples[i] = sample
+		if sample.IsKeyframe {
+			// Prepend parameter sets to keyframe data if not already present
+			processedSamples[i].Data = a.videoParamHelper.PrependParamsToKeyframeAnnexB(sample.Data, isH265)
+		}
+	}
+
+	return ConvertESSamplesToFMP4Video(processedSamples, a.config.VideoTimescale)
 }
 
 // ConvertAudioSamples converts ES audio samples to fmp4 format.

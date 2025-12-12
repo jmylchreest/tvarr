@@ -246,15 +246,19 @@ func (s *SessionStats) ToSessionInfo() RelaySessionInfo {
 		for _, v := range s.ESBufferStats.Variants {
 			// Convert from ESVariantStats to BufferVariantInfo
 			info.BufferVariants = append(info.BufferVariants, BufferVariantInfo{
-				Variant:       string(v.Variant),
-				VideoCodec:    v.VideoCodec,
-				AudioCodec:    v.AudioCodec,
-				VideoSamples:  v.VideoSamples,
-				AudioSamples:  v.AudioSamples,
-				BytesIngested: v.CurrentBytes, // Use current resident bytes, not total ingested
-				MaxBytes:      v.MaxBytes,
-				Utilization:   v.ByteUtilization,
-				IsSource:      v.IsSource,
+				Variant:        string(v.Variant),
+				VideoCodec:     v.VideoCodec,
+				AudioCodec:     v.AudioCodec,
+				VideoSamples:   v.VideoSamples,
+				AudioSamples:   v.AudioSamples,
+				BytesIngested:  v.CurrentBytes, // Use current resident bytes, not total ingested
+				MaxBytes:       v.MaxBytes,
+				Utilization:    v.ByteUtilization,
+				IsSource:       v.IsSource,
+				IsEvicting:     v.IsEvicting,
+				BufferDuration: v.BufferDuration.Seconds(),
+				EvictedSamples: v.EvictedSamples,
+				EvictedBytes:   v.EvictedBytes,
 			})
 		}
 	}

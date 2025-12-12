@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 
+	"github.com/jmylchreest/tvarr/internal/config"
 	"github.com/jmylchreest/tvarr/internal/database/migrations"
 	"github.com/jmylchreest/tvarr/internal/ffmpeg"
 	internalhttp "github.com/jmylchreest/tvarr/internal/http"
@@ -334,7 +335,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		lastKnownCodecRepo,
 		channelRepo,
 		proxyRepo,
-	).WithLogger(logger)
+	).WithLogger(logger).WithBufferConfig(config.BufferConfig{
+		MaxDuration:     viper.GetDuration("relay.buffer.max_duration"),
+		MaxTrackBytes:   viper.GetInt64("relay.buffer.max_track_bytes"),
+		MaxVariantBytes: viper.GetInt64("relay.buffer.max_variant_bytes"),
+	})
 
 	relayProfileMappingService := service.NewRelayProfileMappingService(relayProfileMappingRepo).
 		WithLogger(logger)

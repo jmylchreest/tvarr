@@ -19,6 +19,10 @@ export interface BufferVariantInfo {
   maxBytes: number; // Maximum bytes allowed per variant (e.g., 30MB)
   utilization: number; // 0-100 percentage of max used
   isSource: boolean;
+  isEvicting: boolean; // True if buffer is at capacity and evicting old samples
+  bufferDuration: number; // Duration of content in buffer (seconds)
+  evictedSamples: number; // Total samples evicted since start
+  evictedBytes: number; // Total bytes evicted since start
 }
 
 export interface FlowNodeData {

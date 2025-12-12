@@ -53,8 +53,10 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: Relay
 
   const { fitView } = useReactFlow();
 
-  // Track if this is the initial load (for fitView)
+  // Track if this is the initial load (for fitView and layout)
   const isInitialLoad = useRef(true);
+  // Track if we've applied initial layout (force clean positions on mount)
+  const hasAppliedInitialLayout = useRef(false);
   // Track known node IDs to detect new nodes
   const knownNodeIds = useRef<Set<string>>(new Set());
   // Track manually moved nodes (don't auto-position these)
@@ -113,9 +115,32 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: Relay
   );
 
   // Update nodes and edges when data changes
-  // Key insight: only update DATA for existing nodes, preserve their positions
+  // On initial load: use layout positions for all nodes (clean slate)
+  // On subsequent updates: only preserve positions for manually-dragged nodes
   useEffect(() => {
     if (layoutedNodes.length === 0) return;
+
+    // On first mount, force clean layout and clear any stale tracking
+    if (!hasAppliedInitialLayout.current) {
+      hasAppliedInitialLayout.current = true;
+      knownNodeIds.current.clear();
+      manuallyMovedNodes.current.clear();
+
+      // Add all current nodes to known set
+      for (const node of layoutedNodes) {
+        knownNodeIds.current.add(node.id);
+      }
+
+      // Use layout positions directly - no position preservation on initial load
+      setNodes(layoutedNodes);
+      setEdges(edges);
+
+      // Fit view after initial layout
+      setTimeout(() => {
+        fitView({ padding: 0.1, duration: 200 });
+      }, 100);
+      return;
+    }
 
     setNodes((currentNodes) => {
       // Build a map of current node positions
@@ -142,18 +167,14 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: Relay
         }
       }
 
-      // Merge: keep existing positions for known nodes, use layout for new nodes
+      // Merge: only preserve positions for nodes the user manually dragged
+      // All other nodes use the calculated layout positions
       return layoutedNodes.map((layoutedNode) => {
         const existingPosition = currentPositions.get(layoutedNode.id);
-        const isNewNode = newNodeIds.has(layoutedNode.id);
         const wasManuallyMoved = manuallyMovedNodes.current.has(layoutedNode.id);
 
-        // Use existing position if:
-        // 1. Node existed before AND (was manually moved OR we have a position for it)
-        // Use layout position if:
-        // 1. Node is new
-        const shouldUseExistingPosition =
-          !isNewNode && existingPosition && (wasManuallyMoved || currentNodes.length > 0);
+        // Only preserve position if user manually dragged this specific node
+        const shouldUseExistingPosition = wasManuallyMoved && existingPosition;
 
         return {
           ...layoutedNode,
@@ -163,21 +184,13 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: Relay
     });
 
     setEdges(edges);
-
-    // Only fit view on initial load or when new nodes are added
-    if (isInitialLoad.current) {
-      isInitialLoad.current = false;
-      setTimeout(() => {
-        fitView({ padding: 0.15, duration: 200 });
-      }, 100);
-    }
   }, [layoutedNodes, edges, setNodes, setEdges, fitView]);
 
   const onInit = useCallback(() => {
     // Fit view on initial load
     if (isInitialLoad.current) {
       setTimeout(() => {
-        fitView({ padding: 0.15 });
+        fitView({ padding: 0.1 });
       }, 100);
     }
   }, [fitView]);
@@ -259,7 +272,7 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: Relay
               edgeTypes={edgeTypes}
               fitView
               fitViewOptions={{
-                padding: 0.15,
+                padding: 0.1,
                 includeHiddenNodes: false,
               }}
               minZoom={0.3}

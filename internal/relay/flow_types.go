@@ -128,15 +128,19 @@ type FlowNodeData struct {
 
 // BufferVariantInfo describes a codec variant in the shared buffer.
 type BufferVariantInfo struct {
-	Variant       string  `json:"variant"` // e.g., "h264/aac", "hevc/aac"
-	VideoCodec    string  `json:"videoCodec"`
-	AudioCodec    string  `json:"audioCodec"`
-	VideoSamples  int     `json:"videoSamples"`
-	AudioSamples  int     `json:"audioSamples"`
-	BytesIngested uint64  `json:"bytesIngested"`
-	MaxBytes      uint64  `json:"maxBytes"`    // Maximum bytes for this variant (e.g., 30MB)
-	Utilization   float64 `json:"utilization"` // 0-100 percentage of max used
-	IsSource      bool    `json:"isSource"`    // True if this is the original source variant
+	Variant        string  `json:"variant"` // e.g., "h264/aac", "hevc/aac"
+	VideoCodec     string  `json:"videoCodec"`
+	AudioCodec     string  `json:"audioCodec"`
+	VideoSamples   int     `json:"videoSamples"`
+	AudioSamples   int     `json:"audioSamples"`
+	BytesIngested  uint64  `json:"bytesIngested"`
+	MaxBytes       uint64  `json:"maxBytes"`       // Maximum bytes for this variant (e.g., 30MB)
+	Utilization    float64 `json:"utilization"`    // 0-100 percentage of max used
+	IsSource       bool    `json:"isSource"`       // True if this is the original source variant
+	IsEvicting     bool    `json:"isEvicting"`     // True if buffer is at capacity and evicting
+	BufferDuration float64 `json:"bufferDuration"` // Duration of content in buffer (seconds)
+	EvictedSamples uint64  `json:"evictedSamples"` // Total samples evicted since start
+	EvictedBytes   uint64  `json:"evictedBytes"`   // Total bytes evicted since start
 }
 
 // RelayFlowEdge represents an edge (connection) in the relay flow graph.

@@ -46,7 +46,7 @@ interface LayoutConfig {
 const DEFAULT_CONFIG: LayoutConfig = {
   columnSpacing: 100, // Base gap between node edges
   rowSpacing: 140, // Space between rows
-  transcoderOffset: 180, // How far above buffer the transcoder sits
+  transcoderOffset: 220, // How far above buffer the transcoder sits (increased for better separation)
   startX: 50,
   startY: 200, // Extra top margin for transcoder
   nodeWidths: {
@@ -67,10 +67,13 @@ const DEFAULT_CONFIG: LayoutConfig = {
 
 // Edge length constraints for adaptive layout
 const EDGE_CONSTRAINTS = {
-  minGap: 80, // Minimum gap between node edges
-  maxGap: 140, // Maximum gap between node edges
-  targetGap: 100, // Ideal gap between node edges
+  minGap: 60, // Minimum gap between node edges
+  maxGap: 100, // Maximum gap between node edges
+  targetGap: 80, // Ideal gap between node edges
 };
+
+// Client-specific gap (smaller to keep clients close to their processor)
+const CLIENT_GAP = 60;
 
 /**
  * Groups nodes by their session ID to handle multi-session layouts.
@@ -145,10 +148,10 @@ function calculateAdaptiveGap(totalNodes: number): number {
  *
  * Layout strategy:
  * 1. Group nodes by session
- * 2. Within each session, arrange nodes in columns by type
- * 3. Position transcoder above buffer with sufficient clearance
- * 4. Position clients vertically aligned with their connected processor
- * 5. Use adaptive spacing based on total node count
+ * 2. Sessions stack vertically, each top-aligned
+ * 3. Within each session: Origin, Buffer, Processors, Clients are TOP-ALIGNED
+ * 4. Transcoder positioned above buffer
+ * 5. Additional processors/clients stack downward from the top row
  */
 export function calculateLayout<T extends FlowNode>(
   nodes: T[],
@@ -189,23 +192,11 @@ export function calculateLayout<T extends FlowNode>(
       clientsByProcessor.get(processorId)!.push(client);
     }
 
-    // Find max clients per processor to calculate spacing
+    // Find max clients per processor to calculate session height
     let maxClientsPerProcessor = 0;
     for (const clients of clientsByProcessor.values()) {
       maxClientsPerProcessor = Math.max(maxClientsPerProcessor, clients.length);
     }
-
-    // Calculate the maximum height needed for this session
-    const maxNodesInColumn = Math.max(
-      originNodes.length,
-      bufferNodes.length,
-      processorNodes.length,
-      maxClientsPerProcessor,
-      1 // At least 1 row
-    );
-
-    // Calculate center Y for this session's main row
-    const sessionCenterY = sessionYOffset + (maxNodesInColumn * cfg.rowSpacing) / 2;
 
     // Calculate adaptive gap based on total node count in this session
     const totalNodes =
@@ -217,38 +208,43 @@ export function calculateLayout<T extends FlowNode>(
 
     const gap = calculateAdaptiveGap(totalNodes);
 
-    // Column X positions - using adaptive gaps between node edges
-    // Each column is: previous column X + previous node width + gap
+    // Column X positions - edge-to-edge spacing
     const originX = cfg.startX;
     const bufferX = originX + cfg.nodeWidths.origin + gap;
     const processorX = bufferX + cfg.nodeWidths.buffer + gap;
-    const clientX = processorX + cfg.nodeWidths.processor + gap;
+    const clientX = processorX + cfg.nodeWidths.processor + CLIENT_GAP;
 
-    // Position origin nodes (column 0)
+    // TOP-ALIGNED layout: all main nodes start at the same Y
+    // The "main row" Y is where the top of origin/buffer/first-processor/first-client align
+    const mainRowY = sessionYOffset;
+
+    // Vertical spacing for stacked nodes
+    const processorSpacing = cfg.nodeHeights.processor + 20;
+    const clientSpacing = cfg.nodeHeights.client + 15;
+
+    // Position origin nodes (column 0) - top-aligned, stack downward
     for (let i = 0; i < originNodes.length; i++) {
-      const y = sessionCenterY - ((originNodes.length - 1) / 2 - i) * cfg.rowSpacing;
       layoutedNodes.push({
         ...originNodes[i],
-        position: { x: originX, y },
+        position: { x: originX, y: mainRowY + i * cfg.rowSpacing },
       });
     }
 
-    // Position buffer nodes (column 1)
+    // Position buffer nodes (column 1) - top-aligned, stack downward
     for (let i = 0; i < bufferNodes.length; i++) {
-      const y = sessionCenterY - ((bufferNodes.length - 1) / 2 - i) * cfg.rowSpacing;
       layoutedNodes.push({
         ...bufferNodes[i],
-        position: { x: bufferX, y },
+        position: { x: bufferX, y: mainRowY + i * cfg.rowSpacing },
       });
     }
 
-    // Position transcoder nodes (above buffer, same X, centered horizontally)
+    // Position transcoder nodes ABOVE buffer
     if (transcoderNodes.length > 0) {
-      // Center the transcoder above the buffer
       const bufferWidth = cfg.nodeWidths.buffer || 224;
       const transcoderWidth = cfg.nodeWidths.transcoder || 224;
       const transcoderX = bufferX + (bufferWidth - transcoderWidth) / 2;
-      const transcoderY = sessionCenterY - cfg.transcoderOffset;
+      // Position above the main row
+      const transcoderY = mainRowY - cfg.transcoderOffset;
 
       for (let i = 0; i < transcoderNodes.length; i++) {
         layoutedNodes.push({
@@ -261,60 +257,27 @@ export function calculateLayout<T extends FlowNode>(
       }
     }
 
-    // Position processor nodes (column 2)
+    // Position processor nodes (column 2) - top-aligned, stack downward
     const processorPositions: Map<string, { x: number; y: number }> = new Map();
 
-    // Adaptive row spacing for processors when there are many
-    const processorRowSpacing =
-      processorNodes.length > 3
-        ? Math.max(cfg.nodeHeights.processor + 30, cfg.rowSpacing * 0.7)
-        : cfg.rowSpacing;
-
-    if (processorNodes.length === 1) {
-      // Single processor - center it
-      processorPositions.set(processorNodes[0].id, {
-        x: processorX,
-        y: sessionCenterY,
-      });
+    for (let i = 0; i < processorNodes.length; i++) {
+      const y = mainRowY + i * processorSpacing;
+      processorPositions.set(processorNodes[i].id, { x: processorX, y });
       layoutedNodes.push({
-        ...processorNodes[0],
-        position: { x: processorX, y: sessionCenterY },
+        ...processorNodes[i],
+        position: { x: processorX, y },
       });
-    } else if (processorNodes.length > 1) {
-      // Multiple processors - spread vertically with adaptive spacing
-      const totalProcessorSpan = (processorNodes.length - 1) * processorRowSpacing;
-      const processorStartY = sessionCenterY - totalProcessorSpan / 2;
-
-      for (let i = 0; i < processorNodes.length; i++) {
-        const y = processorStartY + i * processorRowSpacing;
-        processorPositions.set(processorNodes[i].id, { x: processorX, y });
-        layoutedNodes.push({
-          ...processorNodes[i],
-          position: { x: processorX, y },
-        });
-      }
     }
 
-    // Position client nodes - grouped by processor
-    // Adaptive spacing based on client count
-    const clientVerticalSpacing =
-      clientNodes.length > 5
-        ? Math.max(cfg.nodeHeights.client + 10, 100)
-        : cfg.nodeHeights.client + 20;
-
+    // Position client nodes - aligned with their processor, stack downward
     for (const [processorId, clients] of clientsByProcessor) {
       const processorPos = processorPositions.get(processorId);
-      const baseCenterY = processorPos?.y ?? sessionCenterY;
-
-      // Center clients around their processor's Y position
-      const totalClientSpan = (clients.length - 1) * clientVerticalSpacing;
-      const clientStartY = baseCenterY - totalClientSpan / 2;
+      const baseY = processorPos?.y ?? mainRowY;
 
       for (let i = 0; i < clients.length; i++) {
-        const y = clientStartY + i * clientVerticalSpacing;
         layoutedNodes.push({
           ...clients[i],
-          position: { x: clientX, y },
+          position: { x: clientX, y: baseY + i * clientSpacing },
         });
       }
     }
@@ -322,24 +285,27 @@ export function calculateLayout<T extends FlowNode>(
     // Handle clients not connected to any processor
     const unconnectedClients = clientNodes.filter((c) => !clientToProcessor.has(c.id));
     if (unconnectedClients.length > 0) {
-      const lastProcessorY = Math.max(
-        ...Array.from(processorPositions.values()).map((p) => p.y),
-        sessionCenterY
-      );
-
       for (let i = 0; i < unconnectedClients.length; i++) {
-        const y = lastProcessorY + (i + 1) * clientVerticalSpacing;
         layoutedNodes.push({
           ...unconnectedClients[i],
-          position: { x: clientX, y },
+          position: { x: clientX, y: mainRowY + i * clientSpacing },
         });
       }
     }
 
-    // Update session Y offset for next session
-    const sessionHeight = Math.max(maxNodesInColumn * cfg.rowSpacing, cfg.rowSpacing * 2);
-    // Add extra space if there's a transcoder
-    const transcoderSpace = transcoderNodes.length > 0 ? cfg.transcoderOffset : 0;
+    // Calculate session height for next session offset
+    const maxVerticalNodes = Math.max(
+      originNodes.length,
+      bufferNodes.length,
+      processorNodes.length,
+      maxClientsPerProcessor,
+      1
+    );
+    const sessionHeight = maxVerticalNodes * Math.max(processorSpacing, clientSpacing, cfg.rowSpacing);
+    // Add space for transcoder above if present
+    const transcoderSpace = transcoderNodes.length > 0 ? cfg.transcoderOffset + cfg.nodeHeights.transcoder : 0;
+
+    // Next session starts below this one with some padding
     sessionYOffset += sessionHeight + transcoderSpace + cfg.rowSpacing;
   }
 

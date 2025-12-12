@@ -3,39 +3,30 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Label } from '@/components/ui/label';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Activity,
   Users,
   Zap,
-  Server,
   TrendingUp,
-  Wifi,
   Clock,
   HardDrive,
   Cpu,
   MemoryStick,
-  AlertTriangle,
+  Monitor,
   ArrowUp,
   ArrowDown,
-  Monitor,
-  Globe,
 } from 'lucide-react';
 import {
   AreaChart,
   Area,
   XAxis,
   YAxis,
-  CartesianGrid,
   LineChart,
   Line,
   ComposedChart,
-  ReferenceLine,
 } from 'recharts';
 import {
   ChartContainer,
@@ -49,40 +40,18 @@ import {
   ClientMetrics,
   RelayMetrics,
   DashboardMetrics,
-  RelayHealthApiResponse,
-  RelayProcess,
-  RelayConnectedClient,
   HealthData,
+  RelayHealthApiResponse,
 } from '@/types/api';
 import { Debug } from '@/utils/debug';
-import { getStatusIndicatorClasses, getStatusType } from '@/lib/status-colors';
 import { apiClient } from '@/lib/api-client';
 import {
   formatBytes,
-  formatBandwidth,
   formatBitrate,
-  formatUptimeFromSeconds,
-  formatTimeConnected,
   formatMemorySize,
   parseStringNumber,
 } from '@/lib/format';
 import { RelayFlowDiagram } from '@/components/relay';
-
-// Interface for historical data points for relay processes
-interface RelayDataPoint {
-  timestamp: string;
-  time: string; // Formatted time for display
-  cpuUsage: number;
-  memoryUsageMb: number;
-  bytesReceivedTotal: number; // cumulative bytes received
-  bytesDeliveredTotal: number; // cumulative bytes delivered
-  bytesReceivedRate: number; // calculated bytes/second since last data point (will be negative for display)
-  bytesDeliveredRate: number; // calculated bytes/second since last data point (positive for display)
-}
-
-interface RelayHistoricalData {
-  [processId: string]: RelayDataPoint[];
-}
 
 // Mock data - in real app, this would come from API
 const mockDashboardMetrics: DashboardMetrics = {
@@ -158,76 +127,13 @@ const mockRelayMetrics: RelayMetrics[] = [
   },
 ];
 
-function formatUptime(uptime: string): string {
-  return uptime;
-}
-
-function getStatusVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
-  const statusType = getStatusType(status);
-  switch (statusType) {
-    case 'success':
-      return 'default';
-    case 'warning':
-      return 'secondary';
-    case 'error':
-      return 'destructive';
-    case 'info':
-      return 'outline';
-    default:
-      return 'outline';
-  }
-}
-
-// Helper function to validate and clean chart data
-function validateChartData(
-  data: RelayDataPoint[] = [],
-  keys: (keyof RelayDataPoint)[]
-): RelayDataPoint[] {
-  if (!data || data.length < 2) return [];
-
-  const filtered = data.filter((point) => {
-    // Ensure point exists and has required structure
-    if (!point || !point.time || !point.timestamp) return false;
-
-    // Ensure all required keys exist and are valid numbers
-    return keys.every((key) => {
-      const value = point[key];
-      return typeof value === 'number' && !isNaN(value) && isFinite(value);
-    });
-  });
-
-  // Debug logging for CPU data
-  if (keys.includes('cpuUsage') && filtered.length > 0) {
-    const cpuValues = filtered.map((p) => p.cpuUsage);
-    Debug.log('CPU chart data:', {
-      count: filtered.length,
-      min: Math.min(...cpuValues),
-      max: Math.max(...cpuValues),
-      values: cpuValues,
-    });
-  }
-
-  // Ensure we have clean array indices for recharts
-  return filtered.map((point, index) => ({
-    ...point,
-    _index: index, // Add explicit index to help recharts
-  }));
-}
-
 export function Dashboard() {
   const [dashboardMetrics, setDashboardMetrics] = useState<DashboardMetrics>(mockDashboardMetrics);
   const [clientMetrics, setClientMetrics] = useState<ClientMetrics[]>(mockClientMetrics);
   const [relayMetrics, setRelayMetrics] = useState<RelayMetrics[]>(mockRelayMetrics);
-  const [relayHealth, setRelayHealth] = useState<RelayHealthApiResponse | null>(null);
-  const [relayHealthError, setRelayHealthError] = useState<string | null>(null);
-  const [isLoadingRelays, setIsLoadingRelays] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [systemHealth, setSystemHealth] = useState<HealthData | null>(null);
-
-  // Integrate with page loading spinner
-  const [relayHistoricalData, setRelayHistoricalData] = useState<RelayHistoricalData>({});
-
-  // Keep max 60 data points per relay process (adjust based on needs)
-  const MAX_RELAY_DATA_POINTS = 60;
+  const [relayHealth, setRelayHealth] = useState<RelayHealthApiResponse | null>(null);
 
   // Update interval management - same as debug page
   const stepValues = [1, 5, 10, 15, 30, 45, 60, 90, 120]; // Update intervals in seconds
@@ -237,103 +143,24 @@ export function Dashboard() {
 
   // Centralized refresh function for all dashboard data
   const refreshDashboardData = useCallback(async () => {
-    setIsLoadingRelays(true);
-    setRelayHealthError(null);
+    setIsLoading(true);
 
     try {
-      // Fetch both relay health and system health data
-      const [health, sysHealth] = await Promise.all([
-        apiClient.getRelayHealth(),
+      // Fetch system health and relay health data
+      const [sysHealth, health] = await Promise.all([
         apiClient.healthCheck(),
+        apiClient.getRelayHealth(),
       ]);
-      setRelayHealth(health);
       setSystemHealth(sysHealth);
-
-      // Update historical data for each relay process
-      if (health?.processes) {
-        const now = new Date();
-        const timeFormatted = now.toLocaleTimeString('en-US', {
-          hour12: false,
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-        });
-
-        setRelayHistoricalData((prev) => {
-          const updated = { ...prev };
-
-          health.processes?.forEach((process) => {
-            const processId = process.config_id;
-            const currentBytesReceived = parseStringNumber(process.bytes_received_upstream);
-            const currentBytesDelivered = parseStringNumber(process.bytes_delivered_downstream);
-
-            // Get previous data point to calculate rate
-            const previousData = updated[processId]?.[updated[processId].length - 1];
-            let bytesReceivedRate = 0;
-            let bytesDeliveredRate = 0;
-
-            if (previousData) {
-              const timeDiffMs = now.getTime() - new Date(previousData.timestamp).getTime();
-              const timeDiffSeconds = timeDiffMs / 1000;
-
-              if (timeDiffSeconds > 0) {
-                // Calculate bytes per second since last data point
-                const receivedDelta = Math.max(
-                  0,
-                  currentBytesReceived - previousData.bytesReceivedTotal
-                );
-                const deliveredDelta = Math.max(
-                  0,
-                  currentBytesDelivered - previousData.bytesDeliveredTotal
-                );
-
-                // Make ingress negative for visualization (below zero line)
-                bytesReceivedRate = -(receivedDelta / timeDiffSeconds);
-                // Keep egress positive (above zero line)
-                bytesDeliveredRate = deliveredDelta / timeDiffSeconds;
-              }
-            }
-
-            // Create new data point for this process with safe defaults and validation
-            const cpuValue = parseStringNumber(process.cpu_usage_percent) || 0;
-            const memoryValue = parseStringNumber(process.memory_usage_mb) || 0;
-            const dataPoint: RelayDataPoint = {
-              timestamp: now.toISOString(),
-              time: timeFormatted,
-              cpuUsage: Math.max(0, Math.min(100, isNaN(cpuValue) ? 0 : cpuValue)), // Clamp CPU between 0-100
-              memoryUsageMb: Math.max(0, isNaN(memoryValue) ? 0 : memoryValue),
-              bytesReceivedTotal: Math.max(0, currentBytesReceived || 0),
-              bytesDeliveredTotal: Math.max(0, currentBytesDelivered || 0),
-              bytesReceivedRate:
-                isNaN(bytesReceivedRate) || !isFinite(bytesReceivedRate)
-                  ? 0
-                  : Math.max(-1000000000, Math.min(0, bytesReceivedRate)), // Clamp negative ingress
-              bytesDeliveredRate:
-                isNaN(bytesDeliveredRate) || !isFinite(bytesDeliveredRate)
-                  ? 0
-                  : Math.max(0, Math.min(1000000000, bytesDeliveredRate)), // Clamp positive egress
-            };
-
-            // Add data point to process history
-            if (!updated[processId]) {
-              updated[processId] = [];
-            }
-
-            updated[processId] = [...updated[processId], dataPoint].slice(-MAX_RELAY_DATA_POINTS);
-          });
-
-          return updated;
-        });
-      }
+      setRelayHealth(health);
 
       // TODO: Add other real API calls here as we implement them
       // Example: const clientData = await apiClient.getClientMetrics()
       // setClientMetrics(clientData)
     } catch (error) {
-      setRelayHealthError(error instanceof Error ? error.message : 'Failed to load dashboard data');
       console.error('Failed to fetch dashboard data:', error);
     } finally {
-      setIsLoadingRelays(false);
+      setIsLoading(false);
     }
   }, []);
 
@@ -416,14 +243,14 @@ export function Dashboard() {
                   Update Interval: {refreshInterval}s
                 </Label>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
-                  {isLoadingRelays && (
+                  {isLoading && (
                     <>
                       <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-primary" />
                       <span>Refreshing...</span>
                     </>
                   )}
-                  {isAutoRefresh && !isLoadingRelays && <span>Auto-refresh active</span>}
-                  {!isAutoRefresh && !isLoadingRelays && <span>Auto-refresh disabled</span>}
+                  {isAutoRefresh && !isLoading && <span>Auto-refresh active</span>}
+                  {!isAutoRefresh && !isLoading && <span>Auto-refresh disabled</span>}
                 </div>
               </div>
               <Button
@@ -602,384 +429,6 @@ export function Dashboard() {
         pollingInterval={refreshInterval * 1000}
         className="w-full"
       />
-
-      {/* Relay Process Cards */}
-      <TooltipProvider>
-        <div className="space-y-4">
-          {relayHealthError ? (
-            <Alert variant="destructive">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertDescription>Failed to load relay data: {relayHealthError}</AlertDescription>
-            </Alert>
-          ) : relayHealth ? (
-            <>
-              {/* Individual Relay Process Cards */}
-              <div className="space-y-4">
-                <h3 className="text-lg font-medium">Active Relay Processes</h3>
-                {!relayHealth.processes?.length ? (
-                  <Card>
-                    <CardContent className="text-center py-8">
-                      <Server className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-                      <p className="text-muted-foreground">No active relay processes found</p>
-                    </CardContent>
-                  </Card>
-                ) : (
-                  <div className="grid gap-4">
-                    {relayHealth.processes?.map((process) => (
-                      <Card key={process.config_id} className="w-full">
-                        <CardHeader>
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                              <div
-                                className={`h-3 w-3 rounded-full ${getStatusIndicatorClasses(process.status)}`}
-                              />
-                              <div>
-                                <CardTitle className="text-lg">
-                                  {process.channel_name || process.profile_name}
-                                </CardTitle>
-                                <CardDescription>
-                                  Profile: {process.profile_name} | PID: {process.pid || 'N/A'} |
-                                  Uptime:{' '}
-                                  {formatUptimeFromSeconds(
-                                    parseStringNumber(process.uptime_seconds)
-                                  )}
-                                </CardDescription>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Badge variant={getStatusVariant(process.status)}>
-                                {process.status}
-                              </Badge>
-                              <Badge variant="outline">
-                                {process.connected_clients?.length ?? 0} clients
-                              </Badge>
-                            </div>
-                          </div>
-                        </CardHeader>
-                        <CardContent>
-                          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                            {/* Left Columns: Charts in single column, 3 rows */}
-                            <div className="lg:col-span-3 space-y-4">
-                              {/* CPU Usage Chart */}
-                              <div className="space-y-3">
-                                <div className="flex items-center gap-2">
-                                  <Cpu className="h-4 w-4 text-muted-foreground" />
-                                  <span className="text-sm font-medium">CPU Usage</span>
-                                  <span className="text-xs text-muted-foreground ml-auto">
-                                    {parseStringNumber(process.cpu_usage_percent).toFixed(1)}%
-                                  </span>
-                                </div>
-                                {(() => {
-                                  const cpuData = validateChartData(
-                                    relayHistoricalData[process.config_id],
-                                    ['cpuUsage']
-                                  );
-                                  return cpuData.length >= 2 ? (
-                                    <ChartContainer
-                                      config={
-                                        {
-                                          cpuUsage: {
-                                            label: 'CPU Usage',
-                                            color: 'var(--chart-1)',
-                                          },
-                                        } satisfies ChartConfig
-                                      }
-                                      className="h-[80px] w-full"
-                                    >
-                                      <AreaChart data={cpuData}>
-                                        <XAxis dataKey="time" hide />
-                                        <YAxis
-                                          domain={[
-                                            0,
-                                            (dataMax: number) => Math.ceil(dataMax * 1.1),
-                                          ]}
-                                          tickFormatter={(value) => `${value}%`}
-                                          className="text-xs"
-                                          width={35}
-                                        />
-                                        <ChartTooltip
-                                          content={
-                                            <ChartTooltipContent
-                                              labelFormatter={(label) => `Time: ${label}`}
-                                              formatter={(value) => [
-                                                `${Number(value).toFixed(1)}% `,
-                                                'CPU Usage',
-                                              ]}
-                                            />
-                                          }
-                                        />
-                                        <Area
-                                          type="monotone"
-                                          dataKey="cpuUsage"
-                                          stroke="var(--color-cpuUsage)"
-                                          fill="var(--color-cpuUsage)"
-                                          fillOpacity={0.6}
-                                          strokeWidth={1.5}
-                                          connectNulls={false}
-                                        />
-                                      </AreaChart>
-                                    </ChartContainer>
-                                  ) : (
-                                    <div className="h-[80px] flex items-center justify-center text-muted-foreground text-xs">
-                                      <span>Collecting data...</span>
-                                    </div>
-                                  );
-                                })()}
-                              </div>
-
-                              {/* Memory Usage Chart */}
-                              <div className="space-y-3">
-                                <div className="flex items-center gap-2">
-                                  <MemoryStick className="h-4 w-4 text-muted-foreground" />
-                                  <span className="text-sm font-medium">Memory Usage</span>
-                                  <span className="text-xs text-muted-foreground ml-auto">
-                                    {parseStringNumber(process.memory_usage_mb).toFixed(1)} MB
-                                  </span>
-                                </div>
-                                {(() => {
-                                  const memoryData = validateChartData(
-                                    relayHistoricalData[process.config_id],
-                                    ['memoryUsageMb']
-                                  );
-                                  return memoryData.length >= 2 ? (
-                                    <ChartContainer
-                                      config={
-                                        {
-                                          memoryUsageMb: {
-                                            label: 'Memory Usage',
-                                            color: 'var(--chart-1)',
-                                          },
-                                        } satisfies ChartConfig
-                                      }
-                                      className="h-[80px] w-full"
-                                    >
-                                      <AreaChart data={memoryData}>
-                                        <XAxis dataKey="time" hide />
-                                        <YAxis
-                                          domain={[
-                                            0,
-                                            (dataMax: number) => Math.ceil(dataMax * 1.1),
-                                          ]}
-                                          tickFormatter={(value) =>
-                                            formatBytes(Number(value) * 1024 * 1024)
-                                          }
-                                          className="text-xs"
-                                          width={50}
-                                        />
-                                        <ChartTooltip
-                                          content={
-                                            <ChartTooltipContent
-                                              labelFormatter={(label) => `Time: ${label}`}
-                                              formatter={(value) => [
-                                                `${formatBytes(Number(value) * 1024 * 1024)} `,
-                                                'Memory Usage',
-                                              ]}
-                                            />
-                                          }
-                                        />
-                                        <Area
-                                          type="monotone"
-                                          dataKey="memoryUsageMb"
-                                          stroke="var(--color-memoryUsageMb)"
-                                          fill="var(--color-memoryUsageMb)"
-                                          fillOpacity={0.6}
-                                          strokeWidth={1.5}
-                                          connectNulls={false}
-                                        />
-                                      </AreaChart>
-                                    </ChartContainer>
-                                  ) : (
-                                    <div className="h-[80px] flex items-center justify-center text-muted-foreground text-xs">
-                                      <span>Collecting data...</span>
-                                    </div>
-                                  );
-                                })()}
-                              </div>
-
-                              {/* Bandwidth Chart */}
-                              <div className="space-y-3">
-                                <div className="flex items-center gap-2">
-                                  <Wifi className="h-4 w-4 text-muted-foreground" />
-                                  <span className="text-sm font-medium">Bandwidth</span>
-                                  <div className="text-xs text-muted-foreground ml-auto space-y-0.5">
-                                    <div className="flex items-center gap-1">
-                                      <ArrowUp className="h-2 w-2 text-blue-500" />
-                                      <span>
-                                        Total:{' '}
-                                        {formatBytes(
-                                          parseStringNumber(process.bytes_received_upstream)
-                                        )}
-                                      </span>
-                                    </div>
-                                    <div className="flex items-center gap-1">
-                                      <ArrowDown className="h-2 w-2 text-green-500" />
-                                      <span>
-                                        Total:{' '}
-                                        {formatBytes(
-                                          parseStringNumber(process.bytes_delivered_downstream)
-                                        )}
-                                      </span>
-                                    </div>
-                                  </div>
-                                </div>
-                                {(() => {
-                                  const bandwidthData = validateChartData(
-                                    relayHistoricalData[process.config_id],
-                                    ['bytesReceivedRate', 'bytesDeliveredRate']
-                                  );
-                                  return bandwidthData.length >= 2 ? (
-                                    <ChartContainer
-                                      config={
-                                        {
-                                          bytesReceivedRate: {
-                                            label: 'Ingress',
-                                            color: 'var(--chart-1)',
-                                          },
-                                          bytesDeliveredRate: {
-                                            label: 'Egress',
-                                            color: 'var(--chart-2)',
-                                          },
-                                        } satisfies ChartConfig
-                                      }
-                                      className="h-[80px] w-full"
-                                    >
-                                      <AreaChart data={bandwidthData}>
-                                        <XAxis dataKey="time" hide />
-                                        <YAxis
-                                          domain={['dataMin', 'dataMax']}
-                                          tickFormatter={(value) =>
-                                            formatBandwidth(Math.abs(Number(value)))
-                                          }
-                                          className="text-xs"
-                                          width={60}
-                                        />
-                                        <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                                        <ReferenceLine
-                                          y={0}
-                                          stroke="hsl(var(--muted-foreground))"
-                                          strokeDasharray="5 5"
-                                          opacity={0.8}
-                                        />
-                                        <ChartTooltip
-                                          content={
-                                            <ChartTooltipContent
-                                              labelFormatter={(label) => `Time: ${label}`}
-                                              formatter={(value, name) => {
-                                                const nameMap: Record<string, string> = {
-                                                  bytesReceivedRate: 'Ingress',
-                                                  bytesDeliveredRate: 'Egress',
-                                                };
-                                                // Show absolute values in tooltip but keep the directional indication
-                                                const absValue = Math.abs(Number(value));
-                                                const direction =
-                                                  name === 'bytesReceivedRate' ? ' (↓)' : ' (↑)';
-                                                return [
-                                                  `${formatBandwidth(absValue)}${direction} `,
-                                                  nameMap[name] || name,
-                                                ];
-                                              }}
-                                            />
-                                          }
-                                        />
-                                        <Area
-                                          type="monotone"
-                                          dataKey="bytesReceivedRate"
-                                          stroke="var(--color-bytesReceivedRate)"
-                                          fill="var(--color-bytesReceivedRate)"
-                                          fillOpacity={0.6}
-                                          strokeWidth={1.5}
-                                        />
-                                        <Area
-                                          type="monotone"
-                                          dataKey="bytesDeliveredRate"
-                                          stroke="var(--color-bytesDeliveredRate)"
-                                          fill="var(--color-bytesDeliveredRate)"
-                                          fillOpacity={0.6}
-                                          strokeWidth={1.5}
-                                        />
-                                      </AreaChart>
-                                    </ChartContainer>
-                                  ) : (
-                                    <div className="h-[80px] flex items-center justify-center text-muted-foreground text-xs">
-                                      <span>Collecting data...</span>
-                                    </div>
-                                  );
-                                })()}
-                              </div>
-                            </div>
-
-                            {/* Right Column: Connected Clients (spans full height) */}
-                            <div className="space-y-3">
-                              <div className="flex items-center gap-2">
-                                <Globe className="h-4 w-4 text-muted-foreground" />
-                                <span className="text-sm font-medium">Connected Clients</span>
-                                <span className="text-xs text-muted-foreground ml-auto">
-                                  {process.connected_clients?.length ?? 0} connected
-                                </span>
-                              </div>
-                              <ScrollArea className="h-[320px]">
-                                <div className="space-y-2 pr-2">
-                                  {!process.connected_clients?.length ? (
-                                    <div className="h-[320px] flex items-center justify-center">
-                                      <span className="text-sm text-muted-foreground">
-                                        No clients connected
-                                      </span>
-                                    </div>
-                                  ) : (
-                                    process.connected_clients.map((client) => (
-                                      <Tooltip key={client.id}>
-                                        <TooltipTrigger asChild>
-                                          <div className="text-sm p-2 bg-secondary rounded cursor-pointer hover:bg-secondary/80 border">
-                                            <div className="font-medium">{client.ip}</div>
-                                          </div>
-                                        </TooltipTrigger>
-                                        <TooltipContent>
-                                          <div className="space-y-1">
-                                            <div>
-                                              <strong>IP:</strong> {client.ip}
-                                            </div>
-                                            <div>
-                                              <strong>User Agent:</strong>{' '}
-                                              {client.user_agent || 'Unknown'}
-                                            </div>
-                                            <div>
-                                              <strong>Connected:</strong>{' '}
-                                              {formatTimeConnected(client.connected_at)}
-                                            </div>
-                                            <div>
-                                              <strong>Data Served:</strong>{' '}
-                                              {formatBytes(parseStringNumber(client.bytes_served))}
-                                            </div>
-                                            <div>
-                                              <strong>Last Activity:</strong>{' '}
-                                              {new Date(client.last_activity).toLocaleString()}
-                                            </div>
-                                          </div>
-                                        </TooltipContent>
-                                      </Tooltip>
-                                    ))
-                                  )}
-                                </div>
-                              </ScrollArea>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </>
-          ) : isLoadingRelays ? (
-            <Card>
-              <CardContent className="text-center py-8">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4" />
-                <p className="text-muted-foreground">Loading relay data...</p>
-              </CardContent>
-            </Card>
-          ) : null}
-        </div>
-      </TooltipProvider>
     </div>
   );
 }

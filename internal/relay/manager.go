@@ -54,6 +54,8 @@ type ManagerConfig struct {
 	CodecRepo repository.LastKnownCodecRepository
 	// CodecCacheTTL is how long to cache codec information.
 	CodecCacheTTL time.Duration
+	// BufferConfig for elementary stream buffer settings.
+	BufferConfig SharedESBufferConfig
 }
 
 // DefaultManagerConfig returns sensible defaults for the relay manager.
@@ -84,6 +86,7 @@ func DefaultManagerConfig() ManagerConfig {
 			// No Timeout - streaming connections run indefinitely
 		},
 		CodecCacheTTL: 24 * time.Hour, // Cache codec info for 24 hours
+		BufferConfig:  DefaultSharedESBufferConfig(),
 	}
 }
 
@@ -157,36 +160,65 @@ func (m *Manager) FallbackGenerator() *FallbackGenerator {
 
 // GetOrCreateSession gets an existing session for the channel or creates a new one.
 // channelUpdatedAt is used to invalidate stale codec cache entries.
+//
+// This function is carefully designed to avoid holding the manager lock during slow
+// operations (stream classification, codec probing) to prevent blocking API requests
+// like /api/v1/relay/sessions while a new session is being created.
 func (m *Manager) GetOrCreateSession(ctx context.Context, channelID uuid.UUID, channelName string, streamSourceName string, streamURL string, profile *models.RelayProfile, channelUpdatedAt time.Time) (*RelaySession, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// Check if session exists for this channel
+	// First, check if session already exists (fast path with read lock)
+	m.mu.RLock()
 	if sessionID, ok := m.channelSessions[channelID]; ok {
 		if session, ok := m.sessions[sessionID]; ok {
-			session.mu.RLock()
-			closed := session.closed
-			session.mu.RUnlock()
-			if !closed {
+			if !session.closed.Load() {
+				m.mu.RUnlock()
 				return session, nil
 			}
-			// Session is closed, remove from maps
-			delete(m.sessions, sessionID)
-			delete(m.channelSessions, channelID)
 		}
 	}
+	m.mu.RUnlock()
 
-	// Check session limit
-	if len(m.sessions) >= m.config.MaxSessions {
-		return nil, fmt.Errorf("maximum sessions (%d) reached", m.config.MaxSessions)
+	// Check session limit before doing slow operations
+	m.mu.RLock()
+	atLimit := len(m.sessions) >= m.config.MaxSessions
+	maxSessions := m.config.MaxSessions
+	m.mu.RUnlock()
+
+	if atLimit {
+		return nil, fmt.Errorf("maximum sessions (%d) reached", maxSessions)
 	}
 
-	// Create new session
+	// Perform slow operations (classify, probe) WITHOUT holding the manager lock
+	// This prevents blocking Stats() and other operations during session creation
 	session, err := m.createSession(ctx, channelID, channelName, streamSourceName, streamURL, profile, channelUpdatedAt)
 	if err != nil {
 		return nil, err
 	}
 
+	// Now acquire the write lock to register the session
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Double-check: another goroutine might have created a session while we were classifying/probing
+	if existingSessionID, ok := m.channelSessions[channelID]; ok {
+		if existingSession, ok := m.sessions[existingSessionID]; ok {
+			if !existingSession.closed.Load() {
+				// Another goroutine won the race - close our session and return the existing one
+				session.Close()
+				return existingSession, nil
+			}
+			// Existing session is closed, remove it
+			delete(m.sessions, existingSessionID)
+			delete(m.channelSessions, channelID)
+		}
+	}
+
+	// Re-check session limit (might have changed while we were creating)
+	if len(m.sessions) >= m.config.MaxSessions {
+		session.Close()
+		return nil, fmt.Errorf("maximum sessions (%d) reached", m.config.MaxSessions)
+	}
+
+	// Register the new session
 	m.sessions[session.ID] = session
 	m.channelSessions[channelID] = session.ID
 
@@ -218,11 +250,7 @@ func (m *Manager) GetSessionForChannel(channelID uuid.UUID) *RelaySession {
 		return nil
 	}
 
-	session.mu.RLock()
-	closed := session.closed
-	session.mu.RUnlock()
-
-	if closed {
+	if session.closed.Load() {
 		return nil
 	}
 
@@ -506,19 +534,35 @@ func (m *Manager) cleanupLoop() {
 }
 
 // cleanupStaleSessions removes sessions without clients.
+// This function is optimized to minimize lock hold time to avoid blocking
+// API requests like /api/v1/relay/sessions.
 func (m *Manager) cleanupStaleSessions() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	// First, copy session pointers while holding the lock briefly
+	m.mu.RLock()
+	sessionList := make([]*RelaySession, 0, len(m.sessions))
+	sessionIDs := make([]uuid.UUID, 0, len(m.sessions))
+	for id, session := range m.sessions {
+		sessionList = append(sessionList, session)
+		sessionIDs = append(sessionIDs, id)
+	}
+	idleGracePeriod := m.config.IdleGracePeriod
+	sessionTimeout := m.config.SessionTimeout
+	m.mu.RUnlock()
 
+	// Evaluate each session WITHOUT holding the manager lock
+	// This allows Stats() and other operations to proceed concurrently
 	var toRemove []uuid.UUID
 
-	for id, session := range m.sessions {
-		session.mu.RLock()
-		clientCount := session.ClientCount()
-		closed := session.closed
-		session.mu.RUnlock()
+	for i, session := range sessionList {
+		id := sessionIDs[i]
 
-		// Use helper methods for atomic values
+		// Check session state using atomic load (no locks needed)
+		closed := session.closed.Load()
+
+		// ClientCount() uses processorsMu, not the manager lock
+		clientCount := session.ClientCount()
+
+		// Use helper methods for atomic values (no locks needed)
 		lastActivity := session.LastActivity()
 		idleSince := session.IdleSince()
 
@@ -528,13 +572,13 @@ func (m *Manager) cleanupStaleSessions() {
 			shouldRemove = true
 		} else if clientCount == 0 {
 			// Session has no clients - check idle grace period
-			if !idleSince.IsZero() && time.Since(idleSince) > m.config.IdleGracePeriod {
+			if !idleSince.IsZero() && time.Since(idleSince) > idleGracePeriod {
 				// Session has been idle longer than the grace period
 				m.logger.Info("Closing idle session after grace period",
 					slog.String("session_id", id.String()),
 					slog.Duration("idle_duration", time.Since(idleSince)))
 				shouldRemove = true
-			} else if idleSince.IsZero() && time.Since(lastActivity) > m.config.SessionTimeout {
+			} else if idleSince.IsZero() && time.Since(lastActivity) > sessionTimeout {
 				// Fallback: no idleSince set but inactive for too long
 				shouldRemove = true
 			}
@@ -545,6 +589,12 @@ func (m *Manager) cleanupStaleSessions() {
 		}
 	}
 
+	// Only acquire write lock if we have sessions to remove
+	if len(toRemove) == 0 {
+		return
+	}
+
+	m.mu.Lock()
 	for _, id := range toRemove {
 		if session, ok := m.sessions[id]; ok {
 			delete(m.sessions, id)
@@ -552,6 +602,7 @@ func (m *Manager) cleanupStaleSessions() {
 			go session.Close()
 		}
 	}
+	m.mu.Unlock()
 }
 
 // ManagerStats holds manager statistics.

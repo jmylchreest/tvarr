@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jmylchreest/tvarr/internal/config"
 	"github.com/jmylchreest/tvarr/internal/ffmpeg"
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/relay"
@@ -77,11 +78,43 @@ func (s *RelayService) WithLogger(logger *slog.Logger) *RelayService {
 // WithHTTPClient sets the HTTP client for the relay manager.
 func (s *RelayService) WithHTTPClient(client *http.Client) *RelayService {
 	// Recreate manager with custom config
-	config := relay.DefaultManagerConfig()
-	config.HTTPClient = client
-	config.CodecRepo = s.lastKnownCodecRepo
+	managerConfig := relay.DefaultManagerConfig()
+	managerConfig.HTTPClient = client
+	managerConfig.CodecRepo = s.lastKnownCodecRepo
 	s.relayManager.Close()
-	s.relayManager = relay.NewManager(config)
+	s.relayManager = relay.NewManager(managerConfig)
+	return s
+}
+
+// WithBufferConfig configures the relay buffer settings from application config.
+// This converts config.BufferConfig to relay.SharedESBufferConfig and recreates the manager.
+func (s *RelayService) WithBufferConfig(bufferCfg config.BufferConfig) *RelayService {
+	managerConfig := relay.DefaultManagerConfig()
+	managerConfig.CodecRepo = s.lastKnownCodecRepo
+
+	// Convert application config to relay buffer config
+	bufferConfig := relay.DefaultSharedESBufferConfig()
+	if bufferCfg.MaxDuration > 0 {
+		bufferConfig.MaxDuration = bufferCfg.MaxDuration
+	}
+	if bufferCfg.MaxTrackBytes > 0 {
+		bufferConfig.MaxVideoBytes = uint64(bufferCfg.MaxTrackBytes)
+		bufferConfig.MaxAudioBytes = uint64(bufferCfg.MaxTrackBytes)
+	}
+	if bufferCfg.MaxVariantBytes > 0 {
+		bufferConfig.MaxVariantBytes = uint64(bufferCfg.MaxVariantBytes)
+	}
+
+	managerConfig.BufferConfig = bufferConfig
+	s.relayManager.Close()
+	s.relayManager = relay.NewManager(managerConfig)
+
+	s.logger.Info("Relay buffer config applied",
+		"max_duration", bufferConfig.MaxDuration,
+		"max_track_bytes", bufferConfig.MaxVideoBytes,
+		"max_variant_bytes", bufferConfig.MaxVariantBytes,
+	)
+
 	return s
 }
 

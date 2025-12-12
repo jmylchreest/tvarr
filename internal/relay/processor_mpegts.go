@@ -74,13 +74,14 @@ type MPEGTSProcessor struct {
 
 // mpegtsStreamClient represents a connected streaming client.
 type mpegtsStreamClient struct {
-	id           string
-	writer       http.ResponseWriter
-	flusher      http.Flusher
-	done         chan struct{}
-	mu           sync.Mutex
-	bytesWritten uint64
-	startedAt    time.Time
+	id              string
+	writer          http.ResponseWriter
+	flusher         http.Flusher
+	done            chan struct{}
+	mu              sync.Mutex
+	bytesWritten    uint64
+	startedAt       time.Time
+	waitForKeyframe bool // True if client is waiting for next keyframe before receiving data
 }
 
 // NewMPEGTSProcessor creates a new MPEG-TS processor.
@@ -181,26 +182,29 @@ func (p *MPEGTSProcessor) RegisterClient(clientID string, w http.ResponseWriter,
 	}
 
 	client := &mpegtsStreamClient{
-		id:        clientID,
-		writer:    w,
-		flusher:   flusher,
-		done:      make(chan struct{}),
-		startedAt: time.Now(),
+		id:              clientID,
+		writer:          w,
+		flusher:         flusher,
+		done:            make(chan struct{}),
+		startedAt:       time.Now(),
+		waitForKeyframe: true, // New clients wait for next keyframe before receiving data
 	}
 
 	p.streamClientsMu.Lock()
 	p.streamClients[clientID] = client
+	clientCount := len(p.streamClients)
 	p.streamClientsMu.Unlock()
 
 	// Also register with base processor for stats
 	p.RegisterClientBase(clientID, w, r)
 
 	p.config.Logger.Debug("Registered MPEG-TS stream client",
-		slog.String("client_id", clientID))
+		slog.String("client_id", clientID),
+		slog.Bool("waiting_for_keyframe", true))
 
 	// Notify callback of client change
 	if p.config.OnClientChange != nil {
-		p.config.OnClientChange(len(p.streamClients))
+		p.config.OnClientChange(clientCount)
 	}
 
 	return nil
@@ -308,13 +312,13 @@ func (p *MPEGTSProcessor) runProcessingLoop(esVariant *ESVariant) {
 
 		case <-ticker.C:
 			// Read and process samples
-			p.processAvailableSamples(videoTrack, audioTrack)
+			hasKeyframe := p.processAvailableSamples(videoTrack, audioTrack)
 
 			// Flush muxer and broadcast to clients
 			p.muxer.Flush()
 			if p.muxerBuf.Len() > 0 {
 				data := p.muxerBuf.Bytes()
-				p.broadcastToClients(data)
+				p.broadcastToClients(data, hasKeyframe)
 				p.muxerBuf.Reset()
 			}
 		}
@@ -322,10 +326,16 @@ func (p *MPEGTSProcessor) runProcessingLoop(esVariant *ESVariant) {
 }
 
 // processAvailableSamples reads and muxes available ES samples.
-func (p *MPEGTSProcessor) processAvailableSamples(videoTrack, audioTrack *ESTrack) {
+// Returns true if a keyframe was processed (to trigger keyframe buffer update).
+func (p *MPEGTSProcessor) processAvailableSamples(videoTrack, audioTrack *ESTrack) bool {
+	hasKeyframe := false
+
 	// Read video samples
 	videoSamples := videoTrack.ReadFrom(p.lastVideoSeq, 100)
 	for _, sample := range videoSamples {
+		if sample.IsKeyframe {
+			hasKeyframe = true
+		}
 		// Ignore muxer errors - continue streaming on failures
 		_ = p.muxer.WriteVideo(sample.PTS, sample.DTS, sample.Data, sample.IsKeyframe)
 		p.lastVideoSeq = sample.Sequence
@@ -338,10 +348,14 @@ func (p *MPEGTSProcessor) processAvailableSamples(videoTrack, audioTrack *ESTrac
 		_ = p.muxer.WriteAudio(sample.PTS, sample.Data)
 		p.lastAudioSeq = sample.Sequence
 	}
+
+	return hasKeyframe
 }
 
 // broadcastToClients sends data to all connected streaming clients.
-func (p *MPEGTSProcessor) broadcastToClients(data []byte) {
+// New clients wait for the next keyframe before receiving data.
+// This ensures they can start decoding immediately.
+func (p *MPEGTSProcessor) broadcastToClients(data []byte, hasKeyframe bool) {
 	if len(data) == 0 {
 		return
 	}
@@ -362,6 +376,22 @@ func (p *MPEGTSProcessor) broadcastToClients(data []byte) {
 		}
 
 		client.mu.Lock()
+
+		// If client is waiting for keyframe, check if this data has one
+		if client.waitForKeyframe {
+			if hasKeyframe {
+				// Keyframe found - start sending data to this client
+				client.waitForKeyframe = false
+				p.config.Logger.Debug("Client starting at keyframe",
+					slog.String("client_id", client.id))
+			} else {
+				// No keyframe yet - skip this client
+				client.mu.Unlock()
+				continue
+			}
+		}
+
+		// Send data
 		_, err := client.writer.Write(data)
 		if err != nil {
 			client.mu.Unlock()

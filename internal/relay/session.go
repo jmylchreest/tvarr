@@ -135,6 +135,11 @@ type RelaySession struct {
 	lastActivity atomic.Value // time.Time - last activity timestamp
 	idleSince    atomic.Value // time.Time - when session became idle (zero if not idle)
 
+	// Session state - atomic to avoid lock contention with stats collection
+	closed     atomic.Bool           // Whether session is closed
+	inFallback atomic.Bool           // Whether session is in fallback mode
+	lastErr    atomic.Pointer[error] // Last error (if any)
+
 	// Resource history for sparklines (CPU/memory over time)
 	resourceHistory *ResourceHistory
 
@@ -170,14 +175,12 @@ type RelaySession struct {
 	esTranscoders     []*FFmpegTranscoder                // Active transcoders for codec variants
 	esTranscodersMu   sync.RWMutex
 
-	mu            sync.RWMutex
+	// Legacy fields - set once during pipeline init, read-only afterward
+	// Protected by readyCh synchronization (readers wait for ready before accessing)
 	ffmpegCmd     *ffmpeg.Command // Running FFmpeg command for stats access
 	hlsCollapser  *HLSCollapser
 	hlsRepackager *HLSRepackager // HLS-to-HLS repackaging (container format change)
 	inputReader   io.ReadCloser
-	closed        bool
-	err           error
-	inFallback    bool
 
 	// Pipeline readiness signaling
 	readyCh   chan struct{} // Closed when pipeline is ready for clients
@@ -205,19 +208,15 @@ func (s *RelaySession) start(ctx context.Context) error {
 func (s *RelaySession) runPipeline() {
 	var err error
 	defer func() {
-		s.mu.Lock()
-		s.err = err
-		s.closed = true
-		s.mu.Unlock()
+		if err != nil {
+			s.lastErr.Store(&err)
+		}
+		s.closed.Store(true)
 	}()
 
 	for {
 		// Check if we're in fallback mode
-		s.mu.RLock()
-		inFallback := s.inFallback
-		s.mu.RUnlock()
-
-		if inFallback {
+		if s.inFallback.Load() {
 			err = s.runFallbackStream()
 			if err != nil && !errors.Is(err, context.Canceled) {
 				// Fallback stream failed, exit pipeline
@@ -238,9 +237,7 @@ func (s *RelaySession) runPipeline() {
 		// If error occurred and fallback is configured, switch to fallback
 		if err != nil && s.fallbackController != nil {
 			if s.fallbackController.CheckError(err.Error()) {
-				s.mu.Lock()
-				s.inFallback = true
-				s.mu.Unlock()
+				s.inFallback.Store(true)
 				continue // Start fallback stream
 			}
 		}
@@ -397,9 +394,7 @@ func (s *RelaySession) runRecoveryLoop(done <-chan bool) {
 		if s.testUpstreamRecovery() {
 			// Upstream recovered - exit fallback mode
 			s.fallbackController.RecoverySucceeded()
-			s.mu.Lock()
-			s.inFallback = false
-			s.mu.Unlock()
+			s.inFallback.Store(false)
 
 			// Cancel current context to stop the fallback stream
 			// The runFallbackStream will return and runPipeline will restart normal pipeline
@@ -450,17 +445,15 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 	}
 
 	collapser := NewHLSCollapser(s.manager.config.HTTPClient, playlistURL)
-
-	s.mu.Lock()
 	s.hlsCollapser = collapser
-	s.mu.Unlock()
 
 	if err := collapser.Start(s.ctx); err != nil {
 		return fmt.Errorf("starting HLS collapser: %w", err)
 	}
 
 	// Initialize the ES pipeline to process collapsed HLS content
-	esConfig := DefaultSharedESBufferConfig()
+	// Use buffer config from the manager if available, otherwise defaults
+	esConfig := s.manager.config.BufferConfig
 	esConfig.Logger = slog.Default()
 	s.esBuffer = NewSharedESBuffer(s.ChannelID.String(), s.ID.String(), esConfig)
 
@@ -611,9 +604,7 @@ func (s *RelaySession) runHLSRepackagePipeline() error {
 		Logger:             slog.Default(),
 	})
 
-	s.mu.Lock()
 	s.hlsRepackager = repackager
-	s.mu.Unlock()
 
 	// Start the repackager
 	if err := repackager.Start(); err != nil {
@@ -678,11 +669,9 @@ func (s *RelaySession) runHLSPassthroughPipeline() error {
 	s.hlsPassthrough = NewHLSPassthroughHandler(playlistURL, baseURL, config)
 
 	// Register with format router if available
-	s.mu.Lock()
 	if s.formatRouter != nil {
 		s.formatRouter.RegisterPassthroughHandler(FormatValueHLS, s.hlsPassthrough)
 	}
-	s.mu.Unlock()
 
 	// Signal that the pipeline is ready for clients
 	s.markReady()
@@ -710,11 +699,9 @@ func (s *RelaySession) runDASHPassthroughPipeline() error {
 	s.dashPassthrough = NewDASHPassthroughHandler(s.StreamURL, baseURL, config)
 
 	// Register with format router if available
-	s.mu.Lock()
 	if s.formatRouter != nil {
 		s.formatRouter.RegisterPassthroughHandler(FormatValueDASH, s.dashPassthrough)
 	}
-	s.mu.Unlock()
 
 	// Signal that the pipeline is ready for clients
 	s.markReady()
@@ -792,7 +779,8 @@ func (s *RelaySession) getTargetVariant() CodecVariant {
 // 5. Processors read from target variant
 func (s *RelaySession) runESPipeline() error {
 	// Initialize the shared ES buffer
-	esConfig := DefaultSharedESBufferConfig()
+	// Use buffer config from the manager if available, otherwise defaults
+	esConfig := s.manager.config.BufferConfig
 	esConfig.Logger = slog.Default()
 	s.esBuffer = NewSharedESBuffer(s.ChannelID.String(), s.ID.String(), esConfig)
 
@@ -922,34 +910,78 @@ func (s *RelaySession) runESPipeline() error {
 // runIngestLoop fetches upstream MPEG-TS and feeds it to the demuxer.
 // This runs in a goroutine and populates the SharedESBuffer with elementary streams.
 func (s *RelaySession) runIngestLoop(inputURL string, demuxer *TSDemuxer) error {
+	slog.Info("Ingest loop starting",
+		slog.String("session_id", s.ID.String()),
+		slog.String("url", inputURL))
+
 	// Fetch upstream MPEG-TS and feed to demuxer
 	req, err := http.NewRequestWithContext(s.ctx, http.MethodGet, inputURL, nil)
 	if err != nil {
+		slog.Error("Ingest loop: failed to create request",
+			slog.String("session_id", s.ID.String()),
+			slog.String("error", err.Error()))
 		return err
 	}
 
 	resp, err := s.manager.config.HTTPClient.Do(req)
 	if err != nil {
+		slog.Error("Ingest loop: HTTP request failed",
+			slog.String("session_id", s.ID.String()),
+			slog.String("error", err.Error()))
 		return err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		slog.Error("Ingest loop: upstream returned non-200 status",
+			slog.String("session_id", s.ID.String()),
+			slog.Int("status", resp.StatusCode))
 		return fmt.Errorf("upstream returned HTTP %d", resp.StatusCode)
 	}
 
-	s.mu.Lock()
+	// Log upstream response headers for debugging stream termination issues
+	contentLength := resp.Header.Get("Content-Length")
+	contentType := resp.Header.Get("Content-Type")
+	transferEncoding := resp.Header.Get("Transfer-Encoding")
+	connection := resp.Header.Get("Connection")
+	slog.Info("Upstream response received",
+		slog.String("session_id", s.ID.String()),
+		slog.String("url", inputURL),
+		slog.Int("status", resp.StatusCode),
+		slog.String("content_length", contentLength),
+		slog.String("content_type", contentType),
+		slog.String("transfer_encoding", transferEncoding),
+		slog.String("connection", connection),
+		slog.Int64("content_length_parsed", resp.ContentLength))
+
+	// Warn if Content-Length is set - this indicates a finite stream, not live
+	if resp.ContentLength > 0 {
+		slog.Warn("Upstream sent Content-Length header - stream may be finite, not live",
+			slog.String("session_id", s.ID.String()),
+			slog.Int64("content_length", resp.ContentLength))
+	}
+
 	s.inputReader = resp.Body
-	s.mu.Unlock()
 
 	// Update last activity using atomic to avoid blocking stats collection
 	s.lastActivity.Store(time.Now())
 
 	// Read from upstream and feed to demuxer
 	buf := make([]byte, 64*1024)
+	var totalBytesRead uint64
+	startTime := time.Now()
+
+	slog.Info("Ingest loop: starting read loop",
+		slog.String("session_id", s.ID.String()))
+
 	for {
 		select {
 		case <-s.ctx.Done():
+			slog.Info("Ingest loop: context cancelled",
+				slog.String("session_id", s.ID.String()),
+				slog.Uint64("total_bytes_read", totalBytesRead),
+				slog.Duration("duration", time.Since(startTime)),
+				slog.String("context_err", s.ctx.Err().Error()))
 			demuxer.Flush()
 			return s.ctx.Err()
 		default:
@@ -958,11 +990,33 @@ func (s *RelaySession) runIngestLoop(inputURL string, demuxer *TSDemuxer) error 
 		n, err := resp.Body.Read(buf)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
+				slog.Info("Ingest loop: upstream stream ended (EOF)",
+					slog.String("session_id", s.ID.String()),
+					slog.String("url", inputURL),
+					slog.Uint64("total_bytes_read", totalBytesRead),
+					slog.Duration("duration", time.Since(startTime)))
 				demuxer.Flush()
 				return nil
 			}
+			// Check if this is a context cancellation error
+			if errors.Is(err, context.Canceled) {
+				slog.Info("Ingest loop: read cancelled by context",
+					slog.String("session_id", s.ID.String()),
+					slog.Uint64("total_bytes_read", totalBytesRead),
+					slog.Duration("duration", time.Since(startTime)))
+				demuxer.Flush()
+				return err
+			}
+			slog.Warn("Ingest loop: upstream read error",
+				slog.String("session_id", s.ID.String()),
+				slog.String("error", err.Error()),
+				slog.String("error_type", fmt.Sprintf("%T", err)),
+				slog.Uint64("total_bytes_read", totalBytesRead),
+				slog.Duration("duration", time.Since(startTime)))
 			return err
 		}
+
+		totalBytesRead += uint64(n)
 
 		if n > 0 {
 			if err := demuxer.Write(buf[:n]); err != nil {
@@ -1204,9 +1258,8 @@ func (s *RelaySession) handleVariantRequest(source, target CodecVariant) error {
 }
 
 // GetESBuffer returns the shared ES buffer for this session.
+// This is set during pipeline init and read-only afterward.
 func (s *RelaySession) GetESBuffer() *SharedESBuffer {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
 	return s.esBuffer
 }
 
@@ -1515,9 +1568,6 @@ func (s *RelaySession) ClientCount() int {
 func (s *RelaySession) UpdateIdleState() {
 	clientCount := s.ClientCount()
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if clientCount == 0 {
 		// No clients - mark as idle if not already
 		idleSince, _ := s.idleSince.Load().(time.Time)
@@ -1592,7 +1642,6 @@ func (s *RelaySession) StopProcessorIfIdle(processorType string) {
 	}
 
 	// Update session idle state after processor cleanup
-	s.mu.Lock()
 	clientCount := s.ClientCount()
 	idleSince, _ := s.idleSince.Load().(time.Time)
 	if clientCount == 0 && idleSince.IsZero() {
@@ -1600,18 +1649,14 @@ func (s *RelaySession) StopProcessorIfIdle(processorType string) {
 		slog.Debug("Session became idle after processor cleanup",
 			slog.String("session_id", s.ID.String()))
 	}
-	s.mu.Unlock()
 }
 
 // Close closes the session and releases resources.
 func (s *RelaySession) Close() {
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
+	// Use CompareAndSwap to ensure Close() is only executed once
+	if !s.closed.CompareAndSwap(false, true) {
 		return
 	}
-	s.closed = true
-	s.mu.Unlock()
 
 	s.cancel()
 
@@ -1720,23 +1765,24 @@ func (s *RelaySession) Stats() SessionStats {
 	var deliveryContext *DeliveryContext
 	var classification ClassificationResult
 
-	s.mu.RLock()
-	if s.err != nil {
-		errStr = s.err.Error()
+	// Read atomic state values
+	if errPtr := s.lastErr.Load(); errPtr != nil {
+		errStr = (*errPtr).Error()
 	}
 	profileName = "passthrough"
 	if s.Profile != nil {
 		profileName = s.Profile.Name
 	}
-	closed = s.closed
-	inFallback = s.inFallback
+	closed = s.closed.Load()
+	inFallback = s.inFallback.Load()
+
+	// These fields are set once during init and read-only afterward
 	esBuffer = s.esBuffer
 	ffmpegCmd = s.ffmpegCmd
 	fallbackController = s.fallbackController
 	cachedCodecInfo = s.CachedCodecInfo
 	deliveryContext = s.DeliveryContext
 	classification = s.Classification
-	s.mu.RUnlock()
 
 	// Get stats from ES buffer if available (has its own lock)
 	var bytesWritten uint64
@@ -2197,9 +2243,9 @@ type ESTranscoderStats struct {
 }
 
 // GetFormatRouter returns the format router for handling output format requests.
+// GetFormatRouter returns the format router for this session.
+// This is set during pipeline init and read-only afterward.
 func (s *RelaySession) GetFormatRouter() *FormatRouter {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
 	return s.formatRouter
 }
 
@@ -2236,11 +2282,8 @@ func (s *RelaySession) WaitReady(ctx context.Context) error {
 		return ctx.Err()
 	case <-s.ctx.Done():
 		// Session was closed before becoming ready
-		s.mu.RLock()
-		err := s.err
-		s.mu.RUnlock()
-		if err != nil {
-			return err
+		if errPtr := s.lastErr.Load(); errPtr != nil {
+			return *errPtr
 		}
 		return ErrSessionClosed
 	}
@@ -2257,17 +2300,17 @@ func (s *RelaySession) IsReady() bool {
 }
 
 // GetContainerFormat returns the current container format.
+// GetContainerFormat returns the current container format.
+// This is set during pipeline init and read-only afterward.
 func (s *RelaySession) GetContainerFormat() models.ContainerFormat {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
 	return s.containerFormat
 }
 
 // SupportsFormat returns true if the session can serve content in the requested format.
+// SupportsFormat checks if the session supports the given output format.
+// This is safe to call without locks because formatRouter is set once during
+// pipeline init and only read afterward.
 func (s *RelaySession) SupportsFormat(format string) bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	if s.formatRouter == nil {
 		// Only MPEG-TS is supported without format router
 		return format == FormatValueMPEGTS || format == ""
@@ -2282,35 +2325,37 @@ func (s *RelaySession) SupportsFormat(format string) bool {
 }
 
 // GetOutputHandler returns the appropriate output handler for the requested format.
+// GetOutputHandler returns the output handler for the given request.
+// This is safe to call without locks because formatRouter is set once during
+// pipeline init and only read afterward.
 func (s *RelaySession) GetOutputHandler(req OutputRequest) (OutputHandler, error) {
-	s.mu.RLock()
-	router := s.formatRouter
-	s.mu.RUnlock()
-
-	if router == nil {
+	if s.formatRouter == nil {
 		return nil, ErrNoHandlerAvailable
 	}
-	return router.GetHandler(req)
+	return s.formatRouter.GetHandler(req)
 }
 
 // IsPassthroughMode returns true if the session is using passthrough handlers.
+// IsPassthroughMode returns true if the session is in passthrough mode.
+// This is safe to call without locks because hlsPassthrough and dashPassthrough
+// are set once during pipeline init and only read afterward.
 func (s *RelaySession) IsPassthroughMode() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
 	return s.hlsPassthrough != nil || s.dashPassthrough != nil
 }
 
 // GetHLSPassthrough returns the HLS passthrough handler if available.
+// GetHLSPassthrough returns the HLS passthrough handler if available.
+// This is safe to call without locks because hlsPassthrough is set once during
+// pipeline init and only read afterward.
 func (s *RelaySession) GetHLSPassthrough() *HLSPassthroughHandler {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
 	return s.hlsPassthrough
 }
 
 // GetDASHPassthrough returns the DASH passthrough handler if available.
+// GetDASHPassthrough returns the DASH passthrough handler if available.
+// This is safe to call without locks because dashPassthrough is set once during
+// pipeline init and only read afterward.
 func (s *RelaySession) GetDASHPassthrough() *DASHPassthroughHandler {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
 	return s.dashPassthrough
 }
 
