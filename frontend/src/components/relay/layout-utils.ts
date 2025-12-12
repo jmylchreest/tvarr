@@ -27,7 +27,7 @@ interface FlowNode {
 
 // Layout configuration
 interface LayoutConfig {
-  /** Horizontal spacing between columns */
+  /** Base horizontal spacing between columns */
   columnSpacing: number;
   /** Vertical spacing between nodes in the same column */
   rowSpacing: number;
@@ -44,11 +44,11 @@ interface LayoutConfig {
 }
 
 const DEFAULT_CONFIG: LayoutConfig = {
-  columnSpacing: 80, // Base gap between node edges (minimum)
-  rowSpacing: 140, // Space between rows (reduced for compactness)
-  transcoderOffset: 160, // How far above buffer the transcoder sits
+  columnSpacing: 100, // Base gap between node edges
+  rowSpacing: 140, // Space between rows
+  transcoderOffset: 180, // How far above buffer the transcoder sits
   startX: 50,
-  startY: 140, // Extra top margin for transcoder
+  startY: 200, // Extra top margin for transcoder
   nodeWidths: {
     origin: 256,
     buffer: 224,
@@ -67,9 +67,9 @@ const DEFAULT_CONFIG: LayoutConfig = {
 
 // Edge length constraints for adaptive layout
 const EDGE_CONSTRAINTS = {
-  minLength: 60, // Minimum visible edge line length
-  maxLength: 120, // Maximum edge line length (keeps things compact)
-  targetLength: 80, // Ideal edge length
+  minGap: 80, // Minimum gap between node edges
+  maxGap: 140, // Maximum gap between node edges
+  targetGap: 100, // Ideal gap between node edges
 };
 
 /**
@@ -126,6 +126,21 @@ function getClientProcessorMap(nodes: FlowNode[], edges: Edge[]): Map<string, st
 }
 
 /**
+ * Calculate adaptive gap based on total node count.
+ * More nodes = tighter gaps to keep layout compact.
+ * Fewer nodes = larger gaps for better readability.
+ */
+function calculateAdaptiveGap(totalNodes: number): number {
+  // Scale factor: fewer nodes get more space
+  // 5 nodes = 1.2x, 10 nodes = 1.0x, 20 nodes = 0.8x
+  const scaleFactor = Math.max(0.8, Math.min(1.2, 10 / Math.max(totalNodes, 5)));
+  const gap = EDGE_CONSTRAINTS.targetGap * scaleFactor;
+
+  // Clamp to min/max
+  return Math.max(EDGE_CONSTRAINTS.minGap, Math.min(EDGE_CONSTRAINTS.maxGap, gap));
+}
+
+/**
  * Calculates optimal layout for relay flow nodes.
  *
  * Layout strategy:
@@ -133,7 +148,7 @@ function getClientProcessorMap(nodes: FlowNode[], edges: Edge[]): Map<string, st
  * 2. Within each session, arrange nodes in columns by type
  * 3. Position transcoder above buffer with sufficient clearance
  * 4. Position clients vertically aligned with their connected processor
- * 5. Ensure consistent spacing between all node types
+ * 5. Use adaptive spacing based on total node count
  */
 export function calculateLayout<T extends FlowNode>(
   nodes: T[],
@@ -192,8 +207,7 @@ export function calculateLayout<T extends FlowNode>(
     // Calculate center Y for this session's main row
     const sessionCenterY = sessionYOffset + (maxNodesInColumn * cfg.rowSpacing) / 2;
 
-    // Adaptive gap calculation based on node complexity
-    // More nodes = tighter gaps to keep layout compact
+    // Calculate adaptive gap based on total node count in this session
     const totalNodes =
       originNodes.length +
       bufferNodes.length +
@@ -201,17 +215,10 @@ export function calculateLayout<T extends FlowNode>(
       processorNodes.length +
       clientNodes.length;
 
-    // Scale gap inversely with node count, but stay within constraints
-    const baseGap = EDGE_CONSTRAINTS.targetLength;
-    const scaleFactor = Math.max(0.7, Math.min(1.2, 8 / Math.max(totalNodes, 4)));
-    const adaptiveGap = Math.max(
-      EDGE_CONSTRAINTS.minLength,
-      Math.min(EDGE_CONSTRAINTS.maxLength, baseGap * scaleFactor)
-    );
+    const gap = calculateAdaptiveGap(totalNodes);
 
-    // Column X positions - consistent gaps between all nodes
+    // Column X positions - using adaptive gaps between node edges
     // Each column is: previous column X + previous node width + gap
-    const gap = adaptiveGap;
     const originX = cfg.startX;
     const bufferX = originX + cfg.nodeWidths.origin + gap;
     const processorX = bufferX + cfg.nodeWidths.buffer + gap;
@@ -257,10 +264,10 @@ export function calculateLayout<T extends FlowNode>(
     // Position processor nodes (column 2)
     const processorPositions: Map<string, { x: number; y: number }> = new Map();
 
-    // Adaptive row spacing for processors - tighter when there are many
+    // Adaptive row spacing for processors when there are many
     const processorRowSpacing =
-      processorNodes.length > 2
-        ? Math.max(cfg.nodeHeights.processor + 20, cfg.rowSpacing * 0.6)
+      processorNodes.length > 3
+        ? Math.max(cfg.nodeHeights.processor + 30, cfg.rowSpacing * 0.7)
         : cfg.rowSpacing;
 
     if (processorNodes.length === 1) {
@@ -290,11 +297,10 @@ export function calculateLayout<T extends FlowNode>(
 
     // Position client nodes - grouped by processor
     // Adaptive spacing based on client count
-    const baseClientSpacing = cfg.nodeHeights.client + 15;
     const clientVerticalSpacing =
-      clientNodes.length > 4
-        ? Math.max(baseClientSpacing * 0.8, cfg.nodeHeights.client + 5)
-        : Math.min(baseClientSpacing, 120);
+      clientNodes.length > 5
+        ? Math.max(cfg.nodeHeights.client + 10, 100)
+        : cfg.nodeHeights.client + 20;
 
     for (const [processorId, clients] of clientsByProcessor) {
       const processorPos = processorPositions.get(processorId);

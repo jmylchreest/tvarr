@@ -452,7 +452,8 @@ func (t *FFmpegTranscoder) startFFmpeg() error {
 	builder := ffmpeg.NewCommandBuilder(ffmpegPath)
 
 	// Global flags
-	builder.HideBanner().LogLevel("warning")
+	// Use Stats() to force progress output (including speed) even when not a terminal
+	builder.HideBanner().LogLevel("warning").Stats()
 
 	// Hardware acceleration (if configured)
 	if t.config.HWAccel != "" {

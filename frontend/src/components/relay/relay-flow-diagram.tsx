@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useEffect } from 'react';
+import { useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   ReactFlow,
   Controls,
@@ -12,6 +12,7 @@ import {
   ReactFlowProvider,
   type Node,
   type Edge,
+  type NodeChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
@@ -52,16 +53,19 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: Relay
 
   const { fitView } = useReactFlow();
 
+  // Track if this is the initial load (for fitView)
+  const isInitialLoad = useRef(true);
+  // Track known node IDs to detect new nodes
+  const knownNodeIds = useRef<Set<string>>(new Set());
+  // Track manually moved nodes (don't auto-position these)
+  const manuallyMovedNodes = useRef<Set<string>>(new Set());
+
   // Convert flow graph data to React Flow format
-  // Backend sends node data with relationships, frontend handles positioning and edge handles
-  // Using 'any' casts to work around @xyflow/react's strict Record<string, unknown> constraint
   const { nodes: rawNodes, edges } = useMemo(() => {
     if (!data?.nodes || !data?.edges) {
       return { nodes: [] as Node[], edges: [] as Edge[] };
     }
 
-    // Extract nodes without using backend positions
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const nodes: Node[] = data.nodes.map((node) => ({
       id: node.id,
       type: node.type,
@@ -70,8 +74,6 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: Relay
       parentId: node.parentId,
     }));
 
-    // Extract backend edges and transform them with proper handle IDs
-    // The frontend determines handle IDs based on node types to ensure correct connections
     const backendEdges = data.edges.map((edge) => ({
       id: edge.id,
       source: edge.source,
@@ -82,13 +84,12 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: Relay
       style: edge.style as React.CSSProperties | undefined,
     }));
 
-    // Build edges with correct handle IDs based on node types
     const edges: Edge[] = buildEdgesWithHandles(nodes, backendEdges);
 
     return { nodes, edges };
   }, [data?.nodes, data?.edges]);
 
-  // Calculate layout on frontend
+  // Calculate layout for new nodes only
   const layoutedNodes = useMemo((): Node[] => {
     if (rawNodes.length === 0) return [];
     return calculateLayout(rawNodes, edges);
@@ -97,23 +98,88 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: Relay
   const [nodesState, setNodes, onNodesChange] = useNodesState(layoutedNodes);
   const [edgesState, setEdges, onEdgesChange] = useEdgesState(edges);
 
+  // Custom node change handler that tracks manual moves
+  const handleNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      for (const change of changes) {
+        // Track nodes that the user has manually dragged
+        if (change.type === 'position' && change.dragging === false && change.id) {
+          manuallyMovedNodes.current.add(change.id);
+        }
+      }
+      onNodesChange(changes);
+    },
+    [onNodesChange]
+  );
+
   // Update nodes and edges when data changes
+  // Key insight: only update DATA for existing nodes, preserve their positions
   useEffect(() => {
-    if (layoutedNodes.length > 0) {
-      setNodes(layoutedNodes);
-      setEdges(edges);
-      // Fit view after layout update with a small delay to ensure nodes are rendered
+    if (layoutedNodes.length === 0) return;
+
+    setNodes((currentNodes) => {
+      // Build a map of current node positions
+      const currentPositions = new Map<string, { x: number; y: number }>();
+      for (const node of currentNodes) {
+        currentPositions.set(node.id, node.position);
+      }
+
+      // Identify new nodes (not seen before)
+      const newNodeIds = new Set<string>();
+      for (const node of layoutedNodes) {
+        if (!knownNodeIds.current.has(node.id)) {
+          newNodeIds.add(node.id);
+          knownNodeIds.current.add(node.id);
+        }
+      }
+
+      // Clean up known nodes that no longer exist
+      const currentNodeIds = new Set(layoutedNodes.map((n) => n.id));
+      for (const id of knownNodeIds.current) {
+        if (!currentNodeIds.has(id)) {
+          knownNodeIds.current.delete(id);
+          manuallyMovedNodes.current.delete(id);
+        }
+      }
+
+      // Merge: keep existing positions for known nodes, use layout for new nodes
+      return layoutedNodes.map((layoutedNode) => {
+        const existingPosition = currentPositions.get(layoutedNode.id);
+        const isNewNode = newNodeIds.has(layoutedNode.id);
+        const wasManuallyMoved = manuallyMovedNodes.current.has(layoutedNode.id);
+
+        // Use existing position if:
+        // 1. Node existed before AND (was manually moved OR we have a position for it)
+        // Use layout position if:
+        // 1. Node is new
+        const shouldUseExistingPosition =
+          !isNewNode && existingPosition && (wasManuallyMoved || currentNodes.length > 0);
+
+        return {
+          ...layoutedNode,
+          position: shouldUseExistingPosition ? existingPosition : layoutedNode.position,
+        };
+      });
+    });
+
+    setEdges(edges);
+
+    // Only fit view on initial load or when new nodes are added
+    if (isInitialLoad.current) {
+      isInitialLoad.current = false;
       setTimeout(() => {
         fitView({ padding: 0.15, duration: 200 });
-      }, 50);
+      }, 100);
     }
   }, [layoutedNodes, edges, setNodes, setEdges, fitView]);
 
   const onInit = useCallback(() => {
     // Fit view on initial load
-    setTimeout(() => {
-      fitView({ padding: 0.15 });
-    }, 100);
+    if (isInitialLoad.current) {
+      setTimeout(() => {
+        fitView({ padding: 0.15 });
+      }, 100);
+    }
   }, [fitView]);
 
   if (isLoading && !data) {
@@ -186,7 +252,7 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: Relay
             <ReactFlow
               nodes={nodesState}
               edges={edgesState}
-              onNodesChange={onNodesChange}
+              onNodesChange={handleNodesChange}
               onEdgesChange={onEdgesChange}
               onInit={onInit}
               nodeTypes={nodeTypes}
