@@ -6,7 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import type { FlowNodeData } from '@/types/relay-flow';
 import { formatBytes } from '@/types/relay-flow';
-import { Cog, Cpu, MemoryStick, Gauge, ArrowRight, Zap } from 'lucide-react';
+import { Cog, Gauge, ArrowRight, Zap } from 'lucide-react';
+import { ResourceSparkline } from './resource-sparkline';
 
 interface TranscoderNodeProps {
   data: FlowNodeData;
@@ -14,6 +15,9 @@ interface TranscoderNodeProps {
 
 function TranscoderNode({ data }: TranscoderNodeProps) {
   const hasStats = data.transcoderCpu !== undefined || data.transcoderMemMb !== undefined;
+  const hasHistory =
+    (data.transcoderCpuHistory && data.transcoderCpuHistory.length > 0) ||
+    (data.transcoderMemHistory && data.transcoderMemHistory.length > 0);
 
   // Format encoding speed as a multiplier (e.g., "1.2x realtime")
   const formatSpeed = (speed?: number) => {
@@ -102,22 +106,15 @@ function TranscoderNode({ data }: TranscoderNodeProps) {
             </div>
           )}
 
-          {/* CPU and Memory stats */}
-          {hasStats && (
-            <div className="flex gap-3 text-xs">
-              {data.transcoderCpu !== undefined && (
-                <div className="flex items-center gap-1">
-                  <Cpu className="h-3 w-3 text-blue-500" />
-                  <span>{data.transcoderCpu.toFixed(1)}%</span>
-                </div>
-              )}
-              {data.transcoderMemMb !== undefined && (
-                <div className="flex items-center gap-1">
-                  <MemoryStick className="h-3 w-3 text-green-500" />
-                  <span>{data.transcoderMemMb.toFixed(0)} MB</span>
-                </div>
-              )}
-            </div>
+          {/* CPU and Memory sparklines */}
+          {(hasStats || hasHistory) && (
+            <ResourceSparkline
+              cpuHistory={data.transcoderCpuHistory}
+              memoryHistory={data.transcoderMemHistory}
+              currentCpu={data.transcoderCpu}
+              currentMemoryMb={data.transcoderMemMb}
+              compact={true}
+            />
           )}
 
           {/* Encoding speed */}

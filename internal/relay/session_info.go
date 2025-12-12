@@ -80,6 +80,10 @@ type RelaySessionInfo struct {
 	MemoryBytes   *uint64  `json:"memory_bytes,omitempty"`
 	MemoryPercent *float64 `json:"memory_percent,omitempty"`
 
+	// Resource history for sparkline graphs (last 30 samples, ~1 sample/sec)
+	CPUHistory    []float64 `json:"cpu_history,omitempty"`    // Historical CPU percentage values
+	MemoryHistory []float64 `json:"memory_history,omitempty"` // Historical memory MB values
+
 	// FFmpeg process info (only for transcode sessions)
 	FFmpegPID   *int             `json:"ffmpeg_pid,omitempty"`
 	FFmpegStats *FFmpegStatsInfo `json:"ffmpeg_stats,omitempty"` // Detailed FFmpeg stats
@@ -103,6 +107,10 @@ type FFmpegStatsInfo struct {
 	BytesWritten  uint64  `json:"bytes_written"`
 	WriteRateMbps float64 `json:"write_rate_mbps"`
 	DurationSecs  float64 `json:"duration_secs"`
+
+	// Resource history for sparkline graphs (last 30 samples, ~1 sample/sec)
+	CPUHistory    []float64 `json:"cpu_history,omitempty"`    // Historical CPU percentage values
+	MemoryHistory []float64 `json:"memory_history,omitempty"` // Historical memory MB values
 }
 
 // Note: BufferVariantInfo is defined in flow_types.go
@@ -206,7 +214,13 @@ func (s *SessionStats) ToSessionInfo() RelaySessionInfo {
 			BytesWritten:  s.FFmpegStats.BytesWritten,
 			WriteRateMbps: s.FFmpegStats.WriteRateMbps,
 			DurationSecs:  s.FFmpegStats.DurationSecs,
+			CPUHistory:    s.FFmpegStats.CPUHistory,
+			MemoryHistory: s.FFmpegStats.MemoryHistory,
 		}
+
+		// Copy resource history to session info level as well
+		info.CPUHistory = s.FFmpegStats.CPUHistory
+		info.MemoryHistory = s.FFmpegStats.MemoryHistory
 	}
 
 	// Copy buffer stats if present

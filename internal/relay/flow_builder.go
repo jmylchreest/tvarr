@@ -355,6 +355,10 @@ func (b *FlowBuilder) buildTranscoderNode(session RelaySessionInfo, yOffset floa
 		}
 		// Add bytes processed
 		data.TranscoderBytesIn = session.FFmpegStats.BytesWritten
+
+		// Add resource history for sparklines
+		data.TranscoderCPUHistory = session.CPUHistory
+		data.TranscoderMemHistory = session.MemoryHistory
 	}
 
 	// Source codecs - the original input codec (e.g., "h264", "aac")

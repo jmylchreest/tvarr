@@ -25,6 +25,91 @@ const (
 	VariantIdleTimeout = 60 * time.Second
 )
 
+// Resource history configuration
+const (
+	// ResourceHistorySize is the number of samples to keep for sparklines
+	ResourceHistorySize = 30
+
+	// ResourceSampleInterval is how often to sample CPU/memory stats
+	ResourceSampleInterval = 1 * time.Second
+)
+
+// ResourceHistory tracks historical CPU and memory usage for sparklines.
+type ResourceHistory struct {
+	mu           sync.RWMutex
+	cpuHistory   []float64 // Ring buffer of CPU percentages
+	memHistory   []float64 // Ring buffer of memory MB values
+	writeIndex   int       // Current write position in ring buffer
+	sampleCount  int       // Total samples written (for partial buffer)
+	lastSampleAt time.Time // Last sample time
+}
+
+// NewResourceHistory creates a new resource history tracker.
+func NewResourceHistory() *ResourceHistory {
+	return &ResourceHistory{
+		cpuHistory: make([]float64, ResourceHistorySize),
+		memHistory: make([]float64, ResourceHistorySize),
+	}
+}
+
+// AddSample adds a CPU/memory sample to the history.
+func (h *ResourceHistory) AddSample(cpuPercent, memoryMB float64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.cpuHistory[h.writeIndex] = cpuPercent
+	h.memHistory[h.writeIndex] = memoryMB
+	h.writeIndex = (h.writeIndex + 1) % ResourceHistorySize
+	if h.sampleCount < ResourceHistorySize {
+		h.sampleCount++
+	}
+	h.lastSampleAt = time.Now()
+}
+
+// GetHistory returns the CPU and memory history in chronological order.
+func (h *ResourceHistory) GetHistory() (cpuHistory, memHistory []float64) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	if h.sampleCount == 0 {
+		return nil, nil
+	}
+
+	// Calculate the actual number of samples to return
+	count := h.sampleCount
+	if count > ResourceHistorySize {
+		count = ResourceHistorySize
+	}
+
+	cpuHistory = make([]float64, count)
+	memHistory = make([]float64, count)
+
+	// Read from oldest to newest
+	if h.sampleCount >= ResourceHistorySize {
+		// Buffer is full, read from writeIndex (oldest) forward
+		for i := 0; i < count; i++ {
+			idx := (h.writeIndex + i) % ResourceHistorySize
+			cpuHistory[i] = h.cpuHistory[idx]
+			memHistory[i] = h.memHistory[idx]
+		}
+	} else {
+		// Buffer is not full, read from start
+		for i := 0; i < count; i++ {
+			cpuHistory[i] = h.cpuHistory[i]
+			memHistory[i] = h.memHistory[i]
+		}
+	}
+
+	return cpuHistory, memHistory
+}
+
+// ShouldSample returns true if enough time has passed to take a new sample.
+func (h *ResourceHistory) ShouldSample() bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return time.Since(h.lastSampleAt) >= ResourceSampleInterval
+}
+
 // ProcessorConfig holds configuration for on-demand processor creation.
 type ProcessorConfig struct {
 	TargetVariant         CodecVariant
@@ -49,6 +134,9 @@ type RelaySession struct {
 	// These are updated by the ingest loop on every read, which would block stats collection
 	lastActivity atomic.Value // time.Time - last activity timestamp
 	idleSince    atomic.Value // time.Time - when session became idle (zero if not idle)
+
+	// Resource history for sparklines (CPU/memory over time)
+	resourceHistory *ResourceHistory
 
 	// Smart delivery context (set when using smart mode)
 	DeliveryContext *DeliveryContext
@@ -1804,6 +1892,11 @@ func (s *RelaySession) Stats() SessionStats {
 	// Include FFmpeg process stats if running (legacy pipeline)
 	if ffmpegCmd != nil {
 		if procStats := ffmpegCmd.ProcessStats(); procStats != nil {
+			// Sample resource history if enough time has passed
+			if s.resourceHistory != nil && s.resourceHistory.ShouldSample() {
+				s.resourceHistory.AddSample(procStats.CPUPercent, procStats.MemoryRSSMB)
+			}
+
 			stats.FFmpegStats = &FFmpegProcessStats{
 				PID:           procStats.PID,
 				CPUPercent:    procStats.CPUPercent,
@@ -1812,6 +1905,13 @@ func (s *RelaySession) Stats() SessionStats {
 				BytesWritten:  procStats.BytesWritten,
 				WriteRateMbps: procStats.WriteRateMbps,
 				DurationSecs:  procStats.Duration.Seconds(),
+			}
+
+			// Include resource history
+			if s.resourceHistory != nil {
+				cpuHistory, memHistory := s.resourceHistory.GetHistory()
+				stats.FFmpegStats.CPUHistory = cpuHistory
+				stats.FFmpegStats.MemoryHistory = memHistory
 			}
 		}
 	}
@@ -1887,6 +1987,11 @@ func (s *RelaySession) Stats() SessionStats {
 		// If no legacy FFmpeg stats but we have ES transcoders, populate FFmpegStats
 		// with actual process stats so the flow visualization shows transcoding
 		if stats.FFmpegStats == nil && len(s.esTranscoders) > 0 {
+			// Sample resource history if enough time has passed
+			if s.resourceHistory != nil && s.resourceHistory.ShouldSample() {
+				s.resourceHistory.AddSample(totalCPUPercent, totalMemoryRSSMB)
+			}
+
 			// Get encoding config from first transcoder for display
 			firstStats := s.esTranscoders[0].Stats()
 			stats.FFmpegStats = &FFmpegProcessStats{
@@ -1904,6 +2009,13 @@ func (s *RelaySession) Stats() SessionStats {
 				AudioEncoder:  firstStats.AudioEncoder,
 				HWAccel:       firstStats.HWAccel,
 				HWAccelDevice: firstStats.HWAccelDevice,
+			}
+
+			// Include resource history
+			if s.resourceHistory != nil {
+				cpuHistory, memHistory := s.resourceHistory.GetHistory()
+				stats.FFmpegStats.CPUHistory = cpuHistory
+				stats.FFmpegStats.MemoryHistory = memHistory
 			}
 		}
 	}
@@ -2013,6 +2125,9 @@ type FFmpegProcessStats struct {
 	AudioEncoder  string `json:"audio_encoder,omitempty"`
 	HWAccel       string `json:"hwaccel,omitempty"`
 	HWAccelDevice string `json:"hwaccel_device,omitempty"`
+	// Resource history for sparkline graphs (last 30 samples, ~1 sample/sec)
+	CPUHistory    []float64 `json:"cpu_history,omitempty"`
+	MemoryHistory []float64 `json:"memory_history,omitempty"`
 }
 
 // ESTranscodersStats contains aggregate stats for all ES-based transcoders.

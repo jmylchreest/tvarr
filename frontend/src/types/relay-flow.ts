@@ -67,6 +67,10 @@ export interface FlowNodeData {
   transcoderMemMb?: number;
   transcoderBytesIn?: number;
 
+  // Resource history for sparklines (last 30 samples, ~1 sample/sec)
+  transcoderCpuHistory?: number[];
+  transcoderMemHistory?: number[];
+
   // Processor node fields
   routeType?: RouteType;
   profileName?: string;

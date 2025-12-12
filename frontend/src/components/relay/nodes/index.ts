@@ -4,3 +4,4 @@ export { default as TranscoderNode } from './transcoder-node';
 export { default as ProcessorNode } from './processor-node';
 export { default as ClientNode } from './client-node';
 export { BandwidthSparkline } from './bandwidth-sparkline';
+export { ResourceSparkline } from './resource-sparkline';

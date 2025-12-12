@@ -459,6 +459,7 @@ func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, channe
 		ctx:              sessionCtx,
 		cancel:           sessionCancel,
 		readyCh:          make(chan struct{}),
+		resourceHistory:  NewResourceHistory(),
 	}
 
 	// Initialize atomic values for frequently updated fields

@@ -89,6 +89,10 @@ type FlowNodeData struct {
 	TranscoderMemMB   *float64 `json:"transcoderMemMb,omitempty"`   // Memory usage in MB
 	TranscoderBytesIn uint64   `json:"transcoderBytesIn,omitempty"` // Bytes read by transcoder
 
+	// Resource history for sparklines (last 30 samples, ~1 sample/sec)
+	TranscoderCPUHistory []float64 `json:"transcoderCpuHistory,omitempty"` // Historical CPU usage percentage
+	TranscoderMemHistory []float64 `json:"transcoderMemHistory,omitempty"` // Historical memory usage in MB
+
 	// Processor node fields
 	RouteType        RouteType `json:"routeType,omitempty"` // passthrough, repackage, transcode
 	ProfileName      string    `json:"profileName,omitempty"`
