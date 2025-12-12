@@ -37,6 +37,8 @@ interface LayoutConfig {
   columnGap: number;
   /** Minimum vertical gap between node edges */
   rowGap: number;
+  /** Vertical gap between client nodes (smaller for compact layout) */
+  clientGap: number;
   /** Additional vertical gap above buffer for transcoder */
   transcoderGap: number;
   /** Starting X position */
@@ -52,6 +54,7 @@ interface LayoutConfig {
 const DEFAULT_CONFIG: LayoutConfig = {
   columnGap: 80, // Horizontal gap between node edges
   rowGap: 40, // Vertical gap between node edges
+  clientGap: 15, // Smaller gap between clients for compact layout
   transcoderGap: 60, // Gap between transcoder bottom and buffer top
   startX: 50,
   startY: 350, // Leave room for transcoder above
@@ -67,7 +70,7 @@ const DEFAULT_CONFIG: LayoutConfig = {
     buffer: 200,
     transcoder: 240,
     processor: 140,
-    client: 130,
+    client: 100, // Smaller client nodes
   },
 };
 
@@ -266,33 +269,27 @@ export function calculateLayout<T extends FlowNode>(
       processorY += height + cfg.rowGap;
     }
 
-    // Position client nodes - align with their processor, stack vertically
-    for (const [processorId, clients] of clientsByProcessor) {
-      const processorPos = processorPositions.get(processorId);
-      let clientY = processorPos?.y ?? mainRowY;
+    // Position client nodes - stack all clients compactly from mainRowY
+    // This prevents clients from spreading out vertically when there are multiple processors
+    let clientY = mainRowY;
 
-      for (const node of clients) {
-        const height = getNodeHeight(node, cfg);
-        layoutedNodes.push({
-          ...node,
-          position: { x: clientX, y: clientY },
-        });
-        clientY += height + cfg.rowGap;
-      }
+    // Collect all clients in order (by processor, then unconnected)
+    const allClients: T[] = [];
+    for (const [, clients] of clientsByProcessor) {
+      allClients.push(...clients);
     }
-
-    // Handle clients not connected to any processor
+    // Add unconnected clients
     const unconnectedClients = clientNodes.filter((c) => !clientToProcessor.has(c.id));
-    if (unconnectedClients.length > 0) {
-      let clientY = mainRowY;
-      for (const node of unconnectedClients) {
-        const height = getNodeHeight(node, cfg);
-        layoutedNodes.push({
-          ...node,
-          position: { x: clientX, y: clientY },
-        });
-        clientY += height + cfg.rowGap;
-      }
+    allClients.push(...unconnectedClients);
+
+    // Position all clients compactly with smaller gap
+    for (const node of allClients) {
+      const height = getNodeHeight(node, cfg);
+      layoutedNodes.push({
+        ...node,
+        position: { x: clientX, y: clientY },
+      });
+      clientY += height + cfg.clientGap;
     }
 
     // Calculate session height for next session offset
