@@ -54,7 +54,7 @@ interface LayoutConfig {
 const DEFAULT_CONFIG: LayoutConfig = {
   columnGap: 80, // Horizontal gap between node edges
   rowGap: 40, // Vertical gap between node edges
-  clientGap: 15, // Smaller gap between clients for compact layout
+  clientGap: 25, // Gap between clients (smaller than rowGap but enough to prevent overlap)
   transcoderGap: 60, // Gap between transcoder bottom and buffer top
   startX: 50,
   startY: 350, // Leave room for transcoder above
@@ -70,7 +70,7 @@ const DEFAULT_CONFIG: LayoutConfig = {
     buffer: 200,
     transcoder: 240,
     processor: 140,
-    client: 100, // Smaller client nodes
+    client: 120, // Client node fallback height
   },
 };
 
