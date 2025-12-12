@@ -14,6 +14,8 @@ const (
 	TokenIdent  // field names, keywords
 	TokenString // "quoted string" or 'quoted string'
 	TokenNumber // integer or float
+	TokenTrue   // true, TRUE - always matches
+	TokenFalse  // false, FALSE - never matches
 
 	// Operators
 	TokenEquals    // =
@@ -101,6 +103,10 @@ func (t TokenType) String() string {
 		return "Remove"
 	case TokenComma:
 		return "Comma"
+	case TokenTrue:
+		return "True"
+	case TokenFalse:
+		return "False"
 	default:
 		return fmt.Sprintf("Token(%d)", t)
 	}
@@ -124,6 +130,10 @@ var keywords = map[string]TokenType{
 	"remove":       TokenSet,
 	"DELETE":       TokenSet,
 	"delete":       TokenSet,
+	"true":         TokenTrue,
+	"TRUE":         TokenTrue,
+	"false":        TokenFalse,
+	"FALSE":        TokenFalse,
 }
 
 // LookupKeyword returns the token type for an identifier,

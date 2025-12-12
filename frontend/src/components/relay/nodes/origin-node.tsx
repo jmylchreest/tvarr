@@ -4,8 +4,9 @@ import { memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import type { FlowNodeData } from '@/types/relay-flow';
-import { formatBps } from '@/types/relay-flow';
-import { Globe } from 'lucide-react';
+import { formatBps, formatBytes } from '@/types/relay-flow';
+import { Globe, Clock, Download, Film, Monitor } from 'lucide-react';
+import { BandwidthSparkline } from './bandwidth-sparkline';
 
 interface OriginNodeProps {
   data: FlowNodeData;
@@ -32,44 +33,85 @@ function OriginNode({ data }: OriginNodeProps) {
           )}
 
           {/* Source URL */}
-          <div
-            className="text-xs text-muted-foreground truncate"
-            title={data.sourceUrl}
-          >
+          <div className="text-xs text-muted-foreground truncate" title={data.sourceUrl}>
             {data.sourceUrl}
           </div>
 
-          {/* Format and codecs - matching processor node style */}
-          {(data.sourceFormat || data.videoCodec || data.audioCodec) && (
-            <div className="text-xs text-muted-foreground space-y-0.5">
-              {data.sourceFormat && (
-                <div>Format: {data.sourceFormat.toUpperCase()}</div>
-              )}
-              {(data.videoCodec || data.audioCodec) && (
-                <div>
-                  Codecs: {[data.videoCodec, data.audioCodec].filter(Boolean).join(' / ')}
+          {/* Format and codecs */}
+          <div className="text-xs text-muted-foreground space-y-0.5">
+            {data.sourceFormat && <div>Container: {data.sourceFormat.toUpperCase()}</div>}
+            {(data.videoCodec || data.audioCodec) && (
+              <div>Codecs: {[data.videoCodec, data.audioCodec].filter(Boolean).join(' / ')}</div>
+            )}
+            {data.videoWidth !== undefined &&
+              data.videoWidth > 0 &&
+              data.videoHeight !== undefined &&
+              data.videoHeight > 0 && (
+                <div className="flex items-center gap-1">
+                  <Monitor className="h-3 w-3" />
+                  <span>
+                    {data.videoWidth}x{data.videoHeight}
+                  </span>
                 </div>
               )}
+            {data.framerate !== undefined && data.framerate > 0 && (
+              <div className="flex items-center gap-1">
+                <Film className="h-3 w-3" />
+                <span>{data.framerate.toFixed(2)} fps</span>
+              </div>
+            )}
+          </div>
+
+          {/* Bandwidth sparkline with ingress rate */}
+          <BandwidthSparkline
+            history={data.ingressHistory}
+            currentBps={data.ingressBps}
+            label="ingress"
+            color="green"
+          />
+
+          {/* Total bytes received */}
+          {data.totalBytesIn !== undefined && data.totalBytesIn > 0 && (
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Download className="h-3 w-3" />
+              <span>{formatBytes(data.totalBytesIn)} received</span>
             </div>
           )}
 
-          {/* Ingress rate */}
-          {data.ingressBps !== undefined && data.ingressBps > 0 && (
-            <div className="text-xs text-green-600 dark:text-green-400">
-              {formatBps(data.ingressBps)} ingress
+          {/* Session duration */}
+          {data.durationSecs !== undefined && data.durationSecs > 0 && (
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Clock className="h-3 w-3" />
+              <span>{formatDuration(data.durationSecs)}</span>
             </div>
           )}
         </CardContent>
       </Card>
 
-      {/* Output handle */}
+      {/* Output handle to buffer */}
       <Handle
         type="source"
         position={Position.Right}
+        id="origin-buffer-out"
         className="w-3 h-3 bg-blue-500 border-2 border-background"
       />
     </>
   );
+}
+
+// Helper to format duration in human-readable format
+function formatDuration(seconds: number): string {
+  if (seconds < 60) {
+    return `${Math.floor(seconds)}s`;
+  }
+  if (seconds < 3600) {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}m ${secs}s`;
+  }
+  const hours = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  return `${hours}h ${mins}m`;
 }
 
 export default memo(OriginNode);

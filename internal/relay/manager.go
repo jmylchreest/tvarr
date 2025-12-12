@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -45,8 +46,6 @@ type ManagerConfig struct {
 	CircuitBreakerConfig CircuitBreakerConfig
 	// ConnectionPoolConfig for upstream connection limits.
 	ConnectionPoolConfig ConnectionPoolConfig
-	// UnifiedBufferConfig for multi-client streaming.
-	UnifiedBufferConfig UnifiedBufferConfig
 	// FallbackConfig for fallback stream generation.
 	FallbackConfig FallbackConfig
 	// HTTPClient for upstream requests.
@@ -66,10 +65,23 @@ func DefaultManagerConfig() ManagerConfig {
 		CleanupInterval:      1 * time.Second, // Check frequently for idle sessions
 		CircuitBreakerConfig: DefaultCircuitBreakerConfig(),
 		ConnectionPoolConfig: DefaultConnectionPoolConfig(),
-		UnifiedBufferConfig:  DefaultUnifiedBufferConfig(),
 		FallbackConfig:       DefaultFallbackConfig(),
+		// For streaming, we use a transport with connection timeouts but no overall
+		// request timeout. The Timeout field on http.Client applies to the entire
+		// request including reading the body, which would cut off long-running streams.
 		HTTPClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				DialContext: (&net.Dialer{
+					Timeout:   30 * time.Second, // Connection timeout
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ResponseHeaderTimeout: 30 * time.Second, // Time to wait for response headers
+				IdleConnTimeout:       90 * time.Second,
+				MaxIdleConns:          100,
+				MaxIdleConnsPerHost:   10,
+			},
+			// No Timeout - streaming connections run indefinitely
 		},
 		CodecCacheTTL: 24 * time.Hour, // Cache codec info for 24 hours
 	}
@@ -189,6 +201,39 @@ func (m *Manager) GetSession(sessionID uuid.UUID) (*RelaySession, bool) {
 	return session, ok
 }
 
+// GetSessionForChannel returns an existing session for the channel if one exists.
+// Unlike GetOrCreateSession, this does not create a new session if none exists.
+// Returns nil if no active session exists for the channel.
+func (m *Manager) GetSessionForChannel(channelID uuid.UUID) *RelaySession {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	sessionID, ok := m.channelSessions[channelID]
+	if !ok {
+		return nil
+	}
+
+	session, ok := m.sessions[sessionID]
+	if !ok {
+		return nil
+	}
+
+	session.mu.RLock()
+	closed := session.closed
+	session.mu.RUnlock()
+
+	if closed {
+		return nil
+	}
+
+	return session
+}
+
+// HasSessionForChannel checks if an active session exists for the given channel.
+func (m *Manager) HasSessionForChannel(channelID uuid.UUID) bool {
+	return m.GetSessionForChannel(channelID) != nil
+}
+
 // CloseSession closes a specific session.
 func (m *Manager) CloseSession(sessionID uuid.UUID) error {
 	m.mu.Lock()
@@ -222,18 +267,29 @@ func (m *Manager) Close() {
 }
 
 // Stats returns manager statistics.
+// This method minimizes lock contention by copying the session list first,
+// then releasing the manager lock before collecting stats from individual sessions.
 func (m *Manager) Stats() ManagerStats {
+	// Copy session pointers while holding the lock briefly
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	sessions := make([]SessionStats, 0, len(m.sessions))
+	sessionCount := len(m.sessions)
+	maxSessions := m.config.MaxSessions
+	sessionList := make([]*RelaySession, 0, sessionCount)
 	for _, s := range m.sessions {
+		sessionList = append(sessionList, s)
+	}
+	m.mu.RUnlock()
+
+	// Collect stats from each session WITHOUT holding the manager lock
+	// This prevents blocking other operations like GetOrCreateSession or cleanup
+	sessions := make([]SessionStats, 0, len(sessionList))
+	for _, s := range sessionList {
 		sessions = append(sessions, s.Stats())
 	}
 
 	return ManagerStats{
-		ActiveSessions:  len(m.sessions),
-		MaxSessions:     m.config.MaxSessions,
+		ActiveSessions:  sessionCount,
+		MaxSessions:     maxSessions,
 		Sessions:        sessions,
 		ConnectionPool:  m.connectionPool.Stats(),
 		CircuitBreakers: m.circuitBreakers.AllStats(),
@@ -395,16 +451,19 @@ func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, channe
 		ChannelName:      channelName,
 		StreamSourceName: streamSourceName,
 		StreamURL:        streamURL,
-		Profile:         profile,
-		Classification:  classification,
-		CachedCodecInfo: codecInfo,
-		StartedAt:       time.Now(),
-		LastActivity:    time.Now(),
-		manager:         m,
-		unifiedBuffer:   NewUnifiedBuffer(m.config.UnifiedBufferConfig),
-		ctx:             sessionCtx,
-		cancel:          sessionCancel,
+		Profile:          profile,
+		Classification:   classification,
+		CachedCodecInfo:  codecInfo,
+		StartedAt:        time.Now(),
+		manager:          m,
+		ctx:              sessionCtx,
+		cancel:           sessionCancel,
+		readyCh:          make(chan struct{}),
 	}
+
+	// Initialize atomic values for frequently updated fields
+	session.lastActivity.Store(time.Now())
+	session.idleSince.Store(time.Time{})
 
 	// Initialize fallback controller if enabled in profile
 	if profile != nil && profile.FallbackEnabled && m.fallbackGenerator.IsReady() {
@@ -454,11 +513,13 @@ func (m *Manager) cleanupStaleSessions() {
 
 	for id, session := range m.sessions {
 		session.mu.RLock()
-		clientCount := session.unifiedBuffer.ClientCount()
-		lastActivity := session.LastActivity
-		idleSince := session.IdleSince
+		clientCount := session.ClientCount()
 		closed := session.closed
 		session.mu.RUnlock()
+
+		// Use helper methods for atomic values
+		lastActivity := session.LastActivity()
+		idleSince := session.IdleSince()
 
 		shouldRemove := false
 

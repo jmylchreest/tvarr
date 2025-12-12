@@ -351,8 +351,6 @@ func TestConnectionPool_Close(t *testing.T) {
 	assert.ErrorIs(t, err, ErrPoolClosed)
 }
 
-// UnifiedBuffer tests are in unified_buffer_test.go
-
 // Host Limiter Tests
 
 func TestHostLimiter_Basic(t *testing.T) {

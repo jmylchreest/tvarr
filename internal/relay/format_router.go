@@ -17,6 +17,7 @@ var (
 	ErrUnsupportedFormat    = errors.New("unsupported output format")
 	ErrUnsupportedOperation = errors.New("unsupported operation for this format")
 	ErrNoHandlerAvailable   = errors.New("no handler available for format")
+	ErrSegmentNotFound      = errors.New("segment not found")
 )
 
 // OutputRequest represents a client request for stream output.

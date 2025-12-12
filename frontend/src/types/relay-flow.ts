@@ -1,11 +1,24 @@
 // Type definitions for relay flow visualization data
 
 export type RouteType = 'passthrough' | 'repackage' | 'transcode';
-export type FlowNodeType = 'origin' | 'processor' | 'client';
+export type FlowNodeType = 'origin' | 'buffer' | 'transcoder' | 'processor' | 'client';
 
 export interface FlowPosition {
   x: number;
   y: number;
+}
+
+// BufferVariantInfo describes a codec variant in the shared buffer
+export interface BufferVariantInfo {
+  variant: string; // e.g., "h264/aac", "hevc/aac"
+  videoCodec: string;
+  audioCodec: string;
+  videoSamples: number;
+  audioSamples: number;
+  bytesIngested: number;
+  maxBytes: number; // Maximum bytes allowed per variant (e.g., 30MB)
+  utilization: number; // 0-100 percentage of max used
+  isSource: boolean;
 }
 
 export interface FlowNodeData {
@@ -21,7 +34,38 @@ export interface FlowNodeData {
   sourceFormat?: string;
   videoCodec?: string;
   audioCodec?: string;
+  framerate?: number; // Video framerate (fps)
+  videoWidth?: number; // Video width in pixels
+  videoHeight?: number; // Video height in pixels
   ingressBps?: number;
+  totalBytesIn?: number;
+  durationSecs?: number;
+
+  // Bandwidth history for sparkline (last 30 samples, ~1 sample/sec)
+  ingressHistory?: number[];
+
+  // Buffer node fields
+  bufferVariants?: BufferVariantInfo[];
+  bufferMemoryBytes?: number;
+  maxBufferBytes?: number; // Maximum buffer size per variant
+  videoSampleCount?: number;
+  audioSampleCount?: number;
+  bufferUtilization?: number; // 0-100 percentage of max buffer used
+
+  // Transcoder node fields (FFmpeg)
+  transcoderId?: string;
+  sourceVideoCodec?: string; // Source video codec (e.g., "h264")
+  sourceAudioCodec?: string; // Source audio codec (e.g., "aac")
+  targetVideoCodec?: string; // Target codec name (e.g., "h265", "aac")
+  targetAudioCodec?: string;
+  videoEncoder?: string; // FFmpeg encoder name (e.g., "libx265", "h264_nvenc")
+  audioEncoder?: string; // FFmpeg encoder name (e.g., "aac", "libopus")
+  hwAccelType?: string; // Hardware acceleration type (e.g., "cuda", "qsv", "vaapi")
+  hwAccelDevice?: string; // Hardware acceleration device (e.g., "/dev/dri/renderD128")
+  encodingSpeed?: number;
+  transcoderCpu?: number;
+  transcoderMemMb?: number;
+  transcoderBytesIn?: number;
 
   // Processor node fields
   routeType?: RouteType;
@@ -32,14 +76,24 @@ export interface FlowNodeData {
   cpuPercent?: number;
   memoryMB?: number;
   processingBps?: number;
+  totalBytesOut?: number;
+
+  // Bandwidth history for sparkline (last 30 samples, ~1 sample/sec)
+  egressHistory?: number[];
 
   // Client node fields
   clientId?: string;
   playerType?: string;
+  clientFormat?: string; // Format this client is using (hls, mpegts, dash)
   remoteAddr?: string;
   userAgent?: string;
+  detectionRule?: string;
   bytesRead?: number;
   egressBps?: number;
+  connectedSecs?: number;
+
+  // Bandwidth history for sparkline (last 30 samples, ~1 sample/sec)
+  clientEgressHistory?: number[];
 
   // Status fields
   inFallback?: boolean;
@@ -83,6 +137,11 @@ export interface FlowGraphMetadata {
   totalIngressBps: number;
   totalEgressBps: number;
   generatedAt: string;
+  // System resource usage
+  systemCpuPercent?: number;
+  systemMemoryPercent?: number;
+  systemMemoryUsedMb?: number;
+  systemMemoryTotalMb?: number;
 }
 
 export interface RelayFlowGraph {
@@ -102,6 +161,7 @@ export interface RelaySessionInfo {
   source_url: string;
   source_format: string;
   output_format: string;
+  active_processor_formats?: string[];
   video_codec?: string;
   audio_codec?: string;
   started_at: string;
@@ -128,7 +188,9 @@ export interface RelayClientInfo {
   user_agent?: string;
   remote_addr?: string;
   player_type?: string;
+  detection_rule?: string;
   connected_at: string;
+  connected_secs: number;
   bytes_read: number;
 }
 

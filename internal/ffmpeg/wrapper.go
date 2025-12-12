@@ -130,7 +130,9 @@ func (b *CommandBuilder) Progress(target string) *CommandBuilder {
 // This should be called before HWAccel for proper device setup.
 // Example: InitHWDevice("vaapi", "/dev/dri/renderD128")
 func (b *CommandBuilder) InitHWDevice(hwType string, device string) *CommandBuilder {
-	if hwType == "" || hwType == "none" {
+	// Skip if empty, "none", or "auto" - FFmpeg doesn't understand "auto",
+	// it needs specific types like vaapi, cuda, qsv, etc.
+	if hwType == "" || hwType == "none" || hwType == "auto" {
 		return b
 	}
 	if device != "" {
@@ -142,8 +144,9 @@ func (b *CommandBuilder) InitHWDevice(hwType string, device string) *CommandBuil
 }
 
 // HWAccel sets the hardware acceleration method.
+// Skips "auto" since FFmpeg doesn't understand it - it needs specific types.
 func (b *CommandBuilder) HWAccel(accel string) *CommandBuilder {
-	if accel != "" && accel != "none" {
+	if accel != "" && accel != "none" && accel != "auto" {
 		b.inputArgs = append(b.inputArgs, "-hwaccel", accel)
 	}
 	return b
@@ -168,7 +171,7 @@ func (b *CommandBuilder) HWAccelOutputFormat(format string) *CommandBuilder {
 // HWUploadFilter adds the appropriate hardware upload filter for the given hwaccel type.
 // This is needed when transcoding with hardware acceleration to upload frames to GPU.
 func (b *CommandBuilder) HWUploadFilter(hwType string) *CommandBuilder {
-	if hwType == "" || hwType == "none" {
+	if hwType == "" || hwType == "none" || hwType == "auto" {
 		return b
 	}
 

@@ -160,6 +160,14 @@ func (r *mockChannelRepo) GetByID(ctx context.Context, id models.ULID) (*models.
 	return ch, nil
 }
 
+func (r *mockChannelRepo) GetByIDWithSource(ctx context.Context, id models.ULID) (*models.Channel, error) {
+	ch, exists := r.channels[id]
+	if !exists {
+		return nil, errors.New("channel not found")
+	}
+	return ch, nil
+}
+
 func (r *mockChannelRepo) GetBySourceID(ctx context.Context, sourceID models.ULID, callback func(*models.Channel) error) error {
 	for _, ch := range r.channels {
 		if ch.SourceID == sourceID {

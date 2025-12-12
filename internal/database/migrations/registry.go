@@ -15,6 +15,7 @@ func AllMigrations() []Migration {
 	return []Migration{
 		migration001Schema(),
 		migration002SystemData(),
+		migration003CleanupRelayProfiles(),
 	}
 }
 
@@ -133,6 +134,84 @@ func migration002SystemData() Migration {
 			if err := tx.Where("is_system = ?", true).Delete(&models.Filter{}).Error; err != nil {
 				return err
 			}
+			return nil
+		},
+	}
+}
+
+// migration003CleanupRelayProfiles purges soft-deleted relay profiles and fixes encoder names.
+func migration003CleanupRelayProfiles() Migration {
+	return Migration{
+		Version:     "003",
+		Description: "Purge soft-deleted relay profiles and fix encoder names to codec names",
+		Up: func(tx *gorm.DB) error {
+			// 1. Hard-delete all soft-deleted relay profiles
+			if err := tx.Unscoped().Where("deleted_at IS NOT NULL").Delete(&models.RelayProfile{}).Error; err != nil {
+				return err
+			}
+
+			// 2. Hard-delete all soft-deleted relay profile mappings
+			if err := tx.Unscoped().Where("deleted_at IS NOT NULL").Delete(&models.RelayProfileMapping{}).Error; err != nil {
+				return err
+			}
+
+			// 3. Fix encoder names in video_codec column -> codec names
+			// Use UpdateColumn to bypass model hooks/validation
+			// H.264 encoders -> h264
+			if err := tx.Model(&models.RelayProfile{}).
+				Where("video_codec IN ?", []string{"libx264", "h264_nvenc", "h264_qsv", "h264_vaapi", "h264_videotoolbox", "h264_amf", "h264_v4l2m2m"}).
+				UpdateColumn("video_codec", "h264").Error; err != nil {
+				return err
+			}
+
+			// H.265/HEVC encoders -> h265
+			if err := tx.Model(&models.RelayProfile{}).
+				Where("video_codec IN ?", []string{"libx265", "hevc_nvenc", "hevc_qsv", "hevc_vaapi", "hevc_videotoolbox", "hevc_amf", "hevc_v4l2m2m"}).
+				UpdateColumn("video_codec", "h265").Error; err != nil {
+				return err
+			}
+
+			// VP9 encoders -> vp9
+			if err := tx.Model(&models.RelayProfile{}).
+				Where("video_codec IN ?", []string{"libvpx-vp9", "vp9_qsv", "vp9_vaapi"}).
+				UpdateColumn("video_codec", "vp9").Error; err != nil {
+				return err
+			}
+
+			// AV1 encoders -> av1
+			if err := tx.Model(&models.RelayProfile{}).
+				Where("video_codec IN ?", []string{"libaom-av1", "av1_nvenc", "av1_qsv", "av1_vaapi"}).
+				UpdateColumn("video_codec", "av1").Error; err != nil {
+				return err
+			}
+
+			// 4. Fix encoder names in audio_codec column -> codec names
+			// AAC encoders -> aac
+			if err := tx.Model(&models.RelayProfile{}).
+				Where("audio_codec IN ?", []string{"libfdk_aac", "aac_at"}).
+				UpdateColumn("audio_codec", "aac").Error; err != nil {
+				return err
+			}
+
+			// Opus encoders -> opus
+			if err := tx.Model(&models.RelayProfile{}).
+				Where("audio_codec = ?", "libopus").
+				UpdateColumn("audio_codec", "opus").Error; err != nil {
+				return err
+			}
+
+			// MP3 encoders -> mp3
+			if err := tx.Model(&models.RelayProfile{}).
+				Where("audio_codec IN ?", []string{"libmp3lame", "libshine"}).
+				UpdateColumn("audio_codec", "mp3").Error; err != nil {
+				return err
+			}
+
+			return nil
+		},
+		Down: func(tx *gorm.DB) error {
+			// This migration cannot be reversed (data cleanup is permanent)
+			// The encoder->codec name normalization is the correct format anyway
 			return nil
 		},
 	}
@@ -627,7 +706,7 @@ func createDefaultRelayProfileMappings(tx *gorm.DB) error {
 			Name:                "Default (Universal)",
 			Description:         "Fallback rule - Maximum compatibility (H.264/AAC/MPEG-TS)",
 			Priority:            999,
-			Expression:          `user_agent contains ""`,
+			Expression:          `true`,
 			IsEnabled:           true,
 			IsSystem:            true,
 			AcceptedVideoCodecs: videoCodecs("h264"),

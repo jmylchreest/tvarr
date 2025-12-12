@@ -179,6 +179,18 @@ func (p *Parser) parseUnaryCondition() (ConditionNode, error) {
 
 // parsePrimaryCondition parses a primary condition (grouped or simple).
 func (p *Parser) parsePrimaryCondition() (ConditionNode, error) {
+	// Handle boolean literals (true/false)
+	if p.current.Type == TokenTrue {
+		p.advance() // consume true
+		// Return a condition that always matches: "" contains ""
+		return NewCondition("", OpContains, ""), nil
+	}
+	if p.current.Type == TokenFalse {
+		p.advance() // consume false
+		// Return a condition that never matches: "" equals "NEVER_MATCH_SENTINEL"
+		return NewCondition("", OpEquals, "__FALSE_SENTINEL_NEVER_MATCHES__"), nil
+	}
+
 	// Handle parenthesized group
 	if p.current.Type == TokenLParen {
 		p.advance() // consume (

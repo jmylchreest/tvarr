@@ -8,7 +8,6 @@ import (
 )
 
 // SegmentProvider defines the interface for accessing segments.
-// Both SegmentBuffer and UnifiedBuffer implement this interface.
 type SegmentProvider interface {
 	// GetSegmentInfos returns metadata for all available segments (for playlist generation).
 	GetSegmentInfos() []SegmentInfo
@@ -21,7 +20,6 @@ type SegmentProvider interface {
 }
 
 // FMP4SegmentProvider extends SegmentProvider with fMP4-specific methods.
-// This interface is implemented by UnifiedBuffer when in fMP4 mode.
 type FMP4SegmentProvider interface {
 	SegmentProvider
 

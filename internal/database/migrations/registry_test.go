@@ -26,10 +26,11 @@ func setupTestDB(t *testing.T) *gorm.DB {
 func TestAllMigrations_ReturnsExpectedCount(t *testing.T) {
 	migrations := AllMigrations()
 
-	// Compacted to 2 migrations:
+	// Compacted to 3 migrations:
 	// 001: Create all database tables (schema)
 	// 002: Insert default filters, rules, profiles, and mappings (system data)
-	assert.Len(t, migrations, 2)
+	// 003: Purge soft-deleted relay profiles and fix encoder names to codec names
+	assert.Len(t, migrations, 3)
 }
 
 func TestAllMigrations_VersionsAreUnique(t *testing.T) {
@@ -99,10 +100,10 @@ func TestMigrator_Status(t *testing.T) {
 	migrator := NewMigrator(db, nil)
 	migrator.RegisterAll(AllMigrations())
 
-	// Before running migrations (compacted to 2 migrations)
+	// Before running migrations (compacted to 3 migrations)
 	statuses, err := migrator.Status(ctx)
 	require.NoError(t, err)
-	assert.Len(t, statuses, 2)
+	assert.Len(t, statuses, 3)
 
 	for _, s := range statuses {
 		assert.False(t, s.Applied)
@@ -138,6 +139,14 @@ func TestMigrator_Down_RollsBackLastMigration(t *testing.T) {
 	assert.True(t, db.Migrator().HasTable("relay_profiles"))
 	assert.True(t, db.Migrator().HasTable("relay_profile_mappings"))
 
+	// Roll back migration 003 (cleanup - no-op down)
+	err = migrator.Down(ctx)
+	require.NoError(t, err)
+
+	// Tables still exist after rolling back cleanup migration
+	assert.True(t, db.Migrator().HasTable("filters"))
+	assert.True(t, db.Migrator().HasTable("relay_profiles"))
+
 	// Roll back migration 002 (system data)
 	err = migrator.Down(ctx)
 	require.NoError(t, err)
@@ -163,10 +172,10 @@ func TestMigrator_Pending(t *testing.T) {
 	migrator := NewMigrator(db, nil)
 	migrator.RegisterAll(AllMigrations())
 
-	// All should be pending initially (compacted to 2 migrations)
+	// All should be pending initially (compacted to 3 migrations)
 	pending, err := migrator.Pending(ctx)
 	require.NoError(t, err)
-	assert.Len(t, pending, 2)
+	assert.Len(t, pending, 3)
 
 	// Run migrations
 	err = migrator.Up(ctx)

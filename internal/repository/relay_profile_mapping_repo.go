@@ -73,9 +73,10 @@ func (r *relayProfileMappingRepository) Update(ctx context.Context, mapping *mod
 	return r.db.WithContext(ctx).Save(mapping).Error
 }
 
-// Delete deletes a relay profile mapping by ID.
+// Delete hard-deletes a relay profile mapping by ID.
+// Uses Unscoped() for permanent deletion to avoid soft-deleted records being accidentally used.
 func (r *relayProfileMappingRepository) Delete(ctx context.Context, id models.ULID) error {
-	return r.db.WithContext(ctx).Delete(&models.RelayProfileMapping{}, "id = ?", id).Error
+	return r.db.WithContext(ctx).Unscoped().Delete(&models.RelayProfileMapping{}, "id = ?", id).Error
 }
 
 // Count returns the total number of relay profile mappings.

@@ -381,30 +381,25 @@ func (s *RelayService) StartRelayWithProfile(ctx context.Context, channelID mode
 	return session, nil
 }
 
-// AddRelayClient adds a client to a relay session and returns a reader.
-func (s *RelayService) AddRelayClient(sessionID uuid.UUID, userAgent, remoteAddr string) (*relay.UnifiedClient, *relay.UnifiedStreamReader, error) {
-	session, ok := s.relayManager.GetSession(sessionID)
-	if !ok {
-		return nil, nil, relay.ErrSessionNotFound
-	}
-
-	return session.AddClient(userAgent, remoteAddr)
-}
-
-// RemoveRelayClient removes a client from a relay session.
-func (s *RelayService) RemoveRelayClient(sessionID, clientID uuid.UUID) error {
-	session, ok := s.relayManager.GetSession(sessionID)
-	if !ok {
-		return relay.ErrSessionNotFound
-	}
-
-	session.RemoveClient(clientID)
-	return nil
-}
-
 // StopRelay stops a relay session.
 func (s *RelayService) StopRelay(sessionID uuid.UUID) error {
 	return s.relayManager.CloseSession(sessionID)
+}
+
+// GetSessionForChannel returns an existing session for the channel if one exists.
+// Unlike StartRelay, this does not create a new session if none exists.
+// Returns nil if no active session exists for the channel.
+func (s *RelayService) GetSessionForChannel(channelID models.ULID) *relay.RelaySession {
+	channelUUID, err := uuid.Parse(channelID.String())
+	if err != nil {
+		return nil
+	}
+	return s.relayManager.GetSessionForChannel(channelUUID)
+}
+
+// HasSessionForChannel checks if an active session exists for the given channel.
+func (s *RelayService) HasSessionForChannel(channelID models.ULID) bool {
+	return s.GetSessionForChannel(channelID) != nil
 }
 
 // GetRelayStats returns relay manager statistics.

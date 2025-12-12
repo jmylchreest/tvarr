@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"context"
+	"crypto/md5"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -216,15 +218,15 @@ func (h *RelayStreamHandler) handleRawStreamOptions(w http.ResponseWriter, r *ht
 
 // validFormatValues contains valid ?format= query parameter values.
 var validFormatValues = map[string]bool{
-	relay.FormatValueHLS:    true,
-	relay.FormatValueDASH:   true,
-	relay.FormatValueMPEGTS: true,
-	relay.FormatValueFMP4:   true,
+	relay.FormatValueHLS:     true,
+	relay.FormatValueDASH:    true,
+	relay.FormatValueMPEGTS:  true,
+	relay.FormatValueFMP4:    true,
 	relay.FormatValueHLSFMP4: true,
 	relay.FormatValueHLSTS:   true,
-	relay.FormatValueAuto:   true,
-	"ts":                    true, // Alias for mpegts
-	"mpeg-ts":               true, // Alias for mpegts
+	relay.FormatValueAuto:    true,
+	"ts":                     true, // Alias for mpegts
+	"mpeg-ts":                true, // Alias for mpegts
 }
 
 // validateFormatParam validates the ?format= query parameter and returns 400 Bad Request for invalid values.
@@ -354,6 +356,45 @@ func (h *RelayStreamHandler) handleChannelPreview(w http.ResponseWriter, r *http
 	// Determine client's desired format from query param or Accept header
 	clientFormat := h.resolveClientFormat(r, classification)
 
+	// Create a minimal StreamInfo for the handlers
+	previewInfo := &service.StreamInfo{
+		Channel: channel,
+		// No Proxy or Profile - this is a preview-only stream
+	}
+
+	// Check if there's already an active session for this channel.
+	// If so, we should join it to share the SharedESBuffer rather than
+	// creating a separate direct proxy connection.
+	existingSession := h.relayService.GetSessionForChannel(channelID)
+
+	if existingSession != nil {
+		h.logger.Info("Channel preview: joining existing session",
+			"channel_id", channel.ID,
+			"session_id", existingSession.ID,
+			"client_format", clientFormat,
+		)
+
+		// Set common headers
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept, Range")
+		w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range")
+		w.Header().Set("X-Stream-Origin-Kind", "SMART")
+		w.Header().Set("X-Stream-Mode", "smart")
+		w.Header().Set("X-Stream-Decision", "join-existing")
+
+		// Use the existing session's SharedESBuffer
+		switch clientFormat {
+		case relay.ClientFormatHLS, relay.ClientFormatDASH:
+			h.handleMultiFormatOutput(w, r, existingSession, previewInfo, clientFormat)
+		default:
+			// For MPEG-TS and auto format, use the MPEG-TS processor
+			h.streamMPEGTSFromRelay(w, r, existingSession, previewInfo)
+		}
+		return
+	}
+
+	// No existing session - determine delivery strategy
 	// Get delivery decision - use nil profile to force zero-transcode behavior
 	// With no profile, SelectDelivery will choose passthrough or repackage only
 	deliveryDecision := relay.SelectDelivery(classification, clientFormat, nil)
@@ -367,32 +408,34 @@ func (h *RelayStreamHandler) handleChannelPreview(w http.ResponseWriter, r *http
 		"decision", deliveryDecision.String(),
 	)
 
-	// Create a minimal StreamInfo for the handlers
-	previewInfo := &service.StreamInfo{
-		Channel: channel,
-		// No Proxy or Profile - this is a preview-only stream
-	}
-
 	// Dispatch based on delivery decision
-	// For preview mode, we allow HLS/DASH format requests to go through transcoding
-	// since users explicitly requesting these formats expect proper playlist responses.
+	// For preview mode, we allow HLS/DASH/MPEGTS format requests to use the ES pipeline
+	// to ensure consistent behavior with proxy routes and enable session sharing.
 	switch deliveryDecision {
 	case relay.DeliveryPassthrough:
-		h.handleSmartPassthrough(w, r, previewInfo, &serviceClassification)
+		// Check if client explicitly requested a format that benefits from ES pipeline
+		if clientFormat == relay.ClientFormatMPEGTS {
+			h.logger.Info("Channel preview: using ES pipeline for explicit MPEG-TS request",
+				"channel_id", channel.ID,
+			)
+			h.handleSmartTranscode(w, r, previewInfo, clientFormat)
+		} else {
+			h.handleSmartPassthrough(w, r, previewInfo, &serviceClassification)
+		}
 
 	case relay.DeliveryRepackage:
 		h.handleSmartRepackage(w, r, previewInfo, &serviceClassification, clientFormat)
 
 	case relay.DeliveryTranscode:
-		// For HLS/DASH format requests, allow transcoding to generate proper playlists
-		if clientFormat == relay.ClientFormatHLS || clientFormat == relay.ClientFormatDASH {
-			h.logger.Info("Channel preview: using transcode for HLS/DASH format request",
+		// For HLS/DASH/MPEGTS format requests, use the ES pipeline
+		if clientFormat == relay.ClientFormatHLS || clientFormat == relay.ClientFormatDASH || clientFormat == relay.ClientFormatMPEGTS {
+			h.logger.Info("Channel preview: using ES pipeline for format request",
 				"channel_id", channel.ID,
 				"client_format", clientFormat,
 			)
 			h.handleSmartTranscode(w, r, previewInfo, clientFormat)
 		} else {
-			// For other formats, fall back to passthrough to avoid FFmpeg overhead
+			// For auto/unknown formats, fall back to passthrough to avoid FFmpeg overhead
 			h.logger.Info("Channel preview: transcoding requested but falling back to passthrough",
 				"channel_id", channel.ID,
 			)
@@ -474,9 +517,10 @@ func (h *RelayStreamHandler) handleRawSmartMode(w http.ResponseWriter, r *http.R
 }
 
 // resolveClientFormat determines the client's desired output format.
-// It checks the ?format= query parameter first, then falls back to Accept header.
+// It checks the ?format= query parameter first, then uses client detection
+// based on User-Agent, Accept headers, and X-Tvarr-Player header.
 func (h *RelayStreamHandler) resolveClientFormat(r *http.Request, source relay.ClassificationResult) relay.ClientFormat {
-	// Check explicit format query parameter
+	// Check explicit format query parameter first
 	formatParam := r.URL.Query().Get(relay.QueryParamFormat)
 	switch formatParam {
 	case relay.FormatValueHLS:
@@ -487,21 +531,53 @@ func (h *RelayStreamHandler) resolveClientFormat(r *http.Request, source relay.C
 		return relay.ClientFormatMPEGTS
 	}
 
-	// Check Accept header for format hints
-	accept := r.Header.Get("Accept")
-	if accept != "" {
-		// HLS: application/vnd.apple.mpegurl or application/x-mpegURL
-		if contains(accept, "mpegurl") || contains(accept, "x-mpegURL") {
+	// Use client detection for determining format
+	detector := relay.NewDefaultClientDetector(h.logger)
+	outputReq := relay.OutputRequest{
+		UserAgent:      r.Header.Get("User-Agent"),
+		Accept:         r.Header.Get("Accept"),
+		Headers:        r.Header,
+		FormatOverride: formatParam, // Already checked above, but pass for completeness
+	}
+
+	caps := detector.Detect(outputReq)
+
+	// If client detection found a preferred format, use it
+	if caps.PreferredFormat != "" {
+		switch caps.PreferredFormat {
+		case relay.FormatValueHLS, relay.FormatValueHLSTS:
+			h.logger.Debug("Client detection resolved format",
+				"format", "hls",
+				"source", caps.DetectionSource,
+				"player", caps.PlayerName)
 			return relay.ClientFormatHLS
-		}
-		// DASH: application/dash+xml
-		if contains(accept, "dash+xml") {
+		case relay.FormatValueHLSFMP4:
+			h.logger.Debug("Client detection resolved format",
+				"format", "hls-fmp4",
+				"source", caps.DetectionSource,
+				"player", caps.PlayerName)
+			return relay.ClientFormatHLS
+		case relay.FormatValueDASH:
+			h.logger.Debug("Client detection resolved format",
+				"format", "dash",
+				"source", caps.DetectionSource,
+				"player", caps.PlayerName)
 			return relay.ClientFormatDASH
-		}
-		// MPEG-TS: video/mp2t
-		if contains(accept, "video/mp2t") {
+		case relay.FormatValueMPEGTS:
+			h.logger.Debug("Client detection resolved format",
+				"format", "mpegts",
+				"source", caps.DetectionSource,
+				"player", caps.PlayerName)
 			return relay.ClientFormatMPEGTS
 		}
+	}
+
+	// If client supports MPEG-TS and prefers it (e.g., libmpv, VLC)
+	if caps.SupportsMPEGTS && !caps.SupportsFMP4 {
+		h.logger.Debug("Client detection prefers MPEG-TS",
+			"source", caps.DetectionSource,
+			"player", caps.PlayerName)
+		return relay.ClientFormatMPEGTS
 	}
 
 	// Default to auto (serve source format as-is)
@@ -771,14 +847,9 @@ func (h *RelayStreamHandler) handleSmartTranscode(w http.ResponseWriter, r *http
 	needsMultiFormat := clientFormat == relay.ClientFormatHLS || clientFormat == relay.ClientFormatDASH
 
 	// Start or join the relay session with the resolved profile
-	var session *relay.RelaySession
-	var err error
-	if resolvedProfile != nil {
-		session, err = h.relayService.StartRelayWithProfile(ctx, info.Channel.ID, resolvedProfile)
-	} else {
-		// No profile, use passthrough
-		session, err = h.relayService.StartRelay(ctx, info.Channel.ID, nil)
-	}
+	// Always use StartRelayWithProfile to avoid loading default profile when nil
+	// (StartRelay with nil would load the default "Automatic" profile with unresolved auto codecs)
+	session, err := h.relayService.StartRelayWithProfile(ctx, info.Channel.ID, resolvedProfile)
 	if err != nil {
 		errAttrs := []any{
 			"channel_id", info.Channel.ID,
@@ -792,12 +863,9 @@ func (h *RelayStreamHandler) handleSmartTranscode(w http.ResponseWriter, r *http
 		return
 	}
 
-	// For HLS/DASH formats, initialize multi-format output
-	// Note: This may be called after FFmpeg starts, so the session's createDualWriter
-	// will use only the cyclic buffer for now. Segments will be created from the
-	// unified buffer as data flows in.
+	// For HLS/DASH formats, use the format router for output
+	// The ES pipeline initializes all output handlers during session startup
 	if needsMultiFormat {
-		session.InitMultiFormatOutput()
 		h.handleMultiFormatOutput(w, r, session, info, clientFormat)
 		return
 	}
@@ -806,28 +874,85 @@ func (h *RelayStreamHandler) handleSmartTranscode(w http.ResponseWriter, r *http
 	h.streamMPEGTSFromRelay(w, r, session, info)
 }
 
-// handleMultiFormatOutput handles HLS/DASH output using the format router.
+// handleMultiFormatOutput handles HLS/DASH output using on-demand processor creation.
 // It serves playlists on base requests and segments on segment requests.
+// Processors are only created when clients actually request their format.
+// Each client can have a different codec variant based on their profile.
 func (h *RelayStreamHandler) handleMultiFormatOutput(w http.ResponseWriter, r *http.Request, session *relay.RelaySession, info *service.StreamInfo, clientFormat relay.ClientFormat) {
-	// Initialize multi-format output if not already done
-	session.InitMultiFormatOutput()
+	ctx := r.Context()
 
 	// Parse request parameters
 	segmentStr := r.URL.Query().Get(relay.QueryParamSegment)
 	initStr := r.URL.Query().Get(relay.QueryParamInit)
 	formatOverride := r.URL.Query().Get(relay.QueryParamFormat)
 
-	// Get the format router
-	router := session.GetFormatRouter()
-	if router == nil {
-		h.logger.Error("Format router not initialized",
+	// Resolve the client's target codec variant from their profile
+	// This enables per-client codec variants - different clients can receive different codecs
+	clientVariant := relay.VariantCopy // Default to passthrough (copy)
+	if info != nil && info.Profile != nil {
+		// Resolve auto codecs if present
+		resolvedProfile := h.resolveProfileWithAutoDetection(ctx, r, info)
+		if resolvedProfile != nil && resolvedProfile.NeedsTranscode() {
+			// Build variant from resolved profile codecs
+			// Use "copy" for codecs that should pass through unchanged
+			videoCodec := string(resolvedProfile.VideoCodec)
+			audioCodec := string(resolvedProfile.AudioCodec)
+
+			// Normalize empty/none to "copy"
+			if videoCodec == "" || videoCodec == "none" {
+				videoCodec = "copy"
+			}
+			if audioCodec == "" || audioCodec == "none" {
+				audioCodec = "copy"
+			}
+
+			// Create variant - MakeCodecVariant handles the "copy" values
+			clientVariant = relay.MakeCodecVariant(videoCodec, audioCodec)
+
+			h.logger.Info("Client requesting specific codec variant",
+				"session_id", session.ID,
+				"variant", clientVariant.String(),
+				"video_codec", videoCodec,
+				"audio_codec", audioCodec,
+				"needs_transcode", true,
+			)
+		}
+	}
+
+	// Generate a client ID for tracking HLS/DASH clients
+	// Use IP (without port) + User-Agent hash to identify unique clients
+	// This handles multiple TCP connections from same client (e.g., mpv parallel segment fetches)
+	remoteAddr := r.RemoteAddr
+	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+		remoteAddr = strings.Split(fwd, ",")[0]
+	}
+	// Strip port from remote address (e.g., "192.168.1.100:54321" -> "192.168.1.100")
+	clientIP := remoteAddr
+	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		clientIP = host
+	}
+	// Create a short hash of User-Agent to distinguish different clients from same IP
+	// (e.g., multiple browser tabs, different players)
+	userAgent := r.UserAgent()
+	uaHash := fmt.Sprintf("%x", md5.Sum([]byte(userAgent)))[:8]
+	// Determine format prefix for client ID
+	formatPrefix := string(clientFormat)
+	if formatPrefix == "" {
+		formatPrefix = "stream"
+	}
+	clientID := fmt.Sprintf("%s-%s-%s", formatPrefix, clientIP, uaHash)
+
+	// Wait for the session pipeline to be ready before accessing processors
+	if err := session.WaitReady(r.Context()); err != nil {
+		h.logger.Error("Session not ready for streaming",
 			"session_id", session.ID,
+			"error", err,
 		)
-		http.Error(w, "format router not available", http.StatusInternalServerError)
+		http.Error(w, "session not ready", http.StatusServiceUnavailable)
 		return
 	}
 
-	// Build output request
+	// Build output request for format determination
 	var segment *uint64
 	if segmentStr != "" {
 		if seq, err := strconv.ParseUint(segmentStr, 10, 64); err == nil {
@@ -845,16 +970,80 @@ func (h *RelayStreamHandler) handleMultiFormatOutput(w http.ResponseWriter, r *h
 		FormatOverride: formatOverride,
 	}
 
-	// Get the appropriate handler
-	handler, err := router.GetHandler(outputReq)
-	if err != nil {
-		h.logger.Error("No handler for format",
-			"session_id", session.ID,
-			"format", clientFormat,
-			"error", err,
-		)
-		http.Error(w, "unsupported format", http.StatusBadRequest)
-		return
+	// Determine which format/processor to use based on client format
+	// and create the processor on-demand
+	var handler relay.OutputHandler
+
+	// Determine effective format (considering override)
+	effectiveFormat := string(clientFormat)
+	if formatOverride != "" {
+		effectiveFormat = formatOverride
+	}
+
+	switch effectiveFormat {
+	case relay.FormatValueHLS, relay.FormatValueHLSTS:
+		// HLS-TS format - get or create HLS-TS processor for client's variant
+		processor, err := session.GetOrCreateHLSTSProcessorForVariant(clientVariant)
+		if err != nil {
+			h.logger.Error("Failed to create HLS-TS processor",
+				"session_id", session.ID,
+				"variant", clientVariant.String(),
+				"error", err,
+			)
+			http.Error(w, "HLS streaming not available", http.StatusServiceUnavailable)
+			return
+		}
+		// Register client for tracking (will update existing or create new)
+		_ = processor.RegisterClient(clientID, w, r)
+		handler = relay.NewHLSHandler(processor)
+
+	case relay.FormatValueFMP4, relay.FormatValueHLSFMP4:
+		// HLS-fMP4/CMAF format - get or create HLS-fMP4 processor for client's variant
+		processor, err := session.GetOrCreateHLSfMP4ProcessorForVariant(clientVariant)
+		if err != nil {
+			h.logger.Error("Failed to create HLS-fMP4 processor",
+				"session_id", session.ID,
+				"variant", clientVariant.String(),
+				"error", err,
+			)
+			http.Error(w, "HLS-fMP4 streaming not available", http.StatusServiceUnavailable)
+			return
+		}
+		// Register client for tracking (will update existing or create new)
+		_ = processor.RegisterClient(clientID, w, r)
+		handler = relay.NewHLSHandler(processor)
+
+	case relay.FormatValueDASH:
+		// DASH format - get or create DASH processor for client's variant
+		processor, err := session.GetOrCreateDASHProcessorForVariant(clientVariant)
+		if err != nil {
+			h.logger.Error("Failed to create DASH processor",
+				"session_id", session.ID,
+				"variant", clientVariant.String(),
+				"error", err,
+			)
+			http.Error(w, "DASH streaming not available", http.StatusServiceUnavailable)
+			return
+		}
+		// Register client for tracking (will update existing or create new)
+		_ = processor.RegisterClient(clientID, w, r)
+		handler = relay.NewDASHHandler(processor)
+
+	default:
+		// Default to HLS-TS for unknown formats
+		processor, err := session.GetOrCreateHLSTSProcessorForVariant(clientVariant)
+		if err != nil {
+			h.logger.Error("Failed to create HLS-TS processor for default",
+				"session_id", session.ID,
+				"variant", clientVariant.String(),
+				"error", err,
+			)
+			http.Error(w, "streaming not available", http.StatusServiceUnavailable)
+			return
+		}
+		// Register client for tracking (will update existing or create new)
+		_ = processor.RegisterClient(clientID, w, r)
+		handler = relay.NewHLSHandler(processor)
 	}
 
 	// Build base URL for playlist (used to generate segment URLs)
@@ -884,7 +1073,15 @@ func (h *RelayStreamHandler) handleMultiFormatOutput(w http.ResponseWriter, r *h
 		}
 	} else {
 		// Playlist/manifest request
-		if err := handler.ServePlaylist(w, baseURL); err != nil {
+		// Use context-aware method if available to support waiting for segments
+		if hlsHandler, ok := handler.(*relay.HLSHandler); ok {
+			if err := hlsHandler.ServePlaylistWithContext(r.Context(), w, baseURL); err != nil {
+				h.logger.Debug("Failed to serve playlist",
+					"session_id", session.ID,
+					"error", err,
+				)
+			}
+		} else if err := handler.ServePlaylist(w, baseURL); err != nil {
 			h.logger.Debug("Failed to serve playlist",
 				"session_id", session.ID,
 				"error", err,
@@ -914,84 +1111,89 @@ func (h *RelayStreamHandler) buildBaseURL(r *http.Request) string {
 }
 
 // streamMPEGTSFromRelay streams MPEG-TS data directly from a relay session.
+// This uses on-demand processor creation - the MPEG-TS processor is only started
+// when a client actually requests this format.
 func (h *RelayStreamHandler) streamMPEGTSFromRelay(w http.ResponseWriter, r *http.Request, session *relay.RelaySession, info *service.StreamInfo) {
-	// Get request info for client registration
-	userAgent := r.Header.Get("User-Agent")
-	remoteAddr := r.Header.Get("X-Forwarded-For")
-	if remoteAddr == "" {
-		remoteAddr = r.RemoteAddr
-	}
-
-	// Add client to the session
-	client, reader, err := h.relayService.AddRelayClient(session.ID, userAgent, remoteAddr)
-	if err != nil {
-		h.logger.Error("Failed to add relay client for smart transcode",
-			"session_id", session.ID,
-			"error", err,
-		)
-		http.Error(w, "failed to add relay client", http.StatusInternalServerError)
-		return
-	}
+	ctx := r.Context()
 
 	connAttrs := []any{
 		"session_id", session.ID,
-		"client_id", client.ID,
 		"channel_id", info.Channel.ID,
 	}
 	if info.Proxy != nil {
 		connAttrs = append([]any{"proxy_id", info.Proxy.ID}, connAttrs...)
 	}
-	h.logger.Info("Client connected to smart transcode relay", connAttrs...)
+	h.logger.Info("Client connecting for MPEG-TS stream", connAttrs...)
 
-	w.Header().Set("Content-Type", relay.ContentTypeMPEGTS)
-	w.Header().Set("Cache-Control", "no-cache, no-store")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Transfer-Encoding", "chunked")
-	w.WriteHeader(http.StatusOK)
+	// Resolve the client's target codec variant from their profile
+	// This enables per-client codec variants - different clients can receive different codecs
+	clientVariant := relay.VariantCopy // Default to passthrough (copy)
+	if info != nil && info.Profile != nil {
+		// Resolve auto codecs if present
+		resolvedProfile := h.resolveProfileWithAutoDetection(ctx, r, info)
+		if resolvedProfile != nil && resolvedProfile.NeedsTranscode() {
+			// Build variant from resolved profile codecs
+			// Use "copy" for codecs that should pass through unchanged
+			videoCodec := string(resolvedProfile.VideoCodec)
+			audioCodec := string(resolvedProfile.AudioCodec)
 
-	// Stream data to client
-	buf := make([]byte, 32*1024) // 32KB buffer
-	for {
-		n, err := reader.Read(buf)
-		if n > 0 {
-			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
-				h.logger.Debug("Client disconnected during smart transcode write",
-					"session_id", session.ID,
-					"client_id", client.ID,
-					"error", writeErr,
-				)
-				break
+			// Normalize empty/none to "copy"
+			if videoCodec == "" || videoCodec == "none" {
+				videoCodec = "copy"
 			}
-			// Flush if possible
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
+			if audioCodec == "" || audioCodec == "none" {
+				audioCodec = "copy"
 			}
-		}
-		if err != nil {
-			if err != io.EOF {
-				h.logger.Debug("Reader error during smart transcode",
-					"session_id", session.ID,
-					"client_id", client.ID,
-					"error", err,
-				)
-			}
-			break
+
+			// Create variant - MakeCodecVariant handles the "copy" values
+			clientVariant = relay.MakeCodecVariant(videoCodec, audioCodec)
+
+			h.logger.Info("MPEG-TS client requesting specific codec variant",
+				"session_id", session.ID,
+				"variant", clientVariant.String(),
+				"video_codec", videoCodec,
+				"audio_codec", audioCodec,
+				"needs_transcode", true,
+			)
 		}
 	}
 
-	// Clean up client
-	if removeErr := h.relayService.RemoveRelayClient(session.ID, client.ID); removeErr != nil {
-		h.logger.Warn("Failed to remove relay client from smart transcode",
+	// Wait for the session pipeline to be ready before accessing processors
+	if err := session.WaitReady(r.Context()); err != nil {
+		h.logger.Error("Session not ready for MPEG-TS streaming",
 			"session_id", session.ID,
-			"client_id", client.ID,
-			"error", removeErr,
+			"error", err,
+		)
+		http.Error(w, "session not ready", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Get or create the MPEG-TS processor for the client's variant on-demand
+	// This enables per-client codec variants
+	processor, err := session.GetOrCreateMPEGTSProcessorForVariant(clientVariant)
+	if err != nil {
+		h.logger.Error("Failed to create MPEG-TS processor",
+			"session_id", session.ID,
+			"error", err,
+		)
+		http.Error(w, "MPEG-TS streaming not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Create handler for this processor
+	mpegtsHandler := relay.NewMPEGTSHandler(processor)
+
+	h.logger.Debug("Serving MPEG-TS stream via on-demand processor",
+		"session_id", session.ID,
+	)
+
+	// Serve the stream - this blocks until client disconnects
+	if err := mpegtsHandler.ServeStreamWithRequest(w, r); err != nil {
+		h.logger.Debug("MPEG-TS stream ended",
+			"session_id", session.ID,
+			"error", err,
 		)
 	}
-
-	h.logger.Info("Client disconnected from smart transcode relay",
-		"session_id", session.ID,
-		"client_id", client.ID,
-	)
 }
 
 // streamRawDirectProxy streams content directly from upstream with CORS headers.

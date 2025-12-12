@@ -7,7 +7,11 @@ type FlowNodeType string
 const (
 	// FlowNodeTypeOrigin represents the origin/source node.
 	FlowNodeTypeOrigin FlowNodeType = "origin"
-	// FlowNodeTypeProcessor represents the processing node (FFmpeg, gohlslib, etc).
+	// FlowNodeTypeBuffer represents the shared buffer node.
+	FlowNodeTypeBuffer FlowNodeType = "buffer"
+	// FlowNodeTypeTranscoder represents an FFmpeg transcoder node.
+	FlowNodeTypeTranscoder FlowNodeType = "transcoder"
+	// FlowNodeTypeProcessor represents the processing node (HLS/DASH/MPEGTS output).
 	FlowNodeTypeProcessor FlowNodeType = "processor"
 	// FlowNodeTypeClient represents a connected client node.
 	FlowNodeTypeClient FlowNodeType = "client"
@@ -47,12 +51,43 @@ type FlowNodeData struct {
 	ChannelName string `json:"channelName,omitempty"`
 
 	// Origin node fields
-	SourceName   string `json:"sourceName,omitempty"`   // Name of the stream source (e.g., "s8k")
-	SourceURL    string `json:"sourceUrl,omitempty"`
-	SourceFormat string `json:"sourceFormat,omitempty"` // hls, dash, mpegts
-	VideoCodec   string `json:"videoCodec,omitempty"`
-	AudioCodec   string `json:"audioCodec,omitempty"`
-	IngressBps   uint64 `json:"ingressBps,omitempty"` // Bytes per second from origin
+	SourceName   string  `json:"sourceName,omitempty"` // Name of the stream source (e.g., "s8k")
+	SourceURL    string  `json:"sourceUrl,omitempty"`
+	SourceFormat string  `json:"sourceFormat,omitempty"` // hls, dash, mpegts
+	VideoCodec   string  `json:"videoCodec,omitempty"`
+	AudioCodec   string  `json:"audioCodec,omitempty"`
+	Framerate    float64 `json:"framerate,omitempty"`    // Video framerate (fps)
+	VideoWidth   int     `json:"videoWidth,omitempty"`   // Video width in pixels
+	VideoHeight  int     `json:"videoHeight,omitempty"`  // Video height in pixels
+	IngressBps   uint64  `json:"ingressBps,omitempty"`   // Bytes per second from origin
+	TotalBytesIn uint64  `json:"totalBytesIn,omitempty"` // Total bytes received from upstream
+	DurationSecs float64 `json:"durationSecs,omitempty"` // Session duration in seconds
+
+	// Bandwidth history for sparkline (last 30 samples, ~1 sample/sec)
+	IngressHistory []uint64 `json:"ingressHistory,omitempty"` // Historical ingress bps values
+
+	// Buffer node fields
+	BufferVariants    []BufferVariantInfo `json:"bufferVariants,omitempty"`    // Variants in the buffer
+	BufferMemoryBytes uint64              `json:"bufferMemoryBytes,omitempty"` // Total resident memory size
+	MaxBufferBytes    uint64              `json:"maxBufferBytes,omitempty"`    // Maximum buffer size per variant
+	VideoSampleCount  int                 `json:"videoSampleCount,omitempty"`  // Number of video samples in buffer
+	AudioSampleCount  int                 `json:"audioSampleCount,omitempty"`  // Number of audio samples in buffer
+	BufferUtilization float64             `json:"bufferUtilization,omitempty"` // 0-100 percentage of max buffer used
+
+	// Transcoder node fields (FFmpeg)
+	TranscoderID      string   `json:"transcoderId,omitempty"`
+	SourceVideoCodec  string   `json:"sourceVideoCodec,omitempty"`  // Source video codec (e.g., "h264")
+	SourceAudioCodec  string   `json:"sourceAudioCodec,omitempty"`  // Source audio codec (e.g., "aac")
+	TargetVideoCodec  string   `json:"targetVideoCodec,omitempty"`  // Target video codec (e.g., "h265")
+	TargetAudioCodec  string   `json:"targetAudioCodec,omitempty"`  // Target audio codec (e.g., "aac")
+	VideoEncoder      string   `json:"videoEncoder,omitempty"`      // FFmpeg video encoder (e.g., "libx265", "h264_nvenc")
+	AudioEncoder      string   `json:"audioEncoder,omitempty"`      // FFmpeg audio encoder (e.g., "aac", "libopus")
+	HWAccelType       string   `json:"hwAccelType,omitempty"`       // Hardware acceleration type (e.g., "cuda", "qsv", "vaapi")
+	HWAccelDevice     string   `json:"hwAccelDevice,omitempty"`     // Hardware acceleration device (e.g., "/dev/dri/renderD128")
+	EncodingSpeed     *float64 `json:"encodingSpeed,omitempty"`     // Realtime encoding speed (1.0 = realtime)
+	TranscoderCPU     *float64 `json:"transcoderCpu,omitempty"`     // CPU usage percentage
+	TranscoderMemMB   *float64 `json:"transcoderMemMb,omitempty"`   // Memory usage in MB
+	TranscoderBytesIn uint64   `json:"transcoderBytesIn,omitempty"` // Bytes read by transcoder
 
 	// Processor node fields
 	RouteType        RouteType `json:"routeType,omitempty"` // passthrough, repackage, transcode
@@ -63,18 +98,41 @@ type FlowNodeData struct {
 	CPUPercent       *float64  `json:"cpuPercent,omitempty"`       // Only for FFmpeg
 	MemoryMB         *float64  `json:"memoryMB,omitempty"`         // Only for FFmpeg
 	ProcessingBps    uint64    `json:"processingBps,omitempty"`
+	TotalBytesOut    uint64    `json:"totalBytesOut,omitempty"` // Total bytes sent to clients
+
+	// Bandwidth history for sparkline (last 30 samples, ~1 sample/sec)
+	EgressHistory []uint64 `json:"egressHistory,omitempty"` // Historical egress bps values
 
 	// Client node fields
-	ClientID   string `json:"clientId,omitempty"`
-	PlayerType string `json:"playerType,omitempty"` // hls.js, mpegts.js, VLC, etc.
-	RemoteAddr string `json:"remoteAddr,omitempty"`
-	UserAgent  string `json:"userAgent,omitempty"` // Full user agent string
-	BytesRead  uint64 `json:"bytesRead,omitempty"`
-	EgressBps  uint64 `json:"egressBps,omitempty"` // Bytes per second to client
+	ClientID      string  `json:"clientId,omitempty"`
+	PlayerType    string  `json:"playerType,omitempty"`   // hls.js, mpegts.js, VLC, etc.
+	ClientFormat  string  `json:"clientFormat,omitempty"` // Format this client is using (hls, mpegts, dash)
+	RemoteAddr    string  `json:"remoteAddr,omitempty"`
+	UserAgent     string  `json:"userAgent,omitempty"`     // Full user agent string
+	DetectionRule string  `json:"detectionRule,omitempty"` // Client detection rule that matched
+	BytesRead     uint64  `json:"bytesRead,omitempty"`
+	EgressBps     uint64  `json:"egressBps,omitempty"`     // Bytes per second to client
+	ConnectedSecs float64 `json:"connectedSecs,omitempty"` // How long client has been connected
+
+	// Bandwidth history for sparkline (last 30 samples, ~1 sample/sec)
+	ClientEgressHistory []uint64 `json:"clientEgressHistory,omitempty"` // Historical client egress bps values
 
 	// Status fields
 	InFallback bool   `json:"inFallback,omitempty"`
 	Error      string `json:"error,omitempty"`
+}
+
+// BufferVariantInfo describes a codec variant in the shared buffer.
+type BufferVariantInfo struct {
+	Variant       string  `json:"variant"` // e.g., "h264/aac", "hevc/aac"
+	VideoCodec    string  `json:"videoCodec"`
+	AudioCodec    string  `json:"audioCodec"`
+	VideoSamples  int     `json:"videoSamples"`
+	AudioSamples  int     `json:"audioSamples"`
+	BytesIngested uint64  `json:"bytesIngested"`
+	MaxBytes      uint64  `json:"maxBytes"`    // Maximum bytes for this variant (e.g., 30MB)
+	Utilization   float64 `json:"utilization"` // 0-100 percentage of max used
+	IsSource      bool    `json:"isSource"`    // True if this is the original source variant
 }
 
 // RelayFlowEdge represents an edge (connection) in the relay flow graph.
@@ -88,6 +146,12 @@ type RelayFlowEdge struct {
 
 	// Target is the ID of the target node.
 	Target string `json:"target"`
+
+	// SourceHandle specifies which handle on the source node to connect from.
+	SourceHandle string `json:"sourceHandle,omitempty"`
+
+	// TargetHandle specifies which handle on the target node to connect to.
+	TargetHandle string `json:"targetHandle,omitempty"`
 
 	// Type determines the edge component to render.
 	Type string `json:"type,omitempty"` // "animated" for data flow animation
@@ -152,4 +216,10 @@ type FlowGraphMetadata struct {
 
 	// GeneratedAt is the timestamp when this graph was generated.
 	GeneratedAt string `json:"generatedAt"`
+
+	// System resource usage
+	SystemCPUPercent    float64 `json:"systemCpuPercent,omitempty"`
+	SystemMemoryPercent float64 `json:"systemMemoryPercent,omitempty"`
+	SystemMemoryUsedMB  uint64  `json:"systemMemoryUsedMb,omitempty"`
+	SystemMemoryTotalMB uint64  `json:"systemMemoryTotalMb,omitempty"`
 }

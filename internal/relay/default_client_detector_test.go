@@ -25,12 +25,12 @@ func TestDefaultClientDetector_DetectFormatOverride(t *testing.T) {
 	detector := NewDefaultClientDetector(nil)
 
 	tests := []struct {
-		name            string
-		formatOverride  string
-		expectedFormat  string
-		expectedSource  string
-		expectedFMP4    bool
-		expectedMPEGTS  bool
+		name           string
+		formatOverride string
+		expectedFormat string
+		expectedSource string
+		expectedFMP4   bool
+		expectedMPEGTS bool
 	}{
 		{
 			name:           "fmp4 override",
@@ -115,13 +115,13 @@ func TestDefaultClientDetector_DetectXTvarrPlayer(t *testing.T) {
 	detector := NewDefaultClientDetector(nil)
 
 	tests := []struct {
-		name            string
-		xTvarrPlayer    string
-		expectedPlayer  string
-		expectedFormat  string
-		expectedSource  string
-		expectedFMP4    bool
-		expectedMPEGTS  bool
+		name           string
+		xTvarrPlayer   string
+		expectedPlayer string
+		expectedFormat string
+		expectedSource string
+		expectedFMP4   bool
+		expectedMPEGTS bool
 	}{
 		{
 			name:           "hls.js player",

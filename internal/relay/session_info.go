@@ -35,11 +35,27 @@ type RelaySessionInfo struct {
 	SourceFormat string `json:"source_format"` // hls, dash, mpegts, etc.
 
 	// Output information
-	OutputFormat string `json:"output_format"` // hls, dash, mpegts, etc.
+	OutputFormat           string   `json:"output_format"`                      // hls, dash, mpegts, etc. (primary/default)
+	ActiveProcessorFormats []string `json:"active_processor_formats,omitempty"` // Actually running processors (mpegts, hls, dash)
 
-	// Codec information
-	VideoCodec string `json:"video_codec,omitempty"` // Source or transcoded codec
-	AudioCodec string `json:"audio_codec,omitempty"` // Source or transcoded codec
+	// Codec information (source)
+	VideoCodec  string  `json:"video_codec,omitempty"`  // Source video codec
+	AudioCodec  string  `json:"audio_codec,omitempty"`  // Source audio codec
+	Framerate   float64 `json:"framerate,omitempty"`    // Video framerate (fps)
+	VideoWidth  int     `json:"video_width,omitempty"`  // Video width in pixels
+	VideoHeight int     `json:"video_height,omitempty"` // Video height in pixels
+
+	// Target codec information (only for transcode sessions)
+	TargetVideoCodec string `json:"target_video_codec,omitempty"` // Target video codec (e.g., h265)
+	TargetAudioCodec string `json:"target_audio_codec,omitempty"` // Target audio codec (e.g., aac)
+
+	// Encoder information (only for transcode sessions) - what FFmpeg uses
+	VideoEncoder string `json:"video_encoder,omitempty"` // FFmpeg video encoder (e.g., libx265, h264_nvenc)
+	AudioEncoder string `json:"audio_encoder,omitempty"` // FFmpeg audio encoder (e.g., aac, libopus)
+
+	// Hardware acceleration (only for transcode sessions)
+	HWAccelType   string `json:"hwaccel_type,omitempty"`   // Hardware acceleration type (e.g., cuda, qsv, vaapi)
+	HWAccelDevice string `json:"hwaccel_device,omitempty"` // Hardware acceleration device (e.g., /dev/dri/renderD128)
 
 	// Timing
 	StartedAt    time.Time `json:"started_at"`
@@ -47,8 +63,8 @@ type RelaySessionInfo struct {
 	DurationSecs float64   `json:"duration_secs"`
 
 	// Connected clients
-	ClientCount int                      `json:"client_count"`
-	Clients     []RelayClientInfo        `json:"clients,omitempty"`
+	ClientCount int               `json:"client_count"`
+	Clients     []RelayClientInfo `json:"clients,omitempty"`
 
 	// Bytes transferred
 	BytesIn  uint64 `json:"bytes_in"`  // From upstream
@@ -65,55 +81,85 @@ type RelaySessionInfo struct {
 	MemoryPercent *float64 `json:"memory_percent,omitempty"`
 
 	// FFmpeg process info (only for transcode sessions)
-	FFmpegPID *int `json:"ffmpeg_pid,omitempty"`
+	FFmpegPID   *int             `json:"ffmpeg_pid,omitempty"`
+	FFmpegStats *FFmpegStatsInfo `json:"ffmpeg_stats,omitempty"` // Detailed FFmpeg stats
 
 	// Buffer statistics
-	BufferUtilization *float64 `json:"buffer_utilization,omitempty"` // 0-100 percentage
-	SegmentCount      *int     `json:"segment_count,omitempty"`
+	BufferUtilization *float64            `json:"buffer_utilization,omitempty"` // 0-100 percentage
+	SegmentCount      *int                `json:"segment_count,omitempty"`
+	BufferVariants    []BufferVariantInfo `json:"buffer_variants,omitempty"` // Variants in shared buffer
 
 	// Status
 	InFallback bool   `json:"in_fallback"`
 	Error      string `json:"error,omitempty"`
 }
 
+// FFmpegStatsInfo contains detailed FFmpeg process statistics.
+type FFmpegStatsInfo struct {
+	PID           int     `json:"pid"`
+	CPUPercent    float64 `json:"cpu_percent"`
+	MemoryRSSMB   float64 `json:"memory_rss_mb"`
+	MemoryPercent float64 `json:"memory_percent"`
+	BytesWritten  uint64  `json:"bytes_written"`
+	WriteRateMbps float64 `json:"write_rate_mbps"`
+	DurationSecs  float64 `json:"duration_secs"`
+}
+
+// Note: BufferVariantInfo is defined in flow_types.go
+
 // RelayClientInfo provides information about a connected client.
 type RelayClientInfo struct {
-	ClientID    string    `json:"client_id"`
-	UserAgent   string    `json:"user_agent,omitempty"`
-	RemoteAddr  string    `json:"remote_addr,omitempty"`
-	PlayerType  string    `json:"player_type,omitempty"` // Extracted from X-Tvarr-Player header
-	ConnectedAt time.Time `json:"connected_at"`
-	BytesRead   uint64    `json:"bytes_read"`
+	ClientID      string    `json:"client_id"`
+	UserAgent     string    `json:"user_agent,omitempty"`
+	RemoteAddr    string    `json:"remote_addr,omitempty"`
+	PlayerType    string    `json:"player_type,omitempty"`    // Extracted from X-Tvarr-Player header
+	DetectionRule string    `json:"detection_rule,omitempty"` // Client detection rule that matched
+	ClientFormat  string    `json:"client_format,omitempty"`  // Format this client is using (hls, mpegts, dash)
+	ConnectedAt   time.Time `json:"connected_at"`
+	ConnectedSecs float64   `json:"connected_secs"` // How long the client has been connected
+	BytesRead     uint64    `json:"bytes_read"`
 }
 
 // ToSessionInfo converts SessionStats to RelaySessionInfo for flow visualization.
 func (s *SessionStats) ToSessionInfo() RelaySessionInfo {
 	info := RelaySessionInfo{
-		SessionID:        s.ID,
-		ChannelID:        s.ChannelID,
-		ChannelName:      s.ChannelName,
-		StreamSourceName: s.StreamSourceName,
-		ProfileName:      s.ProfileName,
-		SourceURL:        s.StreamURL,
-		SourceFormat:     s.SourceFormat,
-		OutputFormat:     s.ClientFormat,
-		StartedAt:        s.StartedAt,
-		LastActivity:     s.LastActivity,
-		ClientCount:      s.ClientCount,
-		BytesIn:          s.BytesFromUpstream,
-		BytesOut:         s.BytesWritten,
-		InFallback:       s.InFallback,
-		Error:            s.Error,
+		SessionID:              s.ID,
+		ChannelID:              s.ChannelID,
+		ChannelName:            s.ChannelName,
+		StreamSourceName:       s.StreamSourceName,
+		ProfileName:            s.ProfileName,
+		SourceURL:              s.StreamURL,
+		SourceFormat:           s.SourceFormat,
+		OutputFormat:           s.ClientFormat,
+		ActiveProcessorFormats: s.ActiveProcessorFormats,
+		StartedAt:              s.StartedAt,
+		LastActivity:           s.LastActivity,
+		ClientCount:            s.ClientCount,
+		BytesIn:                s.BytesFromUpstream,
+		BytesOut:               s.BytesWritten,
+		InFallback:             s.InFallback,
+		Error:                  s.Error,
+	}
+
+	// Calculate duration and rates
+	var durationSecs float64
+	if !s.StartedAt.IsZero() {
+		durationSecs = time.Since(s.StartedAt).Seconds()
+		info.DurationSecs = durationSecs
+
+		// Calculate ingress/egress rates (bytes per second)
+		if durationSecs > 0 {
+			info.IngressRateBps = uint64(float64(s.BytesFromUpstream) / durationSecs)
+			info.EgressRateBps = uint64(float64(s.BytesWritten) / durationSecs)
+		}
 	}
 
 	// Copy codec info
 	info.VideoCodec = s.VideoCodec
 	info.AudioCodec = s.AudioCodec
-
-	// Calculate duration
-	if !s.StartedAt.IsZero() {
-		info.DurationSecs = time.Since(s.StartedAt).Seconds()
-	}
+	info.Framerate = s.Framerate
+	info.VideoWidth = s.VideoWidth
+	info.VideoHeight = s.VideoHeight
 
 	// Determine route type from delivery decision
 	switch s.DeliveryDecision {
@@ -139,6 +185,28 @@ func (s *SessionStats) ToSessionInfo() RelaySessionInfo {
 		memBytes := uint64(s.FFmpegStats.MemoryRSSMB * 1024 * 1024)
 		info.MemoryBytes = &memBytes
 		info.MemoryPercent = &s.FFmpegStats.MemoryPercent
+
+		// Copy target codecs from FFmpeg stats (these are the transcoded output codecs)
+		info.TargetVideoCodec = s.FFmpegStats.VideoCodec
+		info.TargetAudioCodec = s.FFmpegStats.AudioCodec
+
+		// Copy encoder names (what FFmpeg uses to produce the codecs)
+		info.VideoEncoder = s.FFmpegStats.VideoEncoder
+		info.AudioEncoder = s.FFmpegStats.AudioEncoder
+
+		// Copy hardware acceleration info
+		info.HWAccelType = s.FFmpegStats.HWAccel
+		info.HWAccelDevice = s.FFmpegStats.HWAccelDevice
+
+		info.FFmpegStats = &FFmpegStatsInfo{
+			PID:           s.FFmpegStats.PID,
+			CPUPercent:    s.FFmpegStats.CPUPercent,
+			MemoryRSSMB:   s.FFmpegStats.MemoryRSSMB,
+			MemoryPercent: s.FFmpegStats.MemoryPercent,
+			BytesWritten:  s.FFmpegStats.BytesWritten,
+			WriteRateMbps: s.FFmpegStats.WriteRateMbps,
+			DurationSecs:  s.FFmpegStats.DurationSecs,
+		}
 	}
 
 	// Copy buffer stats if present
@@ -147,14 +215,38 @@ func (s *SessionStats) ToSessionInfo() RelaySessionInfo {
 		info.SegmentCount = &s.SegmentBufferStats.SegmentCount
 	}
 
+	// Copy ES buffer variant stats if present
+	if s.ESBufferStats != nil {
+		for _, v := range s.ESBufferStats.Variants {
+			// Convert from ESVariantStats to BufferVariantInfo
+			info.BufferVariants = append(info.BufferVariants, BufferVariantInfo{
+				Variant:       string(v.Variant),
+				VideoCodec:    v.VideoCodec,
+				AudioCodec:    v.AudioCodec,
+				VideoSamples:  v.VideoSamples,
+				AudioSamples:  v.AudioSamples,
+				BytesIngested: v.CurrentBytes, // Use current resident bytes, not total ingested
+				MaxBytes:      v.MaxBytes,
+				Utilization:   v.ByteUtilization,
+				IsSource:      v.IsSource,
+			})
+		}
+	}
+
 	// Convert clients
 	for _, c := range s.Clients {
+		connectedSecs := 0.0
+		if !c.ConnectedAt.IsZero() {
+			connectedSecs = time.Since(c.ConnectedAt).Seconds()
+		}
 		clientInfo := RelayClientInfo{
-			ClientID:    c.ID,
-			UserAgent:   c.UserAgent,
-			RemoteAddr:  c.RemoteAddr,
-			ConnectedAt: c.ConnectedAt,
-			BytesRead:   c.BytesRead,
+			ClientID:      c.ID,
+			UserAgent:     c.UserAgent,
+			RemoteAddr:    c.RemoteAddr,
+			ClientFormat:  c.ClientFormat,
+			ConnectedAt:   c.ConnectedAt,
+			ConnectedSecs: connectedSecs,
+			BytesRead:     c.BytesRead,
 		}
 		// Extract player type from user agent if available
 		clientInfo.PlayerType = extractPlayerType(c.UserAgent)
@@ -176,6 +268,13 @@ func extractPlayerType(userAgent string) string {
 		return "ExoPlayer"
 	case containsIgnoreCase(userAgent, "vlc"):
 		return "VLC"
+	case containsIgnoreCase(userAgent, "mpv"):
+		return "mpv"
+	case containsIgnoreCase(userAgent, "lavf"):
+		// Lavf is libavformat, used by mpv and ffmpeg-based players
+		return "mpv"
+	case containsIgnoreCase(userAgent, "ffmpeg"):
+		return "FFmpeg"
 	case containsIgnoreCase(userAgent, "safari"):
 		return "Safari"
 	case containsIgnoreCase(userAgent, "chrome"):

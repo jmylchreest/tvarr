@@ -1,14 +1,9 @@
 'use client';
 
 import { memo } from 'react';
-import {
-  BaseEdge,
-  EdgeLabelRenderer,
-  getBezierPath,
-  type Position,
-} from '@xyflow/react';
+import { BaseEdge, EdgeLabelRenderer, getBezierPath, type Position } from '@xyflow/react';
 import type { FlowEdgeData } from '@/types/relay-flow';
-import { formatBps } from '@/types/relay-flow';
+import { formatBps, formatBytes } from '@/types/relay-flow';
 
 interface AnimatedEdgeProps {
   id: string;
@@ -79,31 +74,33 @@ function AnimatedEdge({
       {/* Animated flow indicator */}
       {isActive && (
         <circle r="4" fill={strokeColor}>
-          <animateMotion
-            dur="2s"
-            repeatCount="indefinite"
-            path={edgePath}
-          />
+          <animateMotion dur="2s" repeatCount="indefinite" path={edgePath} />
         </circle>
       )}
 
-      {/* Label showing bandwidth */}
-      {data?.bandwidthBps !== undefined && data.bandwidthBps > 0 && (
-        <EdgeLabelRenderer>
+      {/* Label showing bandwidth - always show for active connections */}
+      <EdgeLabelRenderer>
+        <div
+          style={{
+            position: 'absolute',
+            transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+            pointerEvents: 'all',
+          }}
+          className="nodrag nopan"
+        >
           <div
-            style={{
-              position: 'absolute',
-              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
-              pointerEvents: 'all',
-            }}
-            className="nodrag nopan"
+            className={`backdrop-blur-sm border rounded px-1.5 py-0.5 text-xs font-medium ${
+              isActive
+                ? 'bg-background/90 text-green-600 dark:text-green-400 border-green-500/30'
+                : 'bg-background/60 text-muted-foreground'
+            }`}
           >
-            <div className="bg-background/80 backdrop-blur-sm border rounded px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
-              {formatBps(data.bandwidthBps)}
-            </div>
+            {data?.bandwidthBps !== undefined && data.bandwidthBps > 0
+              ? formatBps(data.bandwidthBps)
+              : 'connecting...'}
           </div>
-        </EdgeLabelRenderer>
-      )}
+        </div>
+      </EdgeLabelRenderer>
     </>
   );
 }

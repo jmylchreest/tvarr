@@ -10,6 +10,60 @@ import (
 	"github.com/jmylchreest/tvarr/internal/service"
 )
 
+// validMappingVideoCodecs are the allowed values for preferred video codec in mappings.
+// These are codec names, NOT encoder names (e.g., "h265" not "libx265").
+var validMappingVideoCodecs = map[string]bool{
+	"":     true, // Empty means default
+	"copy": true,
+	"h264": true,
+	"h265": true,
+	"hevc": true, // Alias for h265
+	"vp9":  true,
+	"av1":  true,
+}
+
+// validMappingAudioCodecs are the allowed values for preferred audio codec in mappings.
+// These are codec names, NOT encoder names (e.g., "aac" not "libfdk_aac").
+var validMappingAudioCodecs = map[string]bool{
+	"":     true, // Empty means default
+	"copy": true,
+	"aac":  true,
+	"mp3":  true,
+	"ac3":  true,
+	"eac3": true,
+	"opus": true,
+	"flac": true,
+}
+
+// validateMappingVideoCodec checks if a video codec value is valid for mappings.
+// Returns an error if the value looks like an encoder name instead of a codec name.
+func validateMappingVideoCodec(codec string) error {
+	if validMappingVideoCodecs[codec] {
+		return nil
+	}
+	// Check for common encoder names that users might accidentally use
+	switch codec {
+	case "libx264", "libx265", "h264_nvenc", "hevc_nvenc", "h264_vaapi", "hevc_vaapi",
+		"h264_qsv", "hevc_qsv", "libvpx", "libvpx-vp9", "libaom-av1", "av1_nvenc", "av1_qsv":
+		return fmt.Errorf("invalid preferred_video_codec '%s': use codec name (h264, h265, vp9, av1) not encoder name", codec)
+	}
+	return fmt.Errorf("invalid preferred_video_codec '%s': must be one of: copy, h264, h265, vp9, av1", codec)
+}
+
+// validateMappingAudioCodec checks if an audio codec value is valid for mappings.
+// Returns an error if the value looks like an encoder name instead of a codec name.
+func validateMappingAudioCodec(codec string) error {
+	if validMappingAudioCodecs[codec] {
+		return nil
+	}
+	// Check for common encoder names that users might accidentally use
+	switch codec {
+	case "libfdk_aac", "libmp3lame", "libopus", "libvorbis", "libflac":
+		return fmt.Errorf("invalid preferred_audio_codec '%s': use codec name (aac, mp3, opus, ac3) not encoder name", codec)
+	}
+	return fmt.Errorf("invalid preferred_audio_codec '%s': must be one of: copy, aac, mp3, ac3, eac3, opus, flac", codec)
+}
+
 // RelayProfileMappingHandler handles relay profile mapping API endpoints.
 type RelayProfileMappingHandler struct {
 	service *service.RelayProfileMappingService
@@ -226,6 +280,14 @@ type CreateRelayProfileMappingOutput struct {
 
 // Create creates a new relay profile mapping.
 func (h *RelayProfileMappingHandler) Create(ctx context.Context, input *CreateRelayProfileMappingInput) (*CreateRelayProfileMappingOutput, error) {
+	// Validate preferred codec values - these must be codec names (h264, h265), not encoder names (libx264, libx265)
+	if err := validateMappingVideoCodec(input.Body.PreferredVideoCodec); err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+	if err := validateMappingAudioCodec(input.Body.PreferredAudioCodec); err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+
 	mapping := &models.RelayProfileMapping{
 		Name:                input.Body.Name,
 		Description:         input.Body.Description,
@@ -277,6 +339,14 @@ func (h *RelayProfileMappingHandler) Update(ctx context.Context, input *UpdateRe
 	id, err := models.ParseULID(input.ID)
 	if err != nil {
 		return nil, huma.Error400BadRequest("invalid mapping ID", err)
+	}
+
+	// Validate preferred codec values - these must be codec names (h264, h265), not encoder names (libx264, libx265)
+	if err := validateMappingVideoCodec(input.Body.PreferredVideoCodec); err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+	if err := validateMappingAudioCodec(input.Body.PreferredAudioCodec); err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
 	}
 
 	// Get existing mapping to preserve system flag

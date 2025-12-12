@@ -1,0 +1,666 @@
+// Package relay provides streaming relay functionality for tvarr.
+package relay
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+// HLS-fMP4 Processor errors.
+var (
+	ErrHLSFMP4ProcessorClosed = errors.New("HLS-fMP4 processor closed")
+	ErrInitSegmentNotReady    = errors.New("init segment not ready")
+)
+
+// HLSfMP4ProcessorConfig configures the HLS-fMP4 processor.
+type HLSfMP4ProcessorConfig struct {
+	// TargetSegmentDuration is the target duration for each segment in seconds.
+	TargetSegmentDuration float64
+
+	// MaxSegments is the maximum number of segments to keep in the sliding window.
+	// This is the buffer size for resilience - supports slow clients who've already started.
+	MaxSegments int
+
+	// PlaylistSegments is the number of segments to include in the playlist for new clients.
+	// New clients will start from the latest segments (near live edge).
+	// If 0, defaults to min(3, MaxSegments).
+	// Should be <= MaxSegments.
+	PlaylistSegments int
+
+	// PlaylistType is the HLS playlist type (EVENT or VOD, empty for live).
+	PlaylistType string
+
+	// Logger for structured logging.
+	Logger *slog.Logger
+}
+
+// DefaultHLSfMP4ProcessorConfig returns sensible defaults.
+func DefaultHLSfMP4ProcessorConfig() HLSfMP4ProcessorConfig {
+	return HLSfMP4ProcessorConfig{
+		TargetSegmentDuration: 6.0,
+		MaxSegments:           7,
+		PlaylistSegments:      3,  // New clients start near live edge
+		PlaylistType:          "", // Live
+		Logger:                slog.Default(),
+	}
+}
+
+// hlsFMP4Segment represents a single HLS fMP4 segment.
+type hlsFMP4Segment struct {
+	sequence    uint64
+	duration    float64 // Duration in seconds
+	data        []byte  // fMP4 fragment data (moof+mdat)
+	ptsStart    int64   // Start PTS (in 90kHz units)
+	ptsEnd      int64   // End PTS (in 90kHz units)
+	discontinue bool    // Discontinuity flag
+	createdAt   time.Time
+}
+
+// HLSfMP4Processor reads from a SharedESBuffer variant and produces HLS with fMP4/CMAF segments.
+// It implements the Processor and FMP4SegmentProvider interfaces.
+type HLSfMP4Processor struct {
+	*BaseProcessor
+
+	config   HLSfMP4ProcessorConfig
+	esBuffer *SharedESBuffer
+	variant  CodecVariant
+
+	// Init segment
+	initSegment   *InitSegment
+	initSegmentMu sync.RWMutex
+
+	// Segment management
+	segments      []*hlsFMP4Segment
+	segmentsMu    sync.RWMutex
+	nextSequence  uint64
+	segmentNotify chan struct{} // Notifies waiters when new segment is added
+
+	// Current segment accumulator
+	currentSegment struct {
+		buf       bytes.Buffer
+		startPTS  int64
+		endPTS    int64
+		hasVideo  bool
+		hasAudio  bool
+		startTime time.Time
+		samples   int // Number of samples in current segment
+	}
+
+	// ES reading state
+	lastVideoSeq uint64
+	lastAudioSeq uint64
+
+	// fMP4 muxer using mediacommon
+	writer  *FMP4Writer
+	adapter *ESSampleAdapter
+
+	// Lifecycle
+	ctx     context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
+	started atomic.Bool
+}
+
+// NewHLSfMP4Processor creates a new HLS-fMP4 processor.
+func NewHLSfMP4Processor(
+	id string,
+	esBuffer *SharedESBuffer,
+	variant CodecVariant,
+	config HLSfMP4ProcessorConfig,
+) *HLSfMP4Processor {
+	if config.Logger == nil {
+		config.Logger = slog.Default()
+	}
+
+	base := NewBaseProcessor(id, OutputFormatHLSFMP4, nil)
+
+	p := &HLSfMP4Processor{
+		BaseProcessor: base,
+		config:        config,
+		esBuffer:      esBuffer,
+		variant:       variant,
+		segments:      make([]*hlsFMP4Segment, 0, config.MaxSegments),
+		segmentNotify: make(chan struct{}, 1),
+		writer:        NewFMP4Writer(),
+		adapter:       NewESSampleAdapter(DefaultESSampleAdapterConfig()),
+	}
+
+	return p
+}
+
+// WaitForSegments waits until at least minSegments are available or context is cancelled.
+// This is used to ensure clients don't get empty playlists when first connecting.
+func (p *HLSfMP4Processor) WaitForSegments(ctx context.Context, minSegments int) error {
+	for {
+		p.segmentsMu.RLock()
+		count := len(p.segments)
+		p.segmentsMu.RUnlock()
+
+		if count >= minSegments {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-p.ctx.Done():
+			return errors.New("processor stopped")
+		case <-p.segmentNotify:
+			// New segment added, check again
+		}
+	}
+}
+
+// SegmentCount returns the current number of segments.
+func (p *HLSfMP4Processor) SegmentCount() int {
+	p.segmentsMu.RLock()
+	defer p.segmentsMu.RUnlock()
+	return len(p.segments)
+}
+
+// Start begins processing data from the shared buffer.
+func (p *HLSfMP4Processor) Start(ctx context.Context) error {
+	if !p.started.CompareAndSwap(false, true) {
+		return errors.New("processor already started")
+	}
+
+	p.ctx, p.cancel = context.WithCancel(ctx)
+	p.BaseProcessor.startedAt = time.Now()
+
+	// Get or create the variant we'll read from
+	// This will wait for the source variant to be ready if requesting VariantCopy
+	esVariant, err := p.esBuffer.GetOrCreateVariantWithContext(p.ctx, p.variant)
+	if err != nil {
+		return fmt.Errorf("getting variant: %w", err)
+	}
+
+	// Register with buffer
+	p.esBuffer.RegisterProcessor(p.id)
+
+	// Initialize segment accumulator
+	p.initNewSegment()
+
+	p.config.Logger.Info("Starting HLS-fMP4 processor",
+		slog.String("id", p.id),
+		slog.String("variant", p.variant.String()))
+
+	// Start processing loop
+	p.wg.Add(1)
+	go func() {
+		defer p.wg.Done()
+		p.runProcessingLoop(esVariant)
+	}()
+
+	return nil
+}
+
+// Stop stops the processor and cleans up resources.
+func (p *HLSfMP4Processor) Stop() {
+	if p.cancel != nil {
+		p.cancel()
+	}
+	p.wg.Wait()
+
+	p.esBuffer.UnregisterProcessor(p.id)
+	p.BaseProcessor.Close()
+
+	p.config.Logger.Info("HLS-fMP4 processor stopped",
+		slog.String("id", p.id))
+}
+
+// RegisterClient adds a client to receive output from this processor.
+func (p *HLSfMP4Processor) RegisterClient(clientID string, w http.ResponseWriter, r *http.Request) error {
+	_ = p.RegisterClientBase(clientID, w, r)
+	return nil
+}
+
+// UnregisterClient removes a client.
+func (p *HLSfMP4Processor) UnregisterClient(clientID string) {
+	p.UnregisterClientBase(clientID)
+}
+
+// ServeManifest serves the HLS playlist.
+// Returns only the latest PlaylistSegments segments so new clients start near live edge.
+func (p *HLSfMP4Processor) ServeManifest(w http.ResponseWriter, r *http.Request) error {
+	p.segmentsMu.RLock()
+	allSegments := p.segments
+	if len(allSegments) == 0 {
+		p.segmentsMu.RUnlock()
+		http.Error(w, "No segments available", http.StatusServiceUnavailable)
+		return errors.New("no segments available")
+	}
+
+	// Determine how many segments to include in playlist (latest segments for near-live)
+	playlistSize := p.config.PlaylistSegments
+	if playlistSize <= 0 {
+		playlistSize = 3
+	}
+	if playlistSize > len(allSegments) {
+		playlistSize = len(allSegments)
+	}
+
+	// Get only the latest segments
+	startIdx := len(allSegments) - playlistSize
+	segments := make([]*hlsFMP4Segment, playlistSize)
+	copy(segments, allSegments[startIdx:])
+	p.segmentsMu.RUnlock()
+
+	// Build playlist
+	var buf bytes.Buffer
+	buf.WriteString("#EXTM3U\n")
+	buf.WriteString("#EXT-X-VERSION:7\n") // Version 7 for fMP4
+	buf.WriteString(fmt.Sprintf("#EXT-X-TARGETDURATION:%d\n", int(p.config.TargetSegmentDuration+0.5)))
+	buf.WriteString(fmt.Sprintf("#EXT-X-MEDIA-SEQUENCE:%d\n", segments[0].sequence))
+
+	if p.config.PlaylistType != "" {
+		buf.WriteString(fmt.Sprintf("#EXT-X-PLAYLIST-TYPE:%s\n", p.config.PlaylistType))
+	}
+
+	// Add map for init segment
+	buf.WriteString("#EXT-X-MAP:URI=\"init.mp4\"\n")
+
+	for _, seg := range segments {
+		if seg.discontinue {
+			buf.WriteString("#EXT-X-DISCONTINUITY\n")
+		}
+		buf.WriteString(fmt.Sprintf("#EXTINF:%.3f,\n", seg.duration))
+		buf.WriteString(fmt.Sprintf("segment%d.m4s\n", seg.sequence))
+	}
+
+	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	_, err := w.Write(buf.Bytes())
+	return err
+}
+
+// ServeSegment serves a specific segment by name.
+func (p *HLSfMP4Processor) ServeSegment(w http.ResponseWriter, r *http.Request, segmentName string) error {
+	// Handle init segment
+	if segmentName == "init.mp4" {
+		p.initSegmentMu.RLock()
+		initSeg := p.initSegment
+		p.initSegmentMu.RUnlock()
+
+		if initSeg == nil {
+			http.Error(w, "Init segment not ready", http.StatusServiceUnavailable)
+			return ErrInitSegmentNotReady
+		}
+
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(initSeg.Data)))
+		w.Header().Set("Cache-Control", "public, max-age=31536000") // Init segment is immutable
+		_, err := w.Write(initSeg.Data)
+		return err
+	}
+
+	// Parse segment sequence from name (e.g., "segment123.m4s")
+	var seq uint64
+	_, err := fmt.Sscanf(segmentName, "segment%d.m4s", &seq)
+	if err != nil {
+		http.Error(w, "Invalid segment name", http.StatusBadRequest)
+		return fmt.Errorf("parsing segment name: %w", err)
+	}
+
+	p.segmentsMu.RLock()
+	var segment *hlsFMP4Segment
+	for _, s := range p.segments {
+		if s.sequence == seq {
+			segment = s
+			break
+		}
+	}
+	p.segmentsMu.RUnlock()
+
+	if segment == nil {
+		http.Error(w, "Segment not found", http.StatusNotFound)
+		return fmt.Errorf("segment %d not found", seq)
+	}
+
+	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(segment.data)))
+	w.Header().Set("Cache-Control", "public, max-age=31536000") // Segments are immutable
+	_, err = w.Write(segment.data)
+	return err
+}
+
+// IsFMP4Mode returns true since this processor uses fMP4.
+func (p *HLSfMP4Processor) IsFMP4Mode() bool {
+	return true
+}
+
+// GetInitSegment returns the initialization segment.
+func (p *HLSfMP4Processor) GetInitSegment() *InitSegment {
+	p.initSegmentMu.RLock()
+	defer p.initSegmentMu.RUnlock()
+	return p.initSegment
+}
+
+// HasInitSegment returns true if the init segment is available.
+func (p *HLSfMP4Processor) HasInitSegment() bool {
+	p.initSegmentMu.RLock()
+	defer p.initSegmentMu.RUnlock()
+	return p.initSegment != nil
+}
+
+// GetSegmentInfos implements SegmentProvider.
+// Returns only the latest PlaylistSegments segments so new clients start near live edge.
+func (p *HLSfMP4Processor) GetSegmentInfos() []SegmentInfo {
+	p.segmentsMu.RLock()
+	defer p.segmentsMu.RUnlock()
+
+	if len(p.segments) == 0 {
+		return nil
+	}
+
+	// Determine how many segments to include in playlist
+	playlistSize := p.config.PlaylistSegments
+	if playlistSize <= 0 {
+		playlistSize = 3 // Default to 3 segments for near-live playback
+	}
+	if playlistSize > len(p.segments) {
+		playlistSize = len(p.segments)
+	}
+
+	// Return only the latest segments (from the end of the buffer)
+	startIdx := len(p.segments) - playlistSize
+	latestSegments := p.segments[startIdx:]
+
+	infos := make([]SegmentInfo, len(latestSegments))
+	for i, seg := range latestSegments {
+		infos[i] = SegmentInfo{
+			Sequence:  seg.sequence,
+			Duration:  seg.duration,
+			Timestamp: seg.createdAt,
+		}
+	}
+	return infos
+}
+
+// GetSegment implements SegmentProvider.
+func (p *HLSfMP4Processor) GetSegment(sequence uint64) (*Segment, error) {
+	p.segmentsMu.RLock()
+	defer p.segmentsMu.RUnlock()
+
+	for _, seg := range p.segments {
+		if seg.sequence == sequence {
+			return &Segment{
+				Sequence:  seg.sequence,
+				Duration:  seg.duration,
+				Data:      seg.data,
+				Timestamp: seg.createdAt,
+			}, nil
+		}
+	}
+
+	return nil, ErrSegmentNotFound
+}
+
+// TargetDuration implements SegmentProvider.
+func (p *HLSfMP4Processor) TargetDuration() int {
+	return int(p.config.TargetSegmentDuration + 0.5)
+}
+
+// initNewSegment initializes a new segment accumulator.
+func (p *HLSfMP4Processor) initNewSegment() {
+	p.currentSegment.buf.Reset()
+	p.currentSegment.startPTS = -1
+	p.currentSegment.endPTS = -1
+	p.currentSegment.hasVideo = false
+	p.currentSegment.hasAudio = false
+	p.currentSegment.startTime = time.Now()
+	p.currentSegment.samples = 0
+}
+
+// runProcessingLoop is the main processing loop.
+func (p *HLSfMP4Processor) runProcessingLoop(esVariant *ESVariant) {
+	videoTrack := esVariant.VideoTrack()
+	audioTrack := esVariant.AudioTrack()
+
+	// Wait for initial video keyframe
+	p.config.Logger.Debug("Waiting for initial keyframe")
+	for {
+		select {
+		case <-p.ctx.Done():
+			return
+		case <-videoTrack.NotifyChan():
+		}
+
+		samples := videoTrack.ReadFromKeyframe(p.lastVideoSeq, 1)
+		if len(samples) > 0 {
+			p.lastVideoSeq = samples[0].Sequence - 1
+			break
+		}
+	}
+
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	// Accumulators for current segment
+	var videoSamples []ESSample
+	var audioSamples []ESSample
+
+	for {
+		select {
+		case <-p.ctx.Done():
+			// Flush any remaining segment
+			if len(videoSamples) > 0 || len(audioSamples) > 0 {
+				p.flushSegment(videoSamples, audioSamples)
+			}
+			return
+
+		case <-ticker.C:
+			// Read video samples
+			newVideoSamples := videoTrack.ReadFrom(p.lastVideoSeq, 100)
+			for _, sample := range newVideoSamples {
+				// Check if this keyframe should trigger a new segment
+				if sample.IsKeyframe && len(videoSamples) > 0 && p.hasEnoughContent() {
+					p.flushSegment(videoSamples, audioSamples)
+					p.initNewSegment()
+					videoSamples = nil
+					audioSamples = nil
+				}
+
+				videoSamples = append(videoSamples, sample)
+				p.lastVideoSeq = sample.Sequence
+				p.currentSegment.hasVideo = true
+				if p.currentSegment.startPTS < 0 {
+					p.currentSegment.startPTS = sample.PTS
+				}
+				p.currentSegment.endPTS = sample.PTS
+			}
+
+			// Read audio samples
+			newAudioSamples := audioTrack.ReadFrom(p.lastAudioSeq, 200)
+			for _, sample := range newAudioSamples {
+				audioSamples = append(audioSamples, sample)
+				p.lastAudioSeq = sample.Sequence
+				p.currentSegment.hasAudio = true
+				if p.currentSegment.startPTS < 0 {
+					p.currentSegment.startPTS = sample.PTS
+				}
+			}
+
+			// Check if we should finalize current segment (timeout)
+			if p.shouldFinalizeSegment() {
+				p.flushSegment(videoSamples, audioSamples)
+				p.initNewSegment()
+				videoSamples = nil
+				audioSamples = nil
+			}
+		}
+	}
+}
+
+// hasEnoughContent returns true if we have enough content for a segment.
+func (p *HLSfMP4Processor) hasEnoughContent() bool {
+	if !p.currentSegment.hasVideo {
+		return false
+	}
+
+	elapsed := time.Since(p.currentSegment.startTime).Seconds()
+	return elapsed >= p.config.TargetSegmentDuration
+}
+
+// shouldFinalizeSegment returns true if current segment should be finalized.
+func (p *HLSfMP4Processor) shouldFinalizeSegment() bool {
+	if !p.currentSegment.hasVideo && !p.currentSegment.hasAudio {
+		return false
+	}
+
+	elapsed := time.Since(p.currentSegment.startTime).Seconds()
+	// Finalize if we've exceeded target duration by 50%
+	return elapsed >= p.config.TargetSegmentDuration*1.5
+}
+
+// flushSegment finalizes the current segment and adds it to the list.
+func (p *HLSfMP4Processor) flushSegment(videoSamples, audioSamples []ESSample) {
+	if len(videoSamples) == 0 && len(audioSamples) == 0 {
+		return
+	}
+
+	// Extract codec parameters if not already done
+	if len(videoSamples) > 0 {
+		p.adapter.UpdateVideoParams(videoSamples)
+	}
+	if len(audioSamples) > 0 {
+		p.adapter.UpdateAudioParams(audioSamples)
+	}
+
+	// Generate init segment if not yet created
+	p.initSegmentMu.RLock()
+	hasInit := p.initSegment != nil
+	p.initSegmentMu.RUnlock()
+
+	if !hasInit {
+		if err := p.generateInitSegment(len(videoSamples) > 0, len(audioSamples) > 0); err != nil {
+			p.config.Logger.Error("Failed to generate init segment",
+				slog.String("error", err.Error()))
+			return
+		}
+	}
+
+	// Convert ES samples to fMP4 samples
+	fmp4VideoSamples, videoBaseTime := p.adapter.ConvertVideoSamples(videoSamples)
+	fmp4AudioSamples, audioBaseTime := p.adapter.ConvertAudioSamples(audioSamples)
+
+	// Generate fragment using mediacommon
+	fragmentData, err := p.writer.GeneratePart(fmp4VideoSamples, fmp4AudioSamples, videoBaseTime, audioBaseTime)
+	if err != nil {
+		p.config.Logger.Error("Failed to generate fragment",
+			slog.String("error", err.Error()))
+		return
+	}
+
+	if len(fragmentData) == 0 {
+		return
+	}
+
+	// Calculate duration
+	duration := p.calculateDuration(videoSamples, audioSamples)
+	if duration < 0.1 {
+		return // Too short, skip
+	}
+
+	// Create segment
+	seg := &hlsFMP4Segment{
+		sequence:  p.nextSequence,
+		duration:  duration,
+		data:      fragmentData,
+		ptsStart:  p.currentSegment.startPTS,
+		ptsEnd:    p.currentSegment.endPTS,
+		createdAt: time.Now(),
+	}
+	p.nextSequence++
+
+	p.segmentsMu.Lock()
+	p.segments = append(p.segments, seg)
+
+	// Trim to max segments
+	for len(p.segments) > p.config.MaxSegments {
+		p.segments = p.segments[1:]
+	}
+	p.segmentsMu.Unlock()
+
+	// Notify waiters that a new segment is available
+	select {
+	case p.segmentNotify <- struct{}{}:
+	default:
+		// Channel already has notification pending
+	}
+
+	p.config.Logger.Debug("Created HLS-fMP4 segment",
+		slog.Uint64("sequence", seg.sequence),
+		slog.Float64("duration", seg.duration),
+		slog.Int("size", len(seg.data)))
+
+	// Update stats
+	p.RecordBytesWritten(uint64(len(seg.data)))
+}
+
+// generateInitSegment creates the initialization segment.
+func (p *HLSfMP4Processor) generateInitSegment(hasVideo, hasAudio bool) error {
+	// Configure the writer with codec parameters
+	if err := p.adapter.ConfigureWriter(p.writer); err != nil {
+		return fmt.Errorf("configuring writer: %w", err)
+	}
+
+	// Lock parameters after first init generation
+	p.adapter.LockParams()
+
+	// Generate init segment using mediacommon
+	initData, err := p.writer.GenerateInit(hasVideo, hasAudio, 90000, 90000)
+	if err != nil {
+		return fmt.Errorf("generating init: %w", err)
+	}
+
+	p.initSegmentMu.Lock()
+	p.initSegment = &InitSegment{
+		Data: initData,
+	}
+	p.initSegmentMu.Unlock()
+
+	p.config.Logger.Debug("Generated init segment",
+		slog.Int("size", len(initData)))
+
+	return nil
+}
+
+// calculateDuration calculates segment duration from samples.
+func (p *HLSfMP4Processor) calculateDuration(videoSamples, audioSamples []ESSample) float64 {
+	// Use wall clock time as primary duration
+	duration := time.Since(p.currentSegment.startTime).Seconds()
+
+	// Verify with PTS if available
+	if len(videoSamples) > 1 {
+		firstPTS := videoSamples[0].PTS
+		lastPTS := videoSamples[len(videoSamples)-1].PTS
+		ptsDuration := float64(lastPTS-firstPTS) / 90000.0
+		// Add approximate duration of last sample
+		if len(videoSamples) > 1 {
+			avgDuration := float64(lastPTS-firstPTS) / float64(len(videoSamples)-1)
+			ptsDuration += avgDuration / 90000.0
+		}
+
+		// Use PTS duration if it's reasonable
+		if ptsDuration > 0.1 && ptsDuration < duration*2 {
+			duration = ptsDuration
+		}
+	} else if len(audioSamples) > 1 {
+		firstPTS := audioSamples[0].PTS
+		lastPTS := audioSamples[len(audioSamples)-1].PTS
+		duration = float64(lastPTS-firstPTS) / 90000.0
+		if len(audioSamples) > 1 {
+			avgDuration := float64(lastPTS-firstPTS) / float64(len(audioSamples)-1)
+			duration += avgDuration / 90000.0
+		}
+	}
+
+	return duration
+}

@@ -134,8 +134,8 @@ type HLSMuxer struct {
 	cancel  context.CancelFunc
 
 	// Subscriber tracking for connection sharing
-	subscribers   atomic.Int32
-	lastActivity  atomic.Value // time.Time
+	subscribers  atomic.Int32
+	lastActivity atomic.Value // time.Time
 
 	// Metrics
 	segmentsProduced atomic.Uint64

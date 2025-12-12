@@ -487,14 +487,14 @@ func (r *HLSRepackager) HasSubscribers() bool {
 
 // Stats returns repackager statistics.
 type HLSRepackagerStats struct {
-	SourceURL       string        `json:"source_url"`
-	OutputVariant   string        `json:"output_variant"`
-	Started         bool          `json:"started"`
-	Closed          bool          `json:"closed"`
-	FramesProcessed uint64        `json:"frames_processed"`
-	BytesProcessed  uint64        `json:"bytes_processed"`
-	Duration        time.Duration `json:"duration"`
-	SubscriberCount int           `json:"subscriber_count"`
+	SourceURL       string         `json:"source_url"`
+	OutputVariant   string         `json:"output_variant"`
+	Started         bool           `json:"started"`
+	Closed          bool           `json:"closed"`
+	FramesProcessed uint64         `json:"frames_processed"`
+	BytesProcessed  uint64         `json:"bytes_processed"`
+	Duration        time.Duration  `json:"duration"`
+	SubscriberCount int            `json:"subscriber_count"`
 	MuxerStats      *HLSMuxerStats `json:"muxer_stats,omitempty"`
 }
 

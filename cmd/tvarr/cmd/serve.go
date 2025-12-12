@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -565,6 +566,17 @@ func runServe(cmd *cobra.Command, args []string) error {
 }
 
 func initDatabase(path string) (*gorm.DB, error) {
+	// Resolve to absolute path for clarity in logs
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = path // Fall back to original if resolution fails
+	}
+
+	slog.Info("initializing database",
+		slog.String("path", path),
+		slog.String("absolute_path", absPath),
+	)
+
 	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{
 		Logger: gormlogger.Default.LogMode(gormlogger.Silent),
 	})

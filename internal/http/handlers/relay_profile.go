@@ -14,6 +14,64 @@ import (
 	"gorm.io/gorm"
 )
 
+// validVideoCodecs are the allowed values for video codec in profiles.
+// These are codec names, NOT encoder names (e.g., "h265" not "libx265").
+var validVideoCodecs = map[string]bool{
+	"":     true, // Empty means default (copy)
+	"auto": true,
+	"copy": true,
+	"none": true,
+	"h264": true,
+	"h265": true,
+	"hevc": true, // Alias for h265
+	"vp9":  true,
+	"av1":  true,
+}
+
+// validAudioCodecs are the allowed values for audio codec in profiles.
+// These are codec names, NOT encoder names (e.g., "aac" not "libfdk_aac").
+var validAudioCodecs = map[string]bool{
+	"":     true, // Empty means default (copy)
+	"auto": true,
+	"copy": true,
+	"none": true,
+	"aac":  true,
+	"mp3":  true,
+	"ac3":  true,
+	"eac3": true,
+	"opus": true,
+	"flac": true,
+}
+
+// validateVideoCodec checks if a video codec value is valid.
+// Returns an error if the value looks like an encoder name instead of a codec name.
+func validateVideoCodec(codec string) error {
+	if validVideoCodecs[codec] {
+		return nil
+	}
+	// Check for common encoder names that users might accidentally use
+	switch codec {
+	case "libx264", "libx265", "h264_nvenc", "hevc_nvenc", "h264_vaapi", "hevc_vaapi",
+		"h264_qsv", "hevc_qsv", "libvpx", "libvpx-vp9", "libaom-av1", "av1_nvenc", "av1_qsv":
+		return fmt.Errorf("invalid video_codec '%s': use codec name (h264, h265, vp9, av1) not encoder name", codec)
+	}
+	return fmt.Errorf("invalid video_codec '%s': must be one of: auto, copy, none, h264, h265, vp9, av1", codec)
+}
+
+// validateAudioCodec checks if an audio codec value is valid.
+// Returns an error if the value looks like an encoder name instead of a codec name.
+func validateAudioCodec(codec string) error {
+	if validAudioCodecs[codec] {
+		return nil
+	}
+	// Check for common encoder names that users might accidentally use
+	switch codec {
+	case "libfdk_aac", "libmp3lame", "libopus", "libvorbis":
+		return fmt.Errorf("invalid audio_codec '%s': use codec name (aac, mp3, opus) not encoder name", codec)
+	}
+	return fmt.Errorf("invalid audio_codec '%s': must be one of: auto, copy, none, aac, mp3, ac3, eac3, opus, flac", codec)
+}
+
 // RelayProfileHandler handles relay profile API endpoints.
 type RelayProfileHandler struct {
 	relayService *service.RelayService
@@ -458,6 +516,19 @@ func (h *RelayProfileHandler) Create(ctx context.Context, input *CreateRelayProf
 		profile.FallbackEnabled = true // Default to enabled
 	}
 
+	// Validate codec values before setting
+	if err := validateVideoCodec(input.Body.VideoCodec); err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+	if err := validateAudioCodec(input.Body.AudioCodec); err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+
+	// Normalize hevc alias to h265
+	if profile.VideoCodec == "hevc" {
+		profile.VideoCodec = models.VideoCodecH265
+	}
+
 	// Set defaults if not provided
 	if profile.VideoCodec == "" {
 		profile.VideoCodec = models.VideoCodecCopy
@@ -566,6 +637,18 @@ func (h *RelayProfileHandler) Update(ctx context.Context, input *UpdateRelayProf
 			profile.Enabled = *input.Body.Enabled
 		}
 	} else {
+		// Validate codec values if provided
+		if input.Body.VideoCodec != "" {
+			if err := validateVideoCodec(input.Body.VideoCodec); err != nil {
+				return nil, huma.Error400BadRequest(err.Error())
+			}
+		}
+		if input.Body.AudioCodec != "" {
+			if err := validateAudioCodec(input.Body.AudioCodec); err != nil {
+				return nil, huma.Error400BadRequest(err.Error())
+			}
+		}
+
 		// Update fields if provided for non-system profiles
 		if input.Body.Name != "" {
 			profile.Name = input.Body.Name
@@ -574,7 +657,12 @@ func (h *RelayProfileHandler) Update(ctx context.Context, input *UpdateRelayProf
 			profile.Description = input.Body.Description
 		}
 		if input.Body.VideoCodec != "" {
-			profile.VideoCodec = models.VideoCodec(input.Body.VideoCodec)
+			videoCodec := input.Body.VideoCodec
+			// Normalize hevc alias to h265
+			if videoCodec == "hevc" {
+				videoCodec = "h265"
+			}
+			profile.VideoCodec = models.VideoCodec(videoCodec)
 		}
 		if input.Body.AudioCodec != "" {
 			profile.AudioCodec = models.AudioCodec(input.Body.AudioCodec)

@@ -29,12 +29,12 @@ func TestDefaultRoutingDecider_DecideWithExplicitDetectionMode(t *testing.T) {
 	decider := NewDefaultRoutingDecider(nil)
 
 	tests := []struct {
-		name           string
-		sourceFormat   SourceFormat
-		sourceCodecs   []string
-		profile        *models.RelayProfile
+		name             string
+		sourceFormat     SourceFormat
+		sourceCodecs     []string
+		profile          *models.RelayProfile
 		expectedDecision RoutingDecision
-		expectedFormat string
+		expectedFormat   string
 	}{
 		{
 			name:         "detection_mode=hls with HLS source - passthrough",

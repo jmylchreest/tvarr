@@ -6,7 +6,17 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
+
+// SegmentWaiter is an optional interface that SegmentProviders can implement
+// to support waiting for segments to become available.
+type SegmentWaiter interface {
+	// WaitForSegments waits until at least minSegments are available or context is cancelled.
+	WaitForSegments(ctx context.Context, minSegments int) error
+	// SegmentCount returns the current number of segments.
+	SegmentCount() int
+}
 
 // HLSHandler handles HLS output.
 // Implements the OutputHandler interface for serving HLS playlists and segments.
@@ -50,7 +60,30 @@ func (h *HLSHandler) SupportsStreaming() bool {
 }
 
 // ServePlaylist generates and serves the HLS playlist.
+// If the provider implements SegmentWaiter and has no segments, it will wait
+// up to 15 seconds for the first segment before returning.
 func (h *HLSHandler) ServePlaylist(w http.ResponseWriter, baseURL string) error {
+	return h.ServePlaylistWithContext(context.Background(), w, baseURL)
+}
+
+// ServePlaylistWithContext generates and serves the HLS playlist with context support.
+// If the provider implements SegmentWaiter and has no segments, it will wait
+// up to 15 seconds for the first segment before returning.
+func (h *HLSHandler) ServePlaylistWithContext(ctx context.Context, w http.ResponseWriter, baseURL string) error {
+	// Check if provider supports waiting for segments
+	if waiter, ok := h.provider.(SegmentWaiter); ok {
+		if waiter.SegmentCount() == 0 {
+			// Wait for at least 1 segment (with timeout)
+			waitCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			defer cancel()
+
+			if err := waiter.WaitForSegments(waitCtx, 1); err != nil {
+				http.Error(w, "No segments available yet, please retry", http.StatusServiceUnavailable)
+				return fmt.Errorf("waiting for segments: %w", err)
+			}
+		}
+	}
+
 	playlist := h.GeneratePlaylist(baseURL)
 
 	w.Header().Set("Content-Type", ContentTypeHLSPlaylist)

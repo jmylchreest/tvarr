@@ -80,9 +80,11 @@ func (r *relayProfileRepository) Update(ctx context.Context, profile *models.Rel
 	return r.db.WithContext(ctx).Save(profile).Error
 }
 
-// Delete deletes a relay profile by ID.
+// Delete hard-deletes a relay profile by ID.
+// Uses Unscoped() for permanent deletion to avoid accumulating soft-deleted records
+// that could potentially leak into queries.
 func (r *relayProfileRepository) Delete(ctx context.Context, id models.ULID) error {
-	return r.db.WithContext(ctx).Delete(&models.RelayProfile{}, "id = ?", id).Error
+	return r.db.WithContext(ctx).Unscoped().Delete(&models.RelayProfile{}, "id = ?", id).Error
 }
 
 // Count returns the total number of relay profiles.

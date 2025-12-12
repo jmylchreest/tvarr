@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useEffect } from 'react';
 import {
   ReactFlow,
   Controls,
@@ -8,6 +8,10 @@ import {
   BackgroundVariant,
   useNodesState,
   useEdgesState,
+  useReactFlow,
+  ReactFlowProvider,
+  type Node,
+  type Edge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
@@ -15,13 +19,17 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, AlertCircle, Activity } from 'lucide-react';
 import { useRelayFlowData } from '@/hooks/use-relay-flow-data';
-import { formatBps } from '@/types/relay-flow';
-import { OriginNode, ProcessorNode, ClientNode } from './nodes';
+import { formatBps, type FlowEdgeData } from '@/types/relay-flow';
+import { OriginNode, BufferNode, TranscoderNode, ProcessorNode, ClientNode } from './nodes';
 import { AnimatedEdge } from './edges';
+import { calculateLayout } from './layout-utils';
+import { buildEdgesWithHandles } from './edge-builder';
 
 // Define custom node types
 const nodeTypes = {
   origin: OriginNode,
+  buffer: BufferNode,
+  transcoder: TranscoderNode,
   processor: ProcessorNode,
   client: ClientNode,
 };
@@ -36,55 +44,77 @@ interface RelayFlowDiagramProps {
   className?: string;
 }
 
-export function RelayFlowDiagram({
-  pollingInterval = 2000,
-  className = '',
-}: RelayFlowDiagramProps) {
+function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: RelayFlowDiagramProps) {
   const { data, isLoading, error, refetch } = useRelayFlowData({
     pollingInterval,
     enabled: true,
   });
 
+  const { fitView } = useReactFlow();
+
   // Convert flow graph data to React Flow format
-  // Using 'any' to avoid strict type conflicts with @xyflow/react's Record<string, unknown> constraint
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const nodes = useMemo((): any[] => {
-    if (!data?.nodes) return [];
-    return data.nodes.map((node) => ({
+  // Backend sends node data with relationships, frontend handles positioning and edge handles
+  // Using 'any' casts to work around @xyflow/react's strict Record<string, unknown> constraint
+  const { nodes: rawNodes, edges } = useMemo(() => {
+    if (!data?.nodes || !data?.edges) {
+      return { nodes: [] as Node[], edges: [] as Edge[] };
+    }
+
+    // Extract nodes without using backend positions
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const nodes: Node[] = data.nodes.map((node) => ({
       id: node.id,
       type: node.type,
-      position: node.position,
-      data: node.data,
+      position: { x: 0, y: 0 }, // Will be calculated by layout
+      data: node.data as unknown as Record<string, unknown>,
       parentId: node.parentId,
     }));
-  }, [data?.nodes]);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const edges = useMemo((): any[] => {
-    if (!data?.edges) return [];
-    return data.edges.map((edge) => ({
+    // Extract backend edges and transform them with proper handle IDs
+    // The frontend determines handle IDs based on node types to ensure correct connections
+    const backendEdges = data.edges.map((edge) => ({
       id: edge.id,
       source: edge.source,
       target: edge.target,
       type: edge.type || 'animated',
       animated: edge.animated,
-      data: edge.data,
-      style: edge.style,
+      data: edge.data as FlowEdgeData,
+      style: edge.style as React.CSSProperties | undefined,
     }));
-  }, [data?.edges]);
 
-  const [nodesState, setNodes, onNodesChange] = useNodesState(nodes);
+    // Build edges with correct handle IDs based on node types
+    const edges: Edge[] = buildEdgesWithHandles(nodes, backendEdges);
+
+    return { nodes, edges };
+  }, [data?.nodes, data?.edges]);
+
+  // Calculate layout on frontend
+  const layoutedNodes = useMemo((): Node[] => {
+    if (rawNodes.length === 0) return [];
+    return calculateLayout(rawNodes, edges);
+  }, [rawNodes, edges]);
+
+  const [nodesState, setNodes, onNodesChange] = useNodesState(layoutedNodes);
   const [edgesState, setEdges, onEdgesChange] = useEdgesState(edges);
 
   // Update nodes and edges when data changes
-  useMemo(() => {
-    setNodes(nodes);
-    setEdges(edges);
-  }, [nodes, edges, setNodes, setEdges]);
+  useEffect(() => {
+    if (layoutedNodes.length > 0) {
+      setNodes(layoutedNodes);
+      setEdges(edges);
+      // Fit view after layout update with a small delay to ensure nodes are rendered
+      setTimeout(() => {
+        fitView({ padding: 0.15, duration: 200 });
+      }, 50);
+    }
+  }, [layoutedNodes, edges, setNodes, setEdges, fitView]);
 
   const onInit = useCallback(() => {
-    // React Flow initialized
-  }, []);
+    // Fit view on initial load
+    setTimeout(() => {
+      fitView({ padding: 0.15 });
+    }, 100);
+  }, [fitView]);
 
   if (isLoading && !data) {
     return (
@@ -102,10 +132,7 @@ export function RelayFlowDiagram({
         <CardContent className="flex flex-col items-center justify-center h-64 gap-4">
           <AlertCircle className="h-8 w-8 text-destructive" />
           <p className="text-sm text-muted-foreground">{error.message}</p>
-          <button
-            onClick={refetch}
-            className="text-sm text-primary hover:underline"
-          >
+          <button onClick={refetch} className="text-sm text-primary hover:underline">
             Retry
           </button>
         </CardContent>
@@ -126,7 +153,7 @@ export function RelayFlowDiagram({
 
           {/* Summary badges */}
           {data?.metadata && (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <Badge variant="outline">
                 {data.metadata.totalSessions} session{data.metadata.totalSessions !== 1 ? 's' : ''}
               </Badge>
@@ -166,21 +193,33 @@ export function RelayFlowDiagram({
               edgeTypes={edgeTypes}
               fitView
               fitViewOptions={{
-                padding: 0.2,
+                padding: 0.15,
                 includeHiddenNodes: false,
               }}
-              minZoom={0.5}
+              minZoom={0.3}
               maxZoom={1.5}
-              defaultViewport={{ x: 0, y: 0, zoom: 1 }}
+              defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
               proOptions={{ hideAttribution: true }}
+              nodesDraggable={true}
+              nodesConnectable={false}
+              elementsSelectable={true}
             >
-              <Controls />
+              <Controls showInteractive={false} />
               <Background variant={BackgroundVariant.Dots} gap={12} size={1} />
             </ReactFlow>
           </div>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// Wrap with ReactFlowProvider for useReactFlow hook
+export function RelayFlowDiagram(props: RelayFlowDiagramProps) {
+  return (
+    <ReactFlowProvider>
+      <RelayFlowDiagramInner {...props} />
+    </ReactFlowProvider>
   );
 }
 
