@@ -121,7 +121,7 @@ function ResourceSparkline({
             )}
           </div>
           {hasCpu && (
-            <span className="text-[10px] text-blue-600 dark:text-blue-400 tabular-nums shrink-0 w-8 text-right">
+            <span className="text-[10px] text-blue-600 dark:text-blue-400 tabular-nums shrink-0 w-12 text-right">
               {currentCpu.toFixed(0)}%
             </span>
           )}
@@ -150,7 +150,7 @@ function ResourceSparkline({
             )}
           </div>
           {hasMem && (
-            <span className="text-[10px] text-green-600 dark:text-green-400 tabular-nums shrink-0 min-w-[40px] text-right">
+            <span className="text-[10px] text-green-600 dark:text-green-400 tabular-nums shrink-0 w-12 text-right">
               {formatMemory(currentMemoryMb)}
             </span>
           )}
