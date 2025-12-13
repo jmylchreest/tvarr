@@ -383,11 +383,11 @@ func (m *mockProxyRepoForJob) SetFilters(ctx context.Context, proxyID models.ULI
 	return nil
 }
 
-func (m *mockProxyRepoForJob) CountByRelayProfileID(ctx context.Context, profileID models.ULID) (int64, error) {
+func (m *mockProxyRepoForJob) CountByEncodingProfileID(ctx context.Context, profileID models.ULID) (int64, error) {
 	return 0, nil
 }
 
-func (m *mockProxyRepoForJob) GetByRelayProfileID(ctx context.Context, profileID models.ULID) ([]*models.StreamProxy, error) {
+func (m *mockProxyRepoForJob) GetByEncodingProfileID(ctx context.Context, profileID models.ULID) ([]*models.StreamProxy, error) {
 	return nil, nil
 }
 

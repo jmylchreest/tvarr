@@ -23,6 +23,11 @@ type TSDemuxerConfig struct {
 	// If empty, writes to the source variant.
 	TargetVariant CodecVariant
 
+	// ProbeOverrideAudioCodec allows setting the audio codec from FFmpeg probe results
+	// when the MPEG-TS demuxer can't natively detect the codec (e.g., E-AC3).
+	// This is used when encountering unsupported audio tracks.
+	ProbeOverrideAudioCodec string
+
 	// Callbacks for demuxed samples.
 	OnVideoSample func(pts, dts int64, data []byte, isKeyframe bool)
 	OnAudioSample func(pts int64, data []byte)
@@ -103,6 +108,12 @@ func (d *TSDemuxer) runReader() {
 	if err := d.reader.Initialize(); err != nil {
 		d.initOnce.Do(func() {
 			d.initErr = fmt.Errorf("initializing mpegts reader: %w", err)
+			// Log at info level for visibility - initialization failures are significant
+			if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrClosedPipe) {
+				d.config.Logger.Info("MPEG-TS demuxer initialization failed",
+					slog.String("target_variant", string(d.config.TargetVariant)),
+					slog.String("error", err.Error()))
+			}
 		})
 		return
 	}
@@ -129,13 +140,22 @@ func (d *TSDemuxer) runReader() {
 	for {
 		select {
 		case <-d.ctx.Done():
+			d.config.Logger.Debug("MPEG-TS demuxer context cancelled",
+				slog.String("target_variant", string(d.config.TargetVariant)))
 			return
 		default:
 			if err := d.reader.Read(); err != nil {
 				if errors.Is(err, io.EOF) || errors.Is(err, io.ErrClosedPipe) {
+					d.config.Logger.Debug("MPEG-TS demuxer stream ended",
+						slog.String("target_variant", string(d.config.TargetVariant)),
+						slog.String("reason", err.Error()))
 					return
 				}
-				d.config.Logger.Debug("MPEG-TS read error",
+				// Unexpected error - log at info level for visibility
+				d.config.Logger.Info("MPEG-TS demuxer read error (exiting)",
+					slog.String("target_variant", string(d.config.TargetVariant)),
+					slog.String("video_codec", d.videoCodec),
+					slog.String("audio_codec", d.audioCodec),
 					slog.String("error", err.Error()))
 				return
 			}
@@ -249,9 +269,30 @@ func (d *TSDemuxer) setupTrackCallback(track *mpegts.Track) {
 			slog.Int64("frame_duration_ticks", d.audioFrameDuration))
 
 	default:
-		d.config.Logger.Debug("Found unsupported track",
-			slog.Uint64("pid", uint64(track.PID)),
-			slog.String("type", fmt.Sprintf("%T", track.Codec)))
+		// Check if this is an unsupported audio track that we can handle via probe override
+		if _, ok := track.Codec.(*mpegts.CodecUnsupported); ok && !track.Codec.IsVideo() {
+			// Unsupported audio codec - use probe override if available
+			if d.config.ProbeOverrideAudioCodec != "" && d.audioTrack == nil {
+				d.audioTrack = track
+				d.audioCodec = d.config.ProbeOverrideAudioCodec
+				if d.buffer != nil && d.config.TargetVariant == "" {
+					d.buffer.SetAudioCodec(d.config.ProbeOverrideAudioCodec, nil)
+				}
+				d.config.Logger.Info("Using probe override for unsupported audio track",
+					slog.Uint64("pid", uint64(track.PID)),
+					slog.String("override_codec", d.config.ProbeOverrideAudioCodec))
+				// Note: We cannot demux audio frames for unsupported codecs.
+				// The transcoder will need to read from the original MPEG-TS stream.
+			} else {
+				d.config.Logger.Debug("Found unsupported audio track (no probe override)",
+					slog.Uint64("pid", uint64(track.PID)),
+					slog.String("type", fmt.Sprintf("%T", track.Codec)))
+			}
+		} else {
+			d.config.Logger.Debug("Found unsupported track",
+				slog.Uint64("pid", uint64(track.PID)),
+				slog.String("type", fmt.Sprintf("%T", track.Codec)))
+		}
 	}
 }
 

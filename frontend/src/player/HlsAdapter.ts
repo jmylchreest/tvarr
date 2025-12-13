@@ -33,7 +33,7 @@ import type {
   PlayerMediaInfo,
   StreamKind,
 } from './PlayerAdapter';
-import { PLAYER_HEADER_NAME, PlayerNames } from '../lib/player-headers';
+import { PLAYER_HEADER_NAME } from '../lib/player-headers';
 
 export interface HlsAdapterConfig {
   /** Enable debug logging in hls.js. Default: false */
@@ -63,7 +63,7 @@ export class HlsAdapter implements PlayerAdapter {
       enableDebug: cfg?.enableDebug ?? false,
       maxBufferLength: cfg?.maxBufferLength ?? 30,
       maxMaxBufferLength: cfg?.maxMaxBufferLength ?? 600,
-      headers: cfg?.headers ?? { [PLAYER_HEADER_NAME]: PlayerNames.HLS_JS },
+      headers: cfg?.headers ?? { [PLAYER_HEADER_NAME]: 'hls.js' },
       overrides: cfg?.overrides ?? {},
     };
   }

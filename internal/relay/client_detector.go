@@ -20,13 +20,54 @@ type ClientCapabilities struct {
 	SupportsMPEGTS bool
 
 	// DetectionSource indicates how capabilities were detected
-	// Values: "x-tvarr-player", "user-agent", "accept", "default"
+	// Values: "rule", "x-tvarr-player", "user-agent", "accept", "format_override", "default"
 	DetectionSource string
+
+	// AcceptedVideoCodecs are the video codecs this client can decode.
+	AcceptedVideoCodecs []string
+
+	// AcceptedAudioCodecs are the audio codecs this client can decode.
+	AcceptedAudioCodecs []string
+
+	// PreferredVideoCodec is the video codec to transcode to if source is not accepted.
+	PreferredVideoCodec string
+
+	// PreferredAudioCodec is the audio codec to transcode to if source is not accepted.
+	PreferredAudioCodec string
+
+	// MatchedRuleName is the name of the matched rule (if detection was rule-based).
+	MatchedRuleName string
+}
+
+// AcceptsVideoCodec returns true if the client accepts the given video codec.
+func (c *ClientCapabilities) AcceptsVideoCodec(codec string) bool {
+	if len(c.AcceptedVideoCodecs) == 0 {
+		return true // No restrictions = accepts all
+	}
+	for _, accepted := range c.AcceptedVideoCodecs {
+		if accepted == codec {
+			return true
+		}
+	}
+	return false
+}
+
+// AcceptsAudioCodec returns true if the client accepts the given audio codec.
+func (c *ClientCapabilities) AcceptsAudioCodec(codec string) bool {
+	if len(c.AcceptedAudioCodecs) == 0 {
+		return true // No restrictions = accepts all
+	}
+	for _, accepted := range c.AcceptedAudioCodecs {
+		if accepted == codec {
+			return true
+		}
+	}
+	return false
 }
 
 // ClientDetector detects client capabilities from request metadata.
 type ClientDetector interface {
 	// Detect analyzes the request and returns client capabilities.
-	// Detection priority: FormatOverride > XTvarrPlayer > Accept > UserAgent
+	// Detection priority: FormatOverride > XTvarrPlayer > Accept > UserAgent/Rules
 	Detect(req OutputRequest) ClientCapabilities
 }

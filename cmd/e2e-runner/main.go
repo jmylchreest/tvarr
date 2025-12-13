@@ -885,12 +885,10 @@ func (c *APIClient) CreateEPGSource(ctx context.Context, name, url string) (stri
 
 // TriggerIngestion triggers ingestion for a source and waits for completion
 func (c *APIClient) TriggerIngestion(ctx context.Context, sourceType, sourceID string, timeout time.Duration) error {
-	// Start SSE listener for progress
-	progressDone := make(chan error, 1)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Trigger ingestion
+	// Build ingestion URL
 	var ingestURL string
 	if sourceType == "stream" {
 		ingestURL = fmt.Sprintf("%s/api/v1/sources/stream/%s/ingest", c.baseURL, sourceID)
@@ -898,6 +896,26 @@ func (c *APIClient) TriggerIngestion(ctx context.Context, sourceType, sourceID s
 		ingestURL = fmt.Sprintf("%s/api/v1/sources/epg/%s/ingest", c.baseURL, sourceID)
 	}
 
+	// Start SSE listener BEFORE triggering ingestion to avoid race condition
+	// where the ingestion completes before the listener connects
+	sseReady := make(chan struct{})
+	progressDone := make(chan error, 1)
+	go func() {
+		progressDone <- c.waitForSSECompletionWithReady(ctx, sourceID, sseReady)
+	}()
+
+	// Wait for SSE listener to be ready
+	select {
+	case <-sseReady:
+		// SSE listener is connected and ready
+	case <-ctx.Done():
+		return fmt.Errorf("SSE listener setup timed out: %w", ctx.Err())
+	case err := <-progressDone:
+		// SSE listener failed before becoming ready
+		return fmt.Errorf("SSE listener failed during setup: %w", err)
+	}
+
+	// Now trigger the ingestion
 	req, err := http.NewRequestWithContext(ctx, "POST", ingestURL, nil)
 	if err != nil {
 		return err
@@ -915,10 +933,6 @@ func (c *APIClient) TriggerIngestion(ctx context.Context, sourceType, sourceID s
 	}
 
 	// Wait for completion via SSE
-	go func() {
-		progressDone <- c.waitForSSECompletion(ctx, sourceID)
-	}()
-
 	select {
 	case err := <-progressDone:
 		return err
@@ -927,8 +941,14 @@ func (c *APIClient) TriggerIngestion(ctx context.Context, sourceType, sourceID s
 	}
 }
 
-// waitForSSECompletion monitors SSE events for completion
+// waitForSSECompletion monitors SSE events for completion (legacy wrapper)
 func (c *APIClient) waitForSSECompletion(ctx context.Context, ownerID string) error {
+	return c.waitForSSECompletionWithReady(ctx, ownerID, nil)
+}
+
+// waitForSSECompletionWithReady monitors SSE events for completion.
+// If ready is non-nil, it signals when the SSE connection is established and ready to receive events.
+func (c *APIClient) waitForSSECompletionWithReady(ctx context.Context, ownerID string, ready chan<- struct{}) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/progress/events", nil)
 	if err != nil {
 		return err
@@ -941,35 +961,71 @@ func (c *APIClient) waitForSSECompletion(ctx context.Context, ownerID string) er
 	}
 	defer resp.Body.Close()
 
+	// Signal that SSE connection is ready before reading events
+	if ready != nil {
+		close(ready)
+	}
+
+	// Use a channel-based approach to make scanner.Scan() interruptible by context
+	type scanResult struct {
+		line string
+		ok   bool
+		err  error
+	}
+	lineCh := make(chan scanResult, 1)
+
 	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "data: ") {
-			data := strings.TrimPrefix(line, "data: ")
-			var event map[string]interface{}
-			if err := json.Unmarshal([]byte(data), &event); err != nil {
-				continue
-			}
 
-			// Check if this event is for our source
-			eventOwnerID, _ := event["owner_id"].(string)
-			if eventOwnerID != ownerID {
-				continue
+	// Read lines in a goroutine so we can select on context cancellation
+	go func() {
+		for {
+			ok := scanner.Scan()
+			if !ok {
+				lineCh <- scanResult{err: scanner.Err()}
+				return
 			}
+			select {
+			case lineCh <- scanResult{line: scanner.Text(), ok: true}:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
-			// Check for completion or error
-			state, _ := event["state"].(string)
-			switch state {
-			case "completed":
-				return nil
-			case "error":
-				errMsg, _ := event["error"].(string)
-				return fmt.Errorf("ingestion failed: %s", errMsg)
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case result := <-lineCh:
+			if !result.ok {
+				return result.err
+			}
+			line := result.line
+			if strings.HasPrefix(line, "data: ") {
+				data := strings.TrimPrefix(line, "data: ")
+				var event map[string]interface{}
+				if err := json.Unmarshal([]byte(data), &event); err != nil {
+					continue
+				}
+
+				// Check if this event is for our source
+				eventOwnerID, _ := event["owner_id"].(string)
+				if eventOwnerID != ownerID {
+					continue
+				}
+
+				// Check for completion or error
+				state, _ := event["state"].(string)
+				switch state {
+				case "completed":
+					return nil
+				case "error":
+					errMsg, _ := event["error"].(string)
+					return fmt.Errorf("ingestion failed: %s", errMsg)
+				}
 			}
 		}
 	}
-
-	return scanner.Err()
 }
 
 // GetChannelCount returns the number of channels in the system
@@ -1030,9 +1086,9 @@ func (c *APIClient) CreateStreamProxy(ctx context.Context, opts CreateStreamProx
 	if opts.ProxyMode != "" {
 		body["proxy_mode"] = opts.ProxyMode
 	}
-	// Add relay_profile_id if specified (enables transcoding with "smart" mode)
+	// Add encoding_profile_id if specified (enables transcoding with "smart" mode)
 	if opts.RelayProfileID != "" {
-		body["relay_profile_id"] = opts.RelayProfileID
+		body["encoding_profile_id"] = opts.RelayProfileID
 	}
 	jsonBody, _ := json.Marshal(body)
 
@@ -1408,22 +1464,22 @@ func (c *APIClient) CreateDataMappingRule(ctx context.Context, name, sourceType,
 	return id, nil
 }
 
-// GetRelayProfiles fetches all relay profiles
-func (c *APIClient) GetRelayProfiles(ctx context.Context) ([]map[string]interface{}, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/relay/profiles", nil)
+// GetEncodingProfiles fetches all encoding profiles (formerly relay profiles)
+func (c *APIClient) GetEncodingProfiles(ctx context.Context) ([]map[string]interface{}, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/encoding-profiles", nil)
 	if err != nil {
 		return nil, err
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetch relay profiles failed: %w", err)
+		return nil, fmt.Errorf("fetch encoding profiles failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("fetch relay profiles failed with status %d: %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("fetch encoding profiles failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var result map[string]interface{}
@@ -1433,11 +1489,7 @@ func (c *APIClient) GetRelayProfiles(ctx context.Context) ([]map[string]interfac
 
 	profiles, ok := result["profiles"].([]interface{})
 	if !ok {
-		// Also try "items" key
-		profiles, ok = result["items"].([]interface{})
-		if !ok {
-			return nil, nil // No profiles
-		}
+		return nil, nil // No profiles
 	}
 
 	var profileMaps []map[string]interface{}
@@ -1447,6 +1499,11 @@ func (c *APIClient) GetRelayProfiles(ctx context.Context) ([]map[string]interfac
 		}
 	}
 	return profileMaps, nil
+}
+
+// GetRelayProfiles is deprecated - use GetEncodingProfiles instead
+func (c *APIClient) GetRelayProfiles(ctx context.Context) ([]map[string]interface{}, error) {
+	return c.GetEncodingProfiles(ctx)
 }
 
 // GetFirstRelayProfileID returns the ID of the first relay profile, or empty string if none
@@ -1490,70 +1547,81 @@ type ClientDetectionStats struct {
 	Custom  int `json:"custom"`
 }
 
-// GetClientDetectionMappings fetches all client detection mappings
+// GetClientDetectionMappings fetches all client detection rules (renamed from mappings)
 func (c *APIClient) GetClientDetectionMappings(ctx context.Context) ([]ClientDetectionMapping, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/relay-profile-mappings", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/client-detection-rules", nil)
 	if err != nil {
 		return nil, err
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetch client detection mappings failed: %w", err)
+		return nil, fmt.Errorf("fetch client detection rules failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("fetch client detection mappings failed with status %d: %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("fetch client detection rules failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var result struct {
-		Mappings []ClientDetectionMapping `json:"mappings"`
-		Count    int                      `json:"count"`
+		Rules []ClientDetectionMapping `json:"rules"`
+		Count int                      `json:"count"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode response failed: %w", err)
 	}
 
-	return result.Mappings, nil
+	return result.Rules, nil
 }
 
-// GetClientDetectionStats fetches client detection statistics
+// GetClientDetectionStats computes client detection statistics from the rules list.
+// Note: There's no dedicated stats endpoint, so we compute stats from the list.
 func (c *APIClient) GetClientDetectionStats(ctx context.Context) (*ClientDetectionStats, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/relay-profile-mappings/stats", nil)
+	rules, err := c.GetClientDetectionMappings(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("fetch client detection rules for stats failed: %w", err)
 	}
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetch client detection stats failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("fetch client detection stats failed with status %d: %s", resp.StatusCode, string(respBody))
+	stats := &ClientDetectionStats{
+		Total: len(rules),
 	}
 
-	var stats ClientDetectionStats
-	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
-		return nil, fmt.Errorf("decode response failed: %w", err)
+	for _, rule := range rules {
+		if rule.IsEnabled {
+			stats.Enabled++
+		}
+		if rule.IsSystem {
+			stats.System++
+		} else {
+			stats.Custom++
+		}
 	}
 
-	return &stats, nil
+	return stats, nil
 }
 
-// TestClientDetectionExpression tests an expression against sample data
+// TestClientDetectionExpression tests an expression against sample data (legacy API)
 func (c *APIClient) TestClientDetectionExpression(ctx context.Context, expression string, testData map[string]string) (bool, error) {
+	// Extract user_agent from testData for the new API
+	userAgent := testData["user_agent"]
+	return c.TestClientDetectionExpressionWithHeaders(ctx, expression, userAgent, nil)
+}
+
+// TestClientDetectionExpressionWithHeaders tests an expression against a User-Agent and optional headers.
+// This supports @dynamic(request.headers):key expressions for accessing HTTP headers.
+func (c *APIClient) TestClientDetectionExpressionWithHeaders(ctx context.Context, expression, userAgent string, headers map[string]string) (bool, error) {
 	body := map[string]interface{}{
 		"expression": expression,
-		"test_data":  testData,
+		"user_agent": userAgent,
+	}
+	if headers != nil && len(headers) > 0 {
+		body["headers"] = headers
 	}
 	jsonBody, _ := json.Marshal(body)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/v1/relay-profile-mappings/test", bytes.NewReader(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/v1/client-detection-rules/test", bytes.NewReader(jsonBody))
 	if err != nil {
 		return false, err
 	}
@@ -1571,10 +1639,15 @@ func (c *APIClient) TestClientDetectionExpression(ctx context.Context, expressio
 	}
 
 	var result struct {
-		Matches bool `json:"matches"`
+		Matches bool   `json:"matches"`
+		Error   string `json:"error,omitempty"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return false, fmt.Errorf("decode response failed: %w", err)
+	}
+
+	if result.Error != "" {
+		return false, fmt.Errorf("expression error: %s", result.Error)
 	}
 
 	return result.Matches, nil
@@ -1765,8 +1838,16 @@ func (r *E2ERunner) log(format string, args ...interface{}) {
 
 // runTest executes a test and records the result
 func (r *E2ERunner) runTest(name string, fn func() error) {
+	r.runTestWithInfo(name, "", fn)
+}
+
+// runTestWithInfo executes a test with an info description and records the result
+func (r *E2ERunner) runTestWithInfo(name, info string, fn func() error) {
 	start := time.Now()
 	r.log("Running: %s", name)
+	if info != "" {
+		r.log("  [INFO] %s", info)
+	}
 
 	err := fn()
 	elapsed := time.Since(start)
@@ -1827,539 +1908,785 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 	}
 
 	// Phase 1: Setup - Health Check
-	r.runTest("Health Check", func() error {
+	r.runTestWithInfo("Health Check", "GET /health - verify API is responding", func() error {
 		return r.client.HealthCheck(ctx)
 	})
 
 	// Phase 1.1: Client Detection Rules (tests migration and rule engine)
-	r.runTest("Client Detection: List Mappings", func() error {
-		mappings, err := r.client.GetClientDetectionMappings(ctx)
-		if err != nil {
-			return err
-		}
-		if len(mappings) == 0 {
-			return fmt.Errorf("expected default client detection mappings, got none")
-		}
-		r.log("  Found %d client detection mappings", len(mappings))
-
-		// Verify default mappings exist and are ordered by priority
-		var lastPriority int = -1
-		for _, m := range mappings {
-			if m.Priority < lastPriority {
-				return fmt.Errorf("mappings not ordered by priority: %s (priority %d) came after priority %d",
-					m.Name, m.Priority, lastPriority)
+	r.runTestWithInfo("Client Detection: List Mappings",
+		"GET /api/v1/client-detection-rules - fetch all rules, verify ordering by priority",
+		func() error {
+			mappings, err := r.client.GetClientDetectionMappings(ctx)
+			if err != nil {
+				return err
 			}
-			lastPriority = m.Priority
-		}
-		r.log("  Mappings are correctly ordered by priority")
-		return nil
-	})
+			if len(mappings) == 0 {
+				return fmt.Errorf("expected default client detection mappings, got none")
+			}
+			r.log("  Found %d client detection mappings", len(mappings))
 
-	r.runTest("Client Detection: Get Stats", func() error {
-		stats, err := r.client.GetClientDetectionStats(ctx)
-		if err != nil {
-			return err
-		}
-		if stats.Total == 0 {
-			return fmt.Errorf("expected non-zero total mappings")
-		}
-		if stats.System == 0 {
-			return fmt.Errorf("expected non-zero system mappings")
-		}
-		if stats.Enabled == 0 {
-			return fmt.Errorf("expected non-zero enabled mappings")
-		}
-		r.log("  Stats: total=%d, enabled=%d, system=%d, custom=%d",
-			stats.Total, stats.Enabled, stats.System, stats.Custom)
-		return nil
-	})
-
-	r.runTest("Client Detection: Test Expression - Chrome Match", func() error {
-		// Test Chrome user agent detection
-		testData := map[string]string{
-			"user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-		}
-		matches, err := r.client.TestClientDetectionExpression(ctx, `user_agent contains "Chrome"`, testData)
-		if err != nil {
-			return err
-		}
-		if !matches {
-			return fmt.Errorf("expected Chrome expression to match Chrome user agent")
-		}
-		r.log("  Chrome expression matched correctly")
-		return nil
-	})
-
-	r.runTest("Client Detection: Test Expression - Safari Match", func() error {
-		// Test Safari user agent detection (Safari without Chrome)
-		testData := map[string]string{
-			"user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-		}
-		matches, err := r.client.TestClientDetectionExpression(ctx, `user_agent contains "Safari" AND user_agent not_contains "Chrome"`, testData)
-		if err != nil {
-			return err
-		}
-		if !matches {
-			return fmt.Errorf("expected Safari expression to match Safari user agent")
-		}
-		r.log("  Safari expression matched correctly")
-		return nil
-	})
-
-	r.runTest("Client Detection: Test Expression - Non-Match", func() error {
-		// Test that Firefox doesn't match Chrome rule
-		testData := map[string]string{
-			"user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
-		}
-		matches, err := r.client.TestClientDetectionExpression(ctx, `user_agent contains "Chrome"`, testData)
-		if err != nil {
-			return err
-		}
-		if matches {
-			return fmt.Errorf("expected Chrome expression to NOT match Firefox user agent")
-		}
-		r.log("  Chrome expression correctly did not match Firefox")
-		return nil
-	})
-
-	r.runTest("Client Detection: Verify Default Fallback Rule", func() error {
-		mappings, err := r.client.GetClientDetectionMappings(ctx)
-		if err != nil {
-			return err
-		}
-		// Find the fallback rule (should be last with priority 999)
-		// The fallback uses 'user_agent contains ""' which always matches (empty string in any string)
-		var fallbackFound bool
-		for _, m := range mappings {
-			if m.Priority == 999 && m.Expression == `user_agent contains ""` {
-				fallbackFound = true
-				if !m.IsSystem {
-					return fmt.Errorf("fallback rule should be a system rule")
+			// Verify default mappings exist and are ordered by priority
+			var lastPriority int = -1
+			for _, m := range mappings {
+				if m.Priority < lastPriority {
+					return fmt.Errorf("mappings not ordered by priority: %s (priority %d) came after priority %d",
+						m.Name, m.Priority, lastPriority)
 				}
-				if !m.IsEnabled {
-					return fmt.Errorf("fallback rule should be enabled")
-				}
-				r.log("  Found fallback rule: %s (priority %d)", m.Name, m.Priority)
-				break
+				lastPriority = m.Priority
+			}
+			r.log("  Mappings are correctly ordered by priority")
+			return nil
+		})
+
+	r.runTestWithInfo("Client Detection: Get Stats",
+		"GET /api/v1/client-detection-rules - compute stats from rules list",
+		func() error {
+			stats, err := r.client.GetClientDetectionStats(ctx)
+			if err != nil {
+				return err
+			}
+			if stats.Total == 0 {
+				return fmt.Errorf("expected non-zero total mappings")
+			}
+			if stats.System == 0 {
+				return fmt.Errorf("expected non-zero system mappings")
+			}
+			if stats.Enabled == 0 {
+				return fmt.Errorf("expected non-zero enabled mappings")
+			}
+			r.log("  Stats: total=%d, enabled=%d, system=%d, custom=%d",
+				stats.Total, stats.Enabled, stats.System, stats.Custom)
+			return nil
+		})
+
+	r.runTestWithInfo("Client Detection: Test Expression - Chrome Match",
+		`POST /api/v1/client-detection-rules/test with User-Agent: Chrome/120, expr: contains "Chrome"`,
+		func() error {
+			// Test Chrome user agent detection using @dynamic() syntax
+			headers := map[string]string{}
+			chromeUA := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+			matches, err := r.client.TestClientDetectionExpressionWithHeaders(ctx,
+				`@dynamic(request.headers):user-agent contains "Chrome"`, chromeUA, headers)
+			if err != nil {
+				return err
+			}
+			if !matches {
+				return fmt.Errorf("expected Chrome expression to match Chrome user agent")
+			}
+			r.log("  Chrome expression matched correctly")
+			return nil
+		})
+
+	r.runTestWithInfo("Client Detection: Test Expression - Safari Match",
+		`POST /api/v1/client-detection-rules/test with User-Agent: Safari/17.0, expr: contains "Safari" AND not_contains "Chrome"`,
+		func() error {
+			// Test Safari user agent detection (Safari without Chrome) using @dynamic() syntax
+			headers := map[string]string{}
+			safariUA := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+			matches, err := r.client.TestClientDetectionExpressionWithHeaders(ctx,
+				`@dynamic(request.headers):user-agent contains "Safari" AND @dynamic(request.headers):user-agent not_contains "Chrome"`,
+				safariUA, headers)
+			if err != nil {
+				return err
+			}
+			if !matches {
+				return fmt.Errorf("expected Safari expression to match Safari user agent")
+			}
+			r.log("  Safari expression matched correctly")
+			return nil
+		})
+
+	r.runTestWithInfo("Client Detection: Test Expression - Non-Match",
+		`POST /api/v1/client-detection-rules/test with User-Agent: Firefox/120, expr: contains "Chrome" (should NOT match)`,
+		func() error {
+			// Test that Firefox doesn't match Chrome rule using @dynamic() syntax
+			headers := map[string]string{}
+			firefoxUA := "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0"
+			matches, err := r.client.TestClientDetectionExpressionWithHeaders(ctx,
+				`@dynamic(request.headers):user-agent contains "Chrome"`, firefoxUA, headers)
+			if err != nil {
+				return err
+			}
+			if matches {
+				return fmt.Errorf("expected Chrome expression to NOT match Firefox user agent")
+			}
+			r.log("  Chrome expression correctly did not match Firefox")
+			return nil
+		})
+
+	r.runTestWithInfo("Client Detection: Verify Generic Smart TV Rule",
+		"GET /api/v1/client-detection-rules - verify system rule 'Generic Smart TV' exists at priority 900",
+		func() error {
+			mappings, err := r.client.GetClientDetectionMappings(ctx)
+			if err != nil {
+				return err
+			}
+			// Find the Generic Smart TV rule (lowest priority user-agent rule at 900)
+			var ruleFound bool
+			for _, m := range mappings {
+				if m.Name == "Generic Smart TV" && m.Priority == 900 {
+					ruleFound = true
+					if !m.IsSystem {
+						return fmt.Errorf("Generic Smart TV rule should be a system rule")
+					}
+					if !m.IsEnabled {
+						return fmt.Errorf("Generic Smart TV rule should be enabled")
+					}
+					r.log("  Found Generic Smart TV rule: %s (priority %d)", m.Name, m.Priority)
+					break
 			}
 		}
-		if !fallbackFound {
-			return fmt.Errorf("expected fallback rule with priority 999 and expression 'user_agent contains \"\"'")
+		if !ruleFound {
+			return fmt.Errorf("expected Generic Smart TV rule with priority 900")
 		}
 		return nil
 	})
+
+	// Phase 1.1.1: Explicit Codec Header Tests (User Story 5)
+	r.runTestWithInfo("Client Detection: Explicit X-Video-Codec H.265 Match",
+		`POST /api/v1/client-detection-rules/test with X-Video-Codec: h265`,
+		func() error {
+			// Test that @dynamic(request.headers):x-video-codec expression matches explicit H.265 request
+			headers := map[string]string{
+				"X-Video-Codec": "h265",
+			}
+			matches, err := r.client.TestClientDetectionExpressionWithHeaders(ctx,
+				`@dynamic(request.headers):x-video-codec equals "h265"`, "", headers)
+			if err != nil {
+				return err
+			}
+			if !matches {
+				return fmt.Errorf("expected X-Video-Codec h265 expression to match")
+			}
+			r.log("  X-Video-Codec h265 expression matched correctly")
+			return nil
+		})
+
+	r.runTestWithInfo("Client Detection: Explicit X-Video-Codec H.264 Match",
+		`POST /api/v1/client-detection-rules/test with X-Video-Codec: h264`,
+		func() error {
+			// Test that @dynamic(request.headers):x-video-codec expression matches explicit H.264 request
+			headers := map[string]string{
+				"X-Video-Codec": "h264",
+			}
+			matches, err := r.client.TestClientDetectionExpressionWithHeaders(ctx,
+				`@dynamic(request.headers):x-video-codec equals "h264"`, "", headers)
+			if err != nil {
+				return err
+			}
+			if !matches {
+				return fmt.Errorf("expected X-Video-Codec h264 expression to match")
+			}
+			r.log("  X-Video-Codec h264 expression matched correctly")
+			return nil
+		})
+
+	r.runTestWithInfo("Client Detection: Explicit X-Video-Codec VP9 Match",
+		`POST /api/v1/client-detection-rules/test with X-Video-Codec: vp9`,
+		func() error {
+			// Test VP9 explicit codec header
+			headers := map[string]string{
+				"X-Video-Codec": "vp9",
+			}
+			matches, err := r.client.TestClientDetectionExpressionWithHeaders(ctx,
+				`@dynamic(request.headers):x-video-codec equals "vp9"`, "", headers)
+			if err != nil {
+				return err
+			}
+			if !matches {
+				return fmt.Errorf("expected X-Video-Codec vp9 expression to match")
+			}
+			r.log("  X-Video-Codec vp9 expression matched correctly")
+			return nil
+		})
+
+	r.runTestWithInfo("Client Detection: Explicit X-Video-Codec AV1 Match",
+		`POST /api/v1/client-detection-rules/test with X-Video-Codec: av1`,
+		func() error {
+			// Test AV1 explicit codec header
+			headers := map[string]string{
+				"X-Video-Codec": "av1",
+			}
+			matches, err := r.client.TestClientDetectionExpressionWithHeaders(ctx,
+				`@dynamic(request.headers):x-video-codec equals "av1"`, "", headers)
+			if err != nil {
+				return err
+			}
+			if !matches {
+				return fmt.Errorf("expected X-Video-Codec av1 expression to match")
+			}
+			r.log("  X-Video-Codec av1 expression matched correctly")
+			return nil
+		})
+
+	r.runTestWithInfo("Client Detection: Explicit X-Audio-Codec AAC Match",
+		`POST /api/v1/client-detection-rules/test with X-Audio-Codec: aac`,
+		func() error {
+			// Test that @dynamic(request.headers):x-audio-codec expression matches explicit AAC request
+			headers := map[string]string{
+				"X-Audio-Codec": "aac",
+			}
+			matches, err := r.client.TestClientDetectionExpressionWithHeaders(ctx,
+				`@dynamic(request.headers):x-audio-codec equals "aac"`, "", headers)
+			if err != nil {
+				return err
+			}
+			if !matches {
+				return fmt.Errorf("expected X-Audio-Codec aac expression to match")
+			}
+			r.log("  X-Audio-Codec aac expression matched correctly")
+			return nil
+		})
+
+	r.runTestWithInfo("Client Detection: Explicit X-Audio-Codec Opus Match",
+		`POST /api/v1/client-detection-rules/test with X-Audio-Codec: opus`,
+		func() error {
+			// Test Opus explicit audio codec header
+			headers := map[string]string{
+				"X-Audio-Codec": "opus",
+			}
+			matches, err := r.client.TestClientDetectionExpressionWithHeaders(ctx,
+				`@dynamic(request.headers):x-audio-codec equals "opus"`, "", headers)
+			if err != nil {
+				return err
+			}
+			if !matches {
+				return fmt.Errorf("expected X-Audio-Codec opus expression to match")
+			}
+			r.log("  X-Audio-Codec opus expression matched correctly")
+			return nil
+		})
+
+	r.runTestWithInfo("Client Detection: Combined Video and Audio Codec Headers",
+		`POST /api/v1/client-detection-rules/test with X-Video-Codec: h265, X-Audio-Codec: aac`,
+		func() error {
+			// Test both video and audio codec headers in one expression
+			headers := map[string]string{
+				"X-Video-Codec": "h265",
+				"X-Audio-Codec": "aac",
+			}
+			matches, err := r.client.TestClientDetectionExpressionWithHeaders(ctx,
+				`@dynamic(request.headers):x-video-codec equals "h265" AND @dynamic(request.headers):x-audio-codec equals "aac"`,
+				"", headers)
+			if err != nil {
+				return err
+			}
+			if !matches {
+				return fmt.Errorf("expected combined codec expression to match")
+			}
+			r.log("  Combined codec expression matched correctly")
+			return nil
+		})
+
+	r.runTestWithInfo("Client Detection: Codec Header Priority Over User-Agent",
+		`POST /api/v1/client-detection-rules/test with X-Video-Codec: h265 + User-Agent: Chrome`,
+		func() error {
+			// Test that explicit codec header takes priority when combined with User-Agent
+			headers := map[string]string{
+				"X-Video-Codec": "h265",
+			}
+			chromeUA := "Mozilla/5.0 Chrome/120.0"
+
+			// X-Video-Codec should match even with Chrome User-Agent
+			matches, err := r.client.TestClientDetectionExpressionWithHeaders(ctx,
+				`@dynamic(request.headers):x-video-codec equals "h265"`, chromeUA, headers)
+			if err != nil {
+				return err
+			}
+			if !matches {
+				return fmt.Errorf("expected explicit codec header to match with User-Agent present")
+			}
+			r.log("  Explicit codec header matched with User-Agent present")
+			return nil
+		})
+
+	r.runTestWithInfo("Client Detection: Invalid Codec Header Fallthrough",
+		`POST /api/v1/client-detection-rules/test with X-Video-Codec: invalid_codec (should NOT match h265)`,
+		func() error {
+			// Test that invalid codec value doesn't match explicit codec rule
+			headers := map[string]string{
+				"X-Video-Codec": "invalid_codec",
+			}
+			matches, err := r.client.TestClientDetectionExpressionWithHeaders(ctx,
+				`@dynamic(request.headers):x-video-codec equals "h265"`, "", headers)
+			if err != nil {
+				return err
+			}
+			if matches {
+				return fmt.Errorf("expected invalid codec to NOT match h265 expression")
+			}
+			r.log("  Invalid codec correctly did not match")
+			return nil
+		})
+
+	r.runTestWithInfo("Client Detection: Case Sensitive Codec Matching",
+		`POST /api/v1/client-detection-rules/test with X-Video-Codec: H265 vs expr: equals "h265"`,
+		func() error {
+			// Test that codec matching is case sensitive
+			headers := map[string]string{
+				"X-Video-Codec": "H265", // uppercase
+			}
+			matches, err := r.client.TestClientDetectionExpressionWithHeaders(ctx,
+				`@dynamic(request.headers):x-video-codec equals "h265"`, "", headers)
+			if err != nil {
+				return err
+			}
+			if matches {
+				return fmt.Errorf("expected uppercase codec to NOT match lowercase expression")
+			}
+			r.log("  Case sensitivity verified - H265 != h265")
+			return nil
+		})
 
 	// Phase 1.2: Themes API tests
-	r.runTest("Themes: List All Themes", func() error {
-		themes, err := r.client.GetThemes(ctx)
-		if err != nil {
-			return err
-		}
-		if len(themes.Themes) == 0 {
-			return fmt.Errorf("expected at least one theme, got none")
-		}
-		if themes.Default == "" {
-			return fmt.Errorf("expected default theme to be set")
-		}
-
-		// Count built-in vs custom themes
-		var builtinCount, customCount int
-		for _, t := range themes.Themes {
-			if t.Source == "builtin" {
-				builtinCount++
-			} else if t.Source == "custom" {
-				customCount++
+	r.runTestWithInfo("Themes: List All Themes",
+		"GET /api/v1/themes - verify built-in themes exist with default set",
+		func() error {
+			themes, err := r.client.GetThemes(ctx)
+			if err != nil {
+				return err
 			}
-		}
-		r.log("  Found %d themes (%d built-in, %d custom), default: %s",
-			len(themes.Themes), builtinCount, customCount, themes.Default)
-
-		// Verify default theme exists in list
-		var defaultFound bool
-		for _, t := range themes.Themes {
-			if t.ID == themes.Default {
-				defaultFound = true
-				break
+			if len(themes.Themes) == 0 {
+				return fmt.Errorf("expected at least one theme, got none")
 			}
-		}
-		if !defaultFound {
-			return fmt.Errorf("default theme %q not found in theme list", themes.Default)
-		}
-		return nil
-	})
+			if themes.Default == "" {
+				return fmt.Errorf("expected default theme to be set")
+			}
 
-	r.runTest("Themes: Get Built-in Theme CSS (graphite)", func() error {
-		css, err := r.client.GetThemeCSS(ctx, "graphite")
-		if err != nil {
-			return err
-		}
-		if len(css) == 0 {
-			return fmt.Errorf("expected non-empty CSS content")
-		}
-		// Verify CSS structure
-		if !strings.Contains(css, ":root") {
-			return fmt.Errorf("CSS missing :root selector")
-		}
-		if !strings.Contains(css, ".dark") {
-			return fmt.Errorf("CSS missing .dark selector")
-		}
-		if !strings.Contains(css, "--background") {
-			return fmt.Errorf("CSS missing --background variable")
-		}
-		r.log("  Got graphite.css (%d bytes)", len(css))
-		return nil
-	})
+			// Count built-in vs custom themes
+			var builtinCount, customCount int
+			for _, t := range themes.Themes {
+				if t.Source == "builtin" {
+					builtinCount++
+				} else if t.Source == "custom" {
+					customCount++
+				}
+			}
+			r.log("  Found %d themes (%d built-in, %d custom), default: %s",
+				len(themes.Themes), builtinCount, customCount, themes.Default)
 
-	r.runTest("Themes: Get Non-Existent Theme Returns 404", func() error {
-		_, err := r.client.GetThemeCSS(ctx, "nonexistent-theme-12345")
-		if err == nil {
-			return fmt.Errorf("expected error for non-existent theme")
-		}
-		if !strings.Contains(err.Error(), "404") {
-			return fmt.Errorf("expected 404 error, got: %v", err)
-		}
-		r.log("  Correctly returned 404 for non-existent theme")
-		return nil
-	})
+			// Verify default theme exists in list
+			var defaultFound bool
+			for _, t := range themes.Themes {
+				if t.ID == themes.Default {
+					defaultFound = true
+					break
+				}
+			}
+			if !defaultFound {
+				return fmt.Errorf("default theme %q not found in theme list", themes.Default)
+			}
+			return nil
+		})
+
+	r.runTestWithInfo("Themes: Get Built-in Theme CSS (graphite)",
+		"GET /api/v1/themes/graphite/css - verify CSS contains :root, .dark, --background",
+		func() error {
+			css, err := r.client.GetThemeCSS(ctx, "graphite")
+			if err != nil {
+				return err
+			}
+			if len(css) == 0 {
+				return fmt.Errorf("expected non-empty CSS content")
+			}
+			// Verify CSS structure
+			if !strings.Contains(css, ":root") {
+				return fmt.Errorf("CSS missing :root selector")
+			}
+			if !strings.Contains(css, ".dark") {
+				return fmt.Errorf("CSS missing .dark selector")
+			}
+			if !strings.Contains(css, "--background") {
+				return fmt.Errorf("CSS missing --background variable")
+			}
+			r.log("  Got graphite.css (%d bytes)", len(css))
+			return nil
+		})
+
+	r.runTestWithInfo("Themes: Get Non-Existent Theme Returns 404",
+		"GET /api/v1/themes/nonexistent-theme-12345/css - expect 404 response",
+		func() error {
+			_, err := r.client.GetThemeCSS(ctx, "nonexistent-theme-12345")
+			if err == nil {
+				return fmt.Errorf("expected error for non-existent theme")
+			}
+			if !strings.Contains(err.Error(), "404") {
+				return fmt.Errorf("expected 404 error, got: %v", err)
+			}
+			r.log("  Correctly returned 404 for non-existent theme")
+			return nil
+		})
 
 	// Phase 1.5: Upload placeholder logos and create data mapping rules
 	// This optimizes logo caching - all logos will point to the same local placeholder
-	r.runTest("Upload Channel Logo Placeholder", func() error {
-		channelLogoData, err := testdataFS.ReadFile("testdata/channel.webp")
-		if err != nil {
-			return fmt.Errorf("read channel.webp from embedded testdata: %w", err)
-		}
-		result, err := r.client.UploadLogo(ctx, "channel-placeholder.webp", channelLogoData)
-		if err != nil {
-			return err
-		}
-		r.channelLogoID = result.ID
-		r.channelLogoURL = result.URL
-		r.log("  Uploaded channel logo: ID=%s URL=%s", r.channelLogoID, r.channelLogoURL)
-		return nil
-	})
+	r.runTestWithInfo("Upload Channel Logo Placeholder",
+		"POST /api/v1/logos/upload - upload channel-placeholder.webp (64x64 WebP)",
+		func() error {
+			channelLogoData, err := testdataFS.ReadFile("testdata/channel.webp")
+			if err != nil {
+				return fmt.Errorf("read channel.webp from embedded testdata: %w", err)
+			}
+			result, err := r.client.UploadLogo(ctx, "channel-placeholder.webp", channelLogoData)
+			if err != nil {
+				return err
+			}
+			r.channelLogoID = result.ID
+			r.channelLogoURL = result.URL
+			r.log("  Uploaded channel logo: ID=%s URL=%s", r.channelLogoID, r.channelLogoURL)
+			return nil
+		})
 
-	r.runTest("Upload Program Logo Placeholder", func() error {
-		programLogoData, err := testdataFS.ReadFile("testdata/program.webp")
-		if err != nil {
-			return fmt.Errorf("read program.webp from embedded testdata: %w", err)
-		}
-		result, err := r.client.UploadLogo(ctx, "program-placeholder.webp", programLogoData)
-		if err != nil {
-			return err
-		}
-		r.programLogoID = result.ID
-		r.programLogoURL = result.URL
-		r.log("  Uploaded program logo: ID=%s URL=%s", r.programLogoID, r.programLogoURL)
-		return nil
-	})
+	r.runTestWithInfo("Upload Program Logo Placeholder",
+		"POST /api/v1/logos/upload - upload program-placeholder.webp (64x64 WebP)",
+		func() error {
+			programLogoData, err := testdataFS.ReadFile("testdata/program.webp")
+			if err != nil {
+				return fmt.Errorf("read program.webp from embedded testdata: %w", err)
+			}
+			result, err := r.client.UploadLogo(ctx, "program-placeholder.webp", programLogoData)
+			if err != nil {
+				return err
+			}
+			r.programLogoID = result.ID
+			r.programLogoURL = result.URL
+			r.log("  Uploaded program logo: ID=%s URL=%s", r.programLogoID, r.programLogoURL)
+			return nil
+		})
 
-	r.runTest("Create Channel Logo Mapping Rule", func() error {
-		if r.channelLogoID == "" {
-			return fmt.Errorf("no channel logo ID available")
-		}
-		// Rule: Replace all channel logos with @logo:ULID helper reference
-		// The @logo:ULID syntax is resolved by the logo caching stage to the full URL
-		// This ensures logos are recognized as local and not fetched remotely
-		expression := fmt.Sprintf(`tvg_logo starts_with "http" SET tvg_logo = "@logo:%s"`, r.channelLogoID)
-		ruleID, err := r.client.CreateDataMappingRule(ctx,
-			fmt.Sprintf("E2E Channel Logo Placeholder %s", r.runID),
-			"stream",
-			expression,
-			100, // High priority
-		)
-		if err != nil {
-			return err
-		}
-		r.log("  Created channel logo mapping rule: %s (sets @logo:%s)", ruleID, r.channelLogoID)
-		return nil
-	})
+	r.runTestWithInfo("Create Channel Logo Mapping Rule",
+		"POST /api/v1/filters - create stream filter: tvg_logo starts_with http SET @logo:ULID",
+		func() error {
+			if r.channelLogoID == "" {
+				return fmt.Errorf("no channel logo ID available")
+			}
+			// Rule: Replace all channel logos with @logo:ULID helper reference
+			// The @logo:ULID syntax is resolved by the logo caching stage to the full URL
+			// This ensures logos are recognized as local and not fetched remotely
+			expression := fmt.Sprintf(`tvg_logo starts_with "http" SET tvg_logo = "@logo:%s"`, r.channelLogoID)
+			ruleID, err := r.client.CreateDataMappingRule(ctx,
+				fmt.Sprintf("E2E Channel Logo Placeholder %s", r.runID),
+				"stream",
+				expression,
+				100, // High priority
+			)
+			if err != nil {
+				return err
+			}
+			r.log("  Created channel logo mapping rule: %s (sets @logo:%s)", ruleID, r.channelLogoID)
+			return nil
+		})
 
-	r.runTest("Create Program Icon Mapping Rule", func() error {
-		if r.programLogoID == "" {
-			return fmt.Errorf("no program logo ID available")
-		}
-		// Rule: Replace all program icons with @logo:ULID helper reference
-		// The @logo:ULID syntax is resolved by the logo caching stage to the full URL
-		expression := fmt.Sprintf(`programme_icon starts_with "http" SET programme_icon = "@logo:%s"`, r.programLogoID)
-		ruleID, err := r.client.CreateDataMappingRule(ctx,
-			fmt.Sprintf("E2E Program Icon Placeholder %s", r.runID),
-			"epg",
-			expression,
-			100, // High priority
-		)
-		if err != nil {
-			return err
-		}
-		r.log("  Created program icon mapping rule: %s (sets @logo:%s)", ruleID, r.programLogoID)
-		return nil
-	})
+	r.runTestWithInfo("Create Program Icon Mapping Rule",
+		"POST /api/v1/filters - create EPG filter: programme_icon starts_with http SET @logo:ULID",
+		func() error {
+			if r.programLogoID == "" {
+				return fmt.Errorf("no program logo ID available")
+			}
+			// Rule: Replace all program icons with @logo:ULID helper reference
+			// The @logo:ULID syntax is resolved by the logo caching stage to the full URL
+			expression := fmt.Sprintf(`programme_icon starts_with "http" SET programme_icon = "@logo:%s"`, r.programLogoID)
+			ruleID, err := r.client.CreateDataMappingRule(ctx,
+				fmt.Sprintf("E2E Program Icon Placeholder %s", r.runID),
+				"epg",
+				expression,
+				100, // High priority
+			)
+			if err != nil {
+				return err
+			}
+			r.log("  Created program icon mapping rule: %s (sets @logo:%s)", ruleID, r.programLogoID)
+			return nil
+		})
 
 	// Phase 2: Stream Source Ingestion
-	r.runTest("Create Stream Source", func() error {
-		var err error
-		// Use unique name with runID to avoid conflicts
-		streamSourceID, err = r.client.CreateStreamSource(ctx, fmt.Sprintf("E2E Test M3U %s", r.runID), r.m3uURL)
-		if err != nil {
-			return err
-		}
-		r.log("  Created stream source: %s", streamSourceID)
-		return nil
-	})
+	r.runTestWithInfo("Create Stream Source",
+		"POST /api/v1/sources/stream - create M3U source from testdata URL",
+		func() error {
+			var err error
+			// Use unique name with runID to avoid conflicts
+			streamSourceID, err = r.client.CreateStreamSource(ctx, fmt.Sprintf("E2E Test M3U %s", r.runID), r.m3uURL)
+			if err != nil {
+				return err
+			}
+			r.log("  Created stream source: %s", streamSourceID)
+			return nil
+		})
 
-	r.runTest("Ingest Stream Source", func() error {
-		if streamSourceID == "" {
-			return fmt.Errorf("no stream source to ingest")
-		}
-		return r.client.TriggerIngestion(ctx, "stream", streamSourceID, 3*time.Minute)
-	})
+	r.runTestWithInfo("Ingest Stream Source",
+		"POST /api/v1/sources/stream/{id}/ingest + SSE /api/v1/progress/events until completed",
+		func() error {
+			if streamSourceID == "" {
+				return fmt.Errorf("no stream source to ingest")
+			}
+			return r.client.TriggerIngestion(ctx, "stream", streamSourceID, 3*time.Minute)
+		})
 
-	r.runTest("Verify Channel Count", func() error {
-		count, err := r.client.GetChannelCount(ctx)
-		if err != nil {
-			return err
-		}
-		r.log("  Channel count: %d", count)
-		if count == 0 {
-			return fmt.Errorf("no channels found after ingestion")
-		}
-		return nil
-	})
+	r.runTestWithInfo("Verify Channel Count",
+		"GET /api/v1/channels?limit=1 - verify channels exist after ingestion",
+		func() error {
+			count, err := r.client.GetChannelCount(ctx)
+			if err != nil {
+				return err
+			}
+			r.log("  Channel count: %d", count)
+			if count == 0 {
+				return fmt.Errorf("no channels found after ingestion")
+			}
+			return nil
+		})
 
 	// Phase 3: EPG Source Ingestion
-	r.runTest("Create EPG Source", func() error {
-		var err error
-		// Use unique name with runID to avoid conflicts
-		epgSourceID, err = r.client.CreateEPGSource(ctx, fmt.Sprintf("E2E Test EPG %s", r.runID), r.epgURL)
-		if err != nil {
-			return err
-		}
-		r.log("  Created EPG source: %s", epgSourceID)
-		return nil
-	})
+	r.runTestWithInfo("Create EPG Source",
+		"POST /api/v1/sources/epg - create XMLTV source from testdata URL",
+		func() error {
+			var err error
+			// Use unique name with runID to avoid conflicts
+			epgSourceID, err = r.client.CreateEPGSource(ctx, fmt.Sprintf("E2E Test EPG %s", r.runID), r.epgURL)
+			if err != nil {
+				return err
+			}
+			r.log("  Created EPG source: %s", epgSourceID)
+			return nil
+		})
 
-	r.runTest("Ingest EPG Source", func() error {
-		if epgSourceID == "" {
-			return fmt.Errorf("no EPG source to ingest")
-		}
-		return r.client.TriggerIngestion(ctx, "epg", epgSourceID, 5*time.Minute)
-	})
+	r.runTestWithInfo("Ingest EPG Source",
+		"POST /api/v1/sources/epg/{id}/ingest + SSE /api/v1/progress/events until completed",
+		func() error {
+			if epgSourceID == "" {
+				return fmt.Errorf("no EPG source to ingest")
+			}
+			return r.client.TriggerIngestion(ctx, "epg", epgSourceID, 5*time.Minute)
+		})
 
 	// Phase 4: Proxy Configuration and Generation
 	// When testProxyModes is enabled, create a redirect mode proxy explicitly.
 	// When not testing proxy modes, create a default proxy (which uses redirect mode).
-	r.runTest("Create Stream Proxy", func() error {
-		var err error
-		sourceIDs := []string{}
-		epgIDs := []string{}
-		if streamSourceID != "" {
-			sourceIDs = []string{streamSourceID}
-		}
-		if epgSourceID != "" {
-			epgIDs = []string{epgSourceID}
-		}
+	r.runTestWithInfo("Create Stream Proxy",
+		"POST /api/v1/proxies - create proxy with stream/EPG sources attached",
+		func() error {
+			var err error
+			sourceIDs := []string{}
+			epgIDs := []string{}
+			if streamSourceID != "" {
+				sourceIDs = []string{streamSourceID}
+			}
+			if epgSourceID != "" {
+				epgIDs = []string{epgSourceID}
+			}
 
-		opts := CreateStreamProxyOptions{
-			StreamSourceIDs:   sourceIDs,
-			EpgSourceIDs:      epgIDs,
-			CacheChannelLogos: r.cacheChannelLogos,
-			CacheProgramLogos: r.cacheProgramLogos,
-		}
+			opts := CreateStreamProxyOptions{
+				StreamSourceIDs:   sourceIDs,
+				EpgSourceIDs:      epgIDs,
+				CacheChannelLogos: r.cacheChannelLogos,
+				CacheProgramLogos: r.cacheProgramLogos,
+			}
 
-		if r.testProxyModes {
-			// Create direct mode proxy with explicit mode for proxy mode testing
-			opts.Name = fmt.Sprintf("E2E Direct Mode Proxy %s", r.runID)
-			opts.ProxyMode = "direct"
-		} else {
-			// Create default proxy (defaults to direct mode)
-			opts.Name = fmt.Sprintf("E2E Test Proxy %s", r.runID)
-		}
+			if r.testProxyModes {
+				// Create direct mode proxy with explicit mode for proxy mode testing
+				opts.Name = fmt.Sprintf("E2E Direct Mode Proxy %s", r.runID)
+				opts.ProxyMode = "direct"
+			} else {
+				// Create default proxy (defaults to direct mode)
+				opts.Name = fmt.Sprintf("E2E Test Proxy %s", r.runID)
+			}
 
-		proxyID, err = r.client.CreateStreamProxy(ctx, opts)
-		if err != nil {
-			return err
-		}
-		r.log("  Created proxy: %s (mode=%s, logo caching: channel=%v, program=%v)",
-			proxyID, opts.ProxyMode, r.cacheChannelLogos, r.cacheProgramLogos)
-		return nil
-	})
+			proxyID, err = r.client.CreateStreamProxy(ctx, opts)
+			if err != nil {
+				return err
+			}
+			r.log("  Created proxy: %s (mode=%s, logo caching: channel=%v, program=%v)",
+				proxyID, opts.ProxyMode, r.cacheChannelLogos, r.cacheProgramLogos)
+			return nil
+		})
 
-	r.runTest("Generate Proxy Output", func() error {
-		if proxyID == "" {
-			return fmt.Errorf("no proxy to generate")
-		}
-		return r.client.TriggerProxyGeneration(ctx, proxyID, 5*time.Minute)
-	})
+	r.runTestWithInfo("Generate Proxy Output",
+		"POST /api/v1/proxies/{id}/generate + SSE /api/v1/progress/events until completed",
+		func() error {
+			if proxyID == "" {
+				return fmt.Errorf("no proxy to generate")
+			}
+			return r.client.TriggerProxyGeneration(ctx, proxyID, 5*time.Minute)
+		})
 
 	// Phase 5: Output Validation
-	r.runTest("Verify Proxy Status", func() error {
-		if proxyID == "" {
-			return fmt.Errorf("no proxy to verify")
-		}
-		proxy, err := r.client.GetProxy(ctx, proxyID)
-		if err != nil {
-			return err
-		}
-		status, _ := proxy["status"].(string)
-		if status == "" {
-			return fmt.Errorf("proxy status not found in response")
-		}
-		r.log("  Proxy status: %s", status)
-		channelCount, _ := proxy["channel_count"].(float64)
-		r.log("  Channel count: %.0f", channelCount)
-		if channelCount == 0 {
-			return fmt.Errorf("proxy has no channels after generation")
-		}
-		return nil
-	})
+	r.runTestWithInfo("Verify Proxy Status",
+		"GET /api/v1/proxies/{id} - verify status and channel_count > 0",
+		func() error {
+			if proxyID == "" {
+				return fmt.Errorf("no proxy to verify")
+			}
+			proxy, err := r.client.GetProxy(ctx, proxyID)
+			if err != nil {
+				return err
+			}
+			status, _ := proxy["status"].(string)
+			if status == "" {
+				return fmt.Errorf("proxy status not found in response")
+			}
+			r.log("  Proxy status: %s", status)
+			channelCount, _ := proxy["channel_count"].(float64)
+			r.log("  Channel count: %.0f", channelCount)
+			if channelCount == 0 {
+				return fmt.Errorf("proxy has no channels after generation")
+			}
+			return nil
+		})
 
 	// Phase 6: M3U/XMLTV Output Validation
 	var m3uContent, xmltvContent string
 
-	r.runTest("Fetch and Validate M3U Output", func() error {
-		if proxyID == "" {
-			return fmt.Errorf("no proxy to fetch M3U from")
-		}
-		var err error
-		m3uContent, err = r.client.GetProxyM3U(ctx, proxyID)
-		if err != nil {
-			return err
-		}
-		r.log("  M3U size: %d bytes", len(m3uContent))
-
-		channelCount, err := ValidateM3U(m3uContent)
-		if err != nil {
-			return err
-		}
-		r.log("  M3U channels: %d", channelCount)
-
-		// Validate expected channel count if specified
-		if r.expectedChannels > 0 && channelCount != r.expectedChannels {
-			return fmt.Errorf("channel count mismatch: got %d, expected %d", channelCount, r.expectedChannels)
-		}
-
-		// Write M3U to output dir if specified
-		if r.outputDir != "" {
-			if err := r.writeArtifact(proxyID+".m3u", m3uContent); err != nil {
-				r.log("  Warning: failed to write M3U: %v", err)
-			} else {
-				r.log("  Wrote M3U artifact: %s/%s.m3u", r.outputDir, proxyID)
+	r.runTestWithInfo("Fetch and Validate M3U Output",
+		"GET /proxy/{id}/playlist.m3u - validate #EXTM3U header and #EXTINF entries",
+		func() error {
+			if proxyID == "" {
+				return fmt.Errorf("no proxy to fetch M3U from")
 			}
-		}
-
-		// Display sample channels if requested
-		if r.showSamples {
-			r.printSampleChannels(m3uContent)
-		}
-
-		return nil
-	})
-
-	r.runTest("Fetch and Validate XMLTV Output", func() error {
-		if proxyID == "" {
-			return fmt.Errorf("no proxy to fetch XMLTV from")
-		}
-		var err error
-		xmltvContent, err = r.client.GetProxyXMLTV(ctx, proxyID)
-		if err != nil {
-			return err
-		}
-		r.log("  XMLTV size: %d bytes", len(xmltvContent))
-
-		channelCount, programCount, err := ValidateXMLTV(xmltvContent)
-		if err != nil {
-			return err
-		}
-		r.log("  XMLTV channels: %d, programs: %d", channelCount, programCount)
-
-		// Validate expected counts if specified
-		if r.expectedChannels > 0 && channelCount != r.expectedChannels {
-			return fmt.Errorf("XMLTV channel count mismatch: got %d, expected %d", channelCount, r.expectedChannels)
-		}
-		if r.expectedPrograms > 0 && programCount != r.expectedPrograms {
-			return fmt.Errorf("XMLTV program count mismatch: got %d, expected %d", programCount, r.expectedPrograms)
-		}
-
-		// Write XMLTV to output dir if specified
-		if r.outputDir != "" {
-			if err := r.writeArtifact(proxyID+".xmltv", xmltvContent); err != nil {
-				r.log("  Warning: failed to write XMLTV: %v", err)
-			} else {
-				r.log("  Wrote XMLTV artifact: %s/%s.xmltv", r.outputDir, proxyID)
+			var err error
+			m3uContent, err = r.client.GetProxyM3U(ctx, proxyID)
+			if err != nil {
+				return err
 			}
-		}
+			r.log("  M3U size: %d bytes", len(m3uContent))
 
-		// Display sample programs if requested
-		if r.showSamples {
-			r.printSamplePrograms(xmltvContent)
-		}
+			channelCount, err := ValidateM3U(m3uContent)
+			if err != nil {
+				return err
+			}
+			r.log("  M3U channels: %d", channelCount)
 
-		return nil
-	})
+			// Validate expected channel count if specified
+			if r.expectedChannels > 0 && channelCount != r.expectedChannels {
+				return fmt.Errorf("channel count mismatch: got %d, expected %d", channelCount, r.expectedChannels)
+			}
+
+			// Write M3U to output dir if specified
+			if r.outputDir != "" {
+				if err := r.writeArtifact(proxyID+".m3u", m3uContent); err != nil {
+					r.log("  Warning: failed to write M3U: %v", err)
+				} else {
+					r.log("  Wrote M3U artifact: %s/%s.m3u", r.outputDir, proxyID)
+				}
+			}
+
+			// Display sample channels if requested
+			if r.showSamples {
+				r.printSampleChannels(m3uContent)
+			}
+
+			return nil
+		})
+
+	r.runTestWithInfo("Fetch and Validate XMLTV Output",
+		"GET /proxy/{id}/epg.xml - validate <tv>, <channel>, <programme> elements",
+		func() error {
+			if proxyID == "" {
+				return fmt.Errorf("no proxy to fetch XMLTV from")
+			}
+			var err error
+			xmltvContent, err = r.client.GetProxyXMLTV(ctx, proxyID)
+			if err != nil {
+				return err
+			}
+			r.log("  XMLTV size: %d bytes", len(xmltvContent))
+
+			channelCount, programCount, err := ValidateXMLTV(xmltvContent)
+			if err != nil {
+				return err
+			}
+			r.log("  XMLTV channels: %d, programs: %d", channelCount, programCount)
+
+			// Validate expected counts if specified
+			if r.expectedChannels > 0 && channelCount != r.expectedChannels {
+				return fmt.Errorf("XMLTV channel count mismatch: got %d, expected %d", channelCount, r.expectedChannels)
+			}
+			if r.expectedPrograms > 0 && programCount != r.expectedPrograms {
+				return fmt.Errorf("XMLTV program count mismatch: got %d, expected %d", programCount, r.expectedPrograms)
+			}
+
+			// Write XMLTV to output dir if specified
+			if r.outputDir != "" {
+				if err := r.writeArtifact(proxyID+".xmltv", xmltvContent); err != nil {
+					r.log("  Warning: failed to write XMLTV: %v", err)
+				} else {
+					r.log("  Wrote XMLTV artifact: %s/%s.xmltv", r.outputDir, proxyID)
+				}
+			}
+
+			// Display sample programs if requested
+			if r.showSamples {
+				r.printSamplePrograms(xmltvContent)
+			}
+
+			return nil
+		})
 
 	// Phase 7: Logo Helper Validation
 	// Verify that the @logo:ULID helper was resolved correctly in the output
-	r.runTest("Validate Channel Logo URLs in M3U", func() error {
-		if r.channelLogoID == "" {
-			r.log("  Skipping: no channel logo ID available")
-			return nil
-		}
-		if m3uContent == "" {
-			return fmt.Errorf("no M3U content available for validation")
-		}
-
-		// The M3U should contain the resolved logo URL with our uploaded logo's ULID
-		// Expected pattern: /api/v1/logos/ULID or http://baseurl/api/v1/logos/ULID
-		expectedLogoPath := fmt.Sprintf("/api/v1/logos/%s", r.channelLogoID)
-
-		if !strings.Contains(m3uContent, expectedLogoPath) {
-			// Check if there are any tvg-logo entries at all
-			if strings.Contains(m3uContent, "tvg-logo=") {
-				// There are logos but they don't match our expected pattern
-				// Extract a sample logo URL for debugging
-				sampleLogo := extractAttribute(m3uContent, "tvg-logo")
-				return fmt.Errorf("M3U contains tvg-logo but not with expected logo ID.\n  Expected path containing: %s\n  Sample logo found: %s\n  This indicates the @logo: helper was not resolved correctly", expectedLogoPath, sampleLogo)
+	r.runTestWithInfo("Validate Channel Logo URLs in M3U",
+		"Verify M3U tvg-logo attributes contain /api/v1/logos/{uploadedLogoID}",
+		func() error {
+			if r.channelLogoID == "" {
+				r.log("  Skipping: no channel logo ID available")
+				return nil
 			}
-			r.log("  Warning: No tvg-logo attributes found in M3U (may be expected if source had no logos)")
-			return nil
-		}
-
-		// Count how many channels have the correct logo
-		logoCount := strings.Count(m3uContent, expectedLogoPath)
-		r.log("  Validated: %d channel logos use uploaded placeholder (ID: %s)", logoCount, r.channelLogoID)
-		return nil
-	})
-
-	r.runTest("Validate Program Icon URLs in XMLTV", func() error {
-		if r.programLogoID == "" {
-			r.log("  Skipping: no program logo ID available")
-			return nil
-		}
-		if xmltvContent == "" {
-			return fmt.Errorf("no XMLTV content available for validation")
-		}
-
-		// The XMLTV should contain the resolved icon URL with our uploaded logo's ULID
-		// Expected pattern: /api/v1/logos/ULID or http://baseurl/api/v1/logos/ULID
-		expectedIconPath := fmt.Sprintf("/api/v1/logos/%s", r.programLogoID)
-
-		if !strings.Contains(xmltvContent, expectedIconPath) {
-			// Check if there are any icon entries at all
-			if strings.Contains(xmltvContent, "<icon src=") {
-				// There are icons but they don't match our expected pattern
-				// Extract a sample icon URL for debugging
-				sampleIcon := extractXMLElement(xmltvContent, "icon")
-				return fmt.Errorf("XMLTV contains icons but not with expected logo ID.\n  Expected path containing: %s\n  Sample icon found: %s\n  This indicates the @logo: helper was not resolved correctly", expectedIconPath, sampleIcon)
+			if m3uContent == "" {
+				return fmt.Errorf("no M3U content available for validation")
 			}
-			r.log("  Warning: No <icon> elements found in XMLTV (may be expected if source had no icons)")
-			return nil
-		}
 
-		// Count how many programs have the correct icon
-		iconCount := strings.Count(xmltvContent, expectedIconPath)
-		r.log("  Validated: %d program icons use uploaded placeholder (ID: %s)", iconCount, r.programLogoID)
-		return nil
-	})
+			// The M3U should contain the resolved logo URL with our uploaded logo's ULID
+			// Expected pattern: /api/v1/logos/ULID or http://baseurl/api/v1/logos/ULID
+			expectedLogoPath := fmt.Sprintf("/api/v1/logos/%s", r.channelLogoID)
+
+			if !strings.Contains(m3uContent, expectedLogoPath) {
+				// Check if there are any tvg-logo entries at all
+				if strings.Contains(m3uContent, "tvg-logo=") {
+					// There are logos but they don't match our expected pattern
+					// Extract a sample logo URL for debugging
+					sampleLogo := extractAttribute(m3uContent, "tvg-logo")
+					return fmt.Errorf("M3U contains tvg-logo but not with expected logo ID.\n  Expected path containing: %s\n  Sample logo found: %s\n  This indicates the @logo: helper was not resolved correctly", expectedLogoPath, sampleLogo)
+				}
+				r.log("  Warning: No tvg-logo attributes found in M3U (may be expected if source had no logos)")
+				return nil
+			}
+
+			// Count how many channels have the correct logo
+			logoCount := strings.Count(m3uContent, expectedLogoPath)
+			r.log("  Validated: %d channel logos use uploaded placeholder (ID: %s)", logoCount, r.channelLogoID)
+			return nil
+		})
+
+	r.runTestWithInfo("Validate Program Icon URLs in XMLTV",
+		"Verify XMLTV <icon> elements contain /api/v1/logos/{uploadedLogoID}",
+		func() error {
+			if r.programLogoID == "" {
+				r.log("  Skipping: no program logo ID available")
+				return nil
+			}
+			if xmltvContent == "" {
+				return fmt.Errorf("no XMLTV content available for validation")
+			}
+
+			// The XMLTV should contain the resolved icon URL with our uploaded logo's ULID
+			// Expected pattern: /api/v1/logos/ULID or http://baseurl/api/v1/logos/ULID
+			expectedIconPath := fmt.Sprintf("/api/v1/logos/%s", r.programLogoID)
+
+			if !strings.Contains(xmltvContent, expectedIconPath) {
+				// Check if there are any icon entries at all
+				if strings.Contains(xmltvContent, "<icon src=") {
+					// There are icons but they don't match our expected pattern
+					// Extract a sample icon URL for debugging
+					sampleIcon := extractXMLElement(xmltvContent, "icon")
+					return fmt.Errorf("XMLTV contains icons but not with expected logo ID.\n  Expected path containing: %s\n  Sample icon found: %s\n  This indicates the @logo: helper was not resolved correctly", expectedIconPath, sampleIcon)
+				}
+				r.log("  Warning: No <icon> elements found in XMLTV (may be expected if source had no icons)")
+				return nil
+			}
+
+			// Count how many programs have the correct icon
+			iconCount := strings.Count(xmltvContent, expectedIconPath)
+			r.log("  Validated: %d program icons use uploaded placeholder (ID: %s)", iconCount, r.programLogoID)
+			return nil
+		})
 
 	// Phase 8: Proxy Mode Tests (optional, enabled via -test-proxy-modes)
 	// Note: Channels already have correct testdata server URLs from test data generation,
@@ -2372,143 +2699,110 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 		var relayProfileProxyID string
 
 		// Create proxy with smart mode (passthrough/repackage)
-		r.runTest("Create Proxy (Smart Mode)", func() error {
-			var err error
-			smartModeProxyID, err = r.client.CreateStreamProxy(ctx, CreateStreamProxyOptions{
-				Name:            fmt.Sprintf("E2E Smart Mode Proxy %s", r.runID),
-				StreamSourceIDs: []string{streamSourceID},
-				ProxyMode:       "smart",
-			})
-			if err != nil {
-				return err
-			}
-			r.log("  Created smart mode proxy: %s", smartModeProxyID)
-			return nil
-		})
-
-		// Create proxy with smart mode + relay profile for transcoding (only if ffmpeg is available)
-		if r.ffmpegAvailable {
-			r.runTest("Create Proxy (Smart Mode with Relay Profile)", func() error {
-				// Get the first relay profile ID (should exist from seeded profiles)
-				relayProfileID, err := r.client.GetFirstRelayProfileID(ctx)
-				if err != nil {
-					return fmt.Errorf("failed to get relay profile: %w", err)
-				}
-				if relayProfileID == "" {
-					return fmt.Errorf("no relay profiles available")
-				}
-				r.log("  Using relay profile: %s", relayProfileID)
-
-				relayProfileProxyID, err = r.client.CreateStreamProxy(ctx, CreateStreamProxyOptions{
-					Name:            fmt.Sprintf("E2E Smart+Relay Proxy %s", r.runID),
+		r.runTestWithInfo("Create Proxy (Smart Mode)",
+			"POST /api/v1/proxies with proxy_mode=smart (HLS passthrough/repackage)",
+			func() error {
+				var err error
+				smartModeProxyID, err = r.client.CreateStreamProxy(ctx, CreateStreamProxyOptions{
+					Name:            fmt.Sprintf("E2E Smart Mode Proxy %s", r.runID),
 					StreamSourceIDs: []string{streamSourceID},
 					ProxyMode:       "smart",
-					RelayProfileID:  relayProfileID,
 				})
 				if err != nil {
 					return err
 				}
-				r.log("  Created smart mode proxy with relay profile: %s", relayProfileProxyID)
+				r.log("  Created smart mode proxy: %s", smartModeProxyID)
 				return nil
 			})
+
+		// Create proxy with smart mode + relay profile for transcoding (only if ffmpeg is available)
+		if r.ffmpegAvailable {
+			r.runTestWithInfo("Create Proxy (Smart Mode with Relay Profile)",
+				"POST /api/v1/proxies with proxy_mode=smart + encoding_profile_id (enables transcoding)",
+				func() error {
+					// Get the first relay profile ID (should exist from seeded profiles)
+					relayProfileID, err := r.client.GetFirstRelayProfileID(ctx)
+					if err != nil {
+						return fmt.Errorf("failed to get relay profile: %w", err)
+					}
+					if relayProfileID == "" {
+						return fmt.Errorf("no relay profiles available")
+					}
+					r.log("  Using relay profile: %s", relayProfileID)
+
+					relayProfileProxyID, err = r.client.CreateStreamProxy(ctx, CreateStreamProxyOptions{
+						Name:            fmt.Sprintf("E2E Smart+Relay Proxy %s", r.runID),
+						StreamSourceIDs: []string{streamSourceID},
+						ProxyMode:       "smart",
+						RelayProfileID:  relayProfileID,
+					})
+					if err != nil {
+						return err
+					}
+					r.log("  Created smart mode proxy with relay profile: %s", relayProfileProxyID)
+					return nil
+				})
 		} else {
 			// Log that we're skipping relay profile tests
-			r.runTest("Skip Relay Profile Tests (No FFmpeg)", func() error {
-				r.log("  SKIPPED: Relay profile tests require ffmpeg")
-				fmt.Println("WARNING: Skipping relay profile proxy test - ffmpeg not available")
-				fmt.Fprintln(os.Stderr, "WARNING: Skipping relay profile proxy test - ffmpeg not available")
-				return nil
-			})
+			r.runTestWithInfo("Skip Relay Profile Tests (No FFmpeg)",
+				"FFmpeg not in PATH - skipping transcoding tests",
+				func() error {
+					r.log("  SKIPPED: Relay profile tests require ffmpeg")
+					fmt.Println("WARNING: Skipping relay profile proxy test - ffmpeg not available")
+					fmt.Fprintln(os.Stderr, "WARNING: Skipping relay profile proxy test - ffmpeg not available")
+					return nil
+				})
 		}
 
 		// Test Direct Mode Stream Fetching
 		// Uses proxyID which was created with direct mode in Phase 4
-		r.runTest("Test Stream (Direct Mode)", func() error {
-			if proxyID == "" {
-				return fmt.Errorf("direct mode proxy was not created")
-			}
+		r.runTestWithInfo("Test Stream (Direct Mode)",
+			"GET /proxy/{id}/{channelId} - verify direct mode returns redirect to source URL",
+			func() error {
+				if proxyID == "" {
+					return fmt.Errorf("direct mode proxy was not created")
+				}
 
-			// Proxy was already generated in Phase 4, no need to regenerate
+				// Proxy was already generated in Phase 4, no need to regenerate
 
-			// Get a channel ID to test streaming
-			// The proxy stream endpoint expects /proxy/{proxyId}/{channelId}
-			channelID, err := r.client.GetFirstChannelID(ctx, streamSourceID)
-			if err != nil {
-				return fmt.Errorf("get channel ID: %w", err)
-			}
+				// Get a channel ID to test streaming
+				// The proxy stream endpoint expects /proxy/{proxyId}/{channelId}
+				channelID, err := r.client.GetFirstChannelID(ctx, streamSourceID)
+				if err != nil {
+					return fmt.Errorf("get channel ID: %w", err)
+				}
 
-			// Construct the proxy stream URL
-			streamURL := r.client.GetProxyStreamURL(proxyID, channelID)
-			r.log("  Testing stream URL: %s", streamURL)
+				// Construct the proxy stream URL
+				streamURL := r.client.GetProxyStreamURL(proxyID, channelID)
+				r.log("  Testing stream URL: %s", streamURL)
 
-			// Test the stream request
-			result, err := r.client.TestStreamRequest(ctx, streamURL)
-			if err != nil {
-				return fmt.Errorf("stream request: %w", err)
-			}
+				// Test the stream request
+				result, err := r.client.TestStreamRequest(ctx, streamURL)
+				if err != nil {
+					return fmt.Errorf("stream request: %w", err)
+				}
 
-			// Direct mode should return HTTP 302 redirect to source URL
-			if result.StatusCode != http.StatusFound {
-				return fmt.Errorf("expected HTTP 302, got %d", result.StatusCode)
-			}
-			if result.Location == "" {
-				return fmt.Errorf("expected Location header in redirect response")
-			}
-			r.log("  Direct mode: HTTP %d -> %s", result.StatusCode, result.Location)
-			return nil
-		})
+				// Direct mode should return HTTP 302 redirect to source URL
+				if result.StatusCode != http.StatusFound {
+					return fmt.Errorf("expected HTTP 302, got %d", result.StatusCode)
+				}
+				if result.Location == "" {
+					return fmt.Errorf("expected Location header in redirect response")
+				}
+				r.log("  Direct mode: HTTP %d -> %s", result.StatusCode, result.Location)
+				return nil
+			})
 
 		// Test Smart Mode Stream Fetching (passthrough/repackage)
-		r.runTest("Test Stream (Smart Mode)", func() error {
-			if smartModeProxyID == "" {
-				return fmt.Errorf("smart mode proxy was not created")
-			}
+		r.runTestWithInfo("Test Stream (Smart Mode)",
+			"GET /proxy/{id}/{channelId} - verify smart mode returns HTTP 200 with CORS + TS bytes",
+			func() error {
+				if smartModeProxyID == "" {
+					return fmt.Errorf("smart mode proxy was not created")
+				}
 
-			// Trigger proxy generation
-			if err := r.client.TriggerProxyGeneration(ctx, smartModeProxyID, time.Minute); err != nil {
-				return fmt.Errorf("trigger proxy generation: %w", err)
-			}
-
-			// Get a channel ID to test streaming
-			// The proxy stream endpoint expects /proxy/{proxyId}/{channelId}
-			channelID, err := r.client.GetFirstChannelID(ctx, streamSourceID)
-			if err != nil {
-				return fmt.Errorf("get channel ID: %w", err)
-			}
-
-			// Construct the proxy stream URL
-			streamURL := r.client.GetProxyStreamURL(smartModeProxyID, channelID)
-			r.log("  Testing stream URL: %s", streamURL)
-
-			// Test the stream request
-			result, err := r.client.TestStreamRequest(ctx, streamURL)
-			if err != nil {
-				return fmt.Errorf("stream request: %w", err)
-			}
-
-			// Smart mode should return HTTP 200 with CORS headers and content
-			if result.StatusCode != http.StatusOK {
-				return fmt.Errorf("expected HTTP 200, got %d", result.StatusCode)
-			}
-			if !result.HasCORSHeaders {
-				return fmt.Errorf("expected CORS headers (Access-Control-Allow-Origin)")
-			}
-			if result.BytesReceived == 0 {
-				return fmt.Errorf("expected to receive stream bytes")
-			}
-			if !result.TSSyncByteValid {
-				r.log("  WARNING: First byte is not TS sync byte (0x47), may not be TS format")
-			}
-			r.log("  Smart mode: HTTP %d, CORS: %v, Bytes: %d, TS: %v",
-				result.StatusCode, result.HasCORSHeaders, result.BytesReceived, result.TSSyncByteValid)
-			return nil
-		})
-
-		// Test Smart Mode with Relay Profile Stream Fetching (only if ffmpeg is available and proxy was created)
-		if r.ffmpegAvailable && relayProfileProxyID != "" {
-			r.runTest("Test Stream (Smart Mode with Relay Profile)", func() error {
 				// Trigger proxy generation
-				if err := r.client.TriggerProxyGeneration(ctx, relayProfileProxyID, time.Minute); err != nil {
+				if err := r.client.TriggerProxyGeneration(ctx, smartModeProxyID, time.Minute); err != nil {
 					return fmt.Errorf("trigger proxy generation: %w", err)
 				}
 
@@ -2520,23 +2814,68 @@ func (r *E2ERunner) Run(ctx context.Context) error {
 				}
 
 				// Construct the proxy stream URL
-				streamURL := r.client.GetProxyStreamURL(relayProfileProxyID, channelID)
+				streamURL := r.client.GetProxyStreamURL(smartModeProxyID, channelID)
 				r.log("  Testing stream URL: %s", streamURL)
 
-				// Test the stream request - smart mode with relay profile should return HTTP 200
+				// Test the stream request
 				result, err := r.client.TestStreamRequest(ctx, streamURL)
 				if err != nil {
 					return fmt.Errorf("stream request: %w", err)
 				}
 
-				// Smart mode with relay profile should return HTTP 200 (transcoded content)
+				// Smart mode should return HTTP 200 with CORS headers and content
 				if result.StatusCode != http.StatusOK {
 					return fmt.Errorf("expected HTTP 200, got %d", result.StatusCode)
 				}
-				r.log("  Smart mode with relay profile: HTTP %d, Bytes: %d, TS: %v",
-					result.StatusCode, result.BytesReceived, result.TSSyncByteValid)
+				if !result.HasCORSHeaders {
+					return fmt.Errorf("expected CORS headers (Access-Control-Allow-Origin)")
+				}
+				if result.BytesReceived == 0 {
+					return fmt.Errorf("expected to receive stream bytes")
+				}
+				if !result.TSSyncByteValid {
+					r.log("  WARNING: First byte is not TS sync byte (0x47), may not be TS format")
+				}
+				r.log("  Smart mode: HTTP %d, CORS: %v, Bytes: %d, TS: %v",
+					result.StatusCode, result.HasCORSHeaders, result.BytesReceived, result.TSSyncByteValid)
 				return nil
 			})
+
+		// Test Smart Mode with Relay Profile Stream Fetching (only if ffmpeg is available and proxy was created)
+		if r.ffmpegAvailable && relayProfileProxyID != "" {
+			r.runTestWithInfo("Test Stream (Smart Mode with Relay Profile)",
+				"GET /proxy/{id}/{channelId} - verify relay profile transcoding returns HTTP 200 + TS bytes",
+				func() error {
+					// Trigger proxy generation
+					if err := r.client.TriggerProxyGeneration(ctx, relayProfileProxyID, time.Minute); err != nil {
+						return fmt.Errorf("trigger proxy generation: %w", err)
+					}
+
+					// Get a channel ID to test streaming
+					// The proxy stream endpoint expects /proxy/{proxyId}/{channelId}
+					channelID, err := r.client.GetFirstChannelID(ctx, streamSourceID)
+					if err != nil {
+						return fmt.Errorf("get channel ID: %w", err)
+					}
+
+					// Construct the proxy stream URL
+					streamURL := r.client.GetProxyStreamURL(relayProfileProxyID, channelID)
+					r.log("  Testing stream URL: %s", streamURL)
+
+					// Test the stream request - smart mode with relay profile should return HTTP 200
+					result, err := r.client.TestStreamRequest(ctx, streamURL)
+					if err != nil {
+						return fmt.Errorf("stream request: %w", err)
+					}
+
+					// Smart mode with relay profile should return HTTP 200 (transcoded content)
+					if result.StatusCode != http.StatusOK {
+						return fmt.Errorf("expected HTTP 200, got %d", result.StatusCode)
+					}
+					r.log("  Smart mode with relay profile: HTTP %d, Bytes: %d, TS: %v",
+						result.StatusCode, result.BytesReceived, result.TSSyncByteValid)
+					return nil
+				})
 		}
 	}
 

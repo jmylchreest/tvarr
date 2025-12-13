@@ -77,14 +77,14 @@ export interface EpgSource {
   source_type: EpgSourceType;
   url: string;
   update_cron: string;
-  time_offset: string;
+  epg_shift: number; // Time shift in hours to apply to EPG times
   created_at: string;
   updated_at: string;
   enabled: boolean;
   status: SourceStatus;
   last_ingestion_at?: string;
   last_error?: string;
-  original_timezone?: string;
+  detected_timezone?: string; // Auto-detected timezone from EPG data (read-only)
   username?: string;
   password?: string;
   api_method?: XtreamApiMethod; // Only for Xtream sources
@@ -110,7 +110,8 @@ export interface StreamProxy {
   upstream_timeout?: number;
   cache_channel_logos: boolean;
   cache_program_logos: boolean;
-  relay_profile_id?: string;
+  client_detection_enabled: boolean;
+  encoding_profile_id?: string;
   m3u8_url?: string;
   xmltv_url?: string;
   created_at: string;
@@ -145,7 +146,6 @@ export interface Filter {
   source_type: FilterSourceType;
   action: FilterAction;
   expression: string;
-  priority: number;
   is_enabled: boolean;
   is_system?: boolean;  // Optional - set by backend, not API
   source_id?: string;
@@ -184,181 +184,46 @@ export type HWAccelType = string;
 // Proxy mode: 'direct' = 302 redirect, 'smart' = intelligent delivery
 export type ProxyMode = 'direct' | 'smart';
 
-export interface RelayProfile {
+// Simplified EncodingProfile with quality presets
+export type QualityPreset = 'low' | 'medium' | 'high' | 'ultra';
+
+// Auto-generated default FFmpeg flags for placeholder text
+export interface DefaultFlags {
+  global_flags: string;
+  input_flags: string;
+  output_flags: string;
+}
+
+export interface EncodingProfile {
   id: string;
   name: string;
   description?: string;
-  video_codec: VideoCodec;
-  audio_codec: AudioCodec;
-  video_bitrate?: number;
-  audio_bitrate?: number;
-  video_maxrate?: number;
-  video_preset?: string;
-  video_width?: number;
-  video_height?: number;
-  audio_sample_rate?: number;
-  audio_channels?: number;
-  hw_accel: HWAccelType;
-  hw_accel_device?: string;
-  hw_accel_output_format?: string;
-  hw_accel_decoder_codec?: string;
-  hw_accel_extra_options?: string;
-  gpu_index?: number;
-  container_format: ContainerFormat;
-  input_options?: string;
-  output_options?: string;
-  filter_complex?: string;
-  custom_flags_validated?: boolean;
-  custom_flags_warnings?: string;
+  target_video_codec: string;
+  target_audio_codec: string;
+  quality_preset: QualityPreset;
+  hw_accel: string;
+  // Custom FFmpeg flags - when set, these replace auto-generated flags
+  global_flags?: string;
+  input_flags?: string;
+  output_flags?: string;
+  // Auto-generated default flags (for placeholder text in UI)
+  default_flags: DefaultFlags;
   is_default: boolean;
-  is_system?: boolean;
+  is_system: boolean;
   enabled: boolean;
-  fallback_enabled?: boolean;
-  fallback_error_threshold?: number;
-  fallback_recovery_interval?: number;
-  // Smart codec matching
-  force_video_transcode?: boolean;
-  force_audio_transcode?: boolean;
-  // Statistics
-  success_count?: number;
-  failure_count?: number;
-  last_used_at?: string;
-  last_error_at?: string;
-  last_error_msg?: string;
   created_at: string;
   updated_at: string;
 }
 
-export interface CreateRelayProfileRequest {
-  name: string;
-  description?: string;
-  video_codec?: VideoCodec;
-  audio_codec?: AudioCodec;
-  video_preset?: string;
-  video_bitrate?: number;
-  audio_bitrate?: number;
-  video_maxrate?: number;
-  video_width?: number;
-  video_height?: number;
-  audio_sample_rate?: number;
-  audio_channels?: number;
-  hw_accel?: HWAccelType;
-  hw_accel_device?: string;
-  hw_accel_output_format?: string;
-  hw_accel_decoder_codec?: string;
-  hw_accel_extra_options?: string;
-  gpu_index?: number;
-  input_options?: string;
-  output_options?: string;
-  filter_complex?: string;
-  container_format?: ContainerFormat;
-  is_default?: boolean;
-  fallback_enabled?: boolean;
-  fallback_error_threshold?: number;
-  fallback_recovery_interval?: number;
-  force_video_transcode?: boolean;
-  force_audio_transcode?: boolean;
-}
-
-export interface UpdateRelayProfileRequest {
-  name?: string;
-  description?: string;
-  video_codec?: VideoCodec;
-  audio_codec?: AudioCodec;
-  video_preset?: string;
-  video_bitrate?: number;
-  audio_bitrate?: number;
-  video_maxrate?: number;
-  video_width?: number;
-  video_height?: number;
-  audio_sample_rate?: number;
-  audio_channels?: number;
-  hw_accel?: HWAccelType;
-  hw_accel_device?: string;
-  hw_accel_output_format?: string;
-  hw_accel_decoder_codec?: string;
-  hw_accel_extra_options?: string;
-  gpu_index?: number;
-  input_options?: string;
-  output_options?: string;
-  filter_complex?: string;
-  container_format?: ContainerFormat;
-  enabled?: boolean;
-  fallback_enabled?: boolean;
-  fallback_error_threshold?: number;
-  fallback_recovery_interval?: number;
-  force_video_transcode?: boolean;
-  force_audio_transcode?: boolean;
-}
-
-// Profile Test Types
-export interface TestStreamInfo {
-  input_url: string;
-  output_url: string;
-}
-
-export interface ProfileTestResult {
-  success: boolean;
-  duration_ms: number;
-  frames_processed: number;
-  fps: number;
-  video_codec_in?: string;
-  video_codec_out?: string;
-  audio_codec_in?: string;
-  audio_codec_out?: string;
-  resolution?: string;
-  hw_accel_active: boolean;
-  hw_accel_method?: string;
-  bitrate_kbps?: number;
-  errors?: string[];
-  warnings?: string[];
-  suggestions?: string[];
-  ffmpeg_output?: string;
-  ffmpeg_command?: string;
-  exit_code: number;
-  stream_info?: TestStreamInfo;
-}
-
-// Profile Test Request
-export interface ProfileTestRequest {
-  stream_url: string;
-  timeout_seconds?: number;
-}
-
-// Command Preview Types
-export interface CommandPreview {
+// FFmpeg command preview response
+export interface EncodingProfilePreview {
   command: string;
-  args: string[];
-  binary: string;
-  input_url: string;
-  output_url: string;
-  video_codec: string;
-  audio_codec: string;
-  hw_accel: string;
-  bitstream_filter: string;
-  notes: string[];
-}
-
-// Command Preview Request
-export interface CommandPreviewRequest {
-  input_url?: string;
-  output_url?: string;
-}
-
-// Flag Validation Types
-export interface FlagValidationResult {
-  valid: boolean;
-  flags: string[];
-  warnings?: string[];
-  errors?: string[];
-  suggestions?: string[];
-}
-
-// Flag Validation Request
-export interface FlagValidationRequest {
-  input_options?: string;
-  output_options?: string;
-  filter_complex?: string;
+  global_flags: string;
+  input_flags: string;
+  output_flags: string;
+  using_custom: boolean;
+  video_encoder: string;
+  audio_encoder: string;
 }
 
 // Hardware Capability Types
@@ -727,8 +592,7 @@ export interface CreateEpgSourceRequest {
   source_type: EpgSourceType;
   url: string;
   update_cron: string;
-  original_timezone?: string;
-  time_offset?: string;
+  epg_shift?: number; // Time shift in hours to apply to EPG times (default: 0)
   username?: string;
   password?: string;
   api_method?: XtreamApiMethod; // Only for Xtream sources
@@ -748,7 +612,7 @@ export interface CreateStreamProxyRequest {
   upstream_timeout?: number;
   cache_channel_logos: boolean;
   cache_program_logos: boolean;
-  relay_profile_id?: string;
+  encoding_profile_id?: string;
 }
 
 export interface UpdateStreamProxyRequest {
@@ -765,7 +629,7 @@ export interface UpdateStreamProxyRequest {
   upstream_timeout?: number;
   cache_channel_logos?: boolean;
   cache_program_logos?: boolean;
-  relay_profile_id?: string;
+  encoding_profile_id?: string;
 }
 
 export interface FilterTestRequest {
@@ -983,8 +847,8 @@ export interface ExpressionEditorConfig {
   showTestResults?: boolean;
 }
 
-// Relay Profile Mapping Types (Client Auto-Detection)
-export interface RelayProfileMapping {
+// Client Detection Rule Types
+export interface ClientDetectionRule {
   id: string;
   name: string;
   description?: string;
@@ -992,44 +856,40 @@ export interface RelayProfileMapping {
   priority: number;
   is_enabled: boolean;
   is_system: boolean;
-  // Accepted codecs (array of codec strings the client can handle)
   accepted_video_codecs: string[];
   accepted_audio_codecs: string[];
-  accepted_containers: string[];
-  // Preferred codecs when transcoding is needed
-  preferred_video_codec: VideoCodec;
-  preferred_audio_codec: AudioCodec;
-  preferred_container: ContainerFormat;
+  preferred_video_codec: string;
+  preferred_audio_codec: string;
+  supports_fmp4: boolean;
+  supports_mpegts: boolean;
+  preferred_format?: string;
+  encoding_profile_id?: string;
   created_at: string;
   updated_at: string;
 }
 
-export interface RelayProfileMappingListResponse {
-  mappings: RelayProfileMapping[];
+export interface ClientDetectionRulesResponse {
+  rules: ClientDetectionRule[];
+  count: number;
 }
 
-export interface RelayProfileMappingStats {
-  total: number;
-  enabled: number;
-  system: number;
-  custom: number;
-}
-
-export interface CreateRelayProfileMappingRequest {
+export interface ClientDetectionRuleCreateRequest {
   name: string;
   description?: string;
   expression: string;
-  priority?: number;
+  priority: number;
   is_enabled?: boolean;
-  accepted_video_codecs?: string[];
-  accepted_audio_codecs?: string[];
-  accepted_containers?: string[];
-  preferred_video_codec?: VideoCodec;
-  preferred_audio_codec?: AudioCodec;
-  preferred_container?: ContainerFormat;
+  accepted_video_codecs: string[];
+  accepted_audio_codecs: string[];
+  preferred_video_codec: string;
+  preferred_audio_codec: string;
+  supports_fmp4?: boolean;
+  supports_mpegts?: boolean;
+  preferred_format?: string;
+  encoding_profile_id?: string;
 }
 
-export interface UpdateRelayProfileMappingRequest {
+export interface ClientDetectionRuleUpdateRequest {
   name?: string;
   description?: string;
   expression?: string;
@@ -1037,23 +897,40 @@ export interface UpdateRelayProfileMappingRequest {
   is_enabled?: boolean;
   accepted_video_codecs?: string[];
   accepted_audio_codecs?: string[];
-  accepted_containers?: string[];
-  preferred_video_codec?: VideoCodec;
-  preferred_audio_codec?: AudioCodec;
-  preferred_container?: ContainerFormat;
+  preferred_video_codec?: string;
+  preferred_audio_codec?: string;
+  supports_fmp4?: boolean;
+  supports_mpegts?: boolean;
+  preferred_format?: string;
+  encoding_profile_id?: string;
 }
 
-export interface ReorderMappingRequest {
-  id: string;
-  priority: number;
+export interface ClientDetectionRuleReorderRequest {
+  reorders: Array<{
+    id: string;
+    priority: number;
+  }>;
 }
 
-export interface TestMappingExpressionRequest {
+export interface ClientDetectionTestRequest {
   expression: string;
-  test_data: Record<string, string>;
+  user_agent: string;
 }
 
-export interface TestMappingExpressionResponse {
+export interface ClientDetectionTestResponse {
   matches: boolean;
   error?: string;
 }
+
+export interface ClientDetectionResult {
+  matched_rule?: ClientDetectionRule;
+  accepted_video_codecs: string[];
+  accepted_audio_codecs: string[];
+  preferred_video_codec: string;
+  preferred_audio_codec: string;
+  supports_fmp4: boolean;
+  supports_mpegts: boolean;
+  preferred_format: string;
+  detection_source: string;
+}
+

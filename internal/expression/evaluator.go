@@ -132,8 +132,14 @@ func (e *Evaluator) evaluateCondition(cond *Condition, accessor FieldValueAccess
 	compareValue := cond.Value
 
 	e.mu.RLock()
-	caseSensitive := e.caseSensitive
+	globalCaseSensitive := e.caseSensitive
 	e.mu.RUnlock()
+
+	// Per-condition CaseSensitive takes precedence if set to true.
+	// Otherwise, use the global evaluator setting.
+	// This allows expressions like `channel_name case_sensitive contains "BBC"` to
+	// force case-sensitive matching even when the evaluator default is case-insensitive.
+	caseSensitive := globalCaseSensitive || cond.CaseSensitive
 
 	// Apply case sensitivity
 	if !caseSensitive && !cond.Operator.IsRegex() {
@@ -263,7 +269,7 @@ func NewDynamicFieldAccessor(base FieldValueAccessor, registry *DynamicFieldRegi
 
 // GetFieldValue returns the value of a field, checking dynamic fields first.
 func (a *DynamicFieldAccessor) GetFieldValue(name string) (string, bool) {
-	// Check dynamic fields first (e.g., @header_req:X-Custom-Player)
+	// Check dynamic fields first (e.g., @dynamic(request.headers):x-custom-player)
 	if a.registry != nil && IsDynamicField(name) {
 		if value, ok := a.registry.Resolve(name); ok {
 			return value, true

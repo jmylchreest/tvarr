@@ -309,26 +309,26 @@ func (r *streamProxyRepo) GetByEpgSourceID(ctx context.Context, epgSourceID mode
 	return proxies, nil
 }
 
-// CountByRelayProfileID returns the count of stream proxies using a given relay profile.
-func (r *streamProxyRepo) CountByRelayProfileID(ctx context.Context, profileID models.ULID) (int64, error) {
+// CountByEncodingProfileID returns the count of stream proxies using a given encoding profile.
+func (r *streamProxyRepo) CountByEncodingProfileID(ctx context.Context, profileID models.ULID) (int64, error) {
 	var count int64
 	if err := r.db.WithContext(ctx).
 		Model(&models.StreamProxy{}).
-		Where("relay_profile_id = ?", profileID).
+		Where("encoding_profile_id = ?", profileID).
 		Count(&count).Error; err != nil {
-		return 0, fmt.Errorf("counting proxies by relay profile ID: %w", err)
+		return 0, fmt.Errorf("counting proxies by encoding profile ID: %w", err)
 	}
 	return count, nil
 }
 
-// GetByRelayProfileID returns stream proxies using a given relay profile.
-func (r *streamProxyRepo) GetByRelayProfileID(ctx context.Context, profileID models.ULID) ([]*models.StreamProxy, error) {
+// GetByEncodingProfileID returns stream proxies using a given encoding profile.
+func (r *streamProxyRepo) GetByEncodingProfileID(ctx context.Context, profileID models.ULID) ([]*models.StreamProxy, error) {
 	var proxies []*models.StreamProxy
 	if err := r.db.WithContext(ctx).
-		Where("relay_profile_id = ?", profileID).
+		Where("encoding_profile_id = ?", profileID).
 		Order("name ASC").
 		Find(&proxies).Error; err != nil {
-		return nil, fmt.Errorf("getting proxies by relay profile ID: %w", err)
+		return nil, fmt.Errorf("getting proxies by encoding profile ID: %w", err)
 	}
 	return proxies, nil
 }

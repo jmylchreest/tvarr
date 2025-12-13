@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 
 	"github.com/jmylchreest/tvarr/internal/expression"
@@ -71,7 +72,7 @@ func New() *Stage {
 }
 
 // NewConstructor returns a stage constructor for use with the factory.
-// If a FilterRepository is provided in dependencies, it loads enabled filters from the database.
+// Filters are loaded from the proxy's associated filters at execution time (not from global repository).
 func NewConstructor() core.StageConstructor {
 	return func(deps *core.Dependencies) core.Stage {
 		stage := New()
@@ -81,48 +82,8 @@ func NewConstructor() core.StageConstructor {
 			stage.logger = deps.Logger.With("stage", StageID)
 		}
 
-		// Load filters from database if repository is available
-		if deps.FilterRepo != nil {
-			filters, err := deps.FilterRepo.GetEnabled(context.Background())
-			if err != nil {
-				if deps.Logger != nil {
-					deps.Logger.Warn("failed to load filters from database", "error", err)
-				}
-			} else {
-				expressionFilters := make([]ExpressionFilter, 0, len(filters))
-				for _, f := range filters {
-					var target FilterTarget
-					switch f.SourceType {
-					case models.FilterSourceTypeStream:
-						target = FilterTargetChannel
-					case models.FilterSourceTypeEPG:
-						target = FilterTargetProgram
-					default:
-						continue
-					}
-
-					var action FilterAction
-					switch f.Action {
-					case models.FilterActionInclude:
-						action = FilterActionInclude
-					case models.FilterActionExclude:
-						action = FilterActionExclude
-					default:
-						continue
-					}
-
-					expressionFilters = append(expressionFilters, ExpressionFilter{
-						ID:         f.ID.String(),
-						Name:       f.Name,
-						Enabled:    f.IsEnabled,
-						Target:     target,
-						Action:     action,
-						Expression: f.Expression,
-					})
-				}
-				stage.WithExpressionFilters(expressionFilters)
-			}
-		}
+		// Note: Filters are loaded from state.Proxy.Filters in Execute(), not here.
+		// This ensures we use only the filters assigned to this specific proxy.
 
 		return stage
 	}
@@ -145,15 +106,22 @@ func (s *Stage) AddExpressionFilter(filter ExpressionFilter) *Stage {
 //   - Output starts empty
 //   - Include filters add matching channels from SOURCE to output (appending)
 //   - Exclude filters remove matching channels from OUTPUT
-//   - Filters apply in priority order
-//   - If no filters exist, all channels pass through
+//   - Filters apply in priority order (lower priority number = first)
+//   - If no filters are assigned to the proxy, all channels pass through
 func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResult, error) {
 	result := shared.NewResult()
 
-	// Use configured filters, or skip if none (pass through all channels)
+	// Load filters from proxy's assigned filters (not global filters)
+	if err := s.loadFiltersFromProxy(ctx, state.Proxy); err != nil {
+		s.log(ctx, slog.LevelError, "failed to load filters from proxy",
+			slog.String("error", err.Error()))
+		return result, fmt.Errorf("loading filters from proxy: %w", err)
+	}
+
+	// If no filters assigned to proxy, pass through all channels
 	if len(s.expressionFilters) == 0 {
-		s.log(ctx, slog.LevelInfo, "no filters configured, skipping")
-		result.Message = "No filters configured"
+		s.log(ctx, slog.LevelInfo, "no filters assigned to proxy, passing all channels through")
+		result.Message = "No filters assigned to proxy"
 		return result, nil
 	}
 
@@ -415,13 +383,98 @@ func (s *Stage) compileExpressionFilters() error {
 			continue
 		}
 
+		evaluator := expression.NewEvaluator()
+		// Use case-insensitive matching by default (consistent with expression test handler).
+		// Per-condition case_sensitive modifier can override this for specific comparisons.
+		evaluator.SetCaseSensitive(false)
+
 		cef := &compiledExpressionFilter{
 			filter:    filter,
 			parsed:    parsed,
-			evaluator: expression.NewEvaluator(),
+			evaluator: evaluator,
 		}
 
 		s.compiledExpressionFilters = append(s.compiledExpressionFilters, cef)
+	}
+
+	return nil
+}
+
+// loadFiltersFromProxy loads filters from the proxy's assigned filters.
+// Filters are sorted by priority (lower = first) and only enabled filters are included.
+func (s *Stage) loadFiltersFromProxy(ctx context.Context, proxy *models.StreamProxy) error {
+	if proxy == nil {
+		return nil
+	}
+
+	// Sort proxy filters by priority (lower = first)
+	proxyFilters := make([]models.ProxyFilter, len(proxy.Filters))
+	copy(proxyFilters, proxy.Filters)
+	sort.Slice(proxyFilters, func(i, j int) bool {
+		return proxyFilters[i].Priority < proxyFilters[j].Priority
+	})
+
+	s.expressionFilters = make([]ExpressionFilter, 0, len(proxyFilters))
+
+	for _, pf := range proxyFilters {
+		// Skip if filter relationship is not loaded
+		if pf.Filter == nil {
+			s.log(ctx, slog.LevelWarn, "proxy filter has no loaded filter relationship",
+				slog.String("proxy_filter_id", pf.ID.String()),
+				slog.String("filter_id", pf.FilterID.String()))
+			continue
+		}
+
+		f := pf.Filter
+
+		// Skip disabled filters
+		if !f.IsEnabled {
+			s.log(ctx, slog.LevelDebug, "skipping disabled filter",
+				slog.String("filter_id", f.ID.String()),
+				slog.String("filter_name", f.Name))
+			continue
+		}
+
+		var target FilterTarget
+		switch f.SourceType {
+		case models.FilterSourceTypeStream:
+			target = FilterTargetChannel
+		case models.FilterSourceTypeEPG:
+			target = FilterTargetProgram
+		default:
+			s.log(ctx, slog.LevelWarn, "unknown filter source type",
+				slog.String("filter_id", f.ID.String()),
+				slog.String("source_type", string(f.SourceType)))
+			continue
+		}
+
+		var action FilterAction
+		switch f.Action {
+		case models.FilterActionInclude:
+			action = FilterActionInclude
+		case models.FilterActionExclude:
+			action = FilterActionExclude
+		default:
+			s.log(ctx, slog.LevelWarn, "unknown filter action",
+				slog.String("filter_id", f.ID.String()),
+				slog.String("action", string(f.Action)))
+			continue
+		}
+
+		s.expressionFilters = append(s.expressionFilters, ExpressionFilter{
+			ID:         f.ID.String(),
+			Name:       f.Name,
+			Enabled:    f.IsEnabled,
+			Target:     target,
+			Action:     action,
+			Expression: f.Expression,
+		})
+
+		s.log(ctx, slog.LevelDebug, "loaded filter from proxy",
+			slog.String("filter_id", f.ID.String()),
+			slog.String("filter_name", f.Name),
+			slog.String("action", string(action)),
+			slog.Int("priority", pf.Priority))
 	}
 
 	return nil

@@ -112,7 +112,6 @@ function CreateFilterSheet({
     source_type: 'stream',
     action: 'include',
     expression: '',
-    priority: 0,
     is_enabled: true,
   });
   const [filterExpression, setFilterExpression] = useState('');
@@ -127,7 +126,6 @@ function CreateFilterSheet({
         source_type: 'stream',
         action: 'include',
         expression: '',
-        priority: 0,
         is_enabled: true,
       });
       setFilterExpression('');
@@ -217,18 +215,6 @@ function CreateFilterSheet({
                 <option value="exclude">Exclude</option>
               </select>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="priority">Priority</Label>
-              <Input
-                id="priority"
-                type="number"
-                value={formData.priority}
-                onChange={(e) => setFormData({ ...formData, priority: parseInt(e.target.value) || 0 })}
-                placeholder="0"
-                disabled={loading}
-              />
-              <p className="text-xs text-muted-foreground">Lower = higher priority</p>
-            </div>
           </div>
 
           <div className="flex items-center space-x-2">
@@ -282,7 +268,6 @@ function EditFilterSheet({
     source_type: filter.source_type,
     action: filter.action,
     expression: filter.expression,
-    priority: filter.priority,
     is_enabled: filter.is_enabled,
   });
   const [filterExpression, setFilterExpression] = useState(() => filter.expression || '');
@@ -295,7 +280,6 @@ function EditFilterSheet({
       source_type: filter.source_type,
       action: filter.action,
       expression: filter.expression,
-      priority: filter.priority,
       is_enabled: filter.is_enabled,
     });
     setFilterExpression(filter.expression || '');
@@ -370,35 +354,21 @@ function EditFilterSheet({
             autoTest={true}
           />
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-action">Action</Label>
-              <select
-                id="edit-action"
-                value={formData.action}
-                onChange={(e) =>
-                  setFormData({ ...formData, action: e.target.value as FilterAction })
-                }
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                required
-                disabled={loading}
-              >
-                <option value="include">Include</option>
-                <option value="exclude">Exclude</option>
-              </select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-priority">Priority</Label>
-              <Input
-                id="edit-priority"
-                type="number"
-                value={formData.priority}
-                onChange={(e) => setFormData({ ...formData, priority: parseInt(e.target.value) || 0 })}
-                placeholder="0"
-                disabled={loading}
-              />
-              <p className="text-xs text-muted-foreground">Lower = higher priority</p>
-            </div>
+          <div className="space-y-2">
+            <Label htmlFor="edit-action">Action</Label>
+            <select
+              id="edit-action"
+              value={formData.action}
+              onChange={(e) =>
+                setFormData({ ...formData, action: e.target.value as FilterAction })
+              }
+              className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              required
+              disabled={loading}
+            >
+              <option value="include">Include</option>
+              <option value="exclude">Exclude</option>
+            </select>
           </div>
 
           <div className="flex items-center space-x-2">

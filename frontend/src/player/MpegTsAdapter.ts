@@ -24,7 +24,7 @@ import type {
   PlayerMediaInfo,
   StreamKind,
 } from './PlayerAdapter';
-import { PLAYER_HEADER_NAME, PlayerNames } from '../lib/player-headers';
+import { PLAYER_HEADER_NAME } from '../lib/player-headers';
 
 export interface MpegTsAdapterConfig {
   enableWorker?: boolean;
@@ -54,7 +54,7 @@ export class MpegTsAdapter implements PlayerAdapter {
       stashBufferThreshold: cfg?.stashBufferThreshold ?? 768 * 1024,
       appendErrorMaxRetry: cfg?.appendErrorMaxRetry ?? 6,
       disableLatencyChasing: cfg?.disableLatencyChasing ?? true,
-      headers: cfg?.headers ?? { [PLAYER_HEADER_NAME]: PlayerNames.MPEGTS_JS },
+      headers: cfg?.headers ?? { [PLAYER_HEADER_NAME]: 'mpegts.js' },
       overrides: cfg?.overrides ?? {},
     };
   }

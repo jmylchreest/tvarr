@@ -28,7 +28,7 @@ import { Label } from '@/components/ui/label';
 import { Plus, GripVertical, Trash2, AlertCircle, Loader2, ArrowUp, ArrowDown } from 'lucide-react';
 import { getBackendUrl } from '@/lib/config';
 import { apiClient } from '@/lib/api-client';
-import { StreamProxy, RelayProfile } from '@/types/api';
+import { StreamProxy, EncodingProfile } from '@/types/api';
 
 // Types based on your API specification
 interface StreamSourceResponse {
@@ -85,7 +85,8 @@ interface ProxyFormData {
   auto_regenerate: boolean;
   cache_channel_logos: boolean;
   cache_program_logos: boolean;
-  relay_profile_id?: string;
+  client_detection_enabled: boolean;
+  encoding_profile_id?: string;
 }
 
 // Multi-select modal component
@@ -442,7 +443,7 @@ export function ProxySheet({
   open,
   onOpenChange,
 }: ProxySheetProps) {
-  const [relayProfiles, setRelayProfiles] = useState<RelayProfile[]>([]);
+  const [encodingProfiles, setEncodingProfiles] = useState<EncodingProfile[]>([]);
   const [isDataLoaded, setIsDataLoaded] = useState(false);
 
   // Modal states
@@ -465,25 +466,26 @@ export function ProxySheet({
     auto_regenerate: true,
     cache_channel_logos: true,
     cache_program_logos: false,
+    client_detection_enabled: true,
   });
 
   // Reset loading state when modal closes
   useEffect(() => {
     if (!open) {
       setIsDataLoaded(false);
-      setRelayProfiles([]);
+      setEncodingProfiles([]);
     }
   }, [open]);
 
-  // Load relay profiles and proxy data when modal opens
+  // Load encoding profiles and proxy data when modal opens
   useEffect(() => {
     if (open && !isDataLoaded) {
       const loadData = async () => {
         try {
-          // Load relay profiles
-          const fetchedProfiles = await apiClient.getRelayProfiles();
+          // Load encoding profiles
+          const fetchedProfiles = await apiClient.getEncodingProfiles();
           const profilesArray = Array.isArray(fetchedProfiles) ? fetchedProfiles : [];
-          setRelayProfiles(profilesArray);
+          setEncodingProfiles(profilesArray);
           setIsDataLoaded(true);
 
           // If editing, load existing proxy data
@@ -551,12 +553,53 @@ export function ProxySheet({
               auto_regenerate: sourceProxyData.auto_regenerate,
               cache_channel_logos: sourceProxyData.cache_channel_logos,
               cache_program_logos: sourceProxyData.cache_program_logos,
-              relay_profile_id: sourceProxyData.relay_profile_id || '',
+              client_detection_enabled: sourceProxyData.client_detection_enabled ?? true,
+              encoding_profile_id: sourceProxyData.encoding_profile_id || '',
             });
           } else {
             // Reset form for create mode
-            // Find the default relay profile (the one with is_default: true)
+            // Find the default encoding profile (the one with is_default: true)
             const defaultProfile = profilesArray.find((p) => p.is_default);
+
+            // Pre-select all stream sources, EPG sources, and system filters by default
+            // This enables "zero-config" proxy creation where users get a working proxy immediately
+            let defaultStreamSources: StreamSourceAssignment[] = [];
+            let defaultEpgSources: EpgSourceAssignment[] = [];
+            let defaultFilters: FilterAssignment[] = [];
+
+            try {
+              // Load all stream sources
+              const streamResponse = await apiClient.getStreamSources();
+              const streamSources = streamResponse.items || [];
+              defaultStreamSources = streamSources.map((source: any, index: number) => ({
+                source_id: source.id,
+                priority_order: index,
+              }));
+
+              // Load all EPG sources
+              const epgResponse = await apiClient.getEpgSources();
+              const epgSources = epgResponse.items || [];
+              defaultEpgSources = epgSources.map((source: any, index: number) => ({
+                epg_source_id: source.id,
+                priority_order: index,
+              }));
+
+              // Load all filters and pre-select system default filters
+              const filterResponse = await apiClient.getFilters();
+              const filters = Array.isArray(filterResponse) ? filterResponse : [];
+              // Pre-select only system default filters that are enabled
+              const systemFilters = filters.filter((filter: any) =>
+                filter.is_system_default && filter.is_enabled
+              );
+              defaultFilters = systemFilters.map((filter: any, index: number) => ({
+                filter_id: filter.id,
+                priority_order: index,
+                is_active: true,
+              }));
+            } catch (preloadError) {
+              console.error('Failed to preload sources for zero-config:', preloadError);
+              // Continue with empty defaults if preload fails
+            }
 
             setFormData({
               name: '',
@@ -565,19 +608,20 @@ export function ProxySheet({
               upstream_timeout: 30,
               max_concurrent_streams: 0,
               starting_channel_number: 1,
-              stream_sources: [],
-              epg_sources: [],
-              filters: [],
+              stream_sources: defaultStreamSources,
+              epg_sources: defaultEpgSources,
+              filters: defaultFilters,
               is_active: true,
               auto_regenerate: true,
               cache_channel_logos: true,
               cache_program_logos: false,
-              relay_profile_id: defaultProfile?.id || '',
+              client_detection_enabled: true,
+              encoding_profile_id: defaultProfile?.id || '',
             });
           }
         } catch (error) {
           console.error('Failed to load proxy data:', error);
-          setRelayProfiles([]);
+          setEncodingProfiles([]);
         }
       };
 
@@ -669,8 +713,8 @@ export function ProxySheet({
         onOpenChange(false);
         // Reset form only for create mode
         if (mode === 'create') {
-          // Find the default relay profile for the reset
-          const defaultProfile = relayProfiles.find((p) => p.is_default);
+          // Find the default encoding profile for the reset
+          const defaultProfile = encodingProfiles.find((p) => p.is_default);
 
           setFormData({
             name: '',
@@ -686,7 +730,8 @@ export function ProxySheet({
             auto_regenerate: true,
             cache_channel_logos: true,
             cache_program_logos: false,
-            relay_profile_id: defaultProfile?.id || '',
+            client_detection_enabled: true,
+            encoding_profile_id: defaultProfile?.id || '',
           });
         }
       }
@@ -740,7 +785,7 @@ export function ProxySheet({
                         setFormData((prev) => ({
                           ...prev,
                           proxy_mode: value,
-                          relay_profile_id: value !== 'smart' ? undefined : prev.relay_profile_id,
+                          encoding_profile_id: value !== 'smart' ? undefined : prev.encoding_profile_id,
                         }));
                       }}
                     >
@@ -755,41 +800,63 @@ export function ProxySheet({
                   </div>
                 </div>
 
-                {/* Relay Profile Selection - only show when proxy mode is smart */}
+                {/* Client Detection and Encoding Profile - only show when proxy mode is smart */}
                 {formData.proxy_mode === 'smart' && (
-                  <div className="space-y-2">
-                    <Label htmlFor="relay_profile">Relay Profile</Label>
-                    {relayProfiles.length > 0 ? (
-                      <Select
-                        key={`relay-select-${relayProfiles.length}`}
-                        value={formData.relay_profile_id || ''}
-                        onValueChange={(value) =>
-                          setFormData((prev) => ({ ...prev, relay_profile_id: value }))
+                  <>
+                    <div className="flex items-center justify-between rounded-lg border p-3">
+                      <div>
+                        <Label>Client Detection</Label>
+                        <p className="text-sm text-muted-foreground">
+                          Automatically detect client capabilities from User-Agent
+                        </p>
+                      </div>
+                      <Switch
+                        checked={formData.client_detection_enabled}
+                        onCheckedChange={(checked) =>
+                          setFormData((prev) => ({ ...prev, client_detection_enabled: checked }))
                         }
-                        required
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select relay profile" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {relayProfiles.map((profile) => (
-                            <SelectItem key={profile.id} value={profile.id}>
-                              {profile.name}
-                              {profile.description && (
-                                <span className="text-xs text-muted-foreground ml-2">
-                                  - {profile.description}
-                                </span>
-                              )}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : (
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="encoding_profile">Default Encoding Profile</Label>
+                      {encodingProfiles.length > 0 ? (
+                        <Select
+                          key={`encoding-select-${encodingProfiles.length}`}
+                          value={formData.encoding_profile_id || ''}
+                          onValueChange={(value) =>
+                            setFormData((prev) => ({ ...prev, encoding_profile_id: value }))
+                          }
+                          required
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select encoding profile" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {encodingProfiles.map((profile) => (
+                              <SelectItem key={profile.id} value={profile.id}>
+                                {profile.name}
+                                {profile.description && (
+                                  <span className="text-xs text-muted-foreground ml-2">
+                                    - {profile.description}
+                                  </span>
+                                )}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          Loading encoding profiles...
+                        </p>
+                      )}
                       <p className="text-xs text-muted-foreground">
-                        Loading relay profiles...
+                        {formData.client_detection_enabled
+                          ? 'Used when no client detection rule matches the requesting device'
+                          : 'Used for all streams when client detection is disabled'}
                       </p>
-                    )}
-                  </div>
+                    </div>
+                  </>
                 )}
               </div>
             </div>

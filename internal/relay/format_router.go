@@ -219,11 +219,22 @@ func (r *FormatRouter) ResolveFormat(req OutputRequest) string {
 		reason = "unknown_format_fallback"
 	}
 
-	r.logger.Debug("format resolved",
+	// Build log attributes
+	attrs := []any{
 		slog.String("requested", req.Format),
 		slog.String("resolved", resolved),
 		slog.String("reason", reason),
-	)
+	}
+
+	// Log explicit codec headers if present (for debugging codec detection flow)
+	if videoCodec := req.GetHeader("X-Video-Codec"); videoCodec != "" {
+		attrs = append(attrs, slog.String("x_video_codec", videoCodec))
+	}
+	if audioCodec := req.GetHeader("X-Audio-Codec"); audioCodec != "" {
+		attrs = append(attrs, slog.String("x_audio_codec", audioCodec))
+	}
+
+	r.logger.Debug("format resolved", attrs...)
 
 	return resolved
 }

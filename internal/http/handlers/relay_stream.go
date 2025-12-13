@@ -20,9 +20,9 @@ import (
 
 // RelayStreamHandler handles stream relay API endpoints.
 type RelayStreamHandler struct {
-	relayService          *service.RelayService
-	profileMappingService *service.RelayProfileMappingService
-	logger                *slog.Logger
+	relayService           *service.RelayService
+	clientDetectionService *service.ClientDetectionService
+	logger                 *slog.Logger
 }
 
 // NewRelayStreamHandler creates a new relay stream handler.
@@ -39,9 +39,9 @@ func (h *RelayStreamHandler) WithLogger(logger *slog.Logger) *RelayStreamHandler
 	return h
 }
 
-// WithProfileMappingService sets the profile mapping service for auto-detection.
-func (h *RelayStreamHandler) WithProfileMappingService(svc *service.RelayProfileMappingService) *RelayStreamHandler {
-	h.profileMappingService = svc
+// WithClientDetectionService sets the client detection service.
+func (h *RelayStreamHandler) WithClientDetectionService(svc *service.ClientDetectionService) *RelayStreamHandler {
+	h.clientDetectionService = svc
 	return h
 }
 
@@ -492,7 +492,7 @@ func (h *RelayStreamHandler) handleRawSmartMode(w http.ResponseWriter, r *http.R
 	clientFormat := h.resolveClientFormat(r, classification)
 
 	// Get delivery decision using the smart delivery logic
-	deliveryDecision := relay.SelectDelivery(classification, clientFormat, info.Profile)
+	deliveryDecision := relay.SelectDelivery(classification, clientFormat, info.EncodingProfile)
 
 	h.logger.Info("Smart mode: delivery decision",
 		"proxy_id", info.Proxy.ID,
@@ -520,28 +520,88 @@ func (h *RelayStreamHandler) handleRawSmartMode(w http.ResponseWriter, r *http.R
 // It checks the ?format= query parameter first, then uses client detection
 // based on User-Agent, Accept headers, and X-Tvarr-Player header.
 func (h *RelayStreamHandler) resolveClientFormat(r *http.Request, source relay.ClassificationResult) relay.ClientFormat {
-	// Check explicit format query parameter first
+	caps := h.detectClientCapabilities(r)
+	return h.capsToClientFormat(caps)
+}
+
+// detectClientCapabilities detects client capabilities using rules or default detection.
+func (h *RelayStreamHandler) detectClientCapabilities(r *http.Request) relay.ClientCapabilities {
 	formatParam := r.URL.Query().Get(relay.QueryParamFormat)
-	switch formatParam {
-	case relay.FormatValueHLS:
-		return relay.ClientFormatHLS
-	case relay.FormatValueDASH:
-		return relay.ClientFormatDASH
-	case relay.FormatValueMPEGTS:
-		return relay.ClientFormatMPEGTS
+
+	// If ClientDetectionService is available and has cached rules, use it
+	if h.clientDetectionService != nil {
+		// Check format override first (handled by service)
+		result := h.clientDetectionService.EvaluateRequest(r)
+
+		// Convert service result to relay.ClientCapabilities
+		caps := relay.ClientCapabilities{
+			AcceptedVideoCodecs: result.AcceptedVideoCodecs,
+			AcceptedAudioCodecs: result.AcceptedAudioCodecs,
+			PreferredVideoCodec: result.PreferredVideoCodec,
+			PreferredAudioCodec: result.PreferredAudioCodec,
+			SupportsFMP4:        result.SupportsFMP4,
+			SupportsMPEGTS:      result.SupportsMPEGTS,
+			PreferredFormat:     result.PreferredFormat,
+			DetectionSource:     result.DetectionSource,
+		}
+		if result.MatchedRule != nil {
+			caps.MatchedRuleName = result.MatchedRule.Name
+		}
+
+		// Handle format override from query param (takes precedence)
+		if formatParam != "" {
+			caps = h.applyFormatOverride(caps, formatParam)
+		}
+
+		return caps
 	}
 
-	// Use client detection for determining format
+	// Fallback to DefaultClientDetector if no service available
 	detector := relay.NewDefaultClientDetector(h.logger)
 	outputReq := relay.OutputRequest{
 		UserAgent:      r.Header.Get("User-Agent"),
 		Accept:         r.Header.Get("Accept"),
 		Headers:        r.Header,
-		FormatOverride: formatParam, // Already checked above, but pass for completeness
+		FormatOverride: formatParam,
 	}
 
-	caps := detector.Detect(outputReq)
+	return detector.Detect(outputReq)
+}
 
+// applyFormatOverride applies a format query parameter override to capabilities.
+func (h *RelayStreamHandler) applyFormatOverride(caps relay.ClientCapabilities, format string) relay.ClientCapabilities {
+	switch format {
+	case relay.FormatValueHLS:
+		caps.PreferredFormat = relay.FormatValueHLS
+		caps.SupportsFMP4 = true
+		caps.SupportsMPEGTS = true
+		caps.DetectionSource = "format_override"
+	case relay.FormatValueHLSFMP4:
+		caps.PreferredFormat = relay.FormatValueHLSFMP4
+		caps.SupportsFMP4 = true
+		caps.SupportsMPEGTS = false
+		caps.DetectionSource = "format_override"
+	case relay.FormatValueHLSTS:
+		caps.PreferredFormat = relay.FormatValueHLSTS
+		caps.SupportsFMP4 = false
+		caps.SupportsMPEGTS = true
+		caps.DetectionSource = "format_override"
+	case relay.FormatValueDASH:
+		caps.PreferredFormat = relay.FormatValueDASH
+		caps.SupportsFMP4 = true
+		caps.SupportsMPEGTS = false
+		caps.DetectionSource = "format_override"
+	case relay.FormatValueMPEGTS:
+		caps.PreferredFormat = relay.FormatValueMPEGTS
+		caps.SupportsFMP4 = false
+		caps.SupportsMPEGTS = true
+		caps.DetectionSource = "format_override"
+	}
+	return caps
+}
+
+// capsToClientFormat converts ClientCapabilities to ClientFormat.
+func (h *RelayStreamHandler) capsToClientFormat(caps relay.ClientCapabilities) relay.ClientFormat {
 	// If client detection found a preferred format, use it
 	if caps.PreferredFormat != "" {
 		switch caps.PreferredFormat {
@@ -549,25 +609,25 @@ func (h *RelayStreamHandler) resolveClientFormat(r *http.Request, source relay.C
 			h.logger.Debug("Client detection resolved format",
 				"format", "hls",
 				"source", caps.DetectionSource,
-				"player", caps.PlayerName)
+				"rule", caps.MatchedRuleName)
 			return relay.ClientFormatHLS
 		case relay.FormatValueHLSFMP4:
 			h.logger.Debug("Client detection resolved format",
 				"format", "hls-fmp4",
 				"source", caps.DetectionSource,
-				"player", caps.PlayerName)
+				"rule", caps.MatchedRuleName)
 			return relay.ClientFormatHLS
 		case relay.FormatValueDASH:
 			h.logger.Debug("Client detection resolved format",
 				"format", "dash",
 				"source", caps.DetectionSource,
-				"player", caps.PlayerName)
+				"rule", caps.MatchedRuleName)
 			return relay.ClientFormatDASH
 		case relay.FormatValueMPEGTS:
 			h.logger.Debug("Client detection resolved format",
 				"format", "mpegts",
 				"source", caps.DetectionSource,
-				"player", caps.PlayerName)
+				"rule", caps.MatchedRuleName)
 			return relay.ClientFormatMPEGTS
 		}
 	}
@@ -576,7 +636,7 @@ func (h *RelayStreamHandler) resolveClientFormat(r *http.Request, source relay.C
 	if caps.SupportsMPEGTS && !caps.SupportsFMP4 {
 		h.logger.Debug("Client detection prefers MPEG-TS",
 			"source", caps.DetectionSource,
-			"player", caps.PlayerName)
+			"rule", caps.MatchedRuleName)
 		return relay.ClientFormatMPEGTS
 	}
 
@@ -617,145 +677,11 @@ func matchLower(a, b string) bool {
 	return true
 }
 
-// resolveProfileWithAutoDetection resolves a profile's auto codecs using client detection.
-// If the profile has auto video/audio codecs and the profile mapping service is configured,
-// it evaluates the HTTP request against enabled mappings to determine the actual codecs.
-// Returns a copy of the profile with resolved codecs, or the original if no auto-detection needed.
-func (h *RelayStreamHandler) resolveProfileWithAutoDetection(ctx context.Context, r *http.Request, info *service.StreamInfo) *models.RelayProfile {
-	profile := info.Profile
-	if profile == nil {
-		return nil
-	}
-
-	// Check if profile has auto codecs that need resolution
-	hasAutoVideo := profile.VideoCodec == models.VideoCodecAuto
-	hasAutoAudio := profile.AudioCodec == models.AudioCodecAuto
-
-	if !hasAutoVideo && !hasAutoAudio {
-		// No auto codecs, return original profile
-		return profile
-	}
-
-	// Get client IP for logging
-	clientIP := r.Header.Get("X-Forwarded-For")
-	if clientIP == "" {
-		clientIP = r.Header.Get("X-Real-IP")
-	}
-	if clientIP == "" {
-		clientIP = r.RemoteAddr
-	}
-
-	// Get channel name for logging context
-	channelName := ""
-	if info.Channel != nil {
-		channelName = info.Channel.ChannelName
-	}
-
-	// Get cached codec info for source comparison (enables passthrough when client supports source codecs)
-	var sourceCodecs *service.CodecInfo
-	if info.Channel != nil && info.Channel.StreamURL != "" {
-		cachedCodec, err := h.relayService.GetLastKnownCodec(ctx, info.Channel.StreamURL)
-		if err == nil && cachedCodec != nil && cachedCodec.IsValid() {
-			sourceCodecs = &service.CodecInfo{
-				VideoCodec: models.VideoCodec(cachedCodec.VideoCodec),
-				AudioCodec: models.AudioCodec(cachedCodec.AudioCodec),
-				Container:  models.ContainerFormat(cachedCodec.ContainerFormat),
-			}
-			h.logger.Debug("Client detection: using cached source codecs",
-				"channel", channelName,
-				"video_codec", cachedCodec.VideoCodec,
-				"audio_codec", cachedCodec.AudioCodec,
-				"container", cachedCodec.ContainerFormat,
-			)
-		}
-	}
-
-	// Check if mapping service is available
-	if h.profileMappingService == nil {
-		h.logger.Warn("Profile has auto codecs but mapping service not configured, using defaults",
-			"profile_id", profile.ID,
-			"profile_name", profile.Name,
-		)
-		// Fall back to copy mode for auto codecs
-		resolved := *profile
-		if hasAutoVideo {
-			resolved.VideoCodec = models.VideoCodecCopy
-		}
-		if hasAutoAudio {
-			resolved.AudioCodec = models.AudioCodecCopy
-		}
-		return &resolved
-	}
-
-	// Evaluate request against mappings (pass source codecs to enable passthrough when client supports them)
-	decision, err := h.profileMappingService.EvaluateRequest(ctx, r, sourceCodecs)
-	if err != nil {
-		h.logger.Warn("Failed to evaluate client detection, using copy mode",
-			"profile_id", profile.ID,
-			"error", err,
-		)
-		resolved := *profile
-		if hasAutoVideo {
-			resolved.VideoCodec = models.VideoCodecCopy
-		}
-		if hasAutoAudio {
-			resolved.AudioCodec = models.AudioCodecCopy
-		}
-		return &resolved
-	}
-
-	if decision == nil {
-		// No matching rule found, use copy mode as safe default
-		resolved := *profile
-		if hasAutoVideo {
-			resolved.VideoCodec = models.VideoCodecCopy
-		}
-		if hasAutoAudio {
-			resolved.AudioCodec = models.AudioCodecCopy
-		}
-
-		h.logger.Info("Client detection: no matching rule, using copy mode",
-			"channel", channelName,
-			"profile", profile.Name,
-			"client_ip", clientIP,
-			"user_agent", r.UserAgent(),
-			"resolved_video", string(resolved.VideoCodec),
-			"resolved_audio", string(resolved.AudioCodec),
-		)
-
-		return &resolved
-	}
-
-	// Apply the decision to create a resolved profile copy
-	resolved := *profile
-	if hasAutoVideo {
-		resolved.VideoCodec = decision.TargetVideoCodec
-	}
-	if hasAutoAudio {
-		resolved.AudioCodec = decision.TargetAudioCodec
-	}
-
-	// Build log message with source codec info if available
-	logAttrs := []any{
-		"channel", channelName,
-		"profile", profile.Name,
-		"client_ip", clientIP,
-		"matched_rule", decision.MappingName,
-		"video_action", decision.VideoAction,
-		"audio_action", decision.AudioAction,
-		"resolved_video", string(resolved.VideoCodec),
-		"resolved_audio", string(resolved.AudioCodec),
-		"user_agent", r.UserAgent(),
-	}
-	if sourceCodecs != nil {
-		logAttrs = append(logAttrs,
-			"source_video", string(sourceCodecs.VideoCodec),
-			"source_audio", string(sourceCodecs.AudioCodec),
-		)
-	}
-	h.logger.Info("Client detection: matched rule", logAttrs...)
-
-	return &resolved
+// getEncodingProfile returns the encoding profile from stream info.
+// EncodingProfile always has concrete target codecs (no auto-detection).
+// This is a simplified version that replaced the old resolveProfileWithAutoDetection.
+func (h *RelayStreamHandler) getEncodingProfile(info *service.StreamInfo) *models.EncodingProfile {
+	return info.EncodingProfile
 }
 
 // handleSmartPassthrough serves the source stream as-is (passthrough mode).
@@ -839,17 +765,15 @@ func (h *RelayStreamHandler) handleSmartTranscode(w http.ResponseWriter, r *http
 	}
 	h.logger.Info("Smart mode: transcode delivery", logAttrs...)
 
-	// Resolve profile with auto-detection if needed
-	resolvedProfile := h.resolveProfileWithAutoDetection(ctx, r, info)
+	// Get the encoding profile (no auto-detection needed with EncodingProfile)
+	profile := h.getEncodingProfile(info)
 
 	// For HLS/DASH formats, we need to start the relay session with multi-format support
 	// and initialize multi-format output before FFmpeg starts to ensure segments are captured.
 	needsMultiFormat := clientFormat == relay.ClientFormatHLS || clientFormat == relay.ClientFormatDASH
 
-	// Start or join the relay session with the resolved profile
-	// Always use StartRelayWithProfile to avoid loading default profile when nil
-	// (StartRelay with nil would load the default "Automatic" profile with unresolved auto codecs)
-	session, err := h.relayService.StartRelayWithProfile(ctx, info.Channel.ID, resolvedProfile)
+	// Start or join the relay session with the encoding profile
+	session, err := h.relayService.StartRelayWithProfile(ctx, info.Channel.ID, profile)
 	if err != nil {
 		errAttrs := []any{
 			"channel_id", info.Channel.ID,
@@ -879,8 +803,6 @@ func (h *RelayStreamHandler) handleSmartTranscode(w http.ResponseWriter, r *http
 // Processors are only created when clients actually request their format.
 // Each client can have a different codec variant based on their profile.
 func (h *RelayStreamHandler) handleMultiFormatOutput(w http.ResponseWriter, r *http.Request, session *relay.RelaySession, info *service.StreamInfo, clientFormat relay.ClientFormat) {
-	ctx := r.Context()
-
 	// Parse request parameters
 	segmentStr := r.URL.Query().Get(relay.QueryParamSegment)
 	initStr := r.URL.Query().Get(relay.QueryParamInit)
@@ -889,14 +811,12 @@ func (h *RelayStreamHandler) handleMultiFormatOutput(w http.ResponseWriter, r *h
 	// Resolve the client's target codec variant from their profile
 	// This enables per-client codec variants - different clients can receive different codecs
 	clientVariant := relay.VariantCopy // Default to passthrough (copy)
-	if info != nil && info.Profile != nil {
-		// Resolve auto codecs if present
-		resolvedProfile := h.resolveProfileWithAutoDetection(ctx, r, info)
-		if resolvedProfile != nil && resolvedProfile.NeedsTranscode() {
-			// Build variant from resolved profile codecs
-			// Use "copy" for codecs that should pass through unchanged
-			videoCodec := string(resolvedProfile.VideoCodec)
-			audioCodec := string(resolvedProfile.AudioCodec)
+	if info != nil && info.EncodingProfile != nil {
+		encodingProfile := info.EncodingProfile
+		if encodingProfile.NeedsTranscode() {
+			// Build variant from encoding profile codecs
+			videoCodec := string(encodingProfile.TargetVideoCodec)
+			audioCodec := string(encodingProfile.TargetAudioCodec)
 
 			// Normalize empty/none to "copy"
 			if videoCodec == "" || videoCodec == "none" {
@@ -1114,8 +1034,6 @@ func (h *RelayStreamHandler) buildBaseURL(r *http.Request) string {
 // This uses on-demand processor creation - the MPEG-TS processor is only started
 // when a client actually requests this format.
 func (h *RelayStreamHandler) streamMPEGTSFromRelay(w http.ResponseWriter, r *http.Request, session *relay.RelaySession, info *service.StreamInfo) {
-	ctx := r.Context()
-
 	connAttrs := []any{
 		"session_id", session.ID,
 		"channel_id", info.Channel.ID,
@@ -1128,14 +1046,12 @@ func (h *RelayStreamHandler) streamMPEGTSFromRelay(w http.ResponseWriter, r *htt
 	// Resolve the client's target codec variant from their profile
 	// This enables per-client codec variants - different clients can receive different codecs
 	clientVariant := relay.VariantCopy // Default to passthrough (copy)
-	if info != nil && info.Profile != nil {
-		// Resolve auto codecs if present
-		resolvedProfile := h.resolveProfileWithAutoDetection(ctx, r, info)
-		if resolvedProfile != nil && resolvedProfile.NeedsTranscode() {
-			// Build variant from resolved profile codecs
-			// Use "copy" for codecs that should pass through unchanged
-			videoCodec := string(resolvedProfile.VideoCodec)
-			audioCodec := string(resolvedProfile.AudioCodec)
+	if info != nil && info.EncodingProfile != nil {
+		encodingProfile := info.EncodingProfile
+		if encodingProfile.NeedsTranscode() {
+			// Build variant from encoding profile codecs
+			videoCodec := string(encodingProfile.TargetVideoCodec)
+			audioCodec := string(encodingProfile.TargetAudioCodec)
 
 			// Normalize empty/none to "copy"
 			if videoCodec == "" || videoCodec == "none" {

@@ -37,7 +37,8 @@ type ModifiableContext interface {
 
 // RuleProcessor applies rules (conditions + actions) to records.
 type RuleProcessor struct {
-	evaluator *Evaluator
+	evaluator       *Evaluator
+	dynamicRegistry *DynamicFieldRegistry
 }
 
 // NewRuleProcessor creates a new rule processor.
@@ -45,6 +46,12 @@ func NewRuleProcessor() *RuleProcessor {
 	return &RuleProcessor{
 		evaluator: NewEvaluator(),
 	}
+}
+
+// WithDynamicRegistry sets the dynamic field registry for resolving @prefix:param values.
+func (p *RuleProcessor) WithDynamicRegistry(registry *DynamicFieldRegistry) *RuleProcessor {
+	p.dynamicRegistry = registry
+	return p
 }
 
 // Apply applies a parsed expression (rule) to a context.
@@ -191,6 +198,18 @@ func (p *RuleProcessor) resolveValue(value ActionValue, ctx ModifiableContext, c
 			return "", nil
 		}
 		return captures[v.Index], nil
+
+	case *DynamicFieldReference:
+		// Resolve dynamic field using registry
+		// Supports both unified (@dynamic(path):key) and legacy (@prefix:parameter)
+		if p.dynamicRegistry == nil {
+			return "", fmt.Errorf("dynamic field reference %s cannot be resolved: no registry configured", v.String())
+		}
+		resolved, ok := p.dynamicRegistry.Resolve(v.String())
+		if !ok {
+			return "", nil // Field not found, return empty
+		}
+		return resolved, nil
 
 	default:
 		return "", fmt.Errorf("unsupported value type: %T", value)

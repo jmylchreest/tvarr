@@ -41,9 +41,6 @@ type Filter struct {
 	// Expression is the filter expression string.
 	Expression string `gorm:"type:text;not null" json:"expression"`
 
-	// Priority determines the order of filter evaluation (lower = higher priority).
-	Priority int `gorm:"default:0" json:"priority"`
-
 	// IsEnabled determines if the filter is active.
 	IsEnabled bool `gorm:"default:true" json:"is_enabled"`
 

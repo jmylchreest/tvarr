@@ -286,8 +286,8 @@ func TestParseXMLTVTime(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				if !result.Equal(tt.expected) {
-					t.Errorf("expected %v, got %v", tt.expected, result)
+				if !result.Time.Equal(tt.expected) {
+					t.Errorf("expected %v, got %v", tt.expected, result.Time)
 				}
 			}
 		})

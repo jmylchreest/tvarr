@@ -407,11 +407,49 @@ func (p *Parser) parseActionValue() (ActionValue, error) {
 			return &FieldReference{Field: value[1:]}, nil
 		}
 
+		// Check if it's a dynamic field reference (starts with @)
+		if strings.HasPrefix(value, "@") {
+			return p.parseDynamicFieldReference(value)
+		}
+
 		return NewLiteralValue(value), nil
 
 	default:
 		return nil, p.errorf("expected value but got %s", p.current.Value)
 	}
+}
+
+// parseDynamicFieldReference parses a dynamic field reference.
+// Supports:
+//   - Unified: @dynamic(path):key (e.g., @dynamic(request.headers):x-video-codec)
+//   - Legacy: @prefix:parameter (e.g., @header_req:x-video-codec)
+func (p *Parser) parseDynamicFieldReference(value string) (ActionValue, error) {
+	// Check for unified @dynamic(path):key syntax
+	if strings.HasPrefix(value, "@dynamic(") {
+		path, key, ok := ParseDynamicSyntax(value)
+		if !ok {
+			return nil, p.errorf("invalid @dynamic syntax: %s", value)
+		}
+		return &DynamicFieldReference{
+			Path: path,
+			Key:  key,
+		}, nil
+	}
+
+	// Legacy @prefix:parameter syntax
+	remainder := value[1:]
+	colonIdx := strings.Index(remainder, ":")
+	if colonIdx > 0 {
+		prefix := remainder[:colonIdx]
+		parameter := remainder[colonIdx+1:]
+		return &DynamicFieldReference{
+			Prefix:    prefix,
+			Parameter: parameter,
+		}, nil
+	}
+
+	// Invalid @ syntax, treat as literal
+	return NewLiteralValue(value), nil
 }
 
 // advance moves to the next token.

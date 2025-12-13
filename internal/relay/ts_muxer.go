@@ -11,6 +11,8 @@ import (
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h264"
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts"
+
+	"github.com/jmylchreest/tvarr/internal/codec"
 )
 
 // SwappableWriter is an io.Writer that can be redirected to different underlying buffers.
@@ -56,12 +58,12 @@ const (
 	TSAudioPID     = 0x0101
 	TSPCRPid       = TSVideoPID
 
-	// Stream types (kept for compatibility)
-	StreamTypeH264 = 0x1B
-	StreamTypeH265 = 0x24
-	StreamTypeAAC  = 0x0F
-	StreamTypeAC3  = 0x81
-	StreamTypeMP3  = 0x03
+	// Stream types - use codec package constants
+	StreamTypeH264 = codec.StreamTypeH264
+	StreamTypeH265 = codec.StreamTypeH265
+	StreamTypeAAC  = codec.StreamTypeAAC
+	StreamTypeAC3  = codec.StreamTypeAC3
+	StreamTypeMP3  = codec.StreamTypeMP3
 )
 
 // TSMuxerConfig configures the TS muxer.

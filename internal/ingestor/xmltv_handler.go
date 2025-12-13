@@ -26,6 +26,11 @@ type XMLTVHandler struct {
 	// channelMap stores channel ID to external ID mapping during ingestion.
 	// This maps XMLTV channel IDs to be used when processing programmes.
 	channelMap map[string]string
+
+	// detectedTimezone stores the first detected timezone offset during ingestion.
+	detectedTimezone string
+	// timezoneDetected tracks whether we've already detected the timezone.
+	timezoneDetected bool
 }
 
 // NewXMLTVHandler creates a new XMLTV handler with default settings.
@@ -80,8 +85,10 @@ func (h *XMLTVHandler) Ingest(ctx context.Context, source *models.EpgSource, cal
 	}
 	defer reader.Close()
 
-	// Reset channel map for this ingestion
+	// Reset state for this ingestion
 	h.channelMap = make(map[string]string)
+	h.detectedTimezone = ""
+	h.timezoneDetected = false
 
 	// Create XMLTV parser with callbacks
 	parser := &xmltv.Parser{
@@ -96,6 +103,12 @@ func (h *XMLTVHandler) Ingest(ctx context.Context, source *models.EpgSource, cal
 			case <-ctx.Done():
 				return ctx.Err()
 			default:
+			}
+
+			// Capture timezone from the first programme that has one
+			if !h.timezoneDetected && programme.TimezoneOffset != "" {
+				h.detectedTimezone = programme.TimezoneOffset
+				h.timezoneDetected = true
 			}
 
 			// Convert XMLTV programme to EpgProgram model
@@ -117,6 +130,11 @@ func (h *XMLTVHandler) Ingest(ctx context.Context, source *models.EpgSource, cal
 	// Parse with auto-decompression support
 	if err := parser.ParseCompressed(reader); err != nil {
 		return fmt.Errorf("failed to parse XMLTV: %w", err)
+	}
+
+	// Update source's detected timezone (will be saved by the caller)
+	if h.timezoneDetected {
+		source.DetectedTimezone = formatTimezoneOffset(h.detectedTimezone)
 	}
 
 	return nil
@@ -173,59 +191,43 @@ func (h *XMLTVHandler) convertProgramme(p *xmltv.Programme, source *models.EpgSo
 	return program
 }
 
-// applyTimeOffset applies the source's time offset to a time value.
-// The offset can be in formats like "+01:00", "-05:00", "+0100", "-0500".
-// If OriginalTimezone is set (e.g., "Europe/London"), it will be used to
-// convert times that don't have timezone info to the correct timezone first.
+// applyTimeOffset applies the source's EpgShift to a time value.
+// The EpgShift is in hours and shifts times forward (positive) or back (negative).
+// Times are first converted to UTC, then the shift is applied.
 func (h *XMLTVHandler) applyTimeOffset(t time.Time, source *models.EpgSource) time.Time {
 	if source == nil {
 		return t
 	}
 
-	// If time has no timezone info (UTC from parser default) and OriginalTimezone is set,
-	// treat the time as being in that timezone
-	if source.OriginalTimezone != "" && t.Location() == time.UTC {
-		loc, err := time.LoadLocation(source.OriginalTimezone)
-		if err == nil {
-			// The time value is correct but was interpreted as UTC.
-			// We need to treat it as if it were in the original timezone.
-			// Create a new time with the same wall clock but in the original timezone.
-			t = time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), loc)
-		}
+	// Convert to UTC first (the time already has timezone info from parsing)
+	t = t.UTC()
+
+	// Apply EpgShift if configured (shift in hours)
+	if source.EpgShift != 0 {
+		t = t.Add(time.Duration(source.EpgShift) * time.Hour)
 	}
 
-	// Apply manual time offset if configured
-	if source.TimeOffset == "" {
-		return t
+	return t
+}
+
+// formatTimezoneOffset converts a timezone offset like "+0000" or "-0500" to a
+// more readable format like "+00:00" or "-05:00".
+func formatTimezoneOffset(offset string) string {
+	if offset == "" {
+		return ""
 	}
 
-	// Parse offset in formats like "+01:00", "-05:00", "+0100", "-0500"
-	offset := source.TimeOffset
-	if len(offset) < 5 {
-		return t
+	// Already in colon format
+	if len(offset) == 6 && offset[3] == ':' {
+		return offset
 	}
 
-	sign := 1
-	if offset[0] == '-' {
-		sign = -1
-		offset = offset[1:]
-	} else if offset[0] == '+' {
-		offset = offset[1:]
+	// Convert "+0000" to "+00:00"
+	if len(offset) == 5 {
+		return offset[:3] + ":" + offset[3:]
 	}
 
-	var hours, minutes int
-	if len(offset) >= 5 && offset[2] == ':' {
-		// Format: "01:00"
-		fmt.Sscanf(offset, "%02d:%02d", &hours, &minutes)
-	} else if len(offset) >= 4 {
-		// Format: "0100"
-		fmt.Sscanf(offset, "%02d%02d", &hours, &minutes)
-	} else {
-		return t
-	}
-
-	duration := time.Duration(sign) * (time.Duration(hours)*time.Hour + time.Duration(minutes)*time.Minute)
-	return t.Add(duration)
+	return offset
 }
 
 // Ensure XMLTVHandler implements EpgHandler.

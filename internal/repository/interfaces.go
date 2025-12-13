@@ -178,10 +178,10 @@ type StreamProxyRepository interface {
 	// GetByEpgSourceID retrieves all proxies that use a specific EPG source.
 	// Used for auto-regeneration when an EPG source is updated.
 	GetByEpgSourceID(ctx context.Context, epgSourceID models.ULID) ([]*models.StreamProxy, error)
-	// CountByRelayProfileID returns the count of stream proxies using a given relay profile.
-	CountByRelayProfileID(ctx context.Context, profileID models.ULID) (int64, error)
-	// GetByRelayProfileID returns stream proxies using a given relay profile.
-	GetByRelayProfileID(ctx context.Context, profileID models.ULID) ([]*models.StreamProxy, error)
+	// CountByEncodingProfileID returns the count of stream proxies using a given encoding profile.
+	CountByEncodingProfileID(ctx context.Context, profileID models.ULID) (int64, error)
+	// GetByEncodingProfileID returns stream proxies using a given encoding profile.
+	GetByEncodingProfileID(ctx context.Context, profileID models.ULID) ([]*models.StreamProxy, error)
 }
 
 // FilterRepository defines operations for filter persistence.
@@ -198,7 +198,7 @@ type FilterRepository interface {
 	GetBySourceType(ctx context.Context, sourceType models.FilterSourceType) ([]*models.Filter, error)
 	// GetBySourceID retrieves filters for a specific source (or global if sourceID is nil).
 	GetBySourceID(ctx context.Context, sourceID *models.ULID) ([]*models.Filter, error)
-	// GetEnabledForSourceType retrieves enabled filters for a source type, ordered by priority.
+	// GetEnabledForSourceType retrieves enabled filters for a source type.
 	GetEnabledForSourceType(ctx context.Context, sourceType models.FilterSourceType, sourceID *models.ULID) ([]*models.Filter, error)
 	// Update updates an existing filter.
 	Update(ctx context.Context, filter *models.Filter) error
@@ -230,28 +230,6 @@ type DataMappingRuleRepository interface {
 	Delete(ctx context.Context, id models.ULID) error
 	// Count returns the total number of rules.
 	Count(ctx context.Context) (int64, error)
-}
-
-// RelayProfileRepository defines operations for relay profile persistence.
-type RelayProfileRepository interface {
-	// Create creates a new relay profile.
-	Create(ctx context.Context, profile *models.RelayProfile) error
-	// GetByID retrieves a relay profile by ID.
-	GetByID(ctx context.Context, id models.ULID) (*models.RelayProfile, error)
-	// GetAll retrieves all relay profiles.
-	GetAll(ctx context.Context) ([]*models.RelayProfile, error)
-	// GetByName retrieves a relay profile by name.
-	GetByName(ctx context.Context, name string) (*models.RelayProfile, error)
-	// GetDefault retrieves the default relay profile.
-	GetDefault(ctx context.Context) (*models.RelayProfile, error)
-	// Update updates an existing relay profile.
-	Update(ctx context.Context, profile *models.RelayProfile) error
-	// Delete deletes a relay profile by ID.
-	Delete(ctx context.Context, id models.ULID) error
-	// Count returns the total number of relay profiles.
-	Count(ctx context.Context) (int64, error)
-	// SetDefault sets a profile as the default (unsets previous default).
-	SetDefault(ctx context.Context, id models.ULID) error
 }
 
 // LastKnownCodecRepository defines operations for codec cache persistence.
@@ -344,26 +322,56 @@ type ReorderRequest struct {
 	Priority int         `json:"priority"`
 }
 
-// RelayProfileMappingRepository defines operations for relay profile mapping persistence.
-type RelayProfileMappingRepository interface {
-	// Create creates a new relay profile mapping.
-	Create(ctx context.Context, mapping *models.RelayProfileMapping) error
-	// GetByID retrieves a relay profile mapping by ID.
-	GetByID(ctx context.Context, id models.ULID) (*models.RelayProfileMapping, error)
-	// GetAll retrieves all relay profile mappings.
-	GetAll(ctx context.Context) ([]*models.RelayProfileMapping, error)
-	// GetEnabled retrieves all enabled relay profile mappings ordered by priority.
-	GetEnabled(ctx context.Context) ([]*models.RelayProfileMapping, error)
-	// Update updates an existing relay profile mapping.
-	Update(ctx context.Context, mapping *models.RelayProfileMapping) error
-	// Delete deletes a relay profile mapping by ID.
+// EncodingProfileRepository defines operations for encoding profile persistence.
+type EncodingProfileRepository interface {
+	// Create creates a new encoding profile.
+	Create(ctx context.Context, profile *models.EncodingProfile) error
+	// GetByID retrieves an encoding profile by ID.
+	GetByID(ctx context.Context, id models.ULID) (*models.EncodingProfile, error)
+	// GetAll retrieves all encoding profiles.
+	GetAll(ctx context.Context) ([]*models.EncodingProfile, error)
+	// GetEnabled retrieves all enabled encoding profiles.
+	GetEnabled(ctx context.Context) ([]*models.EncodingProfile, error)
+	// GetByName retrieves an encoding profile by name.
+	GetByName(ctx context.Context, name string) (*models.EncodingProfile, error)
+	// GetDefault retrieves the default encoding profile.
+	GetDefault(ctx context.Context) (*models.EncodingProfile, error)
+	// GetSystem retrieves all system encoding profiles.
+	GetSystem(ctx context.Context) ([]*models.EncodingProfile, error)
+	// Update updates an existing encoding profile.
+	Update(ctx context.Context, profile *models.EncodingProfile) error
+	// Delete deletes an encoding profile by ID.
 	Delete(ctx context.Context, id models.ULID) error
-	// Count returns the total number of relay profile mappings.
+	// Count returns the total number of encoding profiles.
 	Count(ctx context.Context) (int64, error)
-	// CountEnabled returns the number of enabled mappings.
+	// CountEnabled returns the number of enabled profiles.
 	CountEnabled(ctx context.Context) (int64, error)
-	// CountSystem returns the number of system mappings.
-	CountSystem(ctx context.Context) (int64, error)
-	// Reorder updates the priority of multiple mappings in a batch.
-	Reorder(ctx context.Context, mappings []ReorderRequest) error
+	// SetDefault sets a profile as the default (unsets previous default).
+	SetDefault(ctx context.Context, id models.ULID) error
+}
+
+// ClientDetectionRuleRepository defines operations for client detection rule persistence.
+type ClientDetectionRuleRepository interface {
+	// Create creates a new client detection rule.
+	Create(ctx context.Context, rule *models.ClientDetectionRule) error
+	// GetByID retrieves a client detection rule by ID.
+	GetByID(ctx context.Context, id models.ULID) (*models.ClientDetectionRule, error)
+	// GetAll retrieves all client detection rules ordered by priority.
+	GetAll(ctx context.Context) ([]*models.ClientDetectionRule, error)
+	// GetEnabled retrieves all enabled rules ordered by priority.
+	GetEnabled(ctx context.Context) ([]*models.ClientDetectionRule, error)
+	// GetByName retrieves a rule by name.
+	GetByName(ctx context.Context, name string) (*models.ClientDetectionRule, error)
+	// GetSystem retrieves all system rules.
+	GetSystem(ctx context.Context) ([]*models.ClientDetectionRule, error)
+	// Update updates an existing rule.
+	Update(ctx context.Context, rule *models.ClientDetectionRule) error
+	// Delete deletes a rule by ID.
+	Delete(ctx context.Context, id models.ULID) error
+	// Count returns the total number of rules.
+	Count(ctx context.Context) (int64, error)
+	// CountEnabled returns the number of enabled rules.
+	CountEnabled(ctx context.Context) (int64, error)
+	// Reorder updates priorities for multiple rules in a single transaction.
+	Reorder(ctx context.Context, reorders []ReorderRequest) error
 }

@@ -46,6 +46,15 @@ type FFmpegTranscoderConfig struct {
 	// AudioCodec is the target audio encoder (e.g., "aac", "libopus").
 	AudioCodec string
 
+	// SourceURL is the direct URL to the source stream.
+	// Used when UseDirectInput is true (e.g., for unsupported audio codecs like E-AC3).
+	SourceURL string
+
+	// UseDirectInput enables direct URL input mode.
+	// When true, FFmpeg reads directly from SourceURL instead of stdin.
+	// This is used when the audio codec can't be demuxed by mediacommon.
+	UseDirectInput bool
+
 	// VideoBitrate in kbps (0 for default).
 	VideoBitrate int
 
@@ -196,14 +205,18 @@ func (t *FFmpegTranscoder) Start(ctx context.Context) error {
 	t.config.Logger.Info("Starting FFmpeg transcoder",
 		slog.String("id", t.id),
 		slog.String("source", string(t.config.SourceVariant)),
-		slog.String("target", string(t.config.TargetVariant)))
+		slog.String("target", string(t.config.TargetVariant)),
+		slog.Bool("direct_input", t.config.UseDirectInput))
 
 	// Start reader goroutine (reads from source variant, writes to FFmpeg stdin)
-	t.wg.Add(1)
-	go func() {
-		defer t.wg.Done()
-		t.runInputLoop(sourceVariant)
-	}()
+	// Only needed when NOT using direct input mode
+	if !t.config.UseDirectInput {
+		t.wg.Add(1)
+		go func() {
+			defer t.wg.Done()
+			t.runInputLoop(sourceVariant)
+		}()
+	}
 
 	// Start output goroutine (reads from FFmpeg stdout, writes to target variant)
 	t.wg.Add(1)
@@ -476,11 +489,20 @@ func (t *FFmpegTranscoder) startFFmpeg() error {
 		}
 	}
 
-	// Input settings - reading MPEG-TS from stdin
-	builder.InputArgs("-f", "mpegts")
-	builder.InputArgs("-analyzeduration", "500000")
-	builder.InputArgs("-probesize", "500000")
-	builder.Input("pipe:0")
+	// Input settings
+	if t.config.UseDirectInput && t.config.SourceURL != "" {
+		// Direct URL input mode - FFmpeg reads directly from source
+		// Used for streams with unsupported audio codecs (e.g., E-AC3)
+		builder.InputArgs("-analyzeduration", "2000000")
+		builder.InputArgs("-probesize", "2000000")
+		builder.Input(t.config.SourceURL)
+	} else {
+		// Standard mode - reading MPEG-TS from stdin (ES demux/mux)
+		builder.InputArgs("-f", "mpegts")
+		builder.InputArgs("-analyzeduration", "500000")
+		builder.InputArgs("-probesize", "500000")
+		builder.Input("pipe:0")
+	}
 
 	// Stream mapping
 	builder.OutputArgs("-map", "0:v:0")
@@ -523,7 +545,9 @@ func (t *FFmpegTranscoder) startFFmpeg() error {
 
 	// Build command
 	ffmpegCmd := builder.Build()
-	t.config.Logger.Debug("FFmpeg transcoder command",
+	t.config.Logger.Info("FFmpeg transcoder command",
+		slog.String("id", t.id),
+		slog.Bool("direct_input", t.config.UseDirectInput),
 		slog.String("command", ffmpegCmd.String()))
 
 	// Create command with context
@@ -531,9 +555,13 @@ func (t *FFmpegTranscoder) startFFmpeg() error {
 
 	// Set up pipes
 	var err error
-	t.stdin, err = t.cmd.StdinPipe()
-	if err != nil {
-		return fmt.Errorf("creating stdin pipe: %w", err)
+
+	// Only create stdin pipe when not using direct input
+	if !t.config.UseDirectInput {
+		t.stdin, err = t.cmd.StdinPipe()
+		if err != nil {
+			return fmt.Errorf("creating stdin pipe: %w", err)
+		}
 	}
 
 	t.stdout, err = t.cmd.StdoutPipe()
@@ -772,9 +800,18 @@ func (t *FFmpegTranscoder) runOutputLoop(target *ESVariant) {
 
 		if n > 0 {
 			if err := t.outputDemuxer.Write(buf[:n]); err != nil {
+				// Check for closed pipe - this is normal when client disconnects or demuxer exits
+				if errors.Is(err, io.ErrClosedPipe) || strings.Contains(err.Error(), "closed pipe") {
+					t.config.Logger.Debug("FFmpeg output demuxer closed",
+						slog.String("id", t.id))
+					return
+				}
+				// Any other error - log and exit
 				t.errorCount.Add(1)
-				t.config.Logger.Warn("Error demuxing FFmpeg output",
+				t.config.Logger.Warn("Error demuxing FFmpeg output, stopping output loop",
+					slog.String("id", t.id),
 					slog.String("error", err.Error()))
+				return
 			}
 			t.recordActivity()
 		}
@@ -796,37 +833,57 @@ func (t *FFmpegTranscoder) ClosedChan() <-chan struct{} {
 	return t.closedCh
 }
 
-// CreateTranscoderFromProfile creates an FFmpegTranscoder configured from a relay profile.
+// CreateTranscoderFromProfileOptions contains optional parameters for CreateTranscoderFromProfile.
+type CreateTranscoderFromProfileOptions struct {
+	// SourceURL for direct input mode (bypasses ES demux/mux)
+	SourceURL string
+	// UseDirectInput enables direct URL input when audio codec can't be demuxed
+	UseDirectInput bool
+}
+
+// CreateTranscoderFromProfile creates an FFmpegTranscoder configured from an encoding profile.
 func CreateTranscoderFromProfile(
 	id string,
 	buffer *SharedESBuffer,
 	sourceVariant CodecVariant,
-	profile *models.RelayProfile,
+	profile *models.EncodingProfile,
 	ffmpegBin *ffmpeg.BinaryInfo,
 	logger *slog.Logger,
+	opts ...CreateTranscoderFromProfileOptions,
 ) (*FFmpegTranscoder, error) {
 	if profile == nil {
 		return nil, errors.New("profile is required")
 	}
 
+	// Merge optional parameters
+	var opt CreateTranscoderFromProfileOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+
 	// Determine target variant from profile codecs
 	targetVariant := MakeCodecVariant(
-		string(profile.VideoCodec),
-		string(profile.AudioCodec),
+		string(profile.TargetVideoCodec),
+		string(profile.TargetAudioCodec),
 	)
 
+	// Get encoding parameters from quality preset
+	encodingParams := profile.GetEncodingParams()
+
 	config := FFmpegTranscoderConfig{
-		FFmpegPath:    ffmpegBin.FFmpegPath,
-		SourceVariant: sourceVariant,
-		TargetVariant: targetVariant,
-		VideoCodec:    profile.VideoCodec.GetFFmpegEncoder(profile.HWAccel),
-		AudioCodec:    profile.AudioCodec.GetFFmpegEncoder(),
-		VideoBitrate:  profile.VideoBitrate,
-		AudioBitrate:  profile.AudioBitrate,
-		VideoPreset:   profile.VideoPreset,
-		HWAccel:       string(profile.HWAccel),
-		HWAccelDevice: profile.HWAccelDevice,
-		Logger:        logger,
+		FFmpegPath:     ffmpegBin.FFmpegPath,
+		SourceVariant:  sourceVariant,
+		TargetVariant:  targetVariant,
+		VideoCodec:     profile.GetVideoEncoder(),
+		AudioCodec:     profile.GetAudioEncoder(),
+		VideoBitrate:   profile.GetVideoBitrate(),
+		AudioBitrate:   profile.GetAudioBitrate(),
+		VideoPreset:    encodingParams.VideoPreset,
+		HWAccel:        string(profile.HWAccel),
+		HWAccelDevice:  "", // Not configurable in EncodingProfile, uses auto-detection
+		Logger:         logger,
+		SourceURL:      opt.SourceURL,
+		UseDirectInput: opt.UseDirectInput,
 	}
 
 	return NewFFmpegTranscoder(id, buffer, config), nil
@@ -869,6 +926,14 @@ func getCallerInfo() string {
 	return fmt.Sprintf("%s:%d", file, line)
 }
 
+// CreateTranscoderFromVariantOptions contains optional parameters for CreateTranscoderFromVariant.
+type CreateTranscoderFromVariantOptions struct {
+	// SourceURL for direct input mode (bypasses ES demux/mux)
+	SourceURL string
+	// UseDirectInput enables direct URL input when audio codec can't be demuxed
+	UseDirectInput bool
+}
+
 // CreateTranscoderFromVariant creates an FFmpeg transcoder directly from source and target variants.
 // This is used when we don't have a profile but know the target codec variant.
 // It uses default settings for bitrate, preset, etc.
@@ -879,7 +944,14 @@ func CreateTranscoderFromVariant(
 	targetVariant CodecVariant,
 	ffmpegBin *ffmpeg.BinaryInfo,
 	logger *slog.Logger,
+	opts ...CreateTranscoderFromVariantOptions,
 ) (*FFmpegTranscoder, error) {
+	// Merge optional parameters
+	var opt CreateTranscoderFromVariantOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+
 	// Parse video and audio codecs from target variant
 	videoCodecStr := targetVariant.VideoCodec()
 	audioCodecStr := targetVariant.AudioCodec()
@@ -920,17 +992,19 @@ func CreateTranscoderFromVariant(
 	}
 
 	config := FFmpegTranscoderConfig{
-		FFmpegPath:    ffmpegBin.FFmpegPath,
-		SourceVariant: sourceVariant,
-		TargetVariant: targetVariant,
-		VideoCodec:    videoEncoder,
-		AudioCodec:    audioEncoder,
-		VideoBitrate:  0, // Use FFmpeg defaults
-		AudioBitrate:  0, // Use FFmpeg defaults
-		VideoPreset:   "medium",
-		HWAccel:       "",
-		HWAccelDevice: "",
-		Logger:        logger,
+		FFmpegPath:     ffmpegBin.FFmpegPath,
+		SourceVariant:  sourceVariant,
+		TargetVariant:  targetVariant,
+		VideoCodec:     videoEncoder,
+		AudioCodec:     audioEncoder,
+		VideoBitrate:   0, // Use FFmpeg defaults
+		AudioBitrate:   0, // Use FFmpeg defaults
+		VideoPreset:    "medium",
+		HWAccel:        "",
+		HWAccelDevice:  "",
+		Logger:         logger,
+		SourceURL:      opt.SourceURL,
+		UseDirectInput: opt.UseDirectInput,
 	}
 
 	logger.Info("Creating transcoder from variant",
@@ -938,7 +1012,8 @@ func CreateTranscoderFromVariant(
 		slog.String("source", sourceVariant.String()),
 		slog.String("target", targetVariant.String()),
 		slog.String("video_encoder", videoEncoder),
-		slog.String("audio_encoder", audioEncoder))
+		slog.String("audio_encoder", audioEncoder),
+		slog.Bool("direct_input", opt.UseDirectInput))
 
 	return NewFFmpegTranscoder(id, buffer, config), nil
 }

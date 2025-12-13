@@ -60,7 +60,7 @@ const (
 func SelectDelivery(
 	source ClassificationResult,
 	clientFormat ClientFormat,
-	profile *models.RelayProfile,
+	profile *models.EncodingProfile,
 ) DeliveryDecision {
 	// 1. Profile requires transcoding?
 	if profile != nil && profile.NeedsTranscode() {
@@ -133,22 +133,22 @@ func canRepackage(source ClassificationResult, clientFormat ClientFormat) bool {
 
 // DeliveryContext holds all information needed for delivery decision.
 type DeliveryContext struct {
-	Source       ClassificationResult
-	ClientFormat ClientFormat
-	Profile      *models.RelayProfile
-	Decision     DeliveryDecision
+	Source          ClassificationResult
+	ClientFormat    ClientFormat
+	EncodingProfile *models.EncodingProfile
+	Decision        DeliveryDecision
 }
 
 // NewDeliveryContext creates a context with the delivery decision already computed.
 func NewDeliveryContext(
 	source ClassificationResult,
 	clientFormat ClientFormat,
-	profile *models.RelayProfile,
+	profile *models.EncodingProfile,
 ) DeliveryContext {
 	return DeliveryContext{
-		Source:       source,
-		ClientFormat: clientFormat,
-		Profile:      profile,
-		Decision:     SelectDelivery(source, clientFormat, profile),
+		Source:          source,
+		ClientFormat:    clientFormat,
+		EncodingProfile: profile,
+		Decision:        SelectDelivery(source, clientFormat, profile),
 	}
 }

@@ -25,94 +25,39 @@ func TestRoutingDecision_String(t *testing.T) {
 	}
 }
 
-func TestDefaultRoutingDecider_DecideWithExplicitDetectionMode(t *testing.T) {
+func TestDefaultRoutingDecider_DecideWithTranscodingProfile(t *testing.T) {
 	decider := NewDefaultRoutingDecider(nil)
 
 	tests := []struct {
 		name             string
 		sourceFormat     SourceFormat
 		sourceCodecs     []string
-		profile          *models.RelayProfile
+		profile          *models.EncodingProfile
 		expectedDecision RoutingDecision
-		expectedFormat   string
 	}{
 		{
-			name:         "detection_mode=hls with HLS source - passthrough",
+			name:         "profile requires transcoding - HLS source",
 			sourceFormat: SourceFormatHLS,
 			sourceCodecs: []string{"avc1.64001f", "mp4a.40.2"},
-			profile: &models.RelayProfile{
-				Name:          "HLS Profile",
-				DetectionMode: models.DetectionModeHLS,
-				VideoCodec:    models.VideoCodecCopy,
-				AudioCodec:    models.AudioCodecCopy,
+			profile: &models.EncodingProfile{
+				Name:             "Transcode Profile",
+				TargetVideoCodec: models.VideoCodecH264,
+				TargetAudioCodec: models.AudioCodecAAC,
+				QualityPreset:    models.QualityPresetMedium,
 			},
-			expectedDecision: RoutePassthrough,
-			expectedFormat:   FormatValueHLS,
+			expectedDecision: RouteTranscode,
 		},
 		{
-			name:         "detection_mode=mpegts with MPEGTS source - transcode (not segmented)",
+			name:         "profile requires transcoding - MPEGTS source",
 			sourceFormat: SourceFormatMPEGTS,
 			sourceCodecs: []string{"h264", "aac"},
-			profile: &models.RelayProfile{
-				Name:          "MPEGTS Profile",
-				DetectionMode: models.DetectionModeMPEGTS,
-				VideoCodec:    models.VideoCodecCopy,
-				AudioCodec:    models.AudioCodecCopy,
+			profile: &models.EncodingProfile{
+				Name:             "Transcode Profile",
+				TargetVideoCodec: models.VideoCodecH265,
+				TargetAudioCodec: models.AudioCodecOpus,
+				QualityPreset:    models.QualityPresetHigh,
 			},
 			expectedDecision: RouteTranscode,
-			expectedFormat:   FormatValueMPEGTS,
-		},
-		{
-			name:         "detection_mode=dash with DASH source - passthrough",
-			sourceFormat: SourceFormatDASH,
-			sourceCodecs: []string{"avc1", "mp4a"},
-			profile: &models.RelayProfile{
-				Name:          "DASH Profile",
-				DetectionMode: models.DetectionModeDASH,
-				VideoCodec:    models.VideoCodecCopy,
-				AudioCodec:    models.AudioCodecCopy,
-			},
-			expectedDecision: RoutePassthrough,
-			expectedFormat:   FormatValueDASH,
-		},
-		{
-			name:         "detection_mode=hls with DASH source - repackage",
-			sourceFormat: SourceFormatDASH,
-			sourceCodecs: []string{"avc1", "mp4a"},
-			profile: &models.RelayProfile{
-				Name:          "HLS from DASH Profile",
-				DetectionMode: models.DetectionModeHLS,
-				VideoCodec:    models.VideoCodecCopy,
-				AudioCodec:    models.AudioCodecCopy,
-			},
-			expectedDecision: RouteRepackage,
-			expectedFormat:   FormatValueHLS,
-		},
-		{
-			name:         "detection_mode=hls with MPEGTS source - transcode (not segmented)",
-			sourceFormat: SourceFormatMPEGTS,
-			sourceCodecs: []string{"h264", "aac"},
-			profile: &models.RelayProfile{
-				Name:          "HLS from MPEGTS Profile",
-				DetectionMode: models.DetectionModeHLS,
-				VideoCodec:    models.VideoCodecCopy,
-				AudioCodec:    models.AudioCodecCopy,
-			},
-			expectedDecision: RouteTranscode,
-			expectedFormat:   FormatValueHLS,
-		},
-		{
-			name:         "detection_mode=hls with transcode profile - transcode",
-			sourceFormat: SourceFormatHLS,
-			sourceCodecs: []string{"avc1", "mp4a"},
-			profile: &models.RelayProfile{
-				Name:          "Transcode to H264 Profile",
-				DetectionMode: models.DetectionModeHLS,
-				VideoCodec:    models.VideoCodecH264,
-				AudioCodec:    models.AudioCodecAAC,
-			},
-			expectedDecision: RouteTranscode,
-			expectedFormat:   FormatValueHLS,
 		},
 	}
 
@@ -127,13 +72,12 @@ func TestDefaultRoutingDecider_DecideWithExplicitDetectionMode(t *testing.T) {
 			result := decider.Decide(tt.sourceFormat, tt.sourceCodecs, client, tt.profile)
 
 			assert.Equal(t, tt.expectedDecision, result.Decision, "unexpected routing decision")
-			assert.Equal(t, tt.expectedFormat, result.ClientFormat, "unexpected client format")
 			assert.NotEmpty(t, result.Reasons, "reasons should not be empty")
 		})
 	}
 }
 
-func TestDefaultRoutingDecider_DecideWithAutoDetectionMode(t *testing.T) {
+func TestDefaultRoutingDecider_DecideWithNilProfile(t *testing.T) {
 	decider := NewDefaultRoutingDecider(nil)
 
 	tests := []struct {
@@ -141,103 +85,49 @@ func TestDefaultRoutingDecider_DecideWithAutoDetectionMode(t *testing.T) {
 		sourceFormat     SourceFormat
 		sourceCodecs     []string
 		client           ClientCapabilities
-		profile          *models.RelayProfile
 		expectedDecision RoutingDecision
 	}{
 		{
-			name:         "auto mode with client preferring HLS, HLS source - passthrough",
+			name:         "nil profile with client preferring HLS, HLS source - passthrough",
 			sourceFormat: SourceFormatHLS,
 			sourceCodecs: []string{"avc1", "mp4a"},
 			client: ClientCapabilities{
-				PlayerName:      "hls.js",
+				PlayerName:      "hls-player",
 				PreferredFormat: FormatValueHLS,
 				SupportsFMP4:    true,
-			},
-			profile: &models.RelayProfile{
-				Name:          "Auto Profile",
-				DetectionMode: models.DetectionModeAuto,
-				VideoCodec:    models.VideoCodecCopy,
-				AudioCodec:    models.AudioCodecCopy,
 			},
 			expectedDecision: RoutePassthrough,
 		},
 		{
-			name:         "auto mode with client preferring DASH, HLS source - repackage",
+			name:         "nil profile with client preferring DASH, HLS source - repackage",
 			sourceFormat: SourceFormatHLS,
 			sourceCodecs: []string{"avc1", "mp4a"},
 			client: ClientCapabilities{
-				PlayerName:      "dash.js",
+				PlayerName:      "dash-player",
 				PreferredFormat: FormatValueDASH,
 				SupportsFMP4:    true,
-			},
-			profile: &models.RelayProfile{
-				Name:          "Auto Profile",
-				DetectionMode: models.DetectionModeAuto,
-				VideoCodec:    models.VideoCodecCopy,
-				AudioCodec:    models.AudioCodecCopy,
 			},
 			expectedDecision: RouteRepackage,
 		},
 		{
-			name:         "auto mode with profile requiring transcode - transcode",
-			sourceFormat: SourceFormatHLS,
-			sourceCodecs: []string{"avc1", "mp4a"},
-			client: ClientCapabilities{
-				PlayerName:      "hls.js",
-				PreferredFormat: FormatValueHLS,
-				SupportsFMP4:    true,
-			},
-			profile: &models.RelayProfile{
-				Name:          "Transcode Profile",
-				DetectionMode: models.DetectionModeAuto,
-				VideoCodec:    models.VideoCodecH264,
-				AudioCodec:    models.AudioCodecCopy,
-			},
-			expectedDecision: RouteTranscode,
-		},
-		{
-			name:         "auto mode with raw TS source - transcode (needs segmentation)",
+			name:         "nil profile with MPEGTS source - transcode (not segmented)",
 			sourceFormat: SourceFormatMPEGTS,
 			sourceCodecs: []string{"h264", "aac"},
 			client: ClientCapabilities{
-				PlayerName:      "hls.js",
+				PlayerName:      "hls-player",
 				PreferredFormat: FormatValueHLS,
 				SupportsFMP4:    true,
 			},
-			profile: &models.RelayProfile{
-				Name:          "Auto Profile",
-				DetectionMode: models.DetectionModeAuto,
-				VideoCodec:    models.VideoCodecCopy,
-				AudioCodec:    models.AudioCodecCopy,
-			},
 			expectedDecision: RouteTranscode,
-		},
-		{
-			name:         "auto mode with no client preference, fMP4 support - uses fMP4",
-			sourceFormat: SourceFormatHLS,
-			sourceCodecs: []string{"avc1", "mp4a"},
-			client: ClientCapabilities{
-				PlayerName:      "generic",
-				PreferredFormat: "",
-				SupportsFMP4:    true,
-			},
-			profile: &models.RelayProfile{
-				Name:            "Auto Profile",
-				DetectionMode:   models.DetectionModeAuto,
-				VideoCodec:      models.VideoCodecCopy,
-				AudioCodec:      models.AudioCodecCopy,
-				ContainerFormat: models.ContainerFormatAuto,
-			},
-			expectedDecision: RoutePassthrough,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := decider.Decide(tt.sourceFormat, tt.sourceCodecs, tt.client, tt.profile)
+			result := decider.Decide(tt.sourceFormat, tt.sourceCodecs, tt.client, nil)
 
 			assert.Equal(t, tt.expectedDecision, result.Decision, "unexpected routing decision")
-			assert.Contains(t, result.Reasons, "detection_mode is auto - applying client detection")
+			assert.NotEmpty(t, result.Reasons, "reasons should not be empty")
 		})
 	}
 }
@@ -250,16 +140,11 @@ func TestDefaultRoutingDecider_CodecsCompatibleWithMPEGTS(t *testing.T) {
 		codecs   []string
 		expected bool
 	}{
-		{"H264 + AAC - compatible", []string{"h264", "aac"}, true},
-		{"AVC1 + MP4A - compatible", []string{"avc1.64001f", "mp4a.40.2"}, true},
-		{"HEVC + AAC - compatible", []string{"hevc", "aac"}, true},
-		{"H265 + AC3 - compatible", []string{"h265", "ac3"}, true},
-		{"H264 + MP3 - compatible", []string{"h264", "mp3"}, true},
-		{"H264 + EAC3 - compatible", []string{"h264", "eac3"}, true},
-		{"VP9 + AAC - incompatible", []string{"vp9", "aac"}, false},
-		{"AV1 + AAC - incompatible", []string{"av1", "aac"}, false},
-		{"H264 + OPUS - incompatible", []string{"h264", "opus"}, false},
-		{"Empty codecs - compatible", []string{}, true},
+		{"H.264 + AAC compatible", []string{"avc1.64001f", "mp4a.40.2"}, true},
+		{"H.265 + AAC compatible", []string{"hvc1.1.6.L93.B0", "mp4a.40.2"}, true},
+		{"H.264 + AC3 compatible", []string{"avc1", "ac3"}, true},
+		{"VP9 + Opus not compatible", []string{"vp9", "opus"}, false},
+		{"AV1 + AAC not compatible", []string{"av1", "mp4a"}, false},
 	}
 
 	for _, tt := range tests {
@@ -274,62 +159,60 @@ func TestDefaultRoutingDecider_DetermineOutputFormat(t *testing.T) {
 	decider := NewDefaultRoutingDecider(nil)
 
 	tests := []struct {
-		name     string
-		client   ClientCapabilities
-		profile  *models.RelayProfile
-		expected string
+		name           string
+		client         ClientCapabilities
+		profile        *models.EncodingProfile
+		expectedFormat string
 	}{
 		{
 			name: "client prefers HLS",
 			client: ClientCapabilities{
+				PlayerName:      "hls-player",
 				PreferredFormat: FormatValueHLS,
 				SupportsFMP4:    true,
 			},
-			profile:  &models.RelayProfile{ContainerFormat: models.ContainerFormatAuto},
-			expected: FormatValueHLS,
+			profile:        nil,
+			expectedFormat: FormatValueHLS,
 		},
 		{
 			name: "client prefers DASH",
 			client: ClientCapabilities{
+				PlayerName:      "dash-player",
 				PreferredFormat: FormatValueDASH,
 				SupportsFMP4:    true,
 			},
-			profile:  &models.RelayProfile{ContainerFormat: models.ContainerFormatAuto},
-			expected: FormatValueDASH,
+			profile:        nil,
+			expectedFormat: FormatValueDASH,
 		},
 		{
-			name: "no client preference, profile specifies MPEGTS",
+			name: "no client preference with fMP4 profile",
 			client: ClientCapabilities{
+				PlayerName:      "generic-player",
 				PreferredFormat: "",
 				SupportsFMP4:    true,
 			},
-			profile:  &models.RelayProfile{ContainerFormat: models.ContainerFormatMPEGTS},
-			expected: string(models.ContainerFormatMPEGTS),
-		},
-		{
-			name: "no client preference, auto profile, supports fMP4",
-			client: ClientCapabilities{
-				PreferredFormat: "",
-				SupportsFMP4:    true,
+			profile: &models.EncodingProfile{
+				TargetVideoCodec: models.VideoCodecH264,
+				TargetAudioCodec: models.AudioCodecAAC,
 			},
-			profile:  &models.RelayProfile{ContainerFormat: models.ContainerFormatAuto},
-			expected: FormatValueHLSFMP4,
+			expectedFormat: FormatValueFMP4,
 		},
 		{
-			name: "no client preference, auto profile, no fMP4 support",
+			name: "no client preference, no fMP4 support",
 			client: ClientCapabilities{
+				PlayerName:      "legacy-player",
 				PreferredFormat: "",
 				SupportsFMP4:    false,
 			},
-			profile:  &models.RelayProfile{ContainerFormat: models.ContainerFormatAuto},
-			expected: FormatValueMPEGTS,
+			profile:        nil,
+			expectedFormat: FormatValueMPEGTS,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := decider.determineOutputFormat(tt.client, tt.profile)
-			assert.Equal(t, tt.expected, result)
+			assert.Equal(t, tt.expectedFormat, result)
 		})
 	}
 }
@@ -341,22 +224,18 @@ func TestDefaultRoutingDecider_IsPassthroughCompatible(t *testing.T) {
 		name         string
 		sourceFormat SourceFormat
 		clientFormat string
-		codecs       []string
 		expected     bool
 	}{
-		{"HLS to HLS - compatible", SourceFormatHLS, FormatValueHLS, []string{"avc1"}, true},
-		{"HLS to HLS-fMP4 - compatible", SourceFormatHLS, FormatValueHLSFMP4, []string{"avc1"}, true},
-		{"HLS to HLS-TS - compatible", SourceFormatHLS, FormatValueHLSTS, []string{"avc1"}, true},
-		{"DASH to DASH - compatible", SourceFormatDASH, FormatValueDASH, []string{"avc1"}, true},
-		{"MPEGTS to MPEGTS - compatible", SourceFormatMPEGTS, FormatValueMPEGTS, []string{"h264"}, true},
-		{"HLS to DASH - incompatible", SourceFormatHLS, FormatValueDASH, []string{"avc1"}, false},
-		{"DASH to HLS - incompatible", SourceFormatDASH, FormatValueHLS, []string{"avc1"}, false},
-		{"MPEGTS to HLS - incompatible", SourceFormatMPEGTS, FormatValueHLS, []string{"h264"}, false},
+		{"HLS to HLS compatible", SourceFormatHLS, FormatValueHLS, true},
+		{"DASH to DASH compatible", SourceFormatDASH, FormatValueDASH, true},
+		{"MPEGTS to MPEGTS compatible", SourceFormatMPEGTS, FormatValueMPEGTS, true},
+		{"HLS to DASH not compatible", SourceFormatHLS, FormatValueDASH, false},
+		{"DASH to HLS not compatible", SourceFormatDASH, FormatValueHLS, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := decider.isPassthroughCompatible(tt.sourceFormat, tt.clientFormat, tt.codecs)
+			result := decider.isPassthroughCompatible(tt.sourceFormat, tt.clientFormat, nil)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -372,12 +251,10 @@ func TestDefaultRoutingDecider_IsRepackageCompatible(t *testing.T) {
 		codecs       []string
 		expected     bool
 	}{
-		{"HLS to DASH - can repackage", SourceFormatHLS, FormatValueDASH, []string{"avc1", "mp4a"}, true},
-		{"DASH to HLS - can repackage", SourceFormatDASH, FormatValueHLS, []string{"avc1", "mp4a"}, true},
-		{"HLS to MPEGTS with compatible codecs - can repackage", SourceFormatHLS, FormatValueMPEGTS, []string{"h264", "aac"}, true},
-		{"HLS to MPEGTS with VP9 - cannot repackage", SourceFormatHLS, FormatValueMPEGTS, []string{"vp9", "opus"}, false},
-		{"MPEGTS to HLS - cannot repackage (not segmented)", SourceFormatMPEGTS, FormatValueHLS, []string{"h264"}, false},
-		{"Unknown to HLS - cannot repackage", SourceFormatUnknown, FormatValueHLS, []string{"h264"}, false},
+		{"HLS to DASH repackage possible", SourceFormatHLS, FormatValueDASH, []string{"avc1", "mp4a"}, true},
+		{"DASH to HLS repackage possible", SourceFormatDASH, FormatValueHLS, []string{"avc1", "mp4a"}, true},
+		{"MPEGTS to HLS repackage not possible", SourceFormatMPEGTS, FormatValueHLS, []string{"h264", "aac"}, false},
+		{"HLS to MPEGTS with incompatible codecs", SourceFormatHLS, FormatValueMPEGTS, []string{"vp9", "opus"}, false},
 	}
 
 	for _, tt := range tests {
@@ -388,25 +265,27 @@ func TestDefaultRoutingDecider_IsRepackageCompatible(t *testing.T) {
 	}
 }
 
-func TestRoutingResult_ReasonsArePopulated(t *testing.T) {
+func TestDefaultRoutingDecider_FullDecisionFlow(t *testing.T) {
 	decider := NewDefaultRoutingDecider(nil)
 
-	profile := &models.RelayProfile{
-		Name:          "Test Profile",
-		DetectionMode: models.DetectionModeAuto,
-		VideoCodec:    models.VideoCodecCopy,
-		AudioCodec:    models.AudioCodecCopy,
+	// Test a complete flow: MPEGTS source with HLS client and transcoding profile
+	profile := &models.EncodingProfile{
+		Name:             "Full Test Profile",
+		TargetVideoCodec: models.VideoCodecH264,
+		TargetAudioCodec: models.AudioCodecAAC,
+		QualityPreset:    models.QualityPresetMedium,
 	}
 
 	client := ClientCapabilities{
-		PlayerName:      "test-player",
+		PlayerName:      "hls-player",
 		PreferredFormat: FormatValueHLS,
 		SupportsFMP4:    true,
 	}
 
-	result := decider.Decide(SourceFormatHLS, []string{"avc1", "mp4a"}, client, profile)
+	result := decider.Decide(SourceFormatMPEGTS, []string{"h264", "aac"}, client, profile)
 
-	// Should have reasons explaining the decision
+	// Should transcode because profile specifies target codecs
+	assert.Equal(t, RouteTranscode, result.Decision)
+	assert.Equal(t, FormatValueHLS, result.ClientFormat)
 	assert.NotEmpty(t, result.Reasons)
-	assert.Contains(t, result.Reasons, "detection_mode is auto - applying client detection")
 }

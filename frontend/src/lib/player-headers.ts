@@ -13,6 +13,9 @@
  *   - "mpegts.js" - mpegts.js player (prefers MPEG-TS)
  *   - "hls.js" - hls.js player (prefers HLS with fMP4)
  *   - "hls.js:ts" - hls.js player with explicit TS preference
+ *
+ * NOTE: Player detection rules are now configurable via database-backed
+ * ClientDetectionRules. See /api/v1/client-detection-rules for the API.
  */
 
 /**
@@ -20,24 +23,6 @@
  * Must match the backend constant in internal/relay/default_client_detector.go
  */
 export const PLAYER_HEADER_NAME = 'X-Tvarr-Player';
-
-/**
- * Known player identifiers.
- * These must match the xTvarrPlayerFormats map in default_client_detector.go
- */
-export const PlayerNames = {
-  MPEGTS_JS: 'mpegts.js',
-  HLS_JS: 'hls.js',
-  VIDEO_JS: 'video.js',
-  EXOPLAYER: 'exoplayer',
-  AVPLAYER: 'avplayer',
-  VLC: 'vlc',
-  KODI: 'kodi',
-  SHAKA: 'shaka',
-  DASH_JS: 'dash.js',
-} as const;
-
-export type PlayerName = (typeof PlayerNames)[keyof typeof PlayerNames];
 
 /**
  * Format override values.
@@ -60,7 +45,7 @@ export type FormatValue = (typeof FormatValues)[keyof typeof FormatValues];
  * @param formatOverride - Optional format preference (e.g., "ts", "fmp4")
  * @returns Header value string (e.g., "mpegts.js" or "hls.js:fmp4")
  */
-export function buildPlayerHeader(playerName: PlayerName, formatOverride?: FormatValue): string {
+export function buildPlayerHeader(playerName: string, formatOverride?: FormatValue): string {
   if (formatOverride) {
     return `${playerName}:${formatOverride}`;
   }
@@ -75,7 +60,7 @@ export function buildPlayerHeader(playerName: PlayerName, formatOverride?: Forma
  * @returns Headers object with X-Tvarr-Player header
  */
 export function buildPlayerHeaders(
-  playerName: PlayerName,
+  playerName: string,
   formatOverride?: FormatValue
 ): Record<string, string> {
   return {

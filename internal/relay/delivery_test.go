@@ -98,7 +98,7 @@ func TestSelectDelivery(t *testing.T) {
 		name         string
 		sourceFormat SourceFormat
 		clientFormat ClientFormat
-		profile      *models.RelayProfile
+		profile      *models.EncodingProfile
 		expected     DeliveryDecision
 	}{
 		// Profile requires transcoding - always transcode
@@ -106,18 +106,11 @@ func TestSelectDelivery(t *testing.T) {
 			name:         "profile requires video transcode",
 			sourceFormat: SourceFormatHLS,
 			clientFormat: ClientFormatHLS,
-			profile:      &models.RelayProfile{VideoCodec: models.VideoCodecH264, AudioCodec: models.AudioCodecCopy},
-			expected:     DeliveryTranscode,
-		},
-		{
-			name:         "profile requires audio transcode",
-			sourceFormat: SourceFormatHLS,
-			clientFormat: ClientFormatHLS,
-			profile:      &models.RelayProfile{VideoCodec: models.VideoCodecCopy, AudioCodec: models.AudioCodecAAC},
+			profile:      &models.EncodingProfile{TargetVideoCodec: models.VideoCodecH264, TargetAudioCodec: models.AudioCodecAAC},
 			expected:     DeliveryTranscode,
 		},
 
-		// No profile or copy profile - format matching
+		// No profile - format matching
 		{
 			name:         "HLS to HLS - passthrough",
 			sourceFormat: SourceFormatHLS,
@@ -137,13 +130,6 @@ func TestSelectDelivery(t *testing.T) {
 			sourceFormat: SourceFormatMPEGTS,
 			clientFormat: ClientFormatMPEGTS,
 			profile:      nil,
-			expected:     DeliveryPassthrough,
-		},
-		{
-			name:         "HLS to HLS with copy profile - passthrough",
-			sourceFormat: SourceFormatHLS,
-			clientFormat: ClientFormatHLS,
-			profile:      &models.RelayProfile{VideoCodec: models.VideoCodecCopy, AudioCodec: models.AudioCodecCopy},
 			expected:     DeliveryPassthrough,
 		},
 
@@ -211,15 +197,15 @@ func TestNewDeliveryContext(t *testing.T) {
 		Mode:         StreamModePassthroughHLS,
 	}
 	clientFormat := ClientFormatDASH
-	profile := &models.RelayProfile{
-		VideoCodec: models.VideoCodecCopy,
-		AudioCodec: models.AudioCodecCopy,
+	// EncodingProfile with no target codecs means no transcoding needed
+	profile := &models.EncodingProfile{
+		Name: "test-profile",
 	}
 
 	ctx := NewDeliveryContext(source, clientFormat, profile)
 
 	assert.Equal(t, source, ctx.Source)
 	assert.Equal(t, clientFormat, ctx.ClientFormat)
-	assert.Equal(t, profile, ctx.Profile)
-	assert.Equal(t, DeliveryRepackage, ctx.Decision) // HLS to DASH with copy profile = repackage
+	assert.Equal(t, profile, ctx.EncodingProfile)
+	assert.Equal(t, DeliveryRepackage, ctx.Decision) // HLS to DASH with no transcoding = repackage
 }

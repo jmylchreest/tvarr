@@ -89,6 +89,36 @@ type CaptureReference struct {
 func (v *CaptureReference) node()        {}
 func (v *CaptureReference) actionValue() {}
 
+// DynamicFieldReference represents a reference to a dynamically resolved field.
+// Supports two syntaxes:
+//   - Legacy: @prefix:parameter (e.g., @header_req:x-video-codec)
+//   - Unified: @dynamic(path):key (e.g., @dynamic(request.headers):x-video-codec)
+type DynamicFieldReference struct {
+	// For legacy syntax (@prefix:parameter)
+	Prefix    string // e.g., "header_req"
+	Parameter string // e.g., "x-video-codec"
+
+	// For unified syntax (@dynamic(path):key)
+	Path string // e.g., "request.headers" (empty for legacy syntax)
+	Key  string // e.g., "x-video-codec" (empty for legacy syntax)
+}
+
+// IsUnified returns true if this uses the unified @dynamic(path):key syntax.
+func (v *DynamicFieldReference) IsUnified() bool {
+	return v.Path != ""
+}
+
+// String returns the string representation of the dynamic reference.
+func (v *DynamicFieldReference) String() string {
+	if v.IsUnified() {
+		return "@dynamic(" + v.Path + "):" + v.Key
+	}
+	return "@" + v.Prefix + ":" + v.Parameter
+}
+
+func (v *DynamicFieldReference) node()        {}
+func (v *DynamicFieldReference) actionValue() {}
+
 // ExtendedExpression represents a complete expression that may include
 // both conditions and actions.
 type ExtendedExpression interface {

@@ -8,23 +8,28 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+
+	"github.com/jmylchreest/tvarr/internal/codec"
 )
 
-// OutputFormatType represents output container formats
-type OutputFormatType string
+// OutputFormatType represents output container formats.
+// Deprecated: Use codec.OutputFormat instead.
+type OutputFormatType = codec.OutputFormat
 
+// Output format constants - use codec package.
 const (
-	FormatMPEGTS  OutputFormatType = "mpegts"
-	FormatHLS     OutputFormatType = "hls"
-	FormatFLV     OutputFormatType = "flv"
-	FormatMP4     OutputFormatType = "mp4"
-	FormatFMP4    OutputFormatType = "fmp4" // Fragmented MP4 (CMAF)
-	FormatMKV     OutputFormatType = "matroska"
-	FormatWebM    OutputFormatType = "webm"
-	FormatUnknown OutputFormatType = ""
+	FormatMPEGTS  = codec.FormatMPEGTS
+	FormatHLS     = codec.FormatHLS
+	FormatFLV     = codec.FormatFLV
+	FormatMP4     = codec.FormatMP4
+	FormatFMP4    = codec.FormatFMP4
+	FormatMKV     = codec.FormatMKV
+	FormatWebM    = codec.FormatWebM
+	FormatUnknown = codec.FormatUnknown
 )
 
-// CodecFamily represents the base codec family (independent of encoder implementation)
+// CodecFamily represents the base codec family (independent of encoder implementation).
+// This is kept for backwards compatibility - new code should use codec.Video or codec.Audio.
 type CodecFamily string
 
 const (
@@ -47,71 +52,39 @@ type BitstreamFilterInfo struct {
 	Reason   string // Why this filter is needed
 }
 
-// encoderToCodecFamily maps encoder names to their codec families
-var encoderToCodecFamily = map[string]CodecFamily{
-	// H.264 encoders
-	"libx264":           CodecFamilyH264,
-	"h264_nvenc":        CodecFamilyH264,
-	"h264_qsv":          CodecFamilyH264,
-	"h264_vaapi":        CodecFamilyH264,
-	"h264_videotoolbox": CodecFamilyH264,
-	"h264_amf":          CodecFamilyH264,
-	"h264_mf":           CodecFamilyH264,
-	"h264_omx":          CodecFamilyH264,
-	"h264_v4l2m2m":      CodecFamilyH264,
-	"copy":              CodecFamilyUnknown, // Need to detect source
-
-	// HEVC/H.265 encoders
-	"libx265":           CodecFamilyHEVC,
-	"hevc_nvenc":        CodecFamilyHEVC,
-	"hevc_qsv":          CodecFamilyHEVC,
-	"hevc_vaapi":        CodecFamilyHEVC,
-	"hevc_videotoolbox": CodecFamilyHEVC,
-	"hevc_amf":          CodecFamilyHEVC,
-	"hevc_mf":           CodecFamilyHEVC,
-
-	// VP9 encoders
-	"libvpx-vp9": CodecFamilyVP9,
-	"vp9_vaapi":  CodecFamilyVP9,
-	"vp9_qsv":    CodecFamilyVP9,
-
-	// AV1 encoders
-	"libaom-av1": CodecFamilyAV1,
-	"libsvtav1":  CodecFamilyAV1,
-	"av1_nvenc":  CodecFamilyAV1,
-	"av1_qsv":    CodecFamilyAV1,
-	"av1_vaapi":  CodecFamilyAV1,
-	"librav1e":   CodecFamilyAV1,
-
-	// Audio encoders
-	"aac":        CodecFamilyAAC,
-	"libfdk_aac": CodecFamilyAAC,
-	"ac3":        CodecFamilyAC3,
-	"eac3":       CodecFamilyEAC3,
-	"libmp3lame": CodecFamilyMP3,
-	"libopus":    CodecFamilyOpus,
-}
-
-// GetCodecFamily returns the codec family for an encoder name
+// GetCodecFamily returns the codec family for an encoder name.
+// Uses the unified codec package for normalization.
 func GetCodecFamily(encoder string) CodecFamily {
-	encoder = strings.ToLower(encoder)
-	if family, ok := encoderToCodecFamily[encoder]; ok {
-		return family
+	if encoder == "" || encoder == "copy" {
+		return CodecFamilyUnknown
 	}
-	// Try to infer from encoder name
-	if strings.Contains(encoder, "264") || strings.Contains(encoder, "avc") {
+
+	// Use codec package to normalize the encoder name
+	normalized := codec.Normalize(encoder)
+
+	// Map normalized names to codec families
+	switch normalized {
+	case "h264":
 		return CodecFamilyH264
-	}
-	if strings.Contains(encoder, "265") || strings.Contains(encoder, "hevc") {
+	case "h265":
 		return CodecFamilyHEVC
-	}
-	if strings.Contains(encoder, "vp9") {
+	case "vp9":
 		return CodecFamilyVP9
-	}
-	if strings.Contains(encoder, "av1") {
+	case "av1":
 		return CodecFamilyAV1
+	case "aac":
+		return CodecFamilyAAC
+	case "ac3":
+		return CodecFamilyAC3
+	case "eac3":
+		return CodecFamilyEAC3
+	case "mp3":
+		return CodecFamilyMP3
+	case "opus":
+		return CodecFamilyOpus
+	default:
+		return CodecFamilyUnknown
 	}
-	return CodecFamilyUnknown
 }
 
 // GetVideoBitstreamFilter returns the appropriate video bitstream filter
@@ -337,40 +310,10 @@ func (d *CodecDetector) DetectSourceCodecs(ctx context.Context, streamURL string
 // MapFFprobeCodecToFamily maps ffprobe codec names to codec families.
 // Use this when you have a codec name from ffprobe output (e.g., "h264", "aac")
 // and need to compare it with an encoder-based codec family.
+// Uses the unified codec package for parsing.
 func MapFFprobeCodecToFamily(codecName string) CodecFamily {
-	codecName = strings.ToLower(codecName)
-
-	// Direct mappings
-	switch codecName {
-	case "h264", "avc", "avc1":
-		return CodecFamilyH264
-	case "hevc", "h265", "hev1", "hvc1":
-		return CodecFamilyHEVC
-	case "vp9", "vp09":
-		return CodecFamilyVP9
-	case "av1", "av01":
-		return CodecFamilyAV1
-	case "aac", "mp4a":
-		return CodecFamilyAAC
-	case "ac3", "ac-3", "a52":
-		return CodecFamilyAC3
-	case "eac3", "ec-3":
-		return CodecFamilyEAC3
-	case "mp3", "mp3float":
-		return CodecFamilyMP3
-	case "opus":
-		return CodecFamilyOpus
-	}
-
-	// Pattern matching for variations
-	if strings.Contains(codecName, "264") || strings.Contains(codecName, "avc") {
-		return CodecFamilyH264
-	}
-	if strings.Contains(codecName, "265") || strings.Contains(codecName, "hevc") {
-		return CodecFamilyHEVC
-	}
-
-	return CodecFamilyUnknown
+	// Use GetCodecFamily which internally uses codec.Normalize
+	return GetCodecFamily(codecName)
 }
 
 // SourceMatchesTargetCodec checks if the source codec (from ffprobe) matches the target encoder.
@@ -410,43 +353,25 @@ func ApplyBitstreamFilters(builder *CommandBuilder, bsfInfo BitstreamFilterInfo)
 	return builder
 }
 
-// RequiresAnnexBConversion returns true if the output format requires Annex B NAL format
+// RequiresAnnexBConversion returns true if the output format requires Annex B NAL format.
+// Deprecated: Use outputFormat.RequiresAnnexB() instead.
 func RequiresAnnexBConversion(outputFormat OutputFormatType) bool {
-	switch outputFormat {
-	case FormatMPEGTS, FormatHLS:
-		return true
-	default:
-		return false
-	}
+	return outputFormat.RequiresAnnexB()
 }
 
-// ParseOutputFormat converts a string to OutputFormatType
+// ParseOutputFormat converts a string to OutputFormatType.
+// Deprecated: Use codec.ParseOutputFormat instead.
 func ParseOutputFormat(format string) OutputFormatType {
-	format = strings.ToLower(format)
-	switch format {
-	case "mpegts", "ts":
-		return FormatMPEGTS
-	case "hls", "m3u8":
-		return FormatHLS
-	case "flv":
-		return FormatFLV
-	case "mp4":
-		return FormatMP4
-	case "fmp4", "cmaf":
-		return FormatFMP4
-	case "matroska", "mkv":
-		return FormatMKV
-	case "webm":
-		return FormatWebM
-	default:
-		return FormatUnknown
-	}
+	return codec.ParseOutputFormat(format)
 }
 
-// IsHardwareEncoder returns true if the encoder is a hardware encoder
+// IsHardwareEncoder returns true if the encoder is a hardware encoder.
+// Uses the unified codec package.
 func IsHardwareEncoder(encoder string) bool {
+	// codec.IsEncoder returns true for both lib* prefixed and hardware encoders.
+	// We need to specifically check for hardware encoder suffixes.
 	encoder = strings.ToLower(encoder)
-	hwSuffixes := []string{"_nvenc", "_qsv", "_vaapi", "_videotoolbox", "_amf", "_mf", "_omx", "_v4l2m2m"}
+	hwSuffixes := []string{"_nvenc", "_qsv", "_vaapi", "_videotoolbox", "_amf", "_mf", "_omx", "_v4l2m2m", "_cuvid"}
 	for _, suffix := range hwSuffixes {
 		if strings.HasSuffix(encoder, suffix) {
 			return true

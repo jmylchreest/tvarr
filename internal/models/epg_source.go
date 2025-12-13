@@ -70,11 +70,14 @@ type EpgSource struct {
 	// UserAgent to use when fetching the source (optional).
 	UserAgent string `gorm:"size:512" json:"user_agent,omitempty"`
 
-	// OriginalTimezone is the timezone of the EPG data (e.g., "UTC", "Europe/London").
-	OriginalTimezone string `gorm:"size:50" json:"original_timezone,omitempty"`
+	// DetectedTimezone is the timezone detected from the EPG data (e.g., "+00:00", "+01:00", "Europe/London").
+	// This is auto-detected during ingestion and updated on each ingest. Read-only for users.
+	DetectedTimezone string `gorm:"size:50" json:"detected_timezone,omitempty"`
 
-	// TimeOffset is a manual time offset adjustment (e.g., "+00:00", "-05:00").
-	TimeOffset string `gorm:"size:10" json:"time_offset,omitempty"`
+	// EpgShift is a manual time shift in hours to adjust EPG times (e.g., -2, +1).
+	// Use this when the detected timezone is incorrect or you want to shift all times.
+	// Positive values shift times forward, negative values shift times back.
+	EpgShift int `gorm:"default:0" json:"epg_shift"`
 
 	// Enabled indicates whether this source should be included in ingestion.
 	Enabled bool `gorm:"default:true" json:"enabled"`

@@ -164,7 +164,7 @@ func (m *Manager) FallbackGenerator() *FallbackGenerator {
 // This function is carefully designed to avoid holding the manager lock during slow
 // operations (stream classification, codec probing) to prevent blocking API requests
 // like /api/v1/relay/sessions while a new session is being created.
-func (m *Manager) GetOrCreateSession(ctx context.Context, channelID uuid.UUID, channelName string, streamSourceName string, streamURL string, profile *models.RelayProfile, channelUpdatedAt time.Time) (*RelaySession, error) {
+func (m *Manager) GetOrCreateSession(ctx context.Context, channelID uuid.UUID, channelName string, streamSourceName string, streamURL string, profile *models.EncodingProfile, channelUpdatedAt time.Time) (*RelaySession, error) {
 	// First, check if session already exists (fast path with read lock)
 	m.mu.RLock()
 	if sessionID, ok := m.channelSessions[channelID]; ok {
@@ -450,7 +450,7 @@ func (m *Manager) GetOrProbeCodecInfoWithFreshness(ctx context.Context, streamUR
 
 // createSession creates a new relay session.
 // channelUpdatedAt is used to invalidate stale codec cache entries.
-func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, channelName string, streamSourceName string, streamURL string, profile *models.RelayProfile, channelUpdatedAt time.Time) (*RelaySession, error) {
+func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, channelName string, streamSourceName string, streamURL string, profile *models.EncodingProfile, channelUpdatedAt time.Time) (*RelaySession, error) {
 	// Check circuit breaker
 	cb := m.circuitBreakers.Get(streamURL)
 	if !cb.Allow() {
@@ -479,7 +479,7 @@ func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, channe
 		ChannelName:      channelName,
 		StreamSourceName: streamSourceName,
 		StreamURL:        streamURL,
-		Profile:          profile,
+		EncodingProfile:  profile,
 		Classification:   classification,
 		CachedCodecInfo:  codecInfo,
 		StartedAt:        time.Now(),
@@ -494,13 +494,14 @@ func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, channe
 	session.lastActivity.Store(time.Now())
 	session.idleSince.Store(time.Time{})
 
-	// Initialize fallback controller if enabled in profile
-	if profile != nil && profile.FallbackEnabled && m.fallbackGenerator.IsReady() {
+	// Initialize fallback controller if fallback generator is ready
+	// Note: Fallback settings are now managed at the manager level, not profile level
+	if m.fallbackGenerator != nil && m.fallbackGenerator.IsReady() {
 		session.fallbackGenerator = m.fallbackGenerator
 		session.fallbackController = NewFallbackController(
 			m.fallbackGenerator,
-			profile.FallbackErrorThreshold,
-			time.Duration(profile.FallbackRecoveryInterval)*time.Second,
+			3,    // Default error threshold
+			30,   // Default recovery interval in seconds
 			m.logger.With(slog.String("session_id", session.ID.String())),
 		)
 	}

@@ -1,0 +1,175 @@
+openapi: 3.1.0
+info:
+  title: Stream Proxies API Updates
+  description: Updates to the Stream Proxies API for encoding profile simplification
+  version: 1.0.0
+
+# This file documents CHANGES to the existing Stream Proxies API
+# It does not define the full API, only the modified parts
+
+paths:
+  /stream-proxies:
+    post:
+      summary: Create a new stream proxy (UPDATED)
+      description: |
+        Creates a new stream proxy. Smart defaults are applied:
+        - All available stream sources are pre-selected by default (frontend)
+        - All system filters are pre-selected by default (frontend)
+        - proxy_mode defaults to "smart"
+        - encoding_profile_id is optional (auto-detection when null)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateStreamProxyRequest'
+
+  /stream-proxies/{id}:
+    put:
+      summary: Update a stream proxy (UPDATED)
+      description: |
+        Updates an existing stream proxy.
+
+        CHANGE: relay_profile_id is replaced with encoding_profile_id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStreamProxyRequest'
+
+components:
+  schemas:
+    CreateStreamProxyRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          description: Unique name for the proxy
+        description:
+          type: string
+          maxLength: 1024
+        proxy_mode:
+          type: string
+          enum:
+            - direct
+            - smart
+          default: smart
+          description: |
+            CHANGE: Default changed from "direct" to "smart"
+            - direct: HTTP 302 redirect to source (zero processing)
+            - smart: Intelligent delivery with optional encoding profile
+        encoding_profile_id:
+          type: string
+          pattern: '^[0-9A-HJKMNP-TV-Z]{26}$'
+          nullable: true
+          description: |
+            RENAMED: Was relay_profile_id, now encoding_profile_id
+            Optional encoding profile for forced transcoding.
+            When null, auto-detection handles codec selection.
+        source_ids:
+          type: array
+          items:
+            type: string
+            pattern: '^[0-9A-HJKMNP-TV-Z]{26}$'
+          description: |
+            Stream source IDs to include.
+            FRONTEND CHANGE: Pre-selects all available sources by default
+        filter_ids:
+          type: array
+          items:
+            type: string
+            pattern: '^[0-9A-HJKMNP-TV-Z]{26}$'
+          description: |
+            Filter IDs to apply.
+            FRONTEND CHANGE: Pre-selects all system filters by default
+        # ... other existing fields unchanged
+
+    UpdateStreamProxyRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 1024
+        proxy_mode:
+          type: string
+          enum:
+            - direct
+            - smart
+        encoding_profile_id:
+          type: string
+          pattern: '^[0-9A-HJKMNP-TV-Z]{26}$'
+          nullable: true
+          description: |
+            RENAMED: Was relay_profile_id, now encoding_profile_id
+        # ... other existing fields unchanged
+
+    StreamProxy:
+      type: object
+      description: |
+        CHANGE SUMMARY:
+        - relay_profile_id removed
+        - encoding_profile_id added (same functionality, simpler profile)
+        - proxy_mode default changed to "smart"
+      properties:
+        id:
+          type: string
+          pattern: '^[0-9A-HJKMNP-TV-Z]{26}$'
+        name:
+          type: string
+        description:
+          type: string
+        proxy_mode:
+          type: string
+          enum:
+            - direct
+            - smart
+          default: smart
+        encoding_profile_id:
+          type: string
+          pattern: '^[0-9A-HJKMNP-TV-Z]{26}$'
+          nullable: true
+          description: |
+            RENAMED from relay_profile_id
+            References encoding_profiles table
+        encoding_profile:
+          $ref: './encoding-profiles-api.yaml#/components/schemas/EncodingProfile'
+          description: Populated encoding profile (when expanded)
+        # ... other fields unchanged
+
+  # Migration notes for API consumers
+  x-migration-notes:
+    breaking-changes:
+      - field: relay_profile_id
+        change: renamed
+        new_name: encoding_profile_id
+        migration: |
+          The relay_profile_id field has been renamed to encoding_profile_id.
+          The referenced table has changed from relay_profiles to encoding_profiles.
+          Data is automatically migrated; existing proxy configurations continue to work.
+
+    removed-endpoints:
+      - path: /relay-profiles
+        reason: Replaced by /encoding-profiles
+        migration: Use /encoding-profiles instead
+
+      - path: /relay-profile-mappings
+        reason: Built-in client detection replaces user-configurable mappings
+        migration: |
+          Client detection is now automatic. Use X-Video-Codec and X-Audio-Codec
+          headers for explicit codec requests instead of custom rules.
+
+    new-endpoints:
+      - path: /encoding-profiles
+        description: Simplified encoding profile management
+        see: ./encoding-profiles-api.yaml
+
+    default-changes:
+      - field: proxy_mode
+        old_default: direct
+        new_default: smart
+        reason: Smart mode with auto-detection covers most use cases

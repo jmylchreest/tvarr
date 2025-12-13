@@ -19,6 +19,72 @@ type Helper interface {
 	Process(value, args string) (string, error)
 }
 
+// ContextAwareHelper is an extended helper interface that receives dynamic context.
+// Use this for helpers that need access to request headers, query params, etc.
+type ContextAwareHelper interface {
+	Helper
+
+	// ProcessWithContext processes the helper with dynamic context.
+	// The context map structure is:
+	//   {
+	//     "headers": {"request": {"X-Video-Codec": "h265", ...}},
+	//     "query": {"format": "hls", ...},
+	//     ...
+	//   }
+	ProcessWithContext(value, args string, ctx map[string]any) (string, error)
+}
+
+// HelperContext holds dynamic context for helper resolution.
+type HelperContext struct {
+	// Headers contains HTTP headers keyed by direction ("request", "response").
+	Headers map[string]map[string]string
+
+	// Query contains URL query parameters.
+	Query map[string]string
+
+	// Extra holds any additional context-specific data.
+	Extra map[string]any
+}
+
+// NewHelperContext creates a new empty helper context.
+func NewHelperContext() *HelperContext {
+	return &HelperContext{
+		Headers: make(map[string]map[string]string),
+		Query:   make(map[string]string),
+		Extra:   make(map[string]any),
+	}
+}
+
+// SetRequestHeaders sets request headers in the context.
+func (c *HelperContext) SetRequestHeaders(headers map[string]string) *HelperContext {
+	c.Headers["request"] = headers
+	return c
+}
+
+// GetRequestHeader retrieves a request header value (case-insensitive).
+func (c *HelperContext) GetRequestHeader(name string) (string, bool) {
+	if c.Headers == nil || c.Headers["request"] == nil {
+		return "", false
+	}
+	// HTTP headers are case-insensitive, so normalize
+	nameLower := strings.ToLower(name)
+	for k, v := range c.Headers["request"] {
+		if strings.ToLower(k) == nameLower {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// ToMap converts the context to a generic map for ContextAwareHelper.
+func (c *HelperContext) ToMap() map[string]any {
+	return map[string]any{
+		"headers": c.Headers,
+		"query":   c.Query,
+		"extra":   c.Extra,
+	}
+}
+
 // HelperRegistry manages registered helpers.
 type HelperRegistry struct {
 	mu      sync.RWMutex
@@ -50,6 +116,12 @@ func (r *HelperRegistry) Get(name string) (Helper, bool) {
 // Process processes a value, resolving any helper syntax.
 // If the value starts with @, it's treated as a helper invocation.
 func (r *HelperRegistry) Process(value string) (string, error) {
+	return r.ProcessWithContext(value, nil)
+}
+
+// ProcessWithContext processes a value with dynamic context.
+// Context-aware helpers will receive the context; regular helpers ignore it.
+func (r *HelperRegistry) ProcessWithContext(value string, ctx *HelperContext) (string, error) {
 	isHelper, name, args := ParseHelperSyntax(value)
 	if !isHelper {
 		return value, nil
@@ -59,6 +131,11 @@ func (r *HelperRegistry) Process(value string) (string, error) {
 	if !ok {
 		// Unknown helper - return original value
 		return value, nil
+	}
+
+	// Check if helper is context-aware
+	if ctxHelper, ok := helper.(ContextAwareHelper); ok && ctx != nil {
+		return ctxHelper.ProcessWithContext(args, "", ctx.ToMap())
 	}
 
 	return helper.Process(args, "")
@@ -346,6 +423,8 @@ func DefaultRegistry() *HelperRegistry {
 		defaultRegistry = NewHelperRegistry()
 		defaultRegistry.Register(NewTimeHelper())
 		// Logo helper requires a resolver, so it's not registered by default
+		// Note: Request context access is now handled via @dynamic(request.headers):key
+		// and @dynamic(request.query):key syntax in the expression engine.
 	})
 	return defaultRegistry
 }
@@ -421,6 +500,9 @@ func ProcessTimeHelper(value string) (string, error) {
 // (without external context), while leaving deferred helpers untouched.
 // Currently processes: @time:*
 // Leaves unchanged: @logo:* (requires baseURL from later stages)
+//
+// Note: Request context access has been moved to the expression engine's
+// @dynamic(request.headers):key and @dynamic(request.query):key syntax.
 func ProcessImmediateHelpers(value string) (string, error) {
 	isHelper, name, args := ParseHelperSyntax(value)
 	if !isHelper {
@@ -440,3 +522,7 @@ func ProcessImmediateHelpers(value string) (string, error) {
 		return value, nil
 	}
 }
+
+// DEPRECATED: The @req: helper syntax has been replaced by the unified
+// @dynamic(request.headers):key and @dynamic(request.query):key syntax.
+// See the expression engine's DynamicContext for details.

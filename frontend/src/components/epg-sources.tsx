@@ -70,6 +70,65 @@ import {
   COMMON_CRON_TEMPLATES,
 } from '@/lib/cron-validation';
 
+// Helper to get UTC offset for a timezone string
+function getTimezoneOffset(timezone: string): string | null {
+  if (!timezone) return null;
+
+  // If it's already an offset like "+01:00" or "-05:00", return as-is
+  if (/^[+-]\d{2}:\d{2}$/.test(timezone)) {
+    return timezone;
+  }
+
+  // Try to get the offset for a named timezone (e.g., "Europe/Amsterdam")
+  try {
+    const now = new Date();
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      timeZoneName: 'shortOffset',
+    });
+    const parts = formatter.formatToParts(now);
+    const offsetPart = parts.find((p) => p.type === 'timeZoneName');
+    if (offsetPart) {
+      // Convert "GMT+1" to "+01:00" format
+      const match = offsetPart.value.match(/GMT([+-]?)(\d+)?(?::(\d+))?/);
+      if (match) {
+        const sign = match[1] || '+';
+        const hours = match[2] ? match[2].padStart(2, '0') : '00';
+        const minutes = match[3] ? match[3].padStart(2, '0') : '00';
+        return `${sign}${hours}:${minutes}`;
+      }
+      return offsetPart.value;
+    }
+  } catch {
+    // Invalid timezone, return null
+  }
+  return null;
+}
+
+// Format detected timezone with offset for display
+function formatDetectedTimezone(timezone: string | undefined): { display: string; tooltip: string } {
+  if (!timezone) {
+    return { display: 'Not detected yet', tooltip: '' };
+  }
+
+  const offset = getTimezoneOffset(timezone);
+
+  // If the timezone is already an offset format, just display it
+  if (/^[+-]\d{2}:\d{2}$/.test(timezone)) {
+    return { display: `UTC${timezone}`, tooltip: '' };
+  }
+
+  // For named timezones, show name with offset
+  if (offset) {
+    return {
+      display: `${timezone} (UTC${offset})`,
+      tooltip: `UTC offset: ${offset}`,
+    };
+  }
+
+  return { display: timezone, tooltip: '' };
+}
+
 interface LoadingState {
   sources: boolean;
   create: boolean;
@@ -140,8 +199,7 @@ function CreateEpgSourceSheet({
     source_type: 'xtream',
     url: '',
     update_cron: '0 0 */6 * * *',
-    original_timezone: 'UTC',
-    time_offset: '+00:00',
+    epg_shift: 0,
     username: '',
     password: '',
     api_method: 'stream_id',
@@ -158,8 +216,7 @@ function CreateEpgSourceSheet({
         source_type: 'xtream',
         url: '',
         update_cron: '0 0 */6 * * *',
-        original_timezone: 'UTC',
-        time_offset: '+00:00',
+        epg_shift: 0,
         username: '',
         password: '',
         api_method: 'stream_id',
@@ -297,29 +354,35 @@ function CreateEpgSourceSheet({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="original_timezone">Original Timezone</Label>
-              <Input
-                id="original_timezone"
-                value={formData.original_timezone || ''}
-                onChange={(e) => setFormData({ ...formData, original_timezone: e.target.value })}
-                placeholder="UTC"
-                disabled={loading}
-                autoComplete="off"
-              />
+          <div className="space-y-2">
+            <div className="flex items-center gap-1">
+              <Label htmlFor="epg_shift">EPG Time Shift (hours)</Label>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="sm" className="h-5 w-5 p-0 text-muted-foreground">
+                    ?
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  <p className="text-sm">
+                    EPG times are normalised to UTC in the database. This shift is applied after
+                    conversion to UTC. Use positive values to shift forward, negative to shift back.
+                  </p>
+                </TooltipContent>
+              </Tooltip>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="time_offset">Time Offset</Label>
-              <Input
-                id="time_offset"
-                value={formData.time_offset || ''}
-                onChange={(e) => setFormData({ ...formData, time_offset: e.target.value })}
-                placeholder="+00:00"
-                disabled={loading}
-                autoComplete="off"
-              />
-            </div>
+            <Input
+              id="epg_shift"
+              type="number"
+              value={formData.epg_shift ?? 0}
+              onChange={(e) => setFormData({ ...formData, epg_shift: parseInt(e.target.value) || 0 })}
+              placeholder="0"
+              disabled={loading}
+              autoComplete="off"
+            />
+            <p className="text-xs text-muted-foreground">
+              Adjust normalised UTC times (e.g., +2 shifts times 2 hours forward)
+            </p>
           </div>
 
           <div className="space-y-2">
@@ -431,8 +494,7 @@ function EditEpgSourceSheet({
     source_type: 'xtream',
     url: '',
     update_cron: '0 0 */6 * * *',
-    original_timezone: 'UTC',
-    time_offset: '+00:00',
+    epg_shift: 0,
     username: '',
     password: '',
     api_method: 'stream_id',
@@ -448,8 +510,7 @@ function EditEpgSourceSheet({
         source_type: source.source_type,
         url: source.url,
         update_cron: source.update_cron || defaultCron,
-        original_timezone: source.original_timezone || 'UTC',
-        time_offset: source.time_offset || '+00:00',
+        epg_shift: source.epg_shift ?? 0,
         username: source.username || '',
         password: source.password || '',
         api_method: source.api_method || 'stream_id',
@@ -594,26 +655,43 @@ function EditEpgSourceSheet({
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="edit-original_timezone">Original Timezone</Label>
-              <Input
-                id="edit-original_timezone"
-                value={formData.original_timezone || ''}
-                onChange={(e) => setFormData({ ...formData, original_timezone: e.target.value })}
-                placeholder="UTC"
-                disabled={loading}
-                autoComplete="off"
-              />
+              <Label htmlFor="edit-detected_timezone">Detected Timezone</Label>
+              <div className="flex h-9 items-center px-3 py-2 text-sm border border-input bg-muted rounded-md">
+                {formatDetectedTimezone(source?.detected_timezone).display}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Auto-detected from EPG data during ingestion
+              </p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-time_offset">Time Offset</Label>
+              <div className="flex items-center gap-1">
+                <Label htmlFor="edit-epg_shift">EPG Time Shift (hours)</Label>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="ghost" size="sm" className="h-5 w-5 p-0 text-muted-foreground">
+                      ?
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    <p className="text-sm">
+                      EPG times are normalised to UTC in the database. This shift is applied after
+                      conversion to UTC. Use positive values to shift forward, negative to shift back.
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </div>
               <Input
-                id="edit-time_offset"
-                value={formData.time_offset || ''}
-                onChange={(e) => setFormData({ ...formData, time_offset: e.target.value })}
-                placeholder="+00:00"
+                id="edit-epg_shift"
+                type="number"
+                value={formData.epg_shift ?? 0}
+                onChange={(e) => setFormData({ ...formData, epg_shift: parseInt(e.target.value) || 0 })}
+                placeholder="0"
                 disabled={loading}
                 autoComplete="off"
               />
+              <p className="text-xs text-muted-foreground">
+                Adjust normalised UTC times (e.g., +2 shifts times 2 hours forward)
+              </p>
             </div>
           </div>
 

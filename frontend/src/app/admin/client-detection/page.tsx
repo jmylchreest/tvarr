@@ -1,5 +1,7 @@
-import { RelayProfileMappings } from '@/components/relay-profile-mappings';
+'use client';
+
+import { ClientDetectionRules } from '@/components/client-detection-rules';
 
 export default function ClientDetectionPage() {
-  return <RelayProfileMappings />;
+  return <ClientDetectionRules />;
 }

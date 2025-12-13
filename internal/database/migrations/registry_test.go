@@ -26,11 +26,18 @@ func setupTestDB(t *testing.T) *gorm.DB {
 func TestAllMigrations_ReturnsExpectedCount(t *testing.T) {
 	migrations := AllMigrations()
 
-	// Compacted to 3 migrations:
+	// Migrations:
 	// 001: Create all database tables (schema)
 	// 002: Insert default filters, rules, profiles, and mappings (system data)
-	// 003: Purge soft-deleted relay profiles and fix encoder names to codec names
-	assert.Len(t, migrations, 3)
+	// 003: Legacy cleanup (no-op)
+	// 004: Add EncodingProfile model
+	// 005: Add ClientDetectionRule model
+	// 006: Add explicit codec header detection rules
+	// 007: Rename EPG timezone fields
+	// 008: Remove redundant priority column from filters table
+	// 009: Add dynamic codec header fields to client detection rules
+	// 010: Update client detection rules to use @dynamic() syntax for user-agent
+	assert.Len(t, migrations, 10)
 }
 
 func TestAllMigrations_VersionsAreUnique(t *testing.T) {
@@ -100,10 +107,10 @@ func TestMigrator_Status(t *testing.T) {
 	migrator := NewMigrator(db, nil)
 	migrator.RegisterAll(AllMigrations())
 
-	// Before running migrations (compacted to 3 migrations)
+	// Before running migrations (10 migrations total)
 	statuses, err := migrator.Status(ctx)
 	require.NoError(t, err)
-	assert.Len(t, statuses, 3)
+	assert.Len(t, statuses, 10)
 
 	for _, s := range statuses {
 		assert.False(t, s.Applied)
@@ -136,8 +143,73 @@ func TestMigrator_Down_RollsBackLastMigration(t *testing.T) {
 	// After running all migrations, tables should exist
 	assert.True(t, db.Migrator().HasTable("filters"))
 	assert.True(t, db.Migrator().HasTable("data_mapping_rules"))
-	assert.True(t, db.Migrator().HasTable("relay_profiles"))
-	assert.True(t, db.Migrator().HasTable("relay_profile_mappings"))
+	assert.True(t, db.Migrator().HasTable("encoding_profiles"))
+	assert.True(t, db.Migrator().HasTable("client_detection_rules"))
+
+	// Roll back migration 010 (update user-agent syntax)
+	// This reverts expression syntax in client detection rules
+	err = migrator.Down(ctx)
+	require.NoError(t, err)
+
+	// Tables still exist after rolling back user-agent syntax update
+	assert.True(t, db.Migrator().HasTable("filters"))
+	assert.True(t, db.Migrator().HasTable("client_detection_rules"))
+
+	// Roll back migration 009 (dynamic codec header fields)
+	// This removes columns and reverts data, tables remain
+	err = migrator.Down(ctx)
+	require.NoError(t, err)
+
+	// Tables still exist after rolling back dynamic codec headers
+	assert.True(t, db.Migrator().HasTable("filters"))
+	assert.True(t, db.Migrator().HasTable("client_detection_rules"))
+
+	// Roll back migration 008 (remove filter priority column)
+	// This only re-adds a column, tables remain
+	err = migrator.Down(ctx)
+	require.NoError(t, err)
+
+	// Tables still exist after rolling back filter priority removal
+	assert.True(t, db.Migrator().HasTable("filters"))
+	assert.True(t, db.Migrator().HasTable("encoding_profiles"))
+	assert.True(t, db.Migrator().HasTable("client_detection_rules"))
+
+	// Roll back migration 007 (EPG timezone field renames)
+	// This only renames columns, tables remain
+	err = migrator.Down(ctx)
+	require.NoError(t, err)
+
+	// Tables still exist after rolling back EPG timezone renames
+	assert.True(t, db.Migrator().HasTable("filters"))
+	assert.True(t, db.Migrator().HasTable("epg_sources"))
+	assert.True(t, db.Migrator().HasTable("client_detection_rules"))
+
+	// Roll back migration 006 (explicit codec header rules)
+	// This only deletes data, tables remain
+	err = migrator.Down(ctx)
+	require.NoError(t, err)
+
+	// Tables still exist after rolling back explicit codec header rules
+	assert.True(t, db.Migrator().HasTable("filters"))
+	assert.True(t, db.Migrator().HasTable("encoding_profiles"))
+	assert.True(t, db.Migrator().HasTable("client_detection_rules"))
+
+	// Roll back migration 005 (client detection)
+	err = migrator.Down(ctx)
+	require.NoError(t, err)
+
+	// Tables still exist after rolling back client detection migration
+	assert.True(t, db.Migrator().HasTable("filters"))
+	assert.True(t, db.Migrator().HasTable("encoding_profiles"))
+	assert.False(t, db.Migrator().HasTable("client_detection_rules"))
+
+	// Roll back migration 004 (encoding profiles)
+	err = migrator.Down(ctx)
+	require.NoError(t, err)
+
+	// Tables still exist after rolling back encoding profile migration
+	assert.True(t, db.Migrator().HasTable("filters"))
+	assert.False(t, db.Migrator().HasTable("encoding_profiles"))
 
 	// Roll back migration 003 (cleanup - no-op down)
 	err = migrator.Down(ctx)
@@ -145,7 +217,6 @@ func TestMigrator_Down_RollsBackLastMigration(t *testing.T) {
 
 	// Tables still exist after rolling back cleanup migration
 	assert.True(t, db.Migrator().HasTable("filters"))
-	assert.True(t, db.Migrator().HasTable("relay_profiles"))
 
 	// Roll back migration 002 (system data)
 	err = migrator.Down(ctx)
@@ -153,7 +224,6 @@ func TestMigrator_Down_RollsBackLastMigration(t *testing.T) {
 
 	// Tables still exist after rolling back system data (only data deleted)
 	assert.True(t, db.Migrator().HasTable("filters"))
-	assert.True(t, db.Migrator().HasTable("relay_profiles"))
 
 	// Roll back migration 001 (schema)
 	err = migrator.Down(ctx)
@@ -162,7 +232,6 @@ func TestMigrator_Down_RollsBackLastMigration(t *testing.T) {
 	// Tables should no longer exist
 	assert.False(t, db.Migrator().HasTable("filters"))
 	assert.False(t, db.Migrator().HasTable("data_mapping_rules"))
-	assert.False(t, db.Migrator().HasTable("relay_profiles"))
 }
 
 func TestMigrator_Pending(t *testing.T) {
@@ -172,10 +241,10 @@ func TestMigrator_Pending(t *testing.T) {
 	migrator := NewMigrator(db, nil)
 	migrator.RegisterAll(AllMigrations())
 
-	// All should be pending initially (compacted to 3 migrations)
+	// All should be pending initially (10 migrations total)
 	pending, err := migrator.Pending(ctx)
 	require.NoError(t, err)
-	assert.Len(t, pending, 3)
+	assert.Len(t, pending, 10)
 
 	// Run migrations
 	err = migrator.Up(ctx)

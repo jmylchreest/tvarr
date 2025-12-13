@@ -428,3 +428,144 @@ func TestXtreamEpgHandler_Ingest_ValidationFailure(t *testing.T) {
 func TestXtreamEpgHandler_ImplementsInterface(t *testing.T) {
 	var _ EpgHandler = (*XtreamEpgHandler)(nil)
 }
+
+// T071: Unit test for Xtream API timezone handling in internal/ingestor/xtream_epg_handler_test.go.
+// Tests the applyTimeOffset function which handles EpgShift adjustments.
+func TestXtreamEpgHandler_TimezoneHandling(t *testing.T) {
+	handler := NewXtreamEpgHandler()
+
+	t.Run("applies positive EpgShift", func(t *testing.T) {
+		source := &models.EpgSource{
+			Type:     models.EpgSourceTypeXtream,
+			URL:      "http://example.com",
+			Username: "user",
+			Password: "pass",
+			EpgShift: 2, // +2 hours
+		}
+
+		inputTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+		result := handler.applyTimeOffset(inputTime, source)
+
+		// Should add 2 hours
+		expected := time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC)
+		assert.True(t, result.Equal(expected), "Expected %v, got %v", expected, result)
+	})
+
+	t.Run("applies negative EpgShift", func(t *testing.T) {
+		source := &models.EpgSource{
+			Type:     models.EpgSourceTypeXtream,
+			URL:      "http://example.com",
+			Username: "user",
+			Password: "pass",
+			EpgShift: -5, // -5 hours
+		}
+
+		inputTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+		result := handler.applyTimeOffset(inputTime, source)
+
+		// Should subtract 5 hours
+		expected := time.Date(2024, 1, 15, 5, 0, 0, 0, time.UTC)
+		assert.True(t, result.Equal(expected), "Expected %v, got %v", expected, result)
+	})
+
+	t.Run("no shift returns UTC time", func(t *testing.T) {
+		source := &models.EpgSource{
+			Type:     models.EpgSourceTypeXtream,
+			URL:      "http://example.com",
+			Username: "user",
+			Password: "pass",
+			EpgShift: 0,
+		}
+
+		inputTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+		result := handler.applyTimeOffset(inputTime, source)
+
+		expected := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+		assert.True(t, result.Equal(expected), "Expected %v, got %v", expected, result)
+	})
+
+	t.Run("nil source returns original time", func(t *testing.T) {
+		inputTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+		result := handler.applyTimeOffset(inputTime, nil)
+
+		assert.True(t, result.Equal(inputTime), "Expected %v, got %v", inputTime, result)
+	})
+}
+
+// TestXtreamEpgHandler_Ingest_WithEpgShift tests that EpgShift is applied during ingestion.
+func TestXtreamEpgHandler_Ingest_WithEpgShift(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		action := r.URL.Query().Get("action")
+
+		switch action {
+		case "":
+			// Auth info request - return server info with timezone
+			response := xtream.AuthInfo{
+				ServerInfo: xtream.ServerInfo{
+					Timezone: "UTC",
+				},
+			}
+			json.NewEncoder(w).Encode(response)
+
+		case "get_live_streams":
+			streams := []xtream.Stream{
+				{
+					StreamID:     xtream.FlexInt(1),
+					Name:         "Channel 1",
+					EPGChannelID: "ch1.epg",
+				},
+			}
+			json.NewEncoder(w).Encode(streams)
+
+		case "get_simple_data_table":
+			response := struct {
+				EPGListings []xtream.EPGListing `json:"epg_listings"`
+			}{
+				EPGListings: []xtream.EPGListing{
+					{
+						ID:             xtream.FlexString("1"),
+						Title:          "Morning Show",
+						Description:    "Start your day right",
+						Lang:           "en",
+						StartTimestamp: xtream.FlexInt(1705330800), // 2024-01-15 15:00:00 UTC
+						StopTimestamp:  xtream.FlexInt(1705338000), // 2024-01-15 17:00:00 UTC
+					},
+				},
+			}
+			json.NewEncoder(w).Encode(response)
+
+		default:
+			http.Error(w, "Unknown action", http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	handler := NewXtreamEpgHandler()
+	sourceID := models.NewULID()
+	source := &models.EpgSource{
+		BaseModel: models.BaseModel{ID: sourceID},
+		Type:      models.EpgSourceTypeXtream,
+		URL:       server.URL,
+		Username:  "testuser",
+		Password:  "testpass",
+		EpgShift:  2, // Apply +2 hour shift
+	}
+
+	var programs []*models.EpgProgram
+	err := handler.Ingest(context.Background(), source, func(program *models.EpgProgram) error {
+		programs = append(programs, program)
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.Len(t, programs, 1)
+
+	// Original time was 15:00 UTC, with +2 hour shift should be 17:00 UTC
+	expectedStart := time.Unix(1705330800, 0).UTC().Add(2 * time.Hour)
+	expectedStop := time.Unix(1705338000, 0).UTC().Add(2 * time.Hour)
+	assert.True(t, programs[0].Start.Equal(expectedStart), "start time mismatch: got %v, want %v", programs[0].Start, expectedStart)
+	assert.True(t, programs[0].Stop.Equal(expectedStop), "stop time mismatch: got %v, want %v", programs[0].Stop, expectedStop)
+
+	// Check that timezone was detected from server info
+	assert.Equal(t, "UTC", source.DetectedTimezone, "detected timezone should be UTC")
+}

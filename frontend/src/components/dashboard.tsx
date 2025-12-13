@@ -140,13 +140,13 @@ export function Dashboard() {
     setIsLoading(true);
 
     try {
-      // Fetch system health and relay health data
-      const [sysHealth, health] = await Promise.all([
-        apiClient.healthCheck(),
-        apiClient.getRelayHealth(),
-      ]);
+      // Fetch system health data
+      const sysHealth = await apiClient.healthCheck();
       setSystemHealth(sysHealth);
-      setRelayHealth(health);
+
+      // TODO: Add relay health endpoint when implemented
+      // The /api/v1/relay/health endpoint doesn't exist yet
+      // setRelayHealth(health);
 
       // TODO: Add other real API calls here as we implement them
       // Example: const clientData = await apiClient.getClientMetrics()

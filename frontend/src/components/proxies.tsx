@@ -65,7 +65,7 @@ import {
   CreateStreamProxyRequest,
   UpdateStreamProxyRequest,
   PaginatedResponse,
-  RelayProfile,
+  EncodingProfile,
   StreamSourceResponse,
   EpgSourceResponse,
   Filter,
@@ -111,7 +111,7 @@ export function Proxies() {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive'>('all');
   const [currentPage, setCurrentPage] = useState(1);
-  const [relayProfiles, setRelayProfiles] = useState<RelayProfile[]>([]);
+  const [encodingProfiles, setEncodingProfiles] = useState<EncodingProfile[]>([]);
   const { handleApiError, dismissConflict, getConflictState } = useConflictHandler();
 
   const [loading, setLoading] = useState<LoadingState>({
@@ -175,7 +175,7 @@ export function Proxies() {
           proxy.starting_channel_number.toString(),
           proxy.max_concurrent_streams?.toString() || '',
           proxy.upstream_timeout?.toString() || '',
-          proxy.relay_profile_id?.toLowerCase() || '',
+          proxy.encoding_profile_id?.toLowerCase() || '',
           // Status labels
           proxy.is_active ? 'active enabled' : 'inactive disabled',
           proxy.auto_regenerate ? 'auto regenerate automatic' : 'manual',
@@ -300,17 +300,17 @@ export function Proxies() {
     }
   }, [isOnline]);
 
-  // Load relay profiles on mount
+  // Load encoding profiles on mount
   useEffect(() => {
-    const loadRelayProfilesData = async () => {
+    const loadEncodingProfilesData = async () => {
       try {
-        const profiles = await apiClient.getRelayProfiles();
-        setRelayProfiles(profiles);
+        const profiles = await apiClient.getEncodingProfiles();
+        setEncodingProfiles(profiles);
       } catch (error) {
-        console.error('Failed to load relay profiles:', error);
+        console.error('Failed to load encoding profiles:', error);
       }
     };
-    loadRelayProfilesData();
+    loadEncodingProfilesData();
   }, []);
 
   // Load proxies on mount only
@@ -338,7 +338,7 @@ export function Proxies() {
         upstream_timeout: formData.upstream_timeout,
         cache_channel_logos: formData.cache_channel_logos,
         cache_program_logos: formData.cache_program_logos,
-        relay_profile_id: formData.relay_profile_id,
+        encoding_profile_id: formData.encoding_profile_id,
       };
 
       await apiClient.createProxy(createRequest);
@@ -377,7 +377,7 @@ export function Proxies() {
         upstream_timeout: formData.upstream_timeout,
         cache_channel_logos: formData.cache_channel_logos,
         cache_program_logos: formData.cache_program_logos,
-        relay_profile_id: formData.relay_profile_id,
+        encoding_profile_id: formData.encoding_profile_id,
       };
 
       await apiClient.updateProxy(proxyId, updateRequest);
@@ -468,9 +468,9 @@ export function Proxies() {
   const activeProxies = allProxies?.filter((p) => p.is_active).length || 0;
   const totalProxies = allProxies?.length || 0;
 
-  // Helper function to get relay profile name by ID
-  const getRelayProfileName = (profileId: string) => {
-    const profile = relayProfiles.find((p) => p.id === profileId);
+  // Helper function to get encoding profile name by ID
+  const getEncodingProfileName = (profileId: string) => {
+    const profile = encodingProfiles.find((p) => p.id === profileId);
     return profile ? profile.name : profileId;
   };
 
@@ -698,7 +698,7 @@ export function Proxies() {
                             </div>
                           </TableCell>
                           <TableCell>
-                            {proxy.proxy_mode === 'smart' && proxy.relay_profile_id ? (
+                            {proxy.proxy_mode === 'smart' && proxy.encoding_profile_id ? (
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <Badge variant="outline" className="cursor-help">
@@ -707,12 +707,12 @@ export function Proxies() {
                                 </TooltipTrigger>
                                 <TooltipContent>
                                   <div className="space-y-1">
-                                    <p className="font-medium text-sm">Relay Profile</p>
+                                    <p className="font-medium text-sm">Encoding Profile</p>
                                     <p className="text-xs text-muted-foreground">
-                                      Name: {getRelayProfileName(proxy.relay_profile_id)}
+                                      Name: {getEncodingProfileName(proxy.encoding_profile_id)}
                                     </p>
                                     <p className="text-xs text-muted-foreground font-mono">
-                                      ULID: {proxy.relay_profile_id}
+                                      ULID: {proxy.encoding_profile_id}
                                     </p>
                                   </div>
                                 </TooltipContent>
@@ -903,7 +903,7 @@ export function Proxies() {
                         <CardContent>
                           <div className="space-y-4">
                             <div className="flex flex-wrap gap-2">
-                              {proxy.proxy_mode === 'smart' && proxy.relay_profile_id ? (
+                              {proxy.proxy_mode === 'smart' && proxy.encoding_profile_id ? (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <Badge variant="outline" className="cursor-help">
@@ -912,12 +912,12 @@ export function Proxies() {
                                   </TooltipTrigger>
                                   <TooltipContent>
                                     <div className="space-y-1">
-                                      <p className="font-medium text-sm">Relay Profile</p>
+                                      <p className="font-medium text-sm">Encoding Profile</p>
                                       <p className="text-xs text-muted-foreground">
-                                        Name: {getRelayProfileName(proxy.relay_profile_id)}
+                                        Name: {getEncodingProfileName(proxy.encoding_profile_id)}
                                       </p>
                                       <p className="text-xs text-muted-foreground font-mono">
-                                        ULID: {proxy.relay_profile_id}
+                                        ULID: {proxy.encoding_profile_id}
                                       </p>
                                     </div>
                                   </TooltipContent>
@@ -1090,7 +1090,7 @@ export function Proxies() {
                                     )}
                                   </div>
                                   <div className="flex items-center gap-2">
-                                    {proxy.proxy_mode === 'smart' && proxy.relay_profile_id ? (
+                                    {proxy.proxy_mode === 'smart' && proxy.encoding_profile_id ? (
                                       <Tooltip>
                                         <TooltipTrigger asChild>
                                           <Badge variant="outline" className="cursor-help text-xs">
@@ -1099,12 +1099,12 @@ export function Proxies() {
                                         </TooltipTrigger>
                                         <TooltipContent>
                                           <div className="space-y-1">
-                                            <p className="font-medium text-sm">Relay Profile</p>
+                                            <p className="font-medium text-sm">Encoding Profile</p>
                                             <p className="text-xs text-muted-foreground">
-                                              Name: {getRelayProfileName(proxy.relay_profile_id)}
+                                              Name: {getEncodingProfileName(proxy.encoding_profile_id)}
                                             </p>
                                             <p className="text-xs text-muted-foreground font-mono">
-                                              ULID: {proxy.relay_profile_id}
+                                              ULID: {proxy.encoding_profile_id}
                                             </p>
                                           </div>
                                         </TooltipContent>

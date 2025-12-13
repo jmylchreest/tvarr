@@ -4,112 +4,18 @@ package relay
 import (
 	"io"
 	"log/slog"
-	"regexp"
 	"strings"
 )
 
 // Header name for explicit player identification.
 const XTvarrPlayerHeader = "X-Tvarr-Player"
 
-// Known player patterns for User-Agent detection.
-var playerPatterns = []struct {
-	pattern       *regexp.Regexp
-	name          string
-	prefersFMP4   bool
-	prefersMPEGTS bool
-	preferredFmt  string
-}{
-	// HLS.js with fMP4 preference
-	{regexp.MustCompile(`(?i)hls\.js[/ ]?(\d+\.\d+)?`), "hls.js", true, false, FormatValueHLSFMP4},
-	// mpegts.js prefers MPEG-TS
-	{regexp.MustCompile(`(?i)mpegts\.js`), "mpegts.js", false, true, FormatValueMPEGTS},
-	// Video.js
-	{regexp.MustCompile(`(?i)video\.js[/ ]?(\d+)?`), "video.js", true, true, ""},
-	// ExoPlayer (Android) - supports fMP4
-	{regexp.MustCompile(`(?i)exoplayer[/ ]?(\d+)?`), "exoplayer", true, false, FormatValueHLSFMP4},
-	// AVPlayer (iOS/macOS) - native HLS
-	{regexp.MustCompile(`(?i)avplayer|applecoremedia`), "avplayer", true, false, FormatValueHLS},
-	// VLC
-	{regexp.MustCompile(`(?i)vlc[/ ]?(\d+)?`), "vlc", true, true, ""},
-	// Kodi
-	{regexp.MustCompile(`(?i)kodi[/ ]?(\d+)?`), "kodi", true, true, ""},
-	// IPTV clients
-	{regexp.MustCompile(`(?i)iptv|tivimate|ott`), "iptv-client", false, true, FormatValueMPEGTS},
-	// Safari on Apple devices - native HLS
-	{regexp.MustCompile(`(?i)safari.*mac os|iphone|ipad`), "safari", true, false, FormatValueHLS},
-	// Shaka Player
-	{regexp.MustCompile(`(?i)shaka[/ ]?(\d+)?`), "shaka", true, false, FormatValueDASH},
-	// dash.js
-	{regexp.MustCompile(`(?i)dash\.js`), "dash.js", true, false, FormatValueDASH},
-}
-
-// X-Tvarr-Player format mappings for explicit player identification.
-// Format: "player:format" or just "player"
-var xTvarrPlayerFormats = map[string]ClientCapabilities{
-	"hls.js": {
-		PlayerName:      "hls.js",
-		SupportsFMP4:    true,
-		SupportsMPEGTS:  true,
-		PreferredFormat: FormatValueHLSFMP4,
-		DetectionSource: "x-tvarr-player",
-	},
-	"mpegts.js": {
-		PlayerName:      "mpegts.js",
-		SupportsFMP4:    false,
-		SupportsMPEGTS:  true,
-		PreferredFormat: FormatValueMPEGTS,
-		DetectionSource: "x-tvarr-player",
-	},
-	"video.js": {
-		PlayerName:      "video.js",
-		SupportsFMP4:    true,
-		SupportsMPEGTS:  true,
-		PreferredFormat: "",
-		DetectionSource: "x-tvarr-player",
-	},
-	"exoplayer": {
-		PlayerName:      "exoplayer",
-		SupportsFMP4:    true,
-		SupportsMPEGTS:  false,
-		PreferredFormat: FormatValueHLSFMP4,
-		DetectionSource: "x-tvarr-player",
-	},
-	"avplayer": {
-		PlayerName:      "avplayer",
-		SupportsFMP4:    true,
-		SupportsMPEGTS:  true,
-		PreferredFormat: FormatValueHLS,
-		DetectionSource: "x-tvarr-player",
-	},
-	"vlc": {
-		PlayerName:      "vlc",
-		SupportsFMP4:    true,
-		SupportsMPEGTS:  true,
-		PreferredFormat: "",
-		DetectionSource: "x-tvarr-player",
-	},
-	"kodi": {
-		PlayerName:      "kodi",
-		SupportsFMP4:    true,
-		SupportsMPEGTS:  true,
-		PreferredFormat: "",
-		DetectionSource: "x-tvarr-player",
-	},
-	"shaka": {
-		PlayerName:      "shaka",
-		SupportsFMP4:    true,
-		SupportsMPEGTS:  false,
-		PreferredFormat: FormatValueDASH,
-		DetectionSource: "x-tvarr-player",
-	},
-	"dash.js": {
-		PlayerName:      "dash.js",
-		SupportsFMP4:    true,
-		SupportsMPEGTS:  false,
-		PreferredFormat: FormatValueDASH,
-		DetectionSource: "x-tvarr-player",
-	},
-}
+// NOTE: Player detection patterns and X-Tvarr-Player mappings have been moved
+// to database-backed ClientDetectionRules for configurability. This file now
+// only contains the DefaultClientDetector fallback which handles:
+// - Format override query parameters
+// - Accept header parsing for format hints
+// - Default capabilities when no rule matches
 
 // DefaultClientDetector implements the ClientDetector interface.
 type DefaultClientDetector struct {
@@ -125,7 +31,12 @@ func NewDefaultClientDetector(logger *slog.Logger) *DefaultClientDetector {
 }
 
 // Detect analyzes the request and returns client capabilities.
-// Detection priority: FormatOverride > XTvarrPlayer > Accept > UserAgent > Default
+// This is a fallback detector used when ClientDetectionService is not available.
+// Detection priority: FormatOverride > Accept > Default
+//
+// NOTE: User-Agent based player detection is now handled by database-backed
+// ClientDetectionRules via ClientDetectionService. This fallback only handles
+// format overrides and Accept header hints.
 func (d *DefaultClientDetector) Detect(req OutputRequest) ClientCapabilities {
 	// Step 1: Check explicit format override query parameter
 	if req.FormatOverride != "" {
@@ -134,27 +45,13 @@ func (d *DefaultClientDetector) Detect(req OutputRequest) ClientCapabilities {
 		return caps
 	}
 
-	// Step 2: Check X-Tvarr-Player header (highest priority header)
-	if xPlayer := req.GetHeader(XTvarrPlayerHeader); xPlayer != "" {
-		if caps, ok := d.detectFromXTvarrPlayer(xPlayer); ok {
-			d.logDetection(caps, "x-tvarr-player", req)
-			return caps
-		}
-	}
-
-	// Step 3: Check Accept header for format hints
+	// Step 2: Check Accept header for format hints
 	if caps, ok := d.detectFromAccept(req.Accept); ok {
 		d.logDetection(caps, "accept", req)
 		return caps
 	}
 
-	// Step 4: Check User-Agent for known players
-	if caps, ok := d.detectFromUserAgent(req.UserAgent); ok {
-		d.logDetection(caps, "user-agent", req)
-		return caps
-	}
-
-	// Step 5: Return default capabilities
+	// Step 3: Return default capabilities
 	caps := d.getDefaultCapabilities()
 	d.logDetection(caps, "default", req)
 	return caps
@@ -192,48 +89,6 @@ func (d *DefaultClientDetector) detectFromFormatOverride(format string) ClientCa
 	}
 
 	return caps
-}
-
-// detectFromXTvarrPlayer parses X-Tvarr-Player header.
-// Format: "player" or "player:format"
-func (d *DefaultClientDetector) detectFromXTvarrPlayer(header string) (ClientCapabilities, bool) {
-	header = strings.ToLower(strings.TrimSpace(header))
-	if header == "" {
-		return ClientCapabilities{}, false
-	}
-
-	// Check for "player:format" syntax
-	parts := strings.SplitN(header, ":", 2)
-	playerName := parts[0]
-
-	// Look up player in known formats
-	if caps, ok := xTvarrPlayerFormats[playerName]; ok {
-		// Clone to avoid modifying the global map
-		result := caps
-
-		// If format is explicitly specified, override preferred format
-		if len(parts) > 1 {
-			formatOverride := strings.TrimSpace(parts[1])
-			result.PreferredFormat = d.normalizeFormat(formatOverride)
-		}
-
-		return result, true
-	}
-
-	// Unknown player, but header was present - use it as player name
-	caps := ClientCapabilities{
-		PlayerName:      playerName,
-		SupportsFMP4:    true,
-		SupportsMPEGTS:  true,
-		DetectionSource: "x-tvarr-player",
-	}
-
-	// If format was specified, use it
-	if len(parts) > 1 {
-		caps.PreferredFormat = d.normalizeFormat(parts[1])
-	}
-
-	return caps, true
 }
 
 // detectFromAccept parses Accept header for format hints.
@@ -276,34 +131,6 @@ func (d *DefaultClientDetector) detectFromAccept(accept string) (ClientCapabilit
 	return ClientCapabilities{}, false
 }
 
-// detectFromUserAgent parses User-Agent for known player patterns.
-func (d *DefaultClientDetector) detectFromUserAgent(userAgent string) (ClientCapabilities, bool) {
-	if userAgent == "" {
-		return ClientCapabilities{}, false
-	}
-
-	for _, p := range playerPatterns {
-		if matches := p.pattern.FindStringSubmatch(userAgent); matches != nil {
-			caps := ClientCapabilities{
-				PlayerName:      p.name,
-				SupportsFMP4:    p.prefersFMP4,
-				SupportsMPEGTS:  p.prefersMPEGTS,
-				PreferredFormat: p.preferredFmt,
-				DetectionSource: "user-agent",
-			}
-
-			// Extract version if available
-			if len(matches) > 1 && matches[1] != "" {
-				caps.PlayerVersion = matches[1]
-			}
-
-			return caps, true
-		}
-	}
-
-	return ClientCapabilities{}, false
-}
-
 // getDefaultCapabilities returns sensible defaults for unknown clients.
 func (d *DefaultClientDetector) getDefaultCapabilities() ClientCapabilities {
 	return ClientCapabilities{
@@ -313,25 +140,6 @@ func (d *DefaultClientDetector) getDefaultCapabilities() ClientCapabilities {
 		SupportsFMP4:    true,
 		SupportsMPEGTS:  true,
 		DetectionSource: "default",
-	}
-}
-
-// normalizeFormat normalizes format string to standard values.
-func (d *DefaultClientDetector) normalizeFormat(format string) string {
-	format = strings.ToLower(strings.TrimSpace(format))
-	switch format {
-	case "fmp4", "hls-fmp4":
-		return FormatValueHLSFMP4
-	case "ts", "mpegts", "mpeg-ts":
-		return FormatValueMPEGTS
-	case "hls":
-		return FormatValueHLS
-	case "hls-ts":
-		return FormatValueHLSTS
-	case "dash":
-		return FormatValueDASH
-	default:
-		return format
 	}
 }
 

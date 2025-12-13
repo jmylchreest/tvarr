@@ -17,20 +17,21 @@ import (
 
 // Programme represents a single program entry in an XMLTV file.
 type Programme struct {
-	Start       time.Time
-	Stop        time.Time
-	Channel     string
-	Title       string
-	SubTitle    string
-	Description string
-	Category    string
-	Icon        string
-	EpisodeNum  string
-	Rating      string
-	Language    string
-	IsNew       bool
-	IsPremiere  bool
-	Credits     *Credits
+	Start          time.Time
+	Stop           time.Time
+	Channel        string
+	Title          string
+	SubTitle       string
+	Description    string
+	Category       string
+	Icon           string
+	EpisodeNum     string
+	Rating         string
+	Language       string
+	IsNew          bool
+	IsPremiere     bool
+	Credits        *Credits
+	TimezoneOffset string // The timezone offset from the start time (e.g., "+0000", "-0500")
 }
 
 // Credits holds cast and crew information.
@@ -62,11 +63,25 @@ type Parser struct {
 	OnError func(err error)
 }
 
-// xmltvTime parses XMLTV time format: "20240101120000 +0000"
-func parseXMLTVTime(s string) (time.Time, error) {
+// ParsedTime contains a parsed time value and the timezone offset string if present.
+type ParsedTime struct {
+	Time           time.Time
+	TimezoneOffset string // e.g., "+0000", "-0500", "" if not present
+}
+
+// parseXMLTVTime parses XMLTV time format: "20240101120000 +0000"
+// Returns the parsed time and the timezone offset string if present.
+func parseXMLTVTime(s string) (ParsedTime, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return time.Time{}, fmt.Errorf("empty time string")
+		return ParsedTime{}, fmt.Errorf("empty time string")
+	}
+
+	// Extract timezone offset if present (e.g., "+0000", "-0500")
+	var tzOffset string
+	parts := strings.SplitN(s, " ", 2)
+	if len(parts) == 2 {
+		tzOffset = strings.TrimSpace(parts[1])
 	}
 
 	// Try different formats
@@ -80,11 +95,11 @@ func parseXMLTVTime(s string) (time.Time, error) {
 	for _, format := range formats {
 		t, err := time.Parse(format, s)
 		if err == nil {
-			return t, nil
+			return ParsedTime{Time: t, TimezoneOffset: tzOffset}, nil
 		}
 	}
 
-	return time.Time{}, fmt.Errorf("unable to parse time: %s", s)
+	return ParsedTime{}, fmt.Errorf("unable to parse time: %s", s)
 }
 
 // Parse parses an XMLTV file from a reader.
@@ -237,14 +252,15 @@ func (p *Parser) parseProgramme(decoder *xml.Decoder, start xml.StartElement) (*
 	for _, attr := range start.Attr {
 		switch attr.Name.Local {
 		case "start":
-			t, err := parseXMLTVTime(attr.Value)
+			parsed, err := parseXMLTVTime(attr.Value)
 			if err == nil {
-				prog.Start = t
+				prog.Start = parsed.Time
+				prog.TimezoneOffset = parsed.TimezoneOffset // Capture timezone from start time
 			}
 		case "stop":
-			t, err := parseXMLTVTime(attr.Value)
+			parsed, err := parseXMLTVTime(attr.Value)
 			if err == nil {
-				prog.Stop = t
+				prog.Stop = parsed.Time
 			}
 		case "channel":
 			prog.Channel = attr.Value

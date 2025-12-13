@@ -16,15 +16,13 @@ import {
   FilterTestRequest,
   DataMappingRule,
   DataMappingRuleListResponse,
-  RelayProfile,
-  RelayProfileMapping,
-  RelayProfileMappingListResponse,
-  RelayProfileMappingStats,
-  CreateRelayProfileMappingRequest,
-  UpdateRelayProfileMappingRequest,
-  ReorderMappingRequest,
-  TestMappingExpressionRequest,
-  TestMappingExpressionResponse,
+  EncodingProfile,
+  EncodingProfilePreview,
+  ClientDetectionRule,
+  ClientDetectionRulesResponse,
+  ClientDetectionRuleCreateRequest,
+  ClientDetectionRuleUpdateRequest,
+  ClientDetectionTestResponse,
   RelayHealthApiResponse,
   RuntimeSettings,
   UpdateSettingsRequest,
@@ -603,9 +601,9 @@ class ApiClient {
       delete payload.filters;
     }
 
-    // Remove empty relay_profile_id - backend expects ULID or null, not empty string
-    if (payload.relay_profile_id === '' || payload.relay_profile_id === null) {
-      delete payload.relay_profile_id;
+    // Remove empty encoding_profile_id - backend expects ULID or null, not empty string
+    if (payload.encoding_profile_id === '' || payload.encoding_profile_id === null) {
+      delete payload.encoding_profile_id;
     }
 
     return this.request<ApiResponse<StreamProxy>>(`${API_CONFIG.endpoints.proxies}/${id}`, {
@@ -859,12 +857,168 @@ class ApiClient {
     }
   }
 
-  // Relay Profiles API
-  async getRelayProfiles(): Promise<RelayProfile[]> {
-    const response = await this.request<{ profiles: RelayProfile[] }>(
-      `${API_CONFIG.endpoints.relays}/profiles`
+  // Encoding Profiles API
+  async getEncodingProfiles(): Promise<EncodingProfile[]> {
+    const response = await this.request<{ profiles: EncodingProfile[] }>(
+      API_CONFIG.endpoints.encodingProfiles
     );
     return response.profiles || [];
+  }
+
+  async getEncodingProfile(id: string): Promise<EncodingProfile> {
+    const response = await this.request<{ profile: EncodingProfile }>(
+      `${API_CONFIG.endpoints.encodingProfiles}/${id}`
+    );
+    return response.profile;
+  }
+
+  async createEncodingProfile(profile: Omit<EncodingProfile, 'id' | 'created_at' | 'updated_at' | 'default_flags' | 'is_system' | 'enabled'>): Promise<EncodingProfile> {
+    const response = await this.request<{ profile: EncodingProfile }>(
+      API_CONFIG.endpoints.encodingProfiles,
+      {
+        method: 'POST',
+        body: JSON.stringify(profile),
+      }
+    );
+    return response.profile;
+  }
+
+  async updateEncodingProfile(id: string, profile: Partial<Omit<EncodingProfile, 'id' | 'created_at' | 'updated_at' | 'default_flags' | 'is_system'>>): Promise<EncodingProfile> {
+    const response = await this.request<{ profile: EncodingProfile }>(
+      `${API_CONFIG.endpoints.encodingProfiles}/${id}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(profile),
+      }
+    );
+    return response.profile;
+  }
+
+  async deleteEncodingProfile(id: string): Promise<void> {
+    await this.request<void>(`${API_CONFIG.endpoints.encodingProfiles}/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async setDefaultEncodingProfile(id: string): Promise<EncodingProfile> {
+    const response = await this.request<{ profile: EncodingProfile }>(
+      `${API_CONFIG.endpoints.encodingProfiles}/${id}/set-default`,
+      {
+        method: 'POST',
+      }
+    );
+    return response.profile;
+  }
+
+  async toggleEncodingProfileEnabled(id: string): Promise<EncodingProfile> {
+    const response = await this.request<{ profile: EncodingProfile }>(
+      `${API_CONFIG.endpoints.encodingProfiles}/${id}/toggle-enabled`,
+      {
+        method: 'POST',
+      }
+    );
+    return response.profile;
+  }
+
+  async cloneEncodingProfile(id: string, name: string): Promise<EncodingProfile> {
+    const response = await this.request<{ profile: EncodingProfile }>(
+      `${API_CONFIG.endpoints.encodingProfiles}/${id}/clone`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ name }),
+      }
+    );
+    return response.profile;
+  }
+
+  async previewEncodingProfileCommand(config: {
+    target_video_codec: string;
+    target_audio_codec: string;
+    quality_preset: string;
+    hw_accel: string;
+    global_flags?: string;
+    input_flags?: string;
+    output_flags?: string;
+  }): Promise<EncodingProfilePreview> {
+    return this.request<EncodingProfilePreview>(
+      `${API_CONFIG.endpoints.encodingProfiles}/preview`,
+      {
+        method: 'POST',
+        body: JSON.stringify(config),
+      }
+    );
+  }
+
+  // Client Detection Rules API
+  async getClientDetectionRules(): Promise<ClientDetectionRule[]> {
+    const response = await this.request<ClientDetectionRulesResponse>(
+      API_CONFIG.endpoints.clientDetectionRules
+    );
+    return response.rules || [];
+  }
+
+  async getClientDetectionRule(id: string): Promise<ClientDetectionRule> {
+    return this.request<ClientDetectionRule>(
+      `${API_CONFIG.endpoints.clientDetectionRules}/${id}`
+    );
+  }
+
+  async createClientDetectionRule(rule: ClientDetectionRuleCreateRequest): Promise<ClientDetectionRule> {
+    return this.request<ClientDetectionRule>(
+      API_CONFIG.endpoints.clientDetectionRules,
+      {
+        method: 'POST',
+        body: JSON.stringify(rule),
+      }
+    );
+  }
+
+  async updateClientDetectionRule(id: string, rule: ClientDetectionRuleUpdateRequest): Promise<ClientDetectionRule> {
+    return this.request<ClientDetectionRule>(
+      `${API_CONFIG.endpoints.clientDetectionRules}/${id}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(rule),
+      }
+    );
+  }
+
+  async deleteClientDetectionRule(id: string): Promise<void> {
+    await this.request<void>(
+      `${API_CONFIG.endpoints.clientDetectionRules}/${id}`,
+      {
+        method: 'DELETE',
+      }
+    );
+  }
+
+  async toggleClientDetectionRule(id: string): Promise<ClientDetectionRule> {
+    return this.request<ClientDetectionRule>(
+      `${API_CONFIG.endpoints.clientDetectionRules}/${id}/toggle`,
+      {
+        method: 'PUT',
+      }
+    );
+  }
+
+  async reorderClientDetectionRules(reorders: Array<{ id: string; priority: number }>): Promise<void> {
+    await this.request<void>(
+      `${API_CONFIG.endpoints.clientDetectionRules}/reorder`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ reorders }),
+      }
+    );
+  }
+
+  async testClientDetectionExpression(expression: string, userAgent: string): Promise<ClientDetectionTestResponse> {
+    return this.request<ClientDetectionTestResponse>(
+      `${API_CONFIG.endpoints.clientDetectionRules}/test`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ expression, user_agent: userAgent }),
+      }
+    );
   }
 
   // Settings API
@@ -996,66 +1150,6 @@ class ApiClient {
   // Relay health check
   async getRelayHealth(): Promise<RelayHealthApiResponse> {
     return this.request<RelayHealthApiResponse>('/api/v1/relay/health');
-  }
-
-  // Relay Profile Mappings API (Client Auto-Detection)
-  async getRelayProfileMappings(): Promise<RelayProfileMapping[]> {
-    const response = await this.request<RelayProfileMappingListResponse>(
-      '/api/v1/relay-profile-mappings'
-    );
-    return response.mappings || [];
-  }
-
-  async getRelayProfileMapping(id: string): Promise<RelayProfileMapping> {
-    return this.request<RelayProfileMapping>(`/api/v1/relay-profile-mappings/${id}`);
-  }
-
-  async createRelayProfileMapping(
-    mapping: CreateRelayProfileMappingRequest
-  ): Promise<RelayProfileMapping> {
-    return this.request<RelayProfileMapping>('/api/v1/relay-profile-mappings', {
-      method: 'POST',
-      body: JSON.stringify(mapping),
-    });
-  }
-
-  async updateRelayProfileMapping(
-    id: string,
-    mapping: UpdateRelayProfileMappingRequest
-  ): Promise<RelayProfileMapping> {
-    return this.request<RelayProfileMapping>(`/api/v1/relay-profile-mappings/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(mapping),
-    });
-  }
-
-  async deleteRelayProfileMapping(id: string): Promise<void> {
-    await this.request<void>(`/api/v1/relay-profile-mappings/${id}`, {
-      method: 'DELETE',
-    });
-  }
-
-  async reorderRelayProfileMappings(mappings: ReorderMappingRequest[]): Promise<void> {
-    await this.request<void>('/api/v1/relay-profile-mappings/reorder', {
-      method: 'POST',
-      body: JSON.stringify({ mappings }),
-    });
-  }
-
-  async testRelayProfileMappingExpression(
-    request: TestMappingExpressionRequest
-  ): Promise<TestMappingExpressionResponse> {
-    return this.request<TestMappingExpressionResponse>(
-      '/api/v1/relay-profile-mappings/test',
-      {
-        method: 'POST',
-        body: JSON.stringify(request),
-      }
-    );
-  }
-
-  async getRelayProfileMappingStats(): Promise<RelayProfileMappingStats> {
-    return this.request<RelayProfileMappingStats>('/api/v1/relay-profile-mappings/stats');
   }
 
   // Last Known Codec Cache API

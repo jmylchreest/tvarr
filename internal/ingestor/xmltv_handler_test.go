@@ -347,3 +347,162 @@ func TestXMLTVHandler_Ingest_SkipsInvalidTimeRanges(t *testing.T) {
 func TestXMLTVHandler_ImplementsInterface(t *testing.T) {
 	var _ EpgHandler = (*XMLTVHandler)(nil)
 }
+
+// T070: Unit test for XMLTV timezone handling in internal/ingestor/xmltv_handler_test.go.
+// Tests the applyTimeOffset function which handles EpgShift adjustments.
+func TestXMLTVHandler_TimezoneHandling(t *testing.T) {
+	handler := NewXMLTVHandler()
+
+	t.Run("applies positive EpgShift", func(t *testing.T) {
+		source := &models.EpgSource{
+			Type:     models.EpgSourceTypeXMLTV,
+			URL:      "http://example.com/epg.xml",
+			EpgShift: 2, // +2 hours
+		}
+
+		// Time with timezone info (parsed from XMLTV)
+		inputTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+		result := handler.applyTimeOffset(inputTime, source)
+
+		// Should add 2 hours (result in UTC)
+		expected := time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC)
+		assert.True(t, result.Equal(expected), "Expected %v, got %v", expected, result)
+	})
+
+	t.Run("applies negative EpgShift", func(t *testing.T) {
+		source := &models.EpgSource{
+			Type:     models.EpgSourceTypeXMLTV,
+			URL:      "http://example.com/epg.xml",
+			EpgShift: -5, // -5 hours
+		}
+
+		inputTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+		result := handler.applyTimeOffset(inputTime, source)
+
+		// Should subtract 5 hours
+		expected := time.Date(2024, 1, 15, 5, 0, 0, 0, time.UTC)
+		assert.True(t, result.Equal(expected), "Expected %v, got %v", expected, result)
+	})
+
+	t.Run("no shift returns UTC time", func(t *testing.T) {
+		source := &models.EpgSource{
+			Type:     models.EpgSourceTypeXMLTV,
+			URL:      "http://example.com/epg.xml",
+			EpgShift: 0,
+		}
+
+		inputTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+		result := handler.applyTimeOffset(inputTime, source)
+
+		// Time should be returned in UTC with no shift
+		expected := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+		assert.True(t, result.Equal(expected), "Expected %v, got %v", expected, result)
+	})
+
+	t.Run("nil source returns original time", func(t *testing.T) {
+		inputTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+		result := handler.applyTimeOffset(inputTime, nil)
+
+		assert.True(t, result.Equal(inputTime), "Expected %v, got %v", inputTime, result)
+	})
+
+	t.Run("converts non-UTC time to UTC before shift", func(t *testing.T) {
+		source := &models.EpgSource{
+			Type:     models.EpgSourceTypeXMLTV,
+			URL:      "http://example.com/epg.xml",
+			EpgShift: 1, // +1 hour
+		}
+
+		// Time at 10:00 in America/New_York (UTC-5 in winter)
+		loc, _ := time.LoadLocation("America/New_York")
+		inputTime := time.Date(2024, 1, 15, 10, 0, 0, 0, loc) // This is 15:00 UTC
+
+		result := handler.applyTimeOffset(inputTime, source)
+
+		// Should convert to UTC (15:00) then add 1 hour = 16:00 UTC
+		expected := time.Date(2024, 1, 15, 16, 0, 0, 0, time.UTC)
+		assert.True(t, result.Equal(expected), "Expected %v, got %v", expected, result)
+	})
+}
+
+// TestXMLTVHandler_Ingest_WithEpgShift tests that EpgShift is applied during ingestion.
+func TestXMLTVHandler_Ingest_WithEpgShift(t *testing.T) {
+	// XMLTV data with times in UTC (+0000)
+	xmltvData := `<?xml version="1.0" encoding="UTF-8"?>
+<tv>
+  <programme start="20240115100000 +0000" stop="20240115110000 +0000" channel="ch1">
+    <title>Test Show</title>
+  </programme>
+</tv>`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(xmltvData))
+	}))
+	defer server.Close()
+
+	handler := NewXMLTVHandler()
+	sourceID := models.NewULID()
+	source := &models.EpgSource{
+		BaseModel: models.BaseModel{ID: sourceID},
+		Type:      models.EpgSourceTypeXMLTV,
+		URL:       server.URL,
+		EpgShift:  2, // Apply +2 hour shift
+	}
+
+	var programs []*models.EpgProgram
+	err := handler.Ingest(context.Background(), source, func(program *models.EpgProgram) error {
+		programs = append(programs, program)
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.Len(t, programs, 1)
+
+	// Original time was 10:00 UTC, with +2 hour shift should be 12:00 UTC
+	expectedStart := time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC)
+	expectedStop := time.Date(2024, 1, 15, 13, 0, 0, 0, time.UTC)
+	assert.True(t, programs[0].Start.Equal(expectedStart), "start time mismatch: got %v, want %v", programs[0].Start, expectedStart)
+	assert.True(t, programs[0].Stop.Equal(expectedStop), "stop time mismatch: got %v, want %v", programs[0].Stop, expectedStop)
+}
+
+// TestXMLTVHandler_Ingest_DetectsTimezone tests that timezone is detected from XMLTV data.
+func TestXMLTVHandler_Ingest_DetectsTimezone(t *testing.T) {
+	// XMLTV data with times in +0100 timezone
+	xmltvData := `<?xml version="1.0" encoding="UTF-8"?>
+<tv>
+  <programme start="20240115100000 +0100" stop="20240115110000 +0100" channel="ch1">
+    <title>Test Show</title>
+  </programme>
+</tv>`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(xmltvData))
+	}))
+	defer server.Close()
+
+	handler := NewXMLTVHandler()
+	sourceID := models.NewULID()
+	source := &models.EpgSource{
+		BaseModel: models.BaseModel{ID: sourceID},
+		Type:      models.EpgSourceTypeXMLTV,
+		URL:       server.URL,
+	}
+
+	var programs []*models.EpgProgram
+	err := handler.Ingest(context.Background(), source, func(program *models.EpgProgram) error {
+		programs = append(programs, program)
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.Len(t, programs, 1)
+
+	// Check that timezone was detected
+	assert.Equal(t, "+01:00", source.DetectedTimezone, "detected timezone should be +01:00")
+
+	// Times should be converted to UTC (10:00 +0100 = 09:00 UTC)
+	expectedStart := time.Date(2024, 1, 15, 9, 0, 0, 0, time.UTC)
+	expectedStop := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+	assert.True(t, programs[0].Start.Equal(expectedStart), "start time mismatch: got %v, want %v", programs[0].Start, expectedStart)
+	assert.True(t, programs[0].Stop.Equal(expectedStop), "stop time mismatch: got %v, want %v", programs[0].Stop, expectedStop)
+}

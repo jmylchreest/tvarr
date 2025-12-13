@@ -64,7 +64,7 @@ import {
 
 import { SimpleTsPlayer } from '../player/SimpleTsPlayer';
 import type { PlayerMediaInfo } from '../player/PlayerAdapter';
-import { PLAYER_HEADER_NAME, PlayerNames } from '../lib/player-headers';
+import { PLAYER_HEADER_NAME } from '../lib/player-headers';
 import { Debug } from '@/utils/debug';
 
 /* ---------- Types ---------- */
@@ -154,7 +154,7 @@ export function VideoPlayerModal({ isOpen, onClose, channel, program }: VideoPla
         const res = await fetch(streamUrl, {
           method: 'HEAD',
           cache: 'no-cache',
-          headers: { [PLAYER_HEADER_NAME]: PlayerNames.MPEGTS_JS },
+          headers: { [PLAYER_HEADER_NAME]: 'mpegts.js' },
         });
         if (canceled) return;
         const kind = (res.headers.get('X-Stream-Origin-Kind') || '').toUpperCase();

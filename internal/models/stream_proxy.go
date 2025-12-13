@@ -106,8 +106,16 @@ type StreamProxy struct {
 	// CacheProgramLogos indicates whether to cache EPG program logos locally.
 	CacheProgramLogos bool `gorm:"default:false" json:"cache_program_logos"`
 
-	// RelayProfileID is the optional relay profile for transcoding settings.
-	RelayProfileID *ULID `gorm:"type:varchar(26)" json:"relay_profile_id,omitempty"`
+	// EncodingProfileID is the optional encoding profile for transcoding settings.
+	// When set in "smart" proxy mode, this profile determines the output codecs and quality.
+	// Also used as fallback when no client detection rule matches.
+	EncodingProfileID *ULID `gorm:"type:varchar(26)" json:"encoding_profile_id,omitempty"`
+
+	// ClientDetectionEnabled enables automatic client capability detection.
+	// When true, the proxy uses client detection rules to determine the best
+	// output format and whether transcoding is needed for each client.
+	// When false, uses the EncodingProfile settings directly.
+	ClientDetectionEnabled bool `gorm:"default:true" json:"client_detection_enabled"`
 
 	// OutputPath is the path for generated files.
 	OutputPath string `gorm:"size:512" json:"output_path,omitempty"`

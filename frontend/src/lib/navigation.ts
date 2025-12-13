@@ -93,8 +93,8 @@ export const navigation: NavigationGroup[] = [
         icon: Image,
       },
       {
-        title: 'Relay Profiles',
-        url: '/admin/relays',
+        title: 'Encoding Profiles',
+        url: '/admin/encoding-profiles',
         icon: Zap,
       },
       {

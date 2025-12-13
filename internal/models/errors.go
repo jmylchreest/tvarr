@@ -81,31 +81,33 @@ var (
 	// ErrJobTypeRequired indicates a required job type field is empty.
 	ErrJobTypeRequired = errors.New("job type is required")
 
-	// ErrRelayProfileNameRequired indicates a required relay profile name field is empty.
-	ErrRelayProfileNameRequired = errors.New("relay profile name is required")
-
-	// ErrRelayProfileInvalidBitrate indicates an invalid bitrate value.
-	ErrRelayProfileInvalidBitrate = errors.New("bitrate must be non-negative")
-
-	// ErrRelayProfileNotFound indicates a relay profile was not found.
-	ErrRelayProfileNotFound = errors.New("relay profile not found")
-
-	// ErrRelayProfileInvalidCodecFormat indicates an invalid codec/format combination.
-	// Deprecated: Use ErrRelayProfileCodecRequiresFMP4 instead.
-	ErrRelayProfileInvalidCodecFormat = errors.New("codec requires DASH output format")
-
-	// ErrRelayProfileCodecRequiresFMP4 indicates a codec requires fMP4 container but MPEG-TS was explicitly selected.
-	ErrRelayProfileCodecRequiresFMP4 = errors.New("selected codec (VP9/AV1/Opus) requires fMP4 container; MPEG-TS is not supported")
-
-	// ErrRelayProfileInvalidSegmentDuration indicates an invalid segment duration.
-	ErrRelayProfileInvalidSegmentDuration = errors.New("segment duration must be 2-10 seconds")
-
-	// ErrRelayProfileInvalidPlaylistSize indicates an invalid playlist size.
-	ErrRelayProfileInvalidPlaylistSize = errors.New("playlist size must be 3-20 segments")
-
 	// ErrStreamURLNotFound indicates a stream URL was not found.
 	ErrStreamURLNotFound = errors.New("stream URL not found")
 
 	// ErrLastKnownCodecNotFound indicates a last known codec entry was not found.
 	ErrLastKnownCodecNotFound = errors.New("last known codec not found")
+
+	// ErrEncodingProfileNameRequired indicates a required encoding profile name field is empty.
+	ErrEncodingProfileNameRequired = errors.New("encoding profile name is required")
+
+	// ErrEncodingProfileNotFound indicates an encoding profile was not found.
+	ErrEncodingProfileNotFound = errors.New("encoding profile not found")
+
+	// ErrEncodingProfileInvalidVideoCodec indicates an invalid target video codec.
+	ErrEncodingProfileInvalidVideoCodec = errors.New("invalid target video codec: must be h264, h265, vp9, or av1")
+
+	// ErrEncodingProfileInvalidAudioCodec indicates an invalid target audio codec.
+	ErrEncodingProfileInvalidAudioCodec = errors.New("invalid target audio codec: must be aac, opus, ac3, eac3, or mp3")
+
+	// ErrEncodingProfileInvalidQualityPreset indicates an invalid quality preset.
+	ErrEncodingProfileInvalidQualityPreset = errors.New("invalid quality preset: must be low, medium, high, or ultra")
+
+	// ErrEncodingProfileInvalidHWAccel indicates an invalid hardware acceleration type.
+	ErrEncodingProfileInvalidHWAccel = errors.New("invalid hardware acceleration: must be auto, none, cuda, vaapi, qsv, or videotoolbox")
+
+	// ErrEncodingProfileIsSystem indicates an operation is not allowed on system profiles.
+	ErrEncodingProfileIsSystem = errors.New("cannot modify or delete system encoding profile")
+
+	// ErrEncodingProfileInUse indicates a profile is in use by proxies and cannot be deleted.
+	ErrEncodingProfileInUse = errors.New("encoding profile is in use by one or more stream proxies")
 )

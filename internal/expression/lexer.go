@@ -200,6 +200,12 @@ func (l *Lexer) scanNumber() Token {
 
 // scanIdent scans an identifier or keyword.
 func (l *Lexer) scanIdent() Token {
+	// Check for @dynamic( syntax which needs special handling
+	// At this point l.pos is at the start (after backup())
+	if l.peekString("@dynamic(") {
+		return l.scanDynamicField()
+	}
+
 	for isIdentPart(l.peek()) {
 		l.next()
 	}
@@ -208,6 +214,55 @@ func (l *Lexer) scanIdent() Token {
 	tokType := LookupKeyword(value)
 
 	return l.makeToken(tokType, value)
+}
+
+// scanDynamicField scans @dynamic(path):key syntax.
+func (l *Lexer) scanDynamicField() Token {
+	// Consume "@dynamic("
+	for range "@dynamic(" {
+		l.next()
+	}
+
+	// Scan until closing )
+	depth := 1
+	for depth > 0 {
+		ch := l.next()
+		if ch == 0 {
+			return l.makeErrorToken("unterminated @dynamic( syntax")
+		}
+		if ch == '(' {
+			depth++
+		} else if ch == ')' {
+			depth--
+		}
+	}
+
+	// Expect : after )
+	if l.peek() != ':' {
+		return l.makeErrorToken("expected ':' after @dynamic(path)")
+	}
+	l.next() // consume :
+
+	// Scan the key (identifier characters)
+	for isIdentPart(l.peek()) {
+		l.next()
+	}
+
+	value := l.input[l.start:l.pos]
+	return l.makeToken(TokenIdent, value)
+}
+
+// peekString checks if the next characters match the given string without consuming.
+func (l *Lexer) peekString(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if l.pos+i >= len(l.input) {
+			return false
+		}
+		if l.input[l.pos+i] != s[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // next returns the next rune and advances the position.

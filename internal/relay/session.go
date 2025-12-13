@@ -125,7 +125,7 @@ type RelaySession struct {
 	ChannelName      string // Display name of the channel
 	StreamSourceName string // Name of the stream source (e.g., "s8k")
 	StreamURL        string
-	Profile          *models.RelayProfile
+	EncodingProfile  *models.EncodingProfile
 	Classification   ClassificationResult
 	CachedCodecInfo  *models.LastKnownCodec // Pre-probed codec info for faster startup
 	StartedAt        time.Time
@@ -291,21 +291,21 @@ func (s *RelaySession) runNormalPipeline() error {
 		return s.runHLSCollapsePipeline()
 	case StreamModePassthroughHLS, StreamModeTransparentHLS:
 		// Check if profile requires transcoding - if so, use ES pipeline
-		if s.Profile != nil && s.Profile.NeedsTranscode() {
+		if s.EncodingProfile != nil && s.EncodingProfile.NeedsTranscode() {
 			slog.Info("HLS source requires transcoding, using ES pipeline",
 				slog.String("session_id", s.ID.String()),
-				slog.String("video_codec", string(s.Profile.VideoCodec)),
-				slog.String("audio_codec", string(s.Profile.AudioCodec)))
+				slog.String("video_codec", string(s.EncodingProfile.TargetVideoCodec)),
+				slog.String("audio_codec", string(s.EncodingProfile.TargetAudioCodec)))
 			return s.runESPipeline()
 		}
 		return s.runHLSPassthroughPipeline()
 	case StreamModePassthroughDASH:
 		// Check if profile requires transcoding - if so, use ES pipeline
-		if s.Profile != nil && s.Profile.NeedsTranscode() {
+		if s.EncodingProfile != nil && s.EncodingProfile.NeedsTranscode() {
 			slog.Info("DASH source requires transcoding, using ES pipeline",
 				slog.String("session_id", s.ID.String()),
-				slog.String("video_codec", string(s.Profile.VideoCodec)),
-				slog.String("audio_codec", string(s.Profile.AudioCodec)))
+				slog.String("video_codec", string(s.EncodingProfile.TargetVideoCodec)),
+				slog.String("audio_codec", string(s.EncodingProfile.TargetAudioCodec)))
 			return s.runESPipeline()
 		}
 		return s.runDASHPassthroughPipeline()
@@ -464,19 +464,15 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 	demuxerConfig := TSDemuxerConfig{
 		Logger: slog.Default(),
 	}
+	// Use probed audio codec as fallback for codecs not natively supported by demuxer (e.g., E-AC3)
+	if s.CachedCodecInfo != nil && s.CachedCodecInfo.AudioCodec != "" {
+		demuxerConfig.ProbeOverrideAudioCodec = s.CachedCodecInfo.AudioCodec
+	}
 	s.tsDemuxer = NewTSDemuxer(s.esBuffer, demuxerConfig)
 
-	// Get processor settings from profile
+	// Default streaming settings (EncodingProfile focuses on encoding, not streaming parameters)
 	var targetSegmentDuration float64 = 6.0
 	var maxSegments = 7
-	if s.Profile != nil {
-		if s.Profile.SegmentDuration > 0 {
-			targetSegmentDuration = float64(s.Profile.SegmentDuration)
-		}
-		if s.Profile.PlaylistSize > 0 {
-			maxSegments = s.Profile.PlaylistSize
-		}
-	}
 
 	// Initialize processor maps
 	s.hlsTSProcessors = make(map[CodecVariant]*HLSTSProcessor)
@@ -571,9 +567,9 @@ func (s *RelaySession) runHLSRepackagePipeline() error {
 	// Determine the output variant based on profile container format preference
 	// Default to MPEG-TS for maximum compatibility with legacy HLS clients
 	outputVariant := HLSMuxerVariantMPEGTS
-	if s.Profile != nil {
+	if s.EncodingProfile != nil {
 		// Use the profile's container format setting to determine variant
-		container := s.Profile.DetermineContainer()
+		container := s.EncodingProfile.DetermineContainer()
 		switch container {
 		case models.ContainerFormatFMP4:
 			outputVariant = HLSMuxerVariantFMP4
@@ -582,17 +578,9 @@ func (s *RelaySession) runHLSRepackagePipeline() error {
 		}
 	}
 
-	// Configure segment settings from profile
+	// Default streaming settings (EncodingProfile focuses on encoding, not streaming parameters)
 	segmentCount := 7
 	segmentDuration := 1 * time.Second
-	if s.Profile != nil {
-		if s.Profile.PlaylistSize > 0 {
-			segmentCount = s.Profile.PlaylistSize
-		}
-		if s.Profile.SegmentDuration > 0 {
-			segmentDuration = time.Duration(s.Profile.SegmentDuration) * time.Second
-		}
-	}
 
 	// Create the HLS repackager
 	repackager := NewHLSRepackager(HLSRepackagerConfig{
@@ -730,23 +718,21 @@ func (s *RelaySession) buildProxyBaseURL() string {
 // When processors request a variant that differs from the source, the on-demand
 // transcoding callback (handleVariantRequest) will spawn an FFmpegTranscoder.
 func (s *RelaySession) getTargetVariant() CodecVariant {
-	if s.Profile == nil || !s.Profile.NeedsTranscode() {
+	if s.EncodingProfile == nil || !s.EncodingProfile.NeedsTranscode() {
 		return VariantCopy
 	}
 
 	// Build target variant from profile codecs
-	videoCodec := string(s.Profile.VideoCodec)
-	audioCodec := string(s.Profile.AudioCodec)
+	videoCodec := string(s.EncodingProfile.TargetVideoCodec)
+	audioCodec := string(s.EncodingProfile.TargetAudioCodec)
 
-	// Check for unresolved "auto" codecs - this indicates a bug in the call chain
-	// Auto codecs should be resolved via client detection BEFORE the session is created
-	if videoCodec == "auto" || audioCodec == "auto" {
-		slog.Warn("Profile has unresolved 'auto' codecs at session level - falling back to copy",
-			slog.String("session_id", s.ID.String()),
-			slog.String("profile_name", s.Profile.Name),
-			slog.String("video_codec", videoCodec),
-			slog.String("audio_codec", audioCodec))
-		return VariantCopy
+	// EncodingProfile doesn't have "auto" codecs - it always has concrete target codecs
+	// If empty, treat as copy
+	if videoCodec == "" {
+		videoCodec = "copy"
+	}
+	if audioCodec == "" {
+		audioCodec = "copy"
 	}
 
 	// Normalize: "copy", empty, and "none" all mean keep source codec
@@ -793,6 +779,10 @@ func (s *RelaySession) runESPipeline() error {
 		Logger: slog.Default(),
 		// No TargetVariant - writes to source variant ("copy/copy")
 	}
+	// Use probed audio codec as fallback for codecs not natively supported by demuxer (e.g., E-AC3)
+	if s.CachedCodecInfo != nil && s.CachedCodecInfo.AudioCodec != "" {
+		demuxerConfig.ProbeOverrideAudioCodec = s.CachedCodecInfo.AudioCodec
+	}
 	s.tsDemuxer = NewTSDemuxer(s.esBuffer, demuxerConfig)
 
 	// Determine the source URL
@@ -805,22 +795,14 @@ func (s *RelaySession) runESPipeline() error {
 	// If target differs from source, on-demand transcoding will be triggered
 	targetVariant := s.getTargetVariant()
 
-	// Get processor settings from profile
+	// Default streaming settings (EncodingProfile focuses on encoding, not streaming parameters)
 	var targetSegmentDuration float64 = 6.0
 	var maxSegments = 7
-	if s.Profile != nil {
-		if s.Profile.SegmentDuration > 0 {
-			targetSegmentDuration = float64(s.Profile.SegmentDuration)
-		}
-		if s.Profile.PlaylistSize > 0 {
-			maxSegments = s.Profile.PlaylistSize
-		}
-	}
 
 	slog.Info("Starting ES pipeline",
 		slog.String("session_id", s.ID.String()),
 		slog.String("target_variant", targetVariant.String()),
-		slog.Bool("needs_transcode", s.Profile != nil && s.Profile.NeedsTranscode()))
+		slog.Bool("needs_transcode", s.EncodingProfile != nil && s.EncodingProfile.NeedsTranscode()))
 
 	// Start ingest in a goroutine FIRST - this feeds data to the demuxer
 	// which will detect codecs and create the source variant
@@ -1203,18 +1185,61 @@ func (s *RelaySession) handleVariantRequest(source, target CodecVariant) error {
 		return fmt.Errorf("detecting ffmpeg: %w", err)
 	}
 
+	// Check if source audio/video codec can be demuxed by mediacommon
+	// If not, use direct URL input mode (FFmpeg reads directly from source URL)
+	sourceAudioCodec := source.AudioCodec()
+	sourceVideoCodec := source.VideoCodec()
+	useDirectInput := false
+	sourceURL := s.StreamURL
+
+	// Use selected media playlist if available (for HLS sources)
+	if s.Classification.SelectedMediaPlaylist != "" {
+		sourceURL = s.Classification.SelectedMediaPlaylist
+	}
+
+	// Also check CachedCodecInfo - the source variant may have been created before
+	// audio was detected, so source.AudioCodec() may be empty even though we know the codec
+	if sourceAudioCodec == "" && s.CachedCodecInfo != nil && s.CachedCodecInfo.AudioCodec != "" {
+		sourceAudioCodec = s.CachedCodecInfo.AudioCodec
+	}
+	if sourceVideoCodec == "" && s.CachedCodecInfo != nil && s.CachedCodecInfo.VideoCodec != "" {
+		sourceVideoCodec = s.CachedCodecInfo.VideoCodec
+	}
+
+	// Check audio codec demuxability
+	if sourceAudioCodec != "" && !IsAudioCodecDemuxable(sourceAudioCodec) {
+		slog.Info("Source audio codec not demuxable, using direct URL input",
+			slog.String("session_id", s.ID.String()),
+			slog.String("audio_codec", sourceAudioCodec),
+			slog.String("source_url", sourceURL))
+		useDirectInput = true
+	}
+
+	// Check video codec demuxability
+	if sourceVideoCodec != "" && !IsVideoCodecDemuxable(sourceVideoCodec) {
+		slog.Info("Source video codec not demuxable, using direct URL input",
+			slog.String("session_id", s.ID.String()),
+			slog.String("video_codec", sourceVideoCodec),
+			slog.String("source_url", sourceURL))
+		useDirectInput = true
+	}
+
 	var transcoder *FFmpegTranscoder
 
 	// Try to create transcoder from profile if available, otherwise use variant directly
-	if s.Profile != nil {
+	if s.EncodingProfile != nil {
 		// Use profile for full configuration (bitrate, preset, hwaccel, etc.)
 		transcoder, err = CreateTranscoderFromProfile(
 			fmt.Sprintf("transcoder-%s-%s", s.ID.String(), target.String()),
 			s.esBuffer,
 			source,
-			s.Profile,
+			s.EncodingProfile,
 			binInfo,
 			slog.Default(),
+			CreateTranscoderFromProfileOptions{
+				SourceURL:      sourceURL,
+				UseDirectInput: useDirectInput,
+			},
 		)
 		if err != nil {
 			return fmt.Errorf("creating transcoder from profile: %w", err)
@@ -1233,6 +1258,10 @@ func (s *RelaySession) handleVariantRequest(source, target CodecVariant) error {
 			target,
 			binInfo,
 			slog.Default(),
+			CreateTranscoderFromVariantOptions{
+				SourceURL:      sourceURL,
+				UseDirectInput: useDirectInput,
+			},
 		)
 		if err != nil {
 			return fmt.Errorf("creating transcoder from variant: %w", err)
@@ -1770,8 +1799,8 @@ func (s *RelaySession) Stats() SessionStats {
 		errStr = (*errPtr).Error()
 	}
 	profileName = "passthrough"
-	if s.Profile != nil {
-		profileName = s.Profile.Name
+	if s.EncodingProfile != nil {
+		profileName = s.EncodingProfile.Name
 	}
 	closed = s.closed.Load()
 	inFallback = s.inFallback.Load()

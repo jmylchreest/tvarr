@@ -100,6 +100,13 @@ func (h *XtreamEpgHandler) Ingest(ctx context.Context, source *models.EpgSource,
 		xtream.WithHTTPClient(h.httpClient.StandardClient()),
 	)
 
+	// Try to detect timezone from server info
+	if authInfo, err := client.GetAuthInfo(ctx); err == nil {
+		if authInfo.ServerInfo.Timezone != "" {
+			source.DetectedTimezone = authInfo.ServerInfo.Timezone
+		}
+	}
+
 	// Select API method based on source configuration
 	apiMethod := source.ApiMethod
 	if apiMethod == "" {
@@ -154,7 +161,7 @@ func (h *XtreamEpgHandler) ingestPerStream(ctx context.Context, client *xtream.C
 			default:
 			}
 
-			program := h.convertListing(listing, source.ID, stream.EPGChannelID)
+			program := h.convertListing(listing, source, stream.EPGChannelID)
 
 			// Skip programs that fail validation (e.g., invalid time ranges)
 			if err := program.Validate(); err != nil {
@@ -195,7 +202,7 @@ func (h *XtreamEpgHandler) ingestBulkXMLTV(ctx context.Context, client *xtream.C
 			}
 
 			// Convert XMLTV programme to EpgProgram model
-			program := h.convertXMLTVProgramme(programme, source.ID)
+			program := h.convertXMLTVProgramme(programme, source)
 
 			// Skip programs that fail validation (e.g., invalid time ranges)
 			if err := program.Validate(); err != nil {
@@ -219,15 +226,19 @@ func (h *XtreamEpgHandler) ingestBulkXMLTV(ctx context.Context, client *xtream.C
 }
 
 // convertListing converts an Xtream EPG listing to an EpgProgram model.
-func (h *XtreamEpgHandler) convertListing(listing xtream.EPGListing, sourceID models.ULID, channelID string) *models.EpgProgram {
+func (h *XtreamEpgHandler) convertListing(listing xtream.EPGListing, source *models.EpgSource, channelID string) *models.EpgProgram {
+	// Apply time offset if configured
+	start := h.applyTimeOffset(listing.StartTime(), source)
+	stop := h.applyTimeOffset(listing.EndTime(), source)
+
 	program := &models.EpgProgram{
-		SourceID:    sourceID,
+		SourceID:    source.ID,
 		ChannelID:   channelID,
 		Title:       decodeBase64OrOriginal(listing.Title),
 		Description: decodeBase64OrOriginal(listing.Description),
 		Language:    listing.Lang,
-		Start:       listing.StartTime(),
-		Stop:        listing.EndTime(),
+		Start:       start,
+		Stop:        stop,
 	}
 
 	return program
@@ -250,12 +261,16 @@ func decodeBase64OrOriginal(s string) string {
 
 // convertXMLTVProgramme converts an XMLTV Programme to an EpgProgram model.
 // This is used by the bulk XMLTV ingestion method.
-func (h *XtreamEpgHandler) convertXMLTVProgramme(p *xmltv.Programme, sourceID models.ULID) *models.EpgProgram {
+func (h *XtreamEpgHandler) convertXMLTVProgramme(p *xmltv.Programme, source *models.EpgSource) *models.EpgProgram {
+	// Apply time offset if configured
+	start := h.applyTimeOffset(p.Start, source)
+	stop := h.applyTimeOffset(p.Stop, source)
+
 	program := &models.EpgProgram{
-		SourceID:    sourceID,
+		SourceID:    source.ID,
 		ChannelID:   p.Channel,
-		Start:       p.Start,
-		Stop:        p.Stop,
+		Start:       start,
+		Stop:        stop,
 		Title:       p.Title,
 		SubTitle:    p.SubTitle,
 		Description: p.Description,
@@ -294,6 +309,25 @@ func (h *XtreamEpgHandler) convertXMLTVProgramme(p *xmltv.Programme, sourceID mo
 	}
 
 	return program
+}
+
+// applyTimeOffset applies the source's EpgShift to a time value.
+// The EpgShift is in hours and shifts times forward (positive) or back (negative).
+// Times are first converted to UTC, then the shift is applied.
+func (h *XtreamEpgHandler) applyTimeOffset(t time.Time, source *models.EpgSource) time.Time {
+	if source == nil {
+		return t
+	}
+
+	// Convert to UTC first (the time already has timezone info from parsing)
+	t = t.UTC()
+
+	// Apply EpgShift if configured (shift in hours)
+	if source.EpgShift != 0 {
+		t = t.Add(time.Duration(source.EpgShift) * time.Hour)
+	}
+
+	return t
 }
 
 // Ensure XtreamEpgHandler implements EpgHandler.

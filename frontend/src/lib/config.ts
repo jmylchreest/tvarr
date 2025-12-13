@@ -31,6 +31,8 @@ export const API_CONFIG = {
     dataMapping: '/api/v1/data-mapping',
     logos: '/api/v1/logos',
     relays: '/api/v1/relay',
+    encodingProfiles: '/api/v1/encoding-profiles',
+    clientDetectionRules: '/api/v1/client-detection-rules',
     dashboard: '/api/v1/metrics/dashboard',
     health: '/health',
   },

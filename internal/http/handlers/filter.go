@@ -75,7 +75,6 @@ type FilterResponse struct {
 	SourceType  string  `json:"source_type" doc:"Source type (stream or epg)"`
 	Action      string  `json:"action" doc:"Filter action (include or exclude)"`
 	Expression  string  `json:"expression" doc:"Filter expression"`
-	Priority    int     `json:"priority" doc:"Priority (lower = higher priority)"`
 	IsEnabled   bool    `json:"is_enabled" doc:"Whether the filter is enabled"`
 	IsSystem    bool    `json:"is_system" doc:"Whether this is a system-provided filter (cannot be edited/deleted)"`
 	SourceID    *string `json:"source_id,omitempty" doc:"Source ID to restrict filter to (optional)"`
@@ -92,7 +91,6 @@ func FilterFromModel(f *models.Filter) FilterResponse {
 		SourceType:  string(f.SourceType),
 		Action:      string(f.Action),
 		Expression:  f.Expression,
-		Priority:    f.Priority,
 		IsEnabled:   f.IsEnabled,
 		IsSystem:    f.IsSystem,
 		CreatedAt:   f.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -191,7 +189,6 @@ type CreateFilterRequest struct {
 	SourceType  string  `json:"source_type" doc:"Source type (stream or epg)" enum:"stream,epg"`
 	Action      string  `json:"action" doc:"Filter action (include or exclude)" enum:"include,exclude"`
 	Expression  string  `json:"expression" doc:"Filter expression" minLength:"1"`
-	Priority    int     `json:"priority" doc:"Priority (lower = higher priority)"`
 	IsEnabled   *bool   `json:"is_enabled,omitempty" doc:"Whether the filter is enabled (default: true)"`
 	SourceID    *string `json:"source_id,omitempty" doc:"Source ID to restrict filter to (optional)"`
 }
@@ -214,7 +211,6 @@ func (h *FilterHandler) Create(ctx context.Context, input *CreateFilterInput) (*
 		SourceType:  models.FilterSourceType(input.Body.SourceType),
 		Action:      models.FilterAction(input.Body.Action),
 		Expression:  input.Body.Expression,
-		Priority:    input.Body.Priority,
 		IsEnabled:   true,
 	}
 
@@ -246,7 +242,6 @@ type UpdateFilterRequest struct {
 	SourceType  *string `json:"source_type,omitempty" doc:"Source type (stream or epg)" enum:"stream,epg"`
 	Action      *string `json:"action,omitempty" doc:"Filter action (include or exclude)" enum:"include,exclude"`
 	Expression  *string `json:"expression,omitempty" doc:"Filter expression"`
-	Priority    *int    `json:"priority,omitempty" doc:"Priority (lower = higher priority)"`
 	IsEnabled   *bool   `json:"is_enabled,omitempty" doc:"Whether the filter is enabled"`
 	SourceID    *string `json:"source_id,omitempty" doc:"Source ID to restrict filter to (null to make global)"`
 }
@@ -281,8 +276,7 @@ func (h *FilterHandler) Update(ctx context.Context, input *UpdateFilterInput) (*
 	if filter.IsSystem {
 		if input.Body.Name != nil || input.Body.Description != nil ||
 			input.Body.SourceType != nil || input.Body.Action != nil ||
-			input.Body.Expression != nil || input.Body.Priority != nil ||
-			input.Body.SourceID != nil {
+			input.Body.Expression != nil || input.Body.SourceID != nil {
 			return nil, huma.Error403Forbidden("system filters can only have is_enabled toggled")
 		}
 		// Only allow is_enabled update
@@ -305,9 +299,6 @@ func (h *FilterHandler) Update(ctx context.Context, input *UpdateFilterInput) (*
 		}
 		if input.Body.Expression != nil {
 			filter.Expression = *input.Body.Expression
-		}
-		if input.Body.Priority != nil {
-			filter.Priority = *input.Body.Priority
 		}
 		if input.Body.IsEnabled != nil {
 			filter.IsEnabled = *input.Body.IsEnabled

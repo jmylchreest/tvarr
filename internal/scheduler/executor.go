@@ -186,12 +186,8 @@ func (h *LogoMaintenanceHandler) Execute(ctx context.Context, job *models.Job) (
 		return "", fmt.Errorf("logo maintenance failed: %w", err)
 	}
 
-	result := fmt.Sprintf("scanned %d logos, pruned %d stale", scanned, pruned)
-	h.logger.Info("logo maintenance completed",
-		slog.Int("scanned", scanned),
-		slog.Int("pruned", pruned))
-
-	return result, nil
+	// Service already logs detailed completion message
+	return fmt.Sprintf("scanned %d logos, pruned %d stale", scanned, pruned), nil
 }
 
 // Executor dispatches jobs to the appropriate handlers.

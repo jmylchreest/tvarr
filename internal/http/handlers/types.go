@@ -167,8 +167,8 @@ type EpgSourceResponse struct {
 	Username            string                 `json:"username,omitempty"`
 	ApiMethod           models.XtreamApiMethod `json:"api_method,omitempty"`
 	UserAgent           string                 `json:"user_agent,omitempty"`
-	OriginalTimezone    string                 `json:"original_timezone,omitempty"`
-	TimeOffset          string                 `json:"time_offset,omitempty"`
+	DetectedTimezone    string                 `json:"detected_timezone,omitempty"`
+	EpgShift            int                    `json:"epg_shift"`
 	Enabled             bool                   `json:"enabled"`
 	Priority            int                    `json:"priority"`
 	Status              models.EpgSourceStatus `json:"status"`
@@ -192,8 +192,8 @@ func EpgSourceFromModel(s *models.EpgSource) EpgSourceResponse {
 		Username:            s.Username,
 		ApiMethod:           s.ApiMethod,
 		UserAgent:           s.UserAgent,
-		OriginalTimezone:    s.OriginalTimezone,
-		TimeOffset:          s.TimeOffset,
+		DetectedTimezone:    s.DetectedTimezone,
+		EpgShift:            s.EpgShift,
 		Enabled:             s.Enabled,
 		Priority:            s.Priority,
 		Status:              s.Status,
@@ -208,37 +208,38 @@ func EpgSourceFromModel(s *models.EpgSource) EpgSourceResponse {
 
 // CreateEpgSourceRequest is the request body for creating an EPG source.
 type CreateEpgSourceRequest struct {
-	Name             string                 `json:"name" doc:"User-friendly name for the source" minLength:"1" maxLength:"255"`
-	Type             models.EpgSourceType   `json:"type" doc:"Source type: xmltv or xtream" enum:"xmltv,xtream"`
-	URL              string                 `json:"url" doc:"XMLTV URL or Xtream server URL" minLength:"1" maxLength:"2048"`
-	Username         string                 `json:"username,omitempty" doc:"Username for Xtream authentication" maxLength:"255"`
-	Password         string                 `json:"password,omitempty" doc:"Password for Xtream authentication" maxLength:"255"`
-	ApiMethod        models.XtreamApiMethod `json:"api_method,omitempty" doc:"API method for Xtream sources: stream_id (richer data, ~6 days) or bulk_xmltv (faster, ~2 days)" enum:"stream_id,bulk_xmltv"`
-	UserAgent        string                 `json:"user_agent,omitempty" doc:"Custom User-Agent header" maxLength:"512"`
-	OriginalTimezone string                 `json:"original_timezone,omitempty" doc:"Timezone of the EPG data (e.g., UTC, Europe/London)" maxLength:"50"`
-	TimeOffset       string                 `json:"time_offset,omitempty" doc:"Manual time offset adjustment (e.g., +00:00, -05:00)" maxLength:"10"`
-	Enabled          *bool                  `json:"enabled,omitempty" doc:"Whether the source is enabled (default: true)"`
-	Priority         *int                   `json:"priority,omitempty" doc:"Priority for program merging (higher = preferred)"`
-	CronSchedule     string                 `json:"cron_schedule,omitempty" doc:"Cron schedule for automatic ingestion" maxLength:"100"`
-	RetentionDays    *int                   `json:"retention_days,omitempty" doc:"Days to retain EPG data after expiry (default: 1)"`
+	Name          string                 `json:"name" doc:"User-friendly name for the source" minLength:"1" maxLength:"255"`
+	Type          models.EpgSourceType   `json:"type" doc:"Source type: xmltv or xtream" enum:"xmltv,xtream"`
+	URL           string                 `json:"url" doc:"XMLTV URL or Xtream server URL" minLength:"1" maxLength:"2048"`
+	Username      string                 `json:"username,omitempty" doc:"Username for Xtream authentication" maxLength:"255"`
+	Password      string                 `json:"password,omitempty" doc:"Password for Xtream authentication" maxLength:"255"`
+	ApiMethod     models.XtreamApiMethod `json:"api_method,omitempty" doc:"API method for Xtream sources: stream_id (richer data, ~6 days) or bulk_xmltv (faster, ~2 days)" enum:"stream_id,bulk_xmltv"`
+	UserAgent     string                 `json:"user_agent,omitempty" doc:"Custom User-Agent header" maxLength:"512"`
+	EpgShift      *int                   `json:"epg_shift,omitempty" doc:"Manual time shift in hours to adjust EPG times (default: 0)"`
+	Enabled       *bool                  `json:"enabled,omitempty" doc:"Whether the source is enabled (default: true)"`
+	Priority      *int                   `json:"priority,omitempty" doc:"Priority for program merging (higher = preferred)"`
+	CronSchedule  string                 `json:"cron_schedule,omitempty" doc:"Cron schedule for automatic ingestion" maxLength:"100"`
+	RetentionDays *int                   `json:"retention_days,omitempty" doc:"Days to retain EPG data after expiry (default: 1)"`
 }
 
 // ToModel converts the request to a model.
 func (r *CreateEpgSourceRequest) ToModel() *models.EpgSource {
 	source := &models.EpgSource{
-		Name:             r.Name,
-		Type:             r.Type,
-		URL:              r.URL,
-		Username:         r.Username,
-		Password:         r.Password,
-		ApiMethod:        r.ApiMethod,
-		UserAgent:        r.UserAgent,
-		OriginalTimezone: r.OriginalTimezone,
-		TimeOffset:       r.TimeOffset,
-		Enabled:          true,
-		Priority:         0,
-		CronSchedule:     r.CronSchedule,
-		RetentionDays:    1,
+		Name:          r.Name,
+		Type:          r.Type,
+		URL:           r.URL,
+		Username:      r.Username,
+		Password:      r.Password,
+		ApiMethod:     r.ApiMethod,
+		UserAgent:     r.UserAgent,
+		EpgShift:      0,
+		Enabled:       true,
+		Priority:      0,
+		CronSchedule:  r.CronSchedule,
+		RetentionDays: 1,
+	}
+	if r.EpgShift != nil {
+		source.EpgShift = *r.EpgShift
 	}
 	if r.Enabled != nil {
 		source.Enabled = *r.Enabled
@@ -253,23 +254,24 @@ func (r *CreateEpgSourceRequest) ToModel() *models.EpgSource {
 }
 
 // UpdateEpgSourceRequest is the request body for updating an EPG source.
+// Note: DetectedTimezone is read-only (auto-detected during ingestion)
 type UpdateEpgSourceRequest struct {
-	Name             *string                 `json:"name,omitempty" doc:"User-friendly name for the source" maxLength:"255"`
-	Type             *models.EpgSourceType   `json:"type,omitempty" doc:"Source type: xmltv or xtream" enum:"xmltv,xtream"`
-	URL              *string                 `json:"url,omitempty" doc:"XMLTV URL or Xtream server URL" maxLength:"2048"`
-	Username         *string                 `json:"username,omitempty" doc:"Username for Xtream authentication" maxLength:"255"`
-	Password         *string                 `json:"password,omitempty" doc:"Password for Xtream authentication" maxLength:"255"`
-	ApiMethod        *models.XtreamApiMethod `json:"api_method,omitempty" doc:"API method for Xtream sources: stream_id or bulk_xmltv" enum:"stream_id,bulk_xmltv"`
-	UserAgent        *string                 `json:"user_agent,omitempty" doc:"Custom User-Agent header" maxLength:"512"`
-	OriginalTimezone *string                 `json:"original_timezone,omitempty" doc:"Timezone of the EPG data" maxLength:"50"`
-	TimeOffset       *string                 `json:"time_offset,omitempty" doc:"Manual time offset adjustment" maxLength:"10"`
-	Enabled          *bool                   `json:"enabled,omitempty" doc:"Whether the source is enabled"`
-	Priority         *int                    `json:"priority,omitempty" doc:"Priority for program merging"`
-	CronSchedule     *string                 `json:"cron_schedule,omitempty" doc:"Cron schedule for automatic ingestion" maxLength:"100"`
-	RetentionDays    *int                    `json:"retention_days,omitempty" doc:"Days to retain EPG data after expiry"`
+	Name          *string                 `json:"name,omitempty" doc:"User-friendly name for the source" maxLength:"255"`
+	Type          *models.EpgSourceType   `json:"type,omitempty" doc:"Source type: xmltv or xtream" enum:"xmltv,xtream"`
+	URL           *string                 `json:"url,omitempty" doc:"XMLTV URL or Xtream server URL" maxLength:"2048"`
+	Username      *string                 `json:"username,omitempty" doc:"Username for Xtream authentication" maxLength:"255"`
+	Password      *string                 `json:"password,omitempty" doc:"Password for Xtream authentication" maxLength:"255"`
+	ApiMethod     *models.XtreamApiMethod `json:"api_method,omitempty" doc:"API method for Xtream sources: stream_id or bulk_xmltv" enum:"stream_id,bulk_xmltv"`
+	UserAgent     *string                 `json:"user_agent,omitempty" doc:"Custom User-Agent header" maxLength:"512"`
+	EpgShift      *int                    `json:"epg_shift,omitempty" doc:"Manual time shift in hours to adjust EPG times"`
+	Enabled       *bool                   `json:"enabled,omitempty" doc:"Whether the source is enabled"`
+	Priority      *int                    `json:"priority,omitempty" doc:"Priority for program merging"`
+	CronSchedule  *string                 `json:"cron_schedule,omitempty" doc:"Cron schedule for automatic ingestion" maxLength:"100"`
+	RetentionDays *int                    `json:"retention_days,omitempty" doc:"Days to retain EPG data after expiry"`
 }
 
 // ApplyToModel applies the update request to an existing model.
+// Note: DetectedTimezone is not updated here - it's auto-detected during ingestion
 func (r *UpdateEpgSourceRequest) ApplyToModel(s *models.EpgSource) {
 	if r.Name != nil {
 		s.Name = *r.Name
@@ -292,11 +294,8 @@ func (r *UpdateEpgSourceRequest) ApplyToModel(s *models.EpgSource) {
 	if r.UserAgent != nil {
 		s.UserAgent = *r.UserAgent
 	}
-	if r.OriginalTimezone != nil {
-		s.OriginalTimezone = *r.OriginalTimezone
-	}
-	if r.TimeOffset != nil {
-		s.TimeOffset = *r.TimeOffset
+	if r.EpgShift != nil {
+		s.EpgShift = *r.EpgShift
 	}
 	if r.Enabled != nil {
 		s.Enabled = *r.Enabled
@@ -316,56 +315,58 @@ func (r *UpdateEpgSourceRequest) ApplyToModel(s *models.EpgSource) {
 
 // StreamProxyResponse represents a stream proxy in API responses.
 type StreamProxyResponse struct {
-	ID                    models.ULID              `json:"id"`
-	CreatedAt             time.Time                `json:"created_at"`
-	UpdatedAt             time.Time                `json:"updated_at"`
-	Name                  string                   `json:"name"`
-	Description           string                   `json:"description,omitempty"`
-	ProxyMode             models.StreamProxyMode   `json:"proxy_mode"`
-	IsActive              bool                     `json:"is_active"`
-	AutoRegenerate        bool                     `json:"auto_regenerate"`
-	StartingChannelNumber int                      `json:"starting_channel_number"`
-	UpstreamTimeout       int                      `json:"upstream_timeout,omitempty"`
-	BufferSize            int                      `json:"buffer_size,omitempty"`
-	MaxConcurrentStreams  int                      `json:"max_concurrent_streams,omitempty"`
-	CacheChannelLogos     bool                     `json:"cache_channel_logos"`
-	CacheProgramLogos     bool                     `json:"cache_program_logos"`
-	RelayProfileID        *models.ULID             `json:"relay_profile_id,omitempty"`
-	Status                models.StreamProxyStatus `json:"status"`
-	LastGeneratedAt       *time.Time               `json:"last_generated_at,omitempty"`
-	LastError             string                   `json:"last_error,omitempty"`
-	ChannelCount          int                      `json:"channel_count"`
-	ProgramCount          int                      `json:"program_count"`
-	OutputPath            string                   `json:"output_path,omitempty"`
-	M3U8URL               string                   `json:"m3u8_url,omitempty"`
-	XMLTVURL              string                   `json:"xmltv_url,omitempty"`
+	ID                     models.ULID              `json:"id"`
+	CreatedAt              time.Time                `json:"created_at"`
+	UpdatedAt              time.Time                `json:"updated_at"`
+	Name                   string                   `json:"name"`
+	Description            string                   `json:"description,omitempty"`
+	ProxyMode              models.StreamProxyMode   `json:"proxy_mode"`
+	IsActive               bool                     `json:"is_active"`
+	AutoRegenerate         bool                     `json:"auto_regenerate"`
+	StartingChannelNumber  int                      `json:"starting_channel_number"`
+	UpstreamTimeout        int                      `json:"upstream_timeout,omitempty"`
+	BufferSize             int                      `json:"buffer_size,omitempty"`
+	MaxConcurrentStreams   int                      `json:"max_concurrent_streams,omitempty"`
+	CacheChannelLogos      bool                     `json:"cache_channel_logos"`
+	CacheProgramLogos      bool                     `json:"cache_program_logos"`
+	ClientDetectionEnabled bool                     `json:"client_detection_enabled"`
+	EncodingProfileID      *models.ULID             `json:"encoding_profile_id,omitempty"`
+	Status                 models.StreamProxyStatus `json:"status"`
+	LastGeneratedAt        *time.Time               `json:"last_generated_at,omitempty"`
+	LastError              string                   `json:"last_error,omitempty"`
+	ChannelCount           int                      `json:"channel_count"`
+	ProgramCount           int                      `json:"program_count"`
+	OutputPath             string                   `json:"output_path,omitempty"`
+	M3U8URL                string                   `json:"m3u8_url,omitempty"`
+	XMLTVURL               string                   `json:"xmltv_url,omitempty"`
 }
 
 // StreamProxyFromModel converts a model to a response.
 // The baseURL parameter is optional; if empty, relative URLs are used.
 func StreamProxyFromModel(p *models.StreamProxy, baseURL string) StreamProxyResponse {
 	resp := StreamProxyResponse{
-		ID:                    p.ID,
-		CreatedAt:             p.CreatedAt,
-		UpdatedAt:             p.UpdatedAt,
-		Name:                  p.Name,
-		Description:           p.Description,
-		ProxyMode:             p.ProxyMode,
-		IsActive:              p.IsActive,
-		AutoRegenerate:        p.AutoRegenerate,
-		StartingChannelNumber: p.StartingChannelNumber,
-		UpstreamTimeout:       p.UpstreamTimeout,
-		BufferSize:            p.BufferSize,
-		MaxConcurrentStreams:  p.MaxConcurrentStreams,
-		CacheChannelLogos:     p.CacheChannelLogos,
-		CacheProgramLogos:     p.CacheProgramLogos,
-		RelayProfileID:        p.RelayProfileID,
-		Status:                p.Status,
-		LastGeneratedAt:       p.LastGeneratedAt,
-		LastError:             p.LastError,
-		ChannelCount:          p.ChannelCount,
-		ProgramCount:          p.ProgramCount,
-		OutputPath:            p.OutputPath,
+		ID:                     p.ID,
+		CreatedAt:              p.CreatedAt,
+		UpdatedAt:              p.UpdatedAt,
+		Name:                   p.Name,
+		Description:            p.Description,
+		ProxyMode:              p.ProxyMode,
+		IsActive:               p.IsActive,
+		AutoRegenerate:         p.AutoRegenerate,
+		StartingChannelNumber:  p.StartingChannelNumber,
+		UpstreamTimeout:        p.UpstreamTimeout,
+		BufferSize:             p.BufferSize,
+		MaxConcurrentStreams:   p.MaxConcurrentStreams,
+		CacheChannelLogos:      p.CacheChannelLogos,
+		CacheProgramLogos:      p.CacheProgramLogos,
+		ClientDetectionEnabled: p.ClientDetectionEnabled,
+		EncodingProfileID:      p.EncodingProfileID,
+		Status:                 p.Status,
+		LastGeneratedAt:        p.LastGeneratedAt,
+		LastError:              p.LastError,
+		ChannelCount:           p.ChannelCount,
+		ProgramCount:           p.ProgramCount,
+		OutputPath:             p.OutputPath,
 	}
 
 	// Only populate URLs if the proxy has been generated (has a last_generated_at timestamp)
@@ -465,39 +466,41 @@ func StreamProxyDetailFromModel(p *models.StreamProxy, baseURL string) StreamPro
 
 // CreateStreamProxyRequest is the request body for creating a stream proxy.
 type CreateStreamProxyRequest struct {
-	Name                  string                 `json:"name" doc:"Unique name for the proxy" minLength:"1" maxLength:"255"`
-	Description           string                 `json:"description,omitempty" doc:"Optional description" maxLength:"1024"`
-	ProxyMode             models.StreamProxyMode `json:"proxy_mode,omitempty" doc:"How to serve streams: direct (302 redirect) or smart (auto-optimize)" enum:"direct,smart"`
-	IsActive              *bool                  `json:"is_active,omitempty" doc:"Whether the proxy is active (default: true)"`
-	AutoRegenerate        *bool                  `json:"auto_regenerate,omitempty" doc:"Auto-regenerate when sources change (default: false)"`
-	StartingChannelNumber *int                   `json:"starting_channel_number,omitempty" doc:"Base channel number (default: 1)"`
-	UpstreamTimeout       *int                   `json:"upstream_timeout,omitempty" doc:"Timeout in seconds for upstream connections"`
-	BufferSize            *int                   `json:"buffer_size,omitempty" doc:"Buffer size in bytes for proxy mode"`
-	MaxConcurrentStreams  *int                   `json:"max_concurrent_streams,omitempty" doc:"Max concurrent streams (0 = unlimited)"`
-	CacheChannelLogos     *bool                  `json:"cache_channel_logos,omitempty" doc:"Cache channel logos locally"`
-	CacheProgramLogos     *bool                  `json:"cache_program_logos,omitempty" doc:"Cache EPG program logos locally"`
-	RelayProfileID        *models.ULID           `json:"relay_profile_id,omitempty" doc:"Relay profile for transcoding settings"`
-	OutputPath            string                 `json:"output_path,omitempty" doc:"Path for generated files" maxLength:"512"`
-	SourceIDs             []models.ULID          `json:"source_ids,omitempty" doc:"Stream source IDs to include"`
-	EpgSourceIDs          []models.ULID          `json:"epg_source_ids,omitempty" doc:"EPG source IDs to include"`
-	FilterIDs             []models.ULID          `json:"filter_ids,omitempty" doc:"Filter IDs to include"`
+	Name                   string                 `json:"name" doc:"Unique name for the proxy" minLength:"1" maxLength:"255"`
+	Description            string                 `json:"description,omitempty" doc:"Optional description" maxLength:"1024"`
+	ProxyMode              models.StreamProxyMode `json:"proxy_mode,omitempty" doc:"How to serve streams: direct (302 redirect) or smart (auto-optimize)" enum:"direct,smart"`
+	IsActive               *bool                  `json:"is_active,omitempty" doc:"Whether the proxy is active (default: true)"`
+	AutoRegenerate         *bool                  `json:"auto_regenerate,omitempty" doc:"Auto-regenerate when sources change (default: false)"`
+	StartingChannelNumber  *int                   `json:"starting_channel_number,omitempty" doc:"Base channel number (default: 1)"`
+	UpstreamTimeout        *int                   `json:"upstream_timeout,omitempty" doc:"Timeout in seconds for upstream connections"`
+	BufferSize             *int                   `json:"buffer_size,omitempty" doc:"Buffer size in bytes for proxy mode"`
+	MaxConcurrentStreams   *int                   `json:"max_concurrent_streams,omitempty" doc:"Max concurrent streams (0 = unlimited)"`
+	CacheChannelLogos      *bool                  `json:"cache_channel_logos,omitempty" doc:"Cache channel logos locally"`
+	CacheProgramLogos      *bool                  `json:"cache_program_logos,omitempty" doc:"Cache EPG program logos locally"`
+	ClientDetectionEnabled *bool                  `json:"client_detection_enabled,omitempty" doc:"Enable automatic client capability detection (default: true)"`
+	EncodingProfileID      *models.ULID           `json:"encoding_profile_id,omitempty" doc:"Default encoding profile when client detection doesn't match or is disabled"`
+	OutputPath             string                 `json:"output_path,omitempty" doc:"Path for generated files" maxLength:"512"`
+	SourceIDs              []models.ULID          `json:"source_ids,omitempty" doc:"Stream source IDs to include"`
+	EpgSourceIDs           []models.ULID          `json:"epg_source_ids,omitempty" doc:"EPG source IDs to include"`
+	FilterIDs              []models.ULID          `json:"filter_ids,omitempty" doc:"Filter IDs to include"`
 }
 
 // ToModel converts the request to a model.
 func (r *CreateStreamProxyRequest) ToModel() *models.StreamProxy {
 	proxy := &models.StreamProxy{
-		Name:                  r.Name,
-		Description:           r.Description,
-		ProxyMode:             models.StreamProxyModeDirect, // Default
-		IsActive:              true,
-		AutoRegenerate:        false,
-		StartingChannelNumber: 1,
-		UpstreamTimeout:       30,
-		BufferSize:            8192,
-		MaxConcurrentStreams:  0,
-		CacheChannelLogos:     true,
-		CacheProgramLogos:     true,
-		OutputPath:            r.OutputPath,
+		Name:                   r.Name,
+		Description:            r.Description,
+		ProxyMode:              models.StreamProxyModeDirect, // Default
+		IsActive:               true,
+		AutoRegenerate:         false,
+		StartingChannelNumber:  1,
+		UpstreamTimeout:        30,
+		BufferSize:             8192,
+		MaxConcurrentStreams:   0,
+		CacheChannelLogos:      true,
+		CacheProgramLogos:      true,
+		ClientDetectionEnabled: true, // Default to enabled
+		OutputPath:             r.OutputPath,
 	}
 	if r.ProxyMode != "" && models.IsValidProxyMode(r.ProxyMode) {
 		proxy.ProxyMode = r.ProxyMode
@@ -526,30 +529,34 @@ func (r *CreateStreamProxyRequest) ToModel() *models.StreamProxy {
 	if r.CacheProgramLogos != nil {
 		proxy.CacheProgramLogos = *r.CacheProgramLogos
 	}
-	if r.RelayProfileID != nil {
-		proxy.RelayProfileID = r.RelayProfileID
+	if r.ClientDetectionEnabled != nil {
+		proxy.ClientDetectionEnabled = *r.ClientDetectionEnabled
+	}
+	if r.EncodingProfileID != nil {
+		proxy.EncodingProfileID = r.EncodingProfileID
 	}
 	return proxy
 }
 
 // UpdateStreamProxyRequest is the request body for updating a stream proxy.
 type UpdateStreamProxyRequest struct {
-	Name                  *string                 `json:"name,omitempty" doc:"Unique name for the proxy" maxLength:"255"`
-	Description           *string                 `json:"description,omitempty" doc:"Optional description" maxLength:"1024"`
-	ProxyMode             *models.StreamProxyMode `json:"proxy_mode,omitempty" doc:"How to serve streams: direct (302 redirect) or smart (auto-optimize)" enum:"direct,smart"`
-	IsActive              *bool                   `json:"is_active,omitempty" doc:"Whether the proxy is active"`
-	AutoRegenerate        *bool                   `json:"auto_regenerate,omitempty" doc:"Auto-regenerate when sources change"`
-	StartingChannelNumber *int                    `json:"starting_channel_number,omitempty" doc:"Base channel number"`
-	UpstreamTimeout       *int                    `json:"upstream_timeout,omitempty" doc:"Timeout in seconds for upstream connections"`
-	BufferSize            *int                    `json:"buffer_size,omitempty" doc:"Buffer size in bytes for proxy mode"`
-	MaxConcurrentStreams  *int                    `json:"max_concurrent_streams,omitempty" doc:"Max concurrent streams (0 = unlimited)"`
-	CacheChannelLogos     *bool                   `json:"cache_channel_logos,omitempty" doc:"Cache channel logos locally"`
-	CacheProgramLogos     *bool                   `json:"cache_program_logos,omitempty" doc:"Cache EPG program logos locally"`
-	RelayProfileID        *models.ULID            `json:"relay_profile_id,omitempty" doc:"Relay profile for transcoding settings"`
-	OutputPath            *string                 `json:"output_path,omitempty" doc:"Path for generated files" maxLength:"512"`
-	SourceIDs             []models.ULID           `json:"source_ids,omitempty" doc:"Stream source IDs to include"`
-	EpgSourceIDs          []models.ULID           `json:"epg_source_ids,omitempty" doc:"EPG source IDs to include"`
-	FilterIDs             []models.ULID           `json:"filter_ids,omitempty" doc:"Filter IDs to include"`
+	Name                   *string                 `json:"name,omitempty" doc:"Unique name for the proxy" maxLength:"255"`
+	Description            *string                 `json:"description,omitempty" doc:"Optional description" maxLength:"1024"`
+	ProxyMode              *models.StreamProxyMode `json:"proxy_mode,omitempty" doc:"How to serve streams: direct (302 redirect) or smart (auto-optimize)" enum:"direct,smart"`
+	IsActive               *bool                   `json:"is_active,omitempty" doc:"Whether the proxy is active"`
+	AutoRegenerate         *bool                   `json:"auto_regenerate,omitempty" doc:"Auto-regenerate when sources change"`
+	StartingChannelNumber  *int                    `json:"starting_channel_number,omitempty" doc:"Base channel number"`
+	UpstreamTimeout        *int                    `json:"upstream_timeout,omitempty" doc:"Timeout in seconds for upstream connections"`
+	BufferSize             *int                    `json:"buffer_size,omitempty" doc:"Buffer size in bytes for proxy mode"`
+	MaxConcurrentStreams   *int                    `json:"max_concurrent_streams,omitempty" doc:"Max concurrent streams (0 = unlimited)"`
+	CacheChannelLogos      *bool                   `json:"cache_channel_logos,omitempty" doc:"Cache channel logos locally"`
+	CacheProgramLogos      *bool                   `json:"cache_program_logos,omitempty" doc:"Cache EPG program logos locally"`
+	ClientDetectionEnabled *bool                   `json:"client_detection_enabled,omitempty" doc:"Enable automatic client capability detection"`
+	EncodingProfileID      *models.ULID            `json:"encoding_profile_id,omitempty" doc:"Default encoding profile when client detection doesn't match or is disabled"`
+	OutputPath             *string                 `json:"output_path,omitempty" doc:"Path for generated files" maxLength:"512"`
+	SourceIDs              []models.ULID           `json:"source_ids,omitempty" doc:"Stream source IDs to include"`
+	EpgSourceIDs           []models.ULID           `json:"epg_source_ids,omitempty" doc:"EPG source IDs to include"`
+	FilterIDs              []models.ULID           `json:"filter_ids,omitempty" doc:"Filter IDs to include"`
 }
 
 // ApplyToModel applies the update request to an existing model.
@@ -587,8 +594,11 @@ func (r *UpdateStreamProxyRequest) ApplyToModel(p *models.StreamProxy) {
 	if r.CacheProgramLogos != nil {
 		p.CacheProgramLogos = *r.CacheProgramLogos
 	}
-	if r.RelayProfileID != nil {
-		p.RelayProfileID = r.RelayProfileID
+	if r.ClientDetectionEnabled != nil {
+		p.ClientDetectionEnabled = *r.ClientDetectionEnabled
+	}
+	if r.EncodingProfileID != nil {
+		p.EncodingProfileID = r.EncodingProfileID
 	}
 	if r.OutputPath != nil {
 		p.OutputPath = *r.OutputPath

@@ -385,3 +385,21 @@ func (s *ProxyService) getSuggestionForStage(stageID string, err error) string {
 		return "Check server logs for more details"
 	}
 }
+
+// GetByEncodingProfileID returns proxies using a given encoding profile.
+func (s *ProxyService) GetByEncodingProfileID(ctx context.Context, profileID models.ULID) ([]*models.StreamProxy, error) {
+	proxies, err := s.proxyRepo.GetByEncodingProfileID(ctx, profileID)
+	if err != nil {
+		return nil, fmt.Errorf("getting proxies by encoding profile ID: %w", err)
+	}
+	return proxies, nil
+}
+
+// CountByEncodingProfileID returns the count of proxies using a given encoding profile.
+func (s *ProxyService) CountByEncodingProfileID(ctx context.Context, profileID models.ULID) (int64, error) {
+	count, err := s.proxyRepo.CountByEncodingProfileID(ctx, profileID)
+	if err != nil {
+		return 0, fmt.Errorf("counting proxies by encoding profile ID: %w", err)
+	}
+	return count, nil
+}

@@ -42,7 +42,7 @@ func (r *filterRepository) GetByID(ctx context.Context, id models.ULID) (*models
 // GetAll retrieves all filters.
 func (r *filterRepository) GetAll(ctx context.Context) ([]*models.Filter, error) {
 	var filters []*models.Filter
-	if err := r.db.WithContext(ctx).Order("priority ASC, created_at ASC").Find(&filters).Error; err != nil {
+	if err := r.db.WithContext(ctx).Order("created_at ASC").Find(&filters).Error; err != nil {
 		return nil, err
 	}
 	return filters, nil
@@ -53,7 +53,7 @@ func (r *filterRepository) GetEnabled(ctx context.Context) ([]*models.Filter, er
 	var filters []*models.Filter
 	if err := r.db.WithContext(ctx).
 		Where("is_enabled = ?", true).
-		Order("priority ASC, created_at ASC").
+		Order("created_at ASC").
 		Find(&filters).Error; err != nil {
 		return nil, err
 	}
@@ -65,7 +65,7 @@ func (r *filterRepository) GetBySourceType(ctx context.Context, sourceType model
 	var filters []*models.Filter
 	if err := r.db.WithContext(ctx).
 		Where("source_type = ?", sourceType).
-		Order("priority ASC, created_at ASC").
+		Order("created_at ASC").
 		Find(&filters).Error; err != nil {
 		return nil, err
 	}
@@ -81,13 +81,13 @@ func (r *filterRepository) GetBySourceID(ctx context.Context, sourceID *models.U
 	} else {
 		query = query.Where("source_id IS NULL")
 	}
-	if err := query.Order("priority ASC, created_at ASC").Find(&filters).Error; err != nil {
+	if err := query.Order("created_at ASC").Find(&filters).Error; err != nil {
 		return nil, err
 	}
 	return filters, nil
 }
 
-// GetEnabledForSourceType retrieves enabled filters for a source type, ordered by priority.
+// GetEnabledForSourceType retrieves enabled filters for a source type, ordered by creation time.
 func (r *filterRepository) GetEnabledForSourceType(ctx context.Context, sourceType models.FilterSourceType, sourceID *models.ULID) ([]*models.Filter, error) {
 	var filters []*models.Filter
 	query := r.db.WithContext(ctx).
@@ -102,7 +102,7 @@ func (r *filterRepository) GetEnabledForSourceType(ctx context.Context, sourceTy
 		query = query.Where("source_id IS NULL")
 	}
 
-	if err := query.Order("priority ASC, created_at ASC").Find(&filters).Error; err != nil {
+	if err := query.Order("created_at ASC").Find(&filters).Error; err != nil {
 		return nil, err
 	}
 	return filters, nil

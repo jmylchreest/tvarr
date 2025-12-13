@@ -17,8 +17,8 @@ import (
 	"github.com/jmylchreest/tvarr/internal/services"
 )
 
-// ErrRelayProfileNotFound is returned when a relay profile is not found.
-var ErrRelayProfileNotFound = errors.New("relay profile not found")
+// ErrEncodingProfileNotFound is returned when an encoding profile is not found.
+var ErrEncodingProfileNotFound = errors.New("encoding profile not found")
 
 // ErrChannelNotFound is returned when a channel is not found.
 var ErrChannelNotFound = errors.New("channel not found")
@@ -28,20 +28,20 @@ var ErrProxyNotFound = errors.New("stream proxy not found")
 
 // RelayService provides business logic for stream relay functionality.
 type RelayService struct {
-	relayProfileRepo   repository.RelayProfileRepository
-	lastKnownCodecRepo repository.LastKnownCodecRepository
-	channelRepo        repository.ChannelRepository
-	streamProxyRepo    repository.StreamProxyRepository
-	relayManager       *relay.Manager
-	ffmpegDetector     *ffmpeg.BinaryDetector
-	hardwareDetector   *services.HardwareDetector
-	prober             *ffmpeg.Prober
-	logger             *slog.Logger
+	encodingProfileRepo repository.EncodingProfileRepository
+	lastKnownCodecRepo  repository.LastKnownCodecRepository
+	channelRepo         repository.ChannelRepository
+	streamProxyRepo     repository.StreamProxyRepository
+	relayManager        *relay.Manager
+	ffmpegDetector      *ffmpeg.BinaryDetector
+	hardwareDetector    *services.HardwareDetector
+	prober              *ffmpeg.Prober
+	logger              *slog.Logger
 }
 
 // NewRelayService creates a new relay service.
 func NewRelayService(
-	relayProfileRepo repository.RelayProfileRepository,
+	encodingProfileRepo repository.EncodingProfileRepository,
 	lastKnownCodecRepo repository.LastKnownCodecRepository,
 	channelRepo repository.ChannelRepository,
 	streamProxyRepo repository.StreamProxyRepository,
@@ -58,14 +58,14 @@ func NewRelayService(
 	}
 
 	return &RelayService{
-		relayProfileRepo:   relayProfileRepo,
-		lastKnownCodecRepo: lastKnownCodecRepo,
-		channelRepo:        channelRepo,
-		streamProxyRepo:    streamProxyRepo,
-		relayManager:       relay.NewManager(config),
-		ffmpegDetector:     ffmpegDetector,
-		hardwareDetector:   hardwareDetector,
-		logger:             slog.Default(),
+		encodingProfileRepo: encodingProfileRepo,
+		lastKnownCodecRepo:  lastKnownCodecRepo,
+		channelRepo:         channelRepo,
+		streamProxyRepo:     streamProxyRepo,
+		relayManager:        relay.NewManager(config),
+		ffmpegDetector:      ffmpegDetector,
+		hardwareDetector:    hardwareDetector,
+		logger:              slog.Default(),
 	}
 }
 
@@ -117,115 +117,6 @@ func (s *RelayService) Close() {
 	if s.relayManager != nil {
 		s.relayManager.Close()
 	}
-}
-
-// RelayProfile CRUD operations
-
-// GetAllProfiles returns all relay profiles.
-func (s *RelayService) GetAllProfiles(ctx context.Context) ([]*models.RelayProfile, error) {
-	return s.relayProfileRepo.GetAll(ctx)
-}
-
-// GetProfileByID returns a relay profile by ID.
-func (s *RelayService) GetProfileByID(ctx context.Context, id models.ULID) (*models.RelayProfile, error) {
-	profile, err := s.relayProfileRepo.GetByID(ctx, id)
-	if err != nil {
-		if errors.Is(err, models.ErrRelayProfileNotFound) {
-			return nil, ErrRelayProfileNotFound
-		}
-		return nil, err
-	}
-	if profile == nil {
-		return nil, ErrRelayProfileNotFound
-	}
-	return profile, nil
-}
-
-// GetProfileByName returns a relay profile by name.
-func (s *RelayService) GetProfileByName(ctx context.Context, name string) (*models.RelayProfile, error) {
-	profile, err := s.relayProfileRepo.GetByName(ctx, name)
-	if err != nil {
-		if errors.Is(err, models.ErrRelayProfileNotFound) {
-			return nil, ErrRelayProfileNotFound
-		}
-		return nil, err
-	}
-	if profile == nil {
-		return nil, ErrRelayProfileNotFound
-	}
-	return profile, nil
-}
-
-// GetDefaultProfile returns the default relay profile.
-func (s *RelayService) GetDefaultProfile(ctx context.Context) (*models.RelayProfile, error) {
-	return s.relayProfileRepo.GetDefault(ctx)
-}
-
-// CreateProfile creates a new relay profile.
-func (s *RelayService) CreateProfile(ctx context.Context, profile *models.RelayProfile) error {
-	// Validate the profile settings
-	if err := s.validateProfile(ctx, profile); err != nil {
-		return err
-	}
-
-	return s.relayProfileRepo.Create(ctx, profile)
-}
-
-// UpdateProfile updates an existing relay profile.
-func (s *RelayService) UpdateProfile(ctx context.Context, profile *models.RelayProfile) error {
-	// Validate the profile settings
-	if err := s.validateProfile(ctx, profile); err != nil {
-		return err
-	}
-
-	return s.relayProfileRepo.Update(ctx, profile)
-}
-
-// DeleteProfile deletes a relay profile by ID.
-func (s *RelayService) DeleteProfile(ctx context.Context, id models.ULID) error {
-	return s.relayProfileRepo.Delete(ctx, id)
-}
-
-// SetDefaultProfile sets a relay profile as the default.
-func (s *RelayService) SetDefaultProfile(ctx context.Context, id models.ULID) error {
-	return s.relayProfileRepo.SetDefault(ctx, id)
-}
-
-// validateProfile validates relay profile settings against available FFmpeg capabilities.
-func (s *RelayService) validateProfile(ctx context.Context, profile *models.RelayProfile) error {
-	// Basic validation is done in model hooks
-	// Additional validation checks FFmpeg encoder availability
-
-	// Skip validation for copy/none codecs
-	if profile.VideoCodec != models.VideoCodecCopy && profile.VideoCodec != models.VideoCodecNone {
-		binInfo, err := s.ffmpegDetector.Detect(ctx)
-		if err != nil {
-			s.logger.Warn("Could not detect FFmpeg for encoder validation", "error", err)
-			return nil // Allow creation but warn
-		}
-
-		// Get the actual FFmpeg encoder name based on codec + hwaccel
-		videoEncoder := profile.VideoCodec.GetFFmpegEncoder(profile.HWAccel)
-		if videoEncoder != "" && !binInfo.HasEncoder(videoEncoder) {
-			return fmt.Errorf("video encoder %s not available in FFmpeg", videoEncoder)
-		}
-	}
-
-	// Skip validation for copy/none codecs
-	if profile.AudioCodec != models.AudioCodecCopy && profile.AudioCodec != models.AudioCodecNone {
-		binInfo, err := s.ffmpegDetector.Detect(ctx)
-		if err != nil {
-			return nil // Already warned above
-		}
-
-		// Get the actual FFmpeg encoder name
-		audioEncoder := profile.AudioCodec.GetFFmpegEncoder()
-		if audioEncoder != "" && !binInfo.HasEncoder(audioEncoder) {
-			return fmt.Errorf("audio encoder %s not available in FFmpeg", audioEncoder)
-		}
-	}
-
-	return nil
 }
 
 // LastKnownCodec operations
@@ -318,19 +209,19 @@ func (s *RelayService) StartRelay(ctx context.Context, channelID models.ULID, pr
 		return nil, ErrChannelNotFound
 	}
 
-	// Get profile (use default if not specified)
-	var profile *models.RelayProfile
+	// Get encoding profile (use default if not specified)
+	var profile *models.EncodingProfile
 	if profileID != nil {
-		profile, err = s.relayProfileRepo.GetByID(ctx, *profileID)
+		profile, err = s.encodingProfileRepo.GetByID(ctx, *profileID)
 		if err != nil {
-			if errors.Is(err, models.ErrRelayProfileNotFound) {
-				return nil, fmt.Errorf("%w: %v", ErrRelayProfileNotFound, *profileID)
+			if errors.Is(err, models.ErrEncodingProfileNotFound) {
+				return nil, fmt.Errorf("%w: %v", ErrEncodingProfileNotFound, *profileID)
 			}
 			return nil, err
 		}
 	} else {
-		profile, err = s.relayProfileRepo.GetDefault(ctx)
-		if err != nil && !errors.Is(err, models.ErrRelayProfileNotFound) {
+		profile, err = s.encodingProfileRepo.GetDefault(ctx)
+		if err != nil && !errors.Is(err, models.ErrEncodingProfileNotFound) {
 			return nil, err
 		}
 		// profile can be nil if no default is set (use passthrough)
@@ -368,7 +259,7 @@ func (s *RelayService) StartRelay(ctx context.Context, channelID models.ULID, pr
 
 // StartRelayWithProfile starts a relay session for a channel using a specific profile.
 // This is used when the profile has been pre-resolved (e.g., auto codecs resolved).
-func (s *RelayService) StartRelayWithProfile(ctx context.Context, channelID models.ULID, profile *models.RelayProfile) (*relay.RelaySession, error) {
+func (s *RelayService) StartRelayWithProfile(ctx context.Context, channelID models.ULID, profile *models.EncodingProfile) (*relay.RelaySession, error) {
 	// Get channel with source preloaded
 	channel, err := s.channelRepo.GetByIDWithSource(ctx, channelID)
 	if err != nil {
@@ -463,9 +354,9 @@ func (s *RelayService) GetHTTPClient() *http.Client {
 
 // StreamInfo contains the information needed to stream a channel through a proxy.
 type StreamInfo struct {
-	Proxy   *models.StreamProxy
-	Channel *models.Channel
-	Profile *models.RelayProfile
+	Proxy           *models.StreamProxy
+	Channel         *models.Channel
+	EncodingProfile *models.EncodingProfile
 }
 
 // GetStreamInfo retrieves the proxy, channel, and optional relay profile for streaming.
@@ -497,17 +388,17 @@ func (s *RelayService) GetStreamInfo(ctx context.Context, proxyID, channelID mod
 	// Load profile for smart mode which needs it to determine if transcoding is required
 	needsProfile := proxy.ProxyMode == models.StreamProxyModeSmart
 
-	if needsProfile && proxy.RelayProfileID != nil {
-		profile, err := s.relayProfileRepo.GetByID(ctx, *proxy.RelayProfileID)
+	if needsProfile && proxy.EncodingProfileID != nil {
+		encodingProfile, err := s.encodingProfileRepo.GetByID(ctx, *proxy.EncodingProfileID)
 		if err != nil {
 			// Log but don't fail - will use default profile
-			s.logger.Warn("Failed to load relay profile for proxy",
+			s.logger.Warn("Failed to load encoding profile for proxy",
 				"proxy_id", proxyID,
-				"profile_id", proxy.RelayProfileID,
+				"profile_id", proxy.EncodingProfileID,
 				"error", err,
 			)
-		} else {
-			info.Profile = profile
+		} else if encodingProfile != nil {
+			info.EncodingProfile = encodingProfile
 		}
 	}
 
@@ -579,16 +470,16 @@ type ProfileUsageInfo struct {
 	Proxies    []*models.StreamProxy
 }
 
-// GetProfileUsage returns information about proxies using a given profile.
+// GetProfileUsage returns information about proxies using a given encoding profile.
 func (s *RelayService) GetProfileUsage(ctx context.Context, profileID models.ULID) (*ProfileUsageInfo, error) {
-	count, err := s.streamProxyRepo.CountByRelayProfileID(ctx, profileID)
+	count, err := s.streamProxyRepo.CountByEncodingProfileID(ctx, profileID)
 	if err != nil {
 		return nil, fmt.Errorf("counting profile usage: %w", err)
 	}
 
 	var proxies []*models.StreamProxy
 	if count > 0 {
-		proxies, err = s.streamProxyRepo.GetByRelayProfileID(ctx, profileID)
+		proxies, err = s.streamProxyRepo.GetByEncodingProfileID(ctx, profileID)
 		if err != nil {
 			return nil, fmt.Errorf("getting proxies using profile: %w", err)
 		}

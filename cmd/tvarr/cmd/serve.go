@@ -170,9 +170,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	proxyRepo := repository.NewStreamProxyRepository(db)
 	filterRepo := repository.NewFilterRepository(db)
 	dataMappingRuleRepo := repository.NewDataMappingRuleRepository(db)
-	relayProfileRepo := repository.NewRelayProfileRepository(db)
-	relayProfileMappingRepo := repository.NewRelayProfileMappingRepository(db)
+	encodingProfileRepo := repository.NewEncodingProfileRepository(db)
 	lastKnownCodecRepo := repository.NewLastKnownCodecRepository(db)
+	clientDetectionRuleRepo := repository.NewClientDetectionRuleRepository(db)
 	jobRepo := repository.NewJobRepository(db)
 
 	// Clean up old job history on startup if retention is configured
@@ -331,7 +331,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	).WithLogger(logger).WithProgressService(progressService)
 
 	relayService := service.NewRelayService(
-		relayProfileRepo,
+		encodingProfileRepo,
 		lastKnownCodecRepo,
 		channelRepo,
 		proxyRepo,
@@ -339,11 +339,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 		MaxVariantBytes: viperGetByteSizePtr("relay.buffer.max_variant_bytes"),
 	})
 
-	relayProfileMappingService := service.NewRelayProfileMappingService(relayProfileMappingRepo).
+	encodingProfileService := service.NewEncodingProfileService(encodingProfileRepo).
 		WithLogger(logger)
 
-	// Validate client detection rules on startup
-	relayProfileMappingService.ValidateRulesOnLoad(context.Background())
+	clientDetectionService := service.NewClientDetectionService(clientDetectionRuleRepo).
+		WithLogger(logger)
+	// Refresh client detection rules cache on startup
+	if err := clientDetectionService.RefreshCache(context.Background()); err != nil {
+		logger.Warn("failed to refresh client detection rules cache", slog.String("error", err.Error()))
+	}
 
 	logger.Debug("services initialized")
 
@@ -490,17 +494,17 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	logoHandler.Register(server.API())
 
-	relayProfileHandler := handlers.NewRelayProfileHandler(relayService)
-	relayProfileHandler.Register(server.API())
-
-	relayProfileMappingHandler := handlers.NewRelayProfileMappingHandler(relayProfileMappingService)
-	relayProfileMappingHandler.Register(server.API())
+	encodingProfileHandler := handlers.NewEncodingProfileHandler(encodingProfileService)
+	encodingProfileHandler.Register(server.API())
 
 	relayStreamHandler := handlers.NewRelayStreamHandler(relayService).
 		WithLogger(logger).
-		WithProfileMappingService(relayProfileMappingService)
+		WithClientDetectionService(clientDetectionService)
 	relayStreamHandler.Register(server.API())
 	relayStreamHandler.RegisterChiRoutes(server.Router())
+
+	clientDetectionRuleHandler := handlers.NewClientDetectionRuleHandler(clientDetectionService)
+	clientDetectionRuleHandler.Register(server.API())
 
 	channelHandler := handlers.NewChannelHandler(db).WithLogger(logger)
 	channelHandler.Register(server.API())
