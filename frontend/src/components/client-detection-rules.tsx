@@ -106,7 +106,7 @@ interface RuleFormData {
 const VIDEO_CODECS = ['h264', 'h265', 'vp9', 'av1'];
 const AUDIO_CODECS = ['aac', 'opus', 'ac3', 'eac3', 'mp3'];
 const FORMAT_OPTIONS = [
-  { value: '', label: 'Auto' },
+  { value: 'auto', label: 'Auto' },
   { value: 'hls-fmp4', label: 'HLS (fMP4)' },
   { value: 'hls-ts', label: 'HLS (MPEG-TS)' },
   { value: 'dash', label: 'DASH' },
@@ -129,7 +129,7 @@ const defaultFormData: RuleFormData = {
   preferred_audio_codec: 'aac',
   supports_fmp4: true,
   supports_mpegts: true,
-  preferred_format: '',
+  preferred_format: 'auto',
 };
 
 function RuleFormSheet({
@@ -171,7 +171,7 @@ function RuleFormSheet({
         preferred_audio_codec: rule.preferred_audio_codec,
         supports_fmp4: rule.supports_fmp4,
         supports_mpegts: rule.supports_mpegts,
-        preferred_format: rule.preferred_format || '',
+        preferred_format: rule.preferred_format || 'auto',
       });
     } else {
       setFormData({ ...defaultFormData, priority: nextPriority });

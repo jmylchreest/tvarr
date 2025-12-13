@@ -233,6 +233,29 @@ func (d *TSDemuxer) setupTrackCallback(track *mpegts.Track) {
 			slog.Int("sample_rate", codec.SampleRate),
 			slog.Int("channels", codec.ChannelCount))
 
+	case *mpegts.CodecEAC3:
+		d.audioTrack = track
+		d.audioCodec = "eac3"
+		// E-AC3 frames are 256-1536 samples per syncframe at 32/44.1/48kHz
+		// Default to 48kHz, 1536 samples = 1536 * 90000 / 48000 = 2880 ticks
+		d.audioSampleRate = codec.SampleRate
+		if d.audioSampleRate <= 0 {
+			d.audioSampleRate = 48000
+		}
+		d.audioFrameDuration = int64(1536 * 90000 / d.audioSampleRate)
+		// Only set source codec when NOT writing to a target variant
+		if d.buffer != nil && d.config.TargetVariant == "" {
+			d.buffer.SetAudioCodec("eac3", nil)
+		}
+		d.reader.OnDataEAC3(track, func(pts int64, frame []byte) error {
+			return d.handleEAC3(pts, frame)
+		})
+		d.config.Logger.Debug("Found E-AC-3 audio track",
+			slog.Uint64("pid", uint64(track.PID)),
+			slog.Int("sample_rate", codec.SampleRate),
+			slog.Int("channels", codec.ChannelCount),
+			slog.Int64("frame_duration_ticks", d.audioFrameDuration))
+
 	case *mpegts.CodecMPEG1Audio:
 		d.audioTrack = track
 		d.audioCodec = "mp3"
@@ -358,6 +381,15 @@ func (d *TSDemuxer) handleMPEG4Audio(pts int64, aus [][]byte) error {
 
 // handleAC3 processes AC-3 frames.
 func (d *TSDemuxer) handleAC3(pts int64, frame []byte) error {
+	if len(frame) == 0 {
+		return nil
+	}
+	d.emitAudioSample(pts, frame)
+	return nil
+}
+
+// handleEAC3 processes E-AC-3 (Dolby Digital Plus) frames.
+func (d *TSDemuxer) handleEAC3(pts int64, frame []byte) error {
 	if len(frame) == 0 {
 		return nil
 	}
