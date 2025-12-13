@@ -46,7 +46,8 @@ type ManualStreamChannel struct {
 	IsAdult bool `gorm:"default:false" json:"is_adult"`
 
 	// Enabled indicates whether this channel should be included.
-	Enabled bool `gorm:"default:true" json:"enabled"`
+	// Using pointer to distinguish between "not set" (nil->default true) and "explicitly false".
+	Enabled *bool `gorm:"default:true" json:"enabled"`
 
 	// Priority for ordering among manual channels.
 	Priority int `gorm:"default:0" json:"priority"`

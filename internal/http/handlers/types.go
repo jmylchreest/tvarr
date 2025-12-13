@@ -64,7 +64,7 @@ func StreamSourceFromModel(s *models.StreamSource) StreamSourceResponse {
 		URL:                 s.URL,
 		Username:            s.Username,
 		UserAgent:           s.UserAgent,
-		Enabled:             s.Enabled,
+		Enabled:             models.BoolVal(s.Enabled),
 		Priority:            s.Priority,
 		Status:              s.Status,
 		LastIngestionAt:     s.LastIngestionAt,
@@ -97,12 +97,12 @@ func (r *CreateStreamSourceRequest) ToModel() *models.StreamSource {
 		Username:     r.Username,
 		Password:     r.Password,
 		UserAgent:    r.UserAgent,
-		Enabled:      true,
+		Enabled:      models.BoolPtr(true),
 		Priority:     0,
 		CronSchedule: r.CronSchedule,
 	}
 	if r.Enabled != nil {
-		source.Enabled = *r.Enabled
+		source.Enabled = r.Enabled
 	}
 	if r.Priority != nil {
 		source.Priority = *r.Priority
@@ -144,7 +144,7 @@ func (r *UpdateStreamSourceRequest) ApplyToModel(s *models.StreamSource) {
 		s.UserAgent = *r.UserAgent
 	}
 	if r.Enabled != nil {
-		s.Enabled = *r.Enabled
+		s.Enabled = r.Enabled
 	}
 	if r.Priority != nil {
 		s.Priority = *r.Priority
@@ -194,7 +194,7 @@ func EpgSourceFromModel(s *models.EpgSource) EpgSourceResponse {
 		UserAgent:           s.UserAgent,
 		DetectedTimezone:    s.DetectedTimezone,
 		EpgShift:            s.EpgShift,
-		Enabled:             s.Enabled,
+		Enabled:             models.BoolVal(s.Enabled),
 		Priority:            s.Priority,
 		Status:              s.Status,
 		LastIngestionAt:     s.LastIngestionAt,
@@ -233,7 +233,7 @@ func (r *CreateEpgSourceRequest) ToModel() *models.EpgSource {
 		ApiMethod:     r.ApiMethod,
 		UserAgent:     r.UserAgent,
 		EpgShift:      0,
-		Enabled:       true,
+		Enabled:       models.BoolPtr(true),
 		Priority:      0,
 		CronSchedule:  r.CronSchedule,
 		RetentionDays: 1,
@@ -242,7 +242,7 @@ func (r *CreateEpgSourceRequest) ToModel() *models.EpgSource {
 		source.EpgShift = *r.EpgShift
 	}
 	if r.Enabled != nil {
-		source.Enabled = *r.Enabled
+		source.Enabled = r.Enabled
 	}
 	if r.Priority != nil {
 		source.Priority = *r.Priority
@@ -298,7 +298,7 @@ func (r *UpdateEpgSourceRequest) ApplyToModel(s *models.EpgSource) {
 		s.EpgShift = *r.EpgShift
 	}
 	if r.Enabled != nil {
-		s.Enabled = *r.Enabled
+		s.Enabled = r.Enabled
 	}
 	if r.Priority != nil {
 		s.Priority = *r.Priority
@@ -351,7 +351,7 @@ func StreamProxyFromModel(p *models.StreamProxy, baseURL string) StreamProxyResp
 		Name:                   p.Name,
 		Description:            p.Description,
 		ProxyMode:              p.ProxyMode,
-		IsActive:               p.IsActive,
+		IsActive:               models.BoolVal(p.IsActive),
 		AutoRegenerate:         p.AutoRegenerate,
 		StartingChannelNumber:  p.StartingChannelNumber,
 		UpstreamTimeout:        p.UpstreamTimeout,
@@ -359,7 +359,7 @@ func StreamProxyFromModel(p *models.StreamProxy, baseURL string) StreamProxyResp
 		MaxConcurrentStreams:   p.MaxConcurrentStreams,
 		CacheChannelLogos:      p.CacheChannelLogos,
 		CacheProgramLogos:      p.CacheProgramLogos,
-		ClientDetectionEnabled: p.ClientDetectionEnabled,
+		ClientDetectionEnabled: models.BoolVal(p.ClientDetectionEnabled),
 		EncodingProfileID:      p.EncodingProfileID,
 		Status:                 p.Status,
 		LastGeneratedAt:        p.LastGeneratedAt,
@@ -398,6 +398,14 @@ type ProxyEpgSourceAssignmentResponse struct {
 	EpgSourceID   string `json:"epg_source_id" doc:"ID of the EPG source"`
 	EpgSourceName string `json:"epg_source_name" doc:"Name of the EPG source"`
 	PriorityOrder int    `json:"priority_order" doc:"Priority for merging EPG data"`
+}
+
+// ProxyFilterAssignmentRequest represents a filter assignment in a proxy request.
+// This matches the frontend's format with filter_id, priority_order, and is_active.
+type ProxyFilterAssignmentRequest struct {
+	FilterID      models.ULID `json:"filter_id" doc:"ID of the filter"`
+	PriorityOrder int         `json:"priority_order" doc:"Order in which filters are applied"`
+	IsActive      bool        `json:"is_active" doc:"Whether the filter is active"`
 }
 
 // ProxyFilterAssignmentResponse represents a filter assignment in a proxy.
@@ -454,11 +462,13 @@ func StreamProxyDetailFromModel(p *models.StreamProxy, baseURL string) StreamPro
 		if pf.Filter != nil {
 			filterName = pf.Filter.Name
 		}
+		// Default to true if IsActive pointer is nil
+		isActive := pf.IsActive == nil || *pf.IsActive
 		resp.Filters = append(resp.Filters, ProxyFilterAssignmentResponse{
 			FilterID:      pf.FilterID.String(),
 			FilterName:    filterName,
 			PriorityOrder: pf.Priority,
-			IsActive:      true, // Default to active since model doesn't have this field
+			IsActive:      isActive,
 		})
 	}
 	return resp
@@ -479,10 +489,11 @@ type CreateStreamProxyRequest struct {
 	CacheProgramLogos      *bool                  `json:"cache_program_logos,omitempty" doc:"Cache EPG program logos locally"`
 	ClientDetectionEnabled *bool                  `json:"client_detection_enabled,omitempty" doc:"Enable automatic client capability detection (default: true)"`
 	EncodingProfileID      *models.ULID           `json:"encoding_profile_id,omitempty" doc:"Default encoding profile when client detection doesn't match or is disabled"`
-	OutputPath             string                 `json:"output_path,omitempty" doc:"Path for generated files" maxLength:"512"`
-	SourceIDs              []models.ULID          `json:"source_ids,omitempty" doc:"Stream source IDs to include"`
-	EpgSourceIDs           []models.ULID          `json:"epg_source_ids,omitempty" doc:"EPG source IDs to include"`
-	FilterIDs              []models.ULID          `json:"filter_ids,omitempty" doc:"Filter IDs to include"`
+	OutputPath             string                        `json:"output_path,omitempty" doc:"Path for generated files" maxLength:"512"`
+	SourceIDs              []models.ULID                 `json:"source_ids,omitempty" doc:"Stream source IDs to include"`
+	EpgSourceIDs           []models.ULID                 `json:"epg_source_ids,omitempty" doc:"EPG source IDs to include"`
+	FilterIDs              []models.ULID                 `json:"filter_ids,omitempty" doc:"Filter IDs to include (deprecated, use filters)"`
+	Filters                []ProxyFilterAssignmentRequest `json:"filters,omitempty" doc:"Filter assignments with priority and active state"`
 }
 
 // ToModel converts the request to a model.
@@ -491,7 +502,7 @@ func (r *CreateStreamProxyRequest) ToModel() *models.StreamProxy {
 		Name:                   r.Name,
 		Description:            r.Description,
 		ProxyMode:              models.StreamProxyModeDirect, // Default
-		IsActive:               true,
+		IsActive:               models.BoolPtr(true),
 		AutoRegenerate:         false,
 		StartingChannelNumber:  1,
 		UpstreamTimeout:        30,
@@ -499,14 +510,14 @@ func (r *CreateStreamProxyRequest) ToModel() *models.StreamProxy {
 		MaxConcurrentStreams:   0,
 		CacheChannelLogos:      true,
 		CacheProgramLogos:      true,
-		ClientDetectionEnabled: true, // Default to enabled
+		ClientDetectionEnabled: models.BoolPtr(true), // Default to enabled
 		OutputPath:             r.OutputPath,
 	}
 	if r.ProxyMode != "" && models.IsValidProxyMode(r.ProxyMode) {
 		proxy.ProxyMode = r.ProxyMode
 	}
 	if r.IsActive != nil {
-		proxy.IsActive = *r.IsActive
+		proxy.IsActive = r.IsActive
 	}
 	if r.AutoRegenerate != nil {
 		proxy.AutoRegenerate = *r.AutoRegenerate
@@ -530,7 +541,7 @@ func (r *CreateStreamProxyRequest) ToModel() *models.StreamProxy {
 		proxy.CacheProgramLogos = *r.CacheProgramLogos
 	}
 	if r.ClientDetectionEnabled != nil {
-		proxy.ClientDetectionEnabled = *r.ClientDetectionEnabled
+		proxy.ClientDetectionEnabled = r.ClientDetectionEnabled
 	}
 	if r.EncodingProfileID != nil {
 		proxy.EncodingProfileID = r.EncodingProfileID
@@ -553,10 +564,11 @@ type UpdateStreamProxyRequest struct {
 	CacheProgramLogos      *bool                   `json:"cache_program_logos,omitempty" doc:"Cache EPG program logos locally"`
 	ClientDetectionEnabled *bool                   `json:"client_detection_enabled,omitempty" doc:"Enable automatic client capability detection"`
 	EncodingProfileID      *models.ULID            `json:"encoding_profile_id,omitempty" doc:"Default encoding profile when client detection doesn't match or is disabled"`
-	OutputPath             *string                 `json:"output_path,omitempty" doc:"Path for generated files" maxLength:"512"`
-	SourceIDs              []models.ULID           `json:"source_ids,omitempty" doc:"Stream source IDs to include"`
-	EpgSourceIDs           []models.ULID           `json:"epg_source_ids,omitempty" doc:"EPG source IDs to include"`
-	FilterIDs              []models.ULID           `json:"filter_ids,omitempty" doc:"Filter IDs to include"`
+	OutputPath             *string                        `json:"output_path,omitempty" doc:"Path for generated files" maxLength:"512"`
+	SourceIDs              []models.ULID                  `json:"source_ids,omitempty" doc:"Stream source IDs to include"`
+	EpgSourceIDs           []models.ULID                  `json:"epg_source_ids,omitempty" doc:"EPG source IDs to include"`
+	FilterIDs              []models.ULID                  `json:"filter_ids,omitempty" doc:"Filter IDs to include (deprecated, use filters)"`
+	Filters                []ProxyFilterAssignmentRequest `json:"filters,omitempty" doc:"Filter assignments with priority and active state"`
 }
 
 // ApplyToModel applies the update request to an existing model.
@@ -571,7 +583,7 @@ func (r *UpdateStreamProxyRequest) ApplyToModel(p *models.StreamProxy) {
 		p.ProxyMode = *r.ProxyMode
 	}
 	if r.IsActive != nil {
-		p.IsActive = *r.IsActive
+		p.IsActive = r.IsActive
 	}
 	if r.AutoRegenerate != nil {
 		p.AutoRegenerate = *r.AutoRegenerate
@@ -595,7 +607,7 @@ func (r *UpdateStreamProxyRequest) ApplyToModel(p *models.StreamProxy) {
 		p.CacheProgramLogos = *r.CacheProgramLogos
 	}
 	if r.ClientDetectionEnabled != nil {
-		p.ClientDetectionEnabled = *r.ClientDetectionEnabled
+		p.ClientDetectionEnabled = r.ClientDetectionEnabled
 	}
 	if r.EncodingProfileID != nil {
 		p.EncodingProfileID = r.EncodingProfileID

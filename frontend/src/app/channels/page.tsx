@@ -19,6 +19,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
+import type { VideoTrackInfo, AudioTrackInfo, SubtitleTrackInfo } from '@/types/api';
 import {
   Select,
   SelectContent,
@@ -87,6 +88,12 @@ interface Channel {
   audio_channels?: number | null;
   audio_sample_rate?: number | null;
   probe_source?: string;
+  // Track information (from probe)
+  video_tracks?: VideoTrackInfo[];
+  audio_tracks?: AudioTrackInfo[];
+  subtitle_tracks?: SubtitleTrackInfo[];
+  selected_video_track?: number;
+  selected_audio_track?: number;
 }
 
 interface ChannelsResponse {
@@ -425,6 +432,13 @@ export default function ChannelsPage() {
         audio_bitrate: probe.audio_bitrate ?? null,
         audio_channels: probe.audio_channels ?? null,
         audio_sample_rate: probe.audio_sample_rate ?? null,
+        container_format: probe.container_format ?? undefined,
+        // Track information
+        video_tracks: probe.video_tracks ?? [],
+        audio_tracks: probe.audio_tracks ?? [],
+        subtitle_tracks: probe.subtitle_tracks ?? [],
+        selected_video_track: probe.selected_video_track ?? -1,
+        selected_audio_track: probe.selected_audio_track ?? -1,
         // Always use proxy URL for playback - upstream URLs may not be directly accessible
         stream_url: `${getBackendUrl()}/proxy/${channel.id}`,
       };
@@ -533,8 +547,14 @@ export default function ChannelsPage() {
   };
 
   const ChannelTableRow = ({ channel }: { channel: Channel }) => {
-    // Build condensed probe info string: "h264/aac (1080p@30)"
-    const buildProbeInfo = () => {
+    // Track counts for styling multi-track badges
+    const videoTrackCount = channel.video_tracks?.length ?? 0;
+    const audioTrackCount = channel.audio_tracks?.length ?? 0;
+    const hasMultipleVideoTracks = videoTrackCount > 1;
+    const hasMultipleAudioTracks = audioTrackCount > 1;
+
+    // Build condensed probe info with optional track count indicators
+    const buildProbeInfo = (): { text: string; hasMultipleTracks: boolean } | null => {
       if (!channel.video_codec && !channel.audio_codec) {
         return null;
       }
@@ -565,8 +585,10 @@ export default function ChannelsPage() {
         }
       }
 
-      // Build the display string
-      const codecPart = `${videoCodec}/${audioCodec}`;
+      // Build the display string with track count indicators for multiple tracks
+      const videoCodecDisplay = hasMultipleVideoTracks ? `${videoCodec}(${videoTrackCount})` : videoCodec;
+      const audioCodecDisplay = hasMultipleAudioTracks ? `${audioCodec}(${audioTrackCount})` : audioCodec;
+      const codecPart = `${videoCodecDisplay}/${audioCodecDisplay}`;
       let detailPart = '';
       if (resolutionShort && fpsShort) {
         detailPart = ` (${resolutionShort}@${fpsShort})`;
@@ -576,7 +598,10 @@ export default function ChannelsPage() {
         detailPart = ` (@${fpsShort}fps)`;
       }
 
-      return `${codecPart}${detailPart}`;
+      return {
+        text: `${codecPart}${detailPart}`,
+        hasMultipleTracks: hasMultipleVideoTracks || hasMultipleAudioTracks,
+      };
     };
 
     const probeInfo = buildProbeInfo();
@@ -616,9 +641,11 @@ export default function ChannelsPage() {
           {probeInfo ? (
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className="cursor-help font-mono">{probeInfo}</span>
+                <span className={`cursor-help font-mono ${probeInfo.hasMultipleTracks ? 'text-blue-600 dark:text-blue-400' : ''}`}>
+                  {probeInfo.text}
+                </span>
               </TooltipTrigger>
-              <TooltipContent className="text-xs space-y-1">
+              <TooltipContent className="text-xs space-y-1 max-w-md">
                 <div className="font-semibold border-b pb-1 mb-1">Stream Details</div>
                 {channel.video_codec && <div>Video Codec: {channel.video_codec}</div>}
                 {channel.audio_codec && <div>Audio Codec: {channel.audio_codec}</div>}
@@ -642,8 +669,51 @@ export default function ChannelsPage() {
                 {channel.bitrate != null && channel.bitrate > 0 && (
                   <div>Total Bitrate: {Math.round(channel.bitrate / 1000)} kbps</div>
                 )}
-                {channel.probe_source && <div>Source: {channel.probe_source}</div>}
-                {channel.probe_method && <div>Method: {channel.probe_method}</div>}
+                {/* Video tracks section */}
+                {channel.video_tracks && channel.video_tracks.length > 0 && (
+                  <div className="border-t pt-1 mt-1">
+                    <div className="font-semibold">Video Tracks ({channel.video_tracks.length})</div>
+                    {channel.video_tracks.map((track, idx) => (
+                      <div key={track.index} className={`pl-2 ${idx === channel.selected_video_track ? 'text-primary font-medium' : 'text-muted-foreground'}`}>
+                        #{track.index}: {track.codec.toUpperCase()} {track.width}x{track.height}
+                        {track.framerate ? ` @${track.framerate.toFixed(1)}fps` : ''}
+                        {track.language ? ` [${track.language}]` : ''}
+                        {track.is_default ? ' (default)' : ''}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {/* Audio tracks section */}
+                {channel.audio_tracks && channel.audio_tracks.length > 0 && (
+                  <div className="border-t pt-1 mt-1">
+                    <div className="font-semibold">Audio Tracks ({channel.audio_tracks.length})</div>
+                    {channel.audio_tracks.map((track, idx) => (
+                      <div key={track.index} className={`pl-2 ${idx === channel.selected_audio_track ? 'text-primary font-medium' : 'text-muted-foreground'}`}>
+                        #{track.index}: {track.codec.toUpperCase()} {track.channels}ch
+                        {track.channel_layout ? ` (${track.channel_layout})` : ''}
+                        {track.sample_rate ? ` ${track.sample_rate}Hz` : ''}
+                        {track.language ? ` [${track.language}]` : ''}
+                        {track.is_default ? ' (default)' : ''}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {/* Subtitle tracks section */}
+                {channel.subtitle_tracks && channel.subtitle_tracks.length > 0 && (
+                  <div className="border-t pt-1 mt-1">
+                    <div className="font-semibold">Subtitle Tracks ({channel.subtitle_tracks.length})</div>
+                    {channel.subtitle_tracks.map((track) => (
+                      <div key={track.index} className="pl-2 text-muted-foreground">
+                        #{track.index}: {track.codec}
+                        {track.language ? ` [${track.language}]` : ''}
+                        {track.is_default ? ' (default)' : ''}
+                        {track.is_forced ? ' (forced)' : ''}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {channel.probe_source && <div className="border-t pt-1 mt-1">Source: {channel.probe_source}</div>}
+                {channel.probe_method && !channel.probe_source && <div className="border-t pt-1 mt-1">Method: {channel.probe_method}</div>}
               </TooltipContent>
             </Tooltip>
           ) : (

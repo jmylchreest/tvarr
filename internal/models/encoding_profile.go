@@ -121,7 +121,8 @@ type EncodingProfile struct {
 	IsSystem bool `gorm:"default:false" json:"is_system"`
 
 	// Enabled indicates if this profile can be used.
-	Enabled bool `gorm:"default:true" json:"enabled"`
+	// Using pointer to distinguish between "not set" (nil->default true) and "explicitly false".
+	Enabled *bool `gorm:"default:true" json:"enabled"`
 }
 
 // TableName returns the table name for EncodingProfile.

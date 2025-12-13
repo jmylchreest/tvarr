@@ -463,9 +463,9 @@ func TestMPEGTSStreamType(t *testing.T) {
 		{VideoMPEG1, 0x01},
 		{VideoMPEG2, 0x02},
 		{VideoMPEG4, 0x10},
-		{VideoVP9, 0},  // Not supported in MPEG-TS
-		{VideoAV1, 0},  // Not supported in MPEG-TS
-		{VideoVC1, 0},  // Not supported
+		{VideoVP9, 0}, // Not supported in MPEG-TS
+		{VideoAV1, 0}, // Not supported in MPEG-TS
+		{VideoVC1, 0}, // Not supported
 	}
 
 	for _, tt := range videoTests {

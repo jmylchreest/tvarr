@@ -69,7 +69,7 @@ func (r *mockStreamSourceRepo) GetAll(ctx context.Context) ([]*models.StreamSour
 func (r *mockStreamSourceRepo) GetEnabled(ctx context.Context) ([]*models.StreamSource, error) {
 	sources := make([]*models.StreamSource, 0)
 	for _, s := range r.sources {
-		if s.Enabled {
+		if models.BoolVal(s.Enabled) {
 			sources = append(sources, s)
 		}
 	}

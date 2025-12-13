@@ -98,7 +98,7 @@ func NewConstructor() core.StageConstructor {
 					rules = append(rules, DataMappingRule{
 						ID:         r.ID.String(),
 						Name:       r.Name,
-						Enabled:    r.IsEnabled,
+						Enabled:    models.BoolVal(r.IsEnabled),
 						Target:     target,
 						Priority:   r.Priority,
 						Expression: r.Expression,

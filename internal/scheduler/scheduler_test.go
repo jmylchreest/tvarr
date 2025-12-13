@@ -218,7 +218,7 @@ func (m *mockStreamSourceRepo) GetAll(ctx context.Context) ([]*models.StreamSour
 func (m *mockStreamSourceRepo) GetEnabled(ctx context.Context) ([]*models.StreamSource, error) {
 	var enabled []*models.StreamSource
 	for _, s := range m.sources {
-		if s.Enabled {
+		if models.BoolVal(s.Enabled) {
 			enabled = append(enabled, s)
 		}
 	}
@@ -261,7 +261,7 @@ func (m *mockEpgSourceRepo) GetAll(ctx context.Context) ([]*models.EpgSource, er
 func (m *mockEpgSourceRepo) GetEnabled(ctx context.Context) ([]*models.EpgSource, error) {
 	var enabled []*models.EpgSource
 	for _, s := range m.sources {
-		if s.Enabled {
+		if models.BoolVal(s.Enabled) {
 			enabled = append(enabled, s)
 		}
 	}
@@ -312,7 +312,7 @@ func (m *mockProxyRepo) GetAll(ctx context.Context) ([]*models.StreamProxy, erro
 func (m *mockProxyRepo) GetActive(ctx context.Context) ([]*models.StreamProxy, error) {
 	var active []*models.StreamProxy
 	for _, p := range m.proxies {
-		if p.IsActive {
+		if models.BoolVal(p.IsActive) {
 			active = append(active, p)
 		}
 	}
@@ -359,7 +359,7 @@ func (m *mockProxyRepo) GetFilters(ctx context.Context, proxyID models.ULID) ([]
 	return nil, nil
 }
 
-func (m *mockProxyRepo) SetFilters(ctx context.Context, proxyID models.ULID, filterIDs []models.ULID, orders map[models.ULID]int) error {
+func (m *mockProxyRepo) SetFilters(ctx context.Context, proxyID models.ULID, filterIDs []models.ULID, orders map[models.ULID]int, isActive map[models.ULID]bool) error {
 	return nil
 }
 
@@ -529,7 +529,7 @@ func TestScheduler_LoadSchedules(t *testing.T) {
 	sourceID := models.NewULID()
 	source := &models.StreamSource{
 		Name:         "Test Source",
-		Enabled:      true,
+		Enabled:      models.BoolPtr(true),
 		CronSchedule: "0 * * * * *", // Every minute (6-field with seconds)
 	}
 	source.ID = sourceID

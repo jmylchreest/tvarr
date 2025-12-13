@@ -127,14 +127,14 @@ func ClientDetectionRuleFromModel(r *models.ClientDetectionRule) ClientDetection
 		Description:         r.Description,
 		Expression:          r.Expression,
 		Priority:            r.Priority,
-		IsEnabled:           r.IsEnabled,
+		IsEnabled:           models.BoolVal(r.IsEnabled),
 		IsSystem:            r.IsSystem,
 		AcceptedVideoCodecs: r.GetAcceptedVideoCodecs(),
 		AcceptedAudioCodecs: r.GetAcceptedAudioCodecs(),
 		PreferredVideoCodec: string(r.PreferredVideoCodec),
 		PreferredAudioCodec: string(r.PreferredAudioCodec),
-		SupportsFMP4:        r.SupportsFMP4,
-		SupportsMPEGTS:      r.SupportsMPEGTS,
+		SupportsFMP4:        models.BoolVal(r.SupportsFMP4),
+		SupportsMPEGTS:      models.BoolVal(r.SupportsMPEGTS),
 		PreferredFormat:     r.PreferredFormat,
 		CreatedAt:           r.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:           r.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -257,22 +257,22 @@ func (h *ClientDetectionRuleHandler) Create(ctx context.Context, input *CreateCl
 		Description:         input.Body.Description,
 		Expression:          input.Body.Expression,
 		Priority:            input.Body.Priority,
-		IsEnabled:           true,
+		IsEnabled:           models.BoolPtr(true),
 		PreferredVideoCodec: models.VideoCodec(input.Body.PreferredVideoCodec),
 		PreferredAudioCodec: models.AudioCodec(input.Body.PreferredAudioCodec),
-		SupportsFMP4:        true,
-		SupportsMPEGTS:      true,
+		SupportsFMP4:        models.BoolPtr(true),
+		SupportsMPEGTS:      models.BoolPtr(true),
 		PreferredFormat:     input.Body.PreferredFormat,
 	}
 
 	if input.Body.IsEnabled != nil {
-		rule.IsEnabled = *input.Body.IsEnabled
+		rule.IsEnabled = input.Body.IsEnabled
 	}
 	if input.Body.SupportsFMP4 != nil {
-		rule.SupportsFMP4 = *input.Body.SupportsFMP4
+		rule.SupportsFMP4 = input.Body.SupportsFMP4
 	}
 	if input.Body.SupportsMPEGTS != nil {
-		rule.SupportsMPEGTS = *input.Body.SupportsMPEGTS
+		rule.SupportsMPEGTS = input.Body.SupportsMPEGTS
 	}
 
 	if err := rule.SetAcceptedVideoCodecs(input.Body.AcceptedVideoCodecs); err != nil {
@@ -357,7 +357,7 @@ func (h *ClientDetectionRuleHandler) Update(ctx context.Context, input *UpdateCl
 		}
 		// Only allow is_enabled update
 		if input.Body.IsEnabled != nil {
-			rule.IsEnabled = *input.Body.IsEnabled
+			rule.IsEnabled = input.Body.IsEnabled
 		}
 	} else {
 		// Apply updates for non-system rules
@@ -374,7 +374,7 @@ func (h *ClientDetectionRuleHandler) Update(ctx context.Context, input *UpdateCl
 			rule.Priority = *input.Body.Priority
 		}
 		if input.Body.IsEnabled != nil {
-			rule.IsEnabled = *input.Body.IsEnabled
+			rule.IsEnabled = input.Body.IsEnabled
 		}
 		if input.Body.AcceptedVideoCodecs != nil {
 			if err := rule.SetAcceptedVideoCodecs(input.Body.AcceptedVideoCodecs); err != nil {
@@ -393,10 +393,10 @@ func (h *ClientDetectionRuleHandler) Update(ctx context.Context, input *UpdateCl
 			rule.PreferredAudioCodec = models.AudioCodec(*input.Body.PreferredAudioCodec)
 		}
 		if input.Body.SupportsFMP4 != nil {
-			rule.SupportsFMP4 = *input.Body.SupportsFMP4
+			rule.SupportsFMP4 = input.Body.SupportsFMP4
 		}
 		if input.Body.SupportsMPEGTS != nil {
-			rule.SupportsMPEGTS = *input.Body.SupportsMPEGTS
+			rule.SupportsMPEGTS = input.Body.SupportsMPEGTS
 		}
 		if input.Body.PreferredFormat != nil {
 			rule.PreferredFormat = *input.Body.PreferredFormat

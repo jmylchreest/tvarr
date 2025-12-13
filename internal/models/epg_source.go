@@ -80,7 +80,8 @@ type EpgSource struct {
 	EpgShift int `gorm:"default:0" json:"epg_shift"`
 
 	// Enabled indicates whether this source should be included in ingestion.
-	Enabled bool `gorm:"default:true" json:"enabled"`
+	// Using pointer to distinguish between "not set" (nil->default true) and "explicitly false".
+	Enabled *bool `gorm:"default:true" json:"enabled"`
 
 	// Priority determines the order when merging programs from multiple sources.
 	Priority int `gorm:"default:0" json:"priority"`

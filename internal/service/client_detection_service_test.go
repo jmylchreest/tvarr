@@ -37,7 +37,7 @@ func (m *mockClientDetectionRuleRepo) GetAll(_ context.Context) ([]*models.Clien
 func (m *mockClientDetectionRuleRepo) GetEnabled(_ context.Context) ([]*models.ClientDetectionRule, error) {
 	var enabled []*models.ClientDetectionRule
 	for _, r := range m.rules {
-		if r.IsEnabled {
+		if models.BoolVal(r.IsEnabled) {
 			enabled = append(enabled, r)
 		}
 	}
@@ -98,7 +98,7 @@ func (m *mockClientDetectionRuleRepo) Count(_ context.Context) (int64, error) {
 func (m *mockClientDetectionRuleRepo) CountEnabled(_ context.Context) (int64, error) {
 	var count int64
 	for _, r := range m.rules {
-		if r.IsEnabled {
+		if models.BoolVal(r.IsEnabled) {
 			count++
 		}
 	}
@@ -125,26 +125,26 @@ func TestClientDetectionService_EvaluateRequest_FirstMatchWins(t *testing.T) {
 		Name:                "High Priority Chrome",
 		Expression:          `@dynamic(request.headers):user-agent contains "Chrome"`,
 		Priority:            10,
-		IsEnabled:           true,
+		IsEnabled:           models.BoolPtr(true),
 		AcceptedVideoCodecs: `["h264","h265"]`,
 		AcceptedAudioCodecs: `["aac","opus"]`,
 		PreferredVideoCodec: models.VideoCodecH265,
 		PreferredAudioCodec: models.AudioCodecAAC,
-		SupportsFMP4:        true,
-		SupportsMPEGTS:      true,
+		SupportsFMP4:        models.BoolPtr(true),
+		SupportsMPEGTS:      models.BoolPtr(true),
 	}
 	rule2 := &models.ClientDetectionRule{
 		BaseModel:           models.BaseModel{ID: models.NewULID()},
 		Name:                "Low Priority Generic",
 		Expression:          `@dynamic(request.headers):user-agent contains "Mozilla"`,
 		Priority:            100,
-		IsEnabled:           true,
+		IsEnabled:           models.BoolPtr(true),
 		AcceptedVideoCodecs: `["h264"]`,
 		AcceptedAudioCodecs: `["aac"]`,
 		PreferredVideoCodec: models.VideoCodecH264,
 		PreferredAudioCodec: models.AudioCodecAAC,
-		SupportsFMP4:        false,
-		SupportsMPEGTS:      true,
+		SupportsFMP4:        models.BoolPtr(false),
+		SupportsMPEGTS:      models.BoolPtr(true),
 	}
 
 	// Add in reverse order to ensure priority sorting works
@@ -180,26 +180,26 @@ func TestClientDetectionService_EvaluateRequest_PriorityOrdering(t *testing.T) {
 		Name:                "Android TV",
 		Expression:          `@dynamic(request.headers):user-agent contains "Android" AND @dynamic(request.headers):user-agent contains "TV"`,
 		Priority:            100,
-		IsEnabled:           true,
+		IsEnabled:           models.BoolPtr(true),
 		AcceptedVideoCodecs: `["h264","h265"]`,
 		AcceptedAudioCodecs: `["aac","ac3"]`,
 		PreferredVideoCodec: models.VideoCodecH264,
 		PreferredAudioCodec: models.AudioCodecAAC,
-		SupportsFMP4:        true,
-		SupportsMPEGTS:      true,
+		SupportsFMP4:        models.BoolPtr(true),
+		SupportsMPEGTS:      models.BoolPtr(true),
 	}
 	ruleAndroidMobile := &models.ClientDetectionRule{
 		BaseModel:           models.BaseModel{ID: models.NewULID()},
 		Name:                "Android Mobile",
 		Expression:          `@dynamic(request.headers):user-agent contains "Android"`,
 		Priority:            200, // Lower priority than Android TV
-		IsEnabled:           true,
+		IsEnabled:           models.BoolPtr(true),
 		AcceptedVideoCodecs: `["h264"]`,
 		AcceptedAudioCodecs: `["aac"]`,
 		PreferredVideoCodec: models.VideoCodecH264,
 		PreferredAudioCodec: models.AudioCodecAAC,
-		SupportsFMP4:        true,
-		SupportsMPEGTS:      true,
+		SupportsFMP4:        models.BoolPtr(true),
+		SupportsMPEGTS:      models.BoolPtr(true),
 	}
 
 	// Add in reverse order
@@ -243,13 +243,13 @@ func TestClientDetectionService_EvaluateRequest_ExplicitCodecHeaders(t *testing.
 		Name:                "Explicit H.265 Request",
 		Expression:          `@dynamic(request.headers):x-video-codec equals "h265"`,
 		Priority:            1, // Highest priority
-		IsEnabled:           true,
+		IsEnabled:           models.BoolPtr(true),
 		AcceptedVideoCodecs: `["h265"]`,
 		AcceptedAudioCodecs: `["aac","opus"]`,
 		PreferredVideoCodec: models.VideoCodecH265,
 		PreferredAudioCodec: models.AudioCodecAAC,
-		SupportsFMP4:        true,
-		SupportsMPEGTS:      true,
+		SupportsFMP4:        models.BoolPtr(true),
+		SupportsMPEGTS:      models.BoolPtr(true),
 	}
 
 	ruleChromeUA := &models.ClientDetectionRule{
@@ -257,13 +257,13 @@ func TestClientDetectionService_EvaluateRequest_ExplicitCodecHeaders(t *testing.
 		Name:                "Chrome Browser",
 		Expression:          `@dynamic(request.headers):user-agent contains "Chrome"`,
 		Priority:            160, // Lower priority than explicit header
-		IsEnabled:           true,
+		IsEnabled:           models.BoolPtr(true),
 		AcceptedVideoCodecs: `["h264","vp9"]`,
 		AcceptedAudioCodecs: `["aac","mp3"]`,
 		PreferredVideoCodec: models.VideoCodecH264,
 		PreferredAudioCodec: models.AudioCodecAAC,
-		SupportsFMP4:        true,
-		SupportsMPEGTS:      true,
+		SupportsFMP4:        models.BoolPtr(true),
+		SupportsMPEGTS:      models.BoolPtr(true),
 	}
 
 	repo.rules = append(repo.rules, ruleChromeUA, ruleH265Header)
@@ -307,13 +307,13 @@ func TestClientDetectionService_EvaluateRequest_NoMatch(t *testing.T) {
 		Name:                "VLC Only",
 		Expression:          `@dynamic(request.headers):user-agent contains "VLC"`,
 		Priority:            100,
-		IsEnabled:           true,
+		IsEnabled:           models.BoolPtr(true),
 		AcceptedVideoCodecs: `["h264","h265"]`,
 		AcceptedAudioCodecs: `["aac"]`,
 		PreferredVideoCodec: models.VideoCodecH264,
 		PreferredAudioCodec: models.AudioCodecAAC,
-		SupportsFMP4:        true,
-		SupportsMPEGTS:      true,
+		SupportsFMP4:        models.BoolPtr(true),
+		SupportsMPEGTS:      models.BoolPtr(true),
 	}
 	repo.rules = append(repo.rules, rule)
 
@@ -345,13 +345,13 @@ func TestClientDetectionService_EvaluateRequest_DisabledRule(t *testing.T) {
 		Name:                "Disabled Chrome Rule",
 		Expression:          `@dynamic(request.headers):user-agent contains "Chrome"`,
 		Priority:            10,
-		IsEnabled:           false, // Disabled
+		IsEnabled:           models.BoolPtr(false), // Disabled
 		AcceptedVideoCodecs: `["h265"]`,
 		AcceptedAudioCodecs: `["opus"]`,
 		PreferredVideoCodec: models.VideoCodecH265,
 		PreferredAudioCodec: models.AudioCodecOpus,
-		SupportsFMP4:        true,
-		SupportsMPEGTS:      false,
+		SupportsFMP4:        models.BoolPtr(true),
+		SupportsMPEGTS:      models.BoolPtr(false),
 	}
 
 	// Enabled rule (lower priority)
@@ -360,13 +360,13 @@ func TestClientDetectionService_EvaluateRequest_DisabledRule(t *testing.T) {
 		Name:                "Enabled Generic Rule",
 		Expression:          `@dynamic(request.headers):user-agent contains "Mozilla"`,
 		Priority:            100,
-		IsEnabled:           true,
+		IsEnabled:           models.BoolPtr(true),
 		AcceptedVideoCodecs: `["h264"]`,
 		AcceptedAudioCodecs: `["aac"]`,
 		PreferredVideoCodec: models.VideoCodecH264,
 		PreferredAudioCodec: models.AudioCodecAAC,
-		SupportsFMP4:        true,
-		SupportsMPEGTS:      true,
+		SupportsFMP4:        models.BoolPtr(true),
+		SupportsMPEGTS:      models.BoolPtr(true),
 	}
 
 	repo.rules = append(repo.rules, enabledRule, disabledRule)
@@ -397,13 +397,13 @@ func TestClientDetectionService_ExplicitHeaderPriorityOverUserAgent(t *testing.T
 		Name:                "Explicit H.265 Video Request",
 		Expression:          `@dynamic(request.headers):x-video-codec equals "h265" OR @dynamic(request.headers):x-video-codec equals "hevc"`,
 		Priority:            1, // Highest priority
-		IsEnabled:           true,
+		IsEnabled:           models.BoolPtr(true),
 		AcceptedVideoCodecs: `["h265"]`,
 		AcceptedAudioCodecs: `["aac","opus","ac3","eac3"]`,
 		PreferredVideoCodec: models.VideoCodecH265,
 		PreferredAudioCodec: models.AudioCodecAAC,
-		SupportsFMP4:        true,
-		SupportsMPEGTS:      true,
+		SupportsFMP4:        models.BoolPtr(true),
+		SupportsMPEGTS:      models.BoolPtr(true),
 	}
 
 	ruleExplicitH264 := &models.ClientDetectionRule{
@@ -411,13 +411,13 @@ func TestClientDetectionService_ExplicitHeaderPriorityOverUserAgent(t *testing.T
 		Name:                "Explicit H.264 Video Request",
 		Expression:          `@dynamic(request.headers):x-video-codec equals "h264" OR @dynamic(request.headers):x-video-codec equals "avc"`,
 		Priority:            2,
-		IsEnabled:           true,
+		IsEnabled:           models.BoolPtr(true),
 		AcceptedVideoCodecs: `["h264"]`,
 		AcceptedAudioCodecs: `["aac","mp3","ac3"]`,
 		PreferredVideoCodec: models.VideoCodecH264,
 		PreferredAudioCodec: models.AudioCodecAAC,
-		SupportsFMP4:        true,
-		SupportsMPEGTS:      true,
+		SupportsFMP4:        models.BoolPtr(true),
+		SupportsMPEGTS:      models.BoolPtr(true),
 	}
 
 	ruleExplicitVP9 := &models.ClientDetectionRule{
@@ -425,13 +425,13 @@ func TestClientDetectionService_ExplicitHeaderPriorityOverUserAgent(t *testing.T
 		Name:                "Explicit VP9 Video Request",
 		Expression:          `@dynamic(request.headers):x-video-codec equals "vp9"`,
 		Priority:            3,
-		IsEnabled:           true,
+		IsEnabled:           models.BoolPtr(true),
 		AcceptedVideoCodecs: `["vp9"]`,
 		AcceptedAudioCodecs: `["opus","aac"]`,
 		PreferredVideoCodec: models.VideoCodecVP9,
 		PreferredAudioCodec: models.AudioCodecOpus,
-		SupportsFMP4:        true,
-		SupportsMPEGTS:      false, // VP9 requires fMP4
+		SupportsFMP4:        models.BoolPtr(true),
+		SupportsMPEGTS:      models.BoolPtr(false), // VP9 requires fMP4
 	}
 
 	ruleExplicitAV1 := &models.ClientDetectionRule{
@@ -439,13 +439,13 @@ func TestClientDetectionService_ExplicitHeaderPriorityOverUserAgent(t *testing.T
 		Name:                "Explicit AV1 Video Request",
 		Expression:          `@dynamic(request.headers):x-video-codec equals "av1"`,
 		Priority:            4,
-		IsEnabled:           true,
+		IsEnabled:           models.BoolPtr(true),
 		AcceptedVideoCodecs: `["av1"]`,
 		AcceptedAudioCodecs: `["opus","aac"]`,
 		PreferredVideoCodec: models.VideoCodecAV1,
 		PreferredAudioCodec: models.AudioCodecOpus,
-		SupportsFMP4:        true,
-		SupportsMPEGTS:      false, // AV1 requires fMP4
+		SupportsFMP4:        models.BoolPtr(true),
+		SupportsMPEGTS:      models.BoolPtr(false), // AV1 requires fMP4
 	}
 
 	// User-Agent based rules (lower priority, 100+)
@@ -454,13 +454,13 @@ func TestClientDetectionService_ExplicitHeaderPriorityOverUserAgent(t *testing.T
 		Name:                "Chrome Browser",
 		Expression:          `@dynamic(request.headers):user-agent contains "Chrome" AND NOT @dynamic(request.headers):user-agent contains "Edge"`,
 		Priority:            160,
-		IsEnabled:           true,
+		IsEnabled:           models.BoolPtr(true),
 		AcceptedVideoCodecs: `["h264","vp9","av1"]`,
 		AcceptedAudioCodecs: `["aac","mp3","opus"]`,
 		PreferredVideoCodec: models.VideoCodecH264,
 		PreferredAudioCodec: models.AudioCodecAAC,
-		SupportsFMP4:        true,
-		SupportsMPEGTS:      true,
+		SupportsFMP4:        models.BoolPtr(true),
+		SupportsMPEGTS:      models.BoolPtr(true),
 	}
 
 	ruleSafari := &models.ClientDetectionRule{
@@ -468,13 +468,13 @@ func TestClientDetectionService_ExplicitHeaderPriorityOverUserAgent(t *testing.T
 		Name:                "Safari Browser",
 		Expression:          `@dynamic(request.headers):user-agent contains "Safari" AND @dynamic(request.headers):user-agent contains "Macintosh"`,
 		Priority:            180,
-		IsEnabled:           true,
+		IsEnabled:           models.BoolPtr(true),
 		AcceptedVideoCodecs: `["h264","h265"]`,
 		AcceptedAudioCodecs: `["aac","mp3"]`,
 		PreferredVideoCodec: models.VideoCodecH264,
 		PreferredAudioCodec: models.AudioCodecAAC,
-		SupportsFMP4:        true,
-		SupportsMPEGTS:      false, // Safari prefers fMP4
+		SupportsFMP4:        models.BoolPtr(true),
+		SupportsMPEGTS:      models.BoolPtr(false), // Safari prefers fMP4
 	}
 
 	// Add rules in random order to test priority sorting
@@ -572,13 +572,13 @@ func TestClientDetectionService_InvalidCodecHeaderFallthrough(t *testing.T) {
 		Name:                "Explicit H.265 Video Request",
 		Expression:          `@dynamic(request.headers):x-video-codec equals "h265" OR @dynamic(request.headers):x-video-codec equals "hevc"`,
 		Priority:            1,
-		IsEnabled:           true,
+		IsEnabled:           models.BoolPtr(true),
 		AcceptedVideoCodecs: `["h265"]`,
 		AcceptedAudioCodecs: `["aac"]`,
 		PreferredVideoCodec: models.VideoCodecH265,
 		PreferredAudioCodec: models.AudioCodecAAC,
-		SupportsFMP4:        true,
-		SupportsMPEGTS:      true,
+		SupportsFMP4:        models.BoolPtr(true),
+		SupportsMPEGTS:      models.BoolPtr(true),
 	}
 
 	ruleExplicitH264 := &models.ClientDetectionRule{
@@ -586,13 +586,13 @@ func TestClientDetectionService_InvalidCodecHeaderFallthrough(t *testing.T) {
 		Name:                "Explicit H.264 Video Request",
 		Expression:          `@dynamic(request.headers):x-video-codec equals "h264" OR @dynamic(request.headers):x-video-codec equals "avc"`,
 		Priority:            2,
-		IsEnabled:           true,
+		IsEnabled:           models.BoolPtr(true),
 		AcceptedVideoCodecs: `["h264"]`,
 		AcceptedAudioCodecs: `["aac"]`,
 		PreferredVideoCodec: models.VideoCodecH264,
 		PreferredAudioCodec: models.AudioCodecAAC,
-		SupportsFMP4:        true,
-		SupportsMPEGTS:      true,
+		SupportsFMP4:        models.BoolPtr(true),
+		SupportsMPEGTS:      models.BoolPtr(true),
 	}
 
 	// Fallback User-Agent rule
@@ -601,13 +601,13 @@ func TestClientDetectionService_InvalidCodecHeaderFallthrough(t *testing.T) {
 		Name:                "Chrome Browser",
 		Expression:          `@dynamic(request.headers):user-agent contains "Chrome"`,
 		Priority:            160,
-		IsEnabled:           true,
+		IsEnabled:           models.BoolPtr(true),
 		AcceptedVideoCodecs: `["h264","vp9"]`,
 		AcceptedAudioCodecs: `["aac","mp3"]`,
 		PreferredVideoCodec: models.VideoCodecH264,
 		PreferredAudioCodec: models.AudioCodecAAC,
-		SupportsFMP4:        true,
-		SupportsMPEGTS:      true,
+		SupportsFMP4:        models.BoolPtr(true),
+		SupportsMPEGTS:      models.BoolPtr(true),
 	}
 
 	repo.rules = append(repo.rules, ruleExplicitH265, ruleExplicitH264, ruleChrome)
@@ -775,37 +775,37 @@ func TestClientDetectionService_DynamicCodecHeaders(t *testing.T) {
 				Name:                "Dynamic Video Codec",
 				Expression:          `@dynamic(request.headers):x-video-codec not_equals "" SET preferred_video_codec = @dynamic(request.headers):x-video-codec`,
 				Priority:            10,
-				IsEnabled:           true,
+				IsEnabled:           models.BoolPtr(true),
 				PreferredVideoCodec: "h264", // Fallback if SET value is invalid
 				AcceptedVideoCodecs: `["h264"]`,
 				AcceptedAudioCodecs: `["aac"]`,
-				SupportsFMP4:        true,
-				SupportsMPEGTS:      true,
+				SupportsFMP4:        models.BoolPtr(true),
+				SupportsMPEGTS:      models.BoolPtr(true),
 			},
 			{
 				BaseModel:           models.BaseModel{ID: models.NewULID()},
 				Name:                "Dynamic Audio Codec",
 				Expression:          `@dynamic(request.headers):x-audio-codec not_equals "" SET preferred_audio_codec = @dynamic(request.headers):x-audio-codec`,
 				Priority:            20,
-				IsEnabled:           true,
+				IsEnabled:           models.BoolPtr(true),
 				PreferredAudioCodec: "aac", // Fallback if SET value is invalid
 				AcceptedVideoCodecs: `["h264"]`,
 				AcceptedAudioCodecs: `["aac"]`,
-				SupportsFMP4:        true,
-				SupportsMPEGTS:      true,
+				SupportsFMP4:        models.BoolPtr(true),
+				SupportsMPEGTS:      models.BoolPtr(true),
 			},
 			{
 				BaseModel:           models.BaseModel{ID: models.NewULID()},
 				Name:                "Fallback Rule",
 				Expression:          `@dynamic(request.headers):user-agent not_equals ""`, // Always matches if there's a user agent
 				Priority:            100,
-				IsEnabled:           true,
+				IsEnabled:           models.BoolPtr(true),
 				PreferredVideoCodec: "h264",
 				PreferredAudioCodec: "aac",
 				AcceptedVideoCodecs: `["h264"]`,
 				AcceptedAudioCodecs: `["aac"]`,
-				SupportsFMP4:        true,
-				SupportsMPEGTS:      true,
+				SupportsFMP4:        models.BoolPtr(true),
+				SupportsMPEGTS:      models.BoolPtr(true),
 			},
 		},
 	}

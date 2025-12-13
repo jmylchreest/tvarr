@@ -1194,8 +1194,19 @@ func (b *SharedESBuffer) SetVideoCodec(codec string, initData []byte) {
 		b.sourceVariant = source.variant
 		b.variants[b.sourceVariant] = source
 		created = true
-	} else {
+	} else if source.variant.VideoCodec() != codec {
+		// Video codec changed or was empty - need to update variant key
+		oldVariant := b.sourceVariant
+		newVariant := NewCodecVariant(codec, source.variant.AudioCodec())
 		source.videoTrack.SetCodec(codec)
+		source.variant = newVariant
+		delete(b.variants, oldVariant)
+		b.variants[newVariant] = source
+		b.sourceVariant = newVariant
+		b.config.Logger.Debug("Updated source variant video codec",
+			slog.String("channel_id", b.channelID),
+			slog.String("old_variant", oldVariant.String()),
+			slog.String("new_variant", newVariant.String()))
 	}
 	b.variantsMu.Unlock()
 
@@ -1228,8 +1239,19 @@ func (b *SharedESBuffer) SetAudioCodec(codec string, initData []byte) {
 		b.sourceVariant = source.variant
 		b.variants[b.sourceVariant] = source
 		created = true
-	} else {
+	} else if source.variant.AudioCodec() != codec {
+		// Audio codec changed or was empty - need to update variant key
+		oldVariant := b.sourceVariant
+		newVariant := NewCodecVariant(source.variant.VideoCodec(), codec)
 		source.audioTrack.SetCodec(codec)
+		source.variant = newVariant
+		delete(b.variants, oldVariant)
+		b.variants[newVariant] = source
+		b.sourceVariant = newVariant
+		b.config.Logger.Debug("Updated source variant audio codec",
+			slog.String("channel_id", b.channelID),
+			slog.String("old_variant", oldVariant.String()),
+			slog.String("new_variant", newVariant.String()))
 	}
 	b.variantsMu.Unlock()
 

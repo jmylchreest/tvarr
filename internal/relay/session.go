@@ -167,12 +167,12 @@ type RelaySession struct {
 
 	// Per-variant processors (keyed by CodecVariant for multi-client codec support)
 	// This allows different clients to receive different codec variants from the same session
-	hlsTSProcessors   map[CodecVariant]*HLSTSProcessor   // HLS-TS processors per variant
-	hlsFMP4Processors map[CodecVariant]*HLSfMP4Processor // HLS-fMP4 processors per variant
-	dashProcessors    map[CodecVariant]*DASHProcessor    // DASH processors per variant
-	mpegtsProcessors  map[CodecVariant]*MPEGTSProcessor  // MPEG-TS processors per variant
-	processorsMu      sync.RWMutex                       // Protects processor creation/access
-	esTranscoders     []*FFmpegTranscoder                // Active transcoders for codec variants
+	// Using sync.Map-backed types for lock-free concurrent access (avoids mutex contention)
+	hlsTSProcessors   HLSTSProcessorMap   // HLS-TS processors per variant
+	hlsFMP4Processors HLSfMP4ProcessorMap // HLS-fMP4 processors per variant
+	dashProcessors    DASHProcessorMap    // DASH processors per variant
+	mpegtsProcessors  MPEGTSProcessorMap  // MPEG-TS processors per variant
+	esTranscoders     []*FFmpegTranscoder // Active transcoders for codec variants
 	esTranscodersMu   sync.RWMutex
 
 	// Legacy fields - set once during pipeline init, read-only afterward
@@ -474,9 +474,7 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 	var targetSegmentDuration float64 = 6.0
 	var maxSegments = 7
 
-	// Initialize processor maps
-	s.hlsTSProcessors = make(map[CodecVariant]*HLSTSProcessor)
-	s.mpegtsProcessors = make(map[CodecVariant]*MPEGTSProcessor)
+	// No need to initialize processor maps - sync.Map is zero-value safe
 
 	// Start processors for the default variant (VariantCopy for passthrough)
 	hlsTSConfig := DefaultHLSTSProcessorConfig()
@@ -493,7 +491,7 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 	if err := hlsTSProcessor.Start(s.ctx); err != nil {
 		return fmt.Errorf("starting HLS-TS processor: %w", err)
 	}
-	s.hlsTSProcessors[VariantCopy] = hlsTSProcessor
+	s.hlsTSProcessors.Store(VariantCopy, hlsTSProcessor)
 
 	// Start MPEG-TS processor for raw streaming
 	mpegtsConfig := DefaultMPEGTSProcessorConfig()
@@ -507,7 +505,7 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 	if err := mpegtsProcessor.Start(s.ctx); err != nil {
 		slog.Warn("Failed to start MPEG-TS processor", slog.String("error", err.Error()))
 	} else {
-		s.mpegtsProcessors[VariantCopy] = mpegtsProcessor
+		s.mpegtsProcessors.Store(VariantCopy, mpegtsProcessor)
 	}
 
 	// Set up format router
@@ -1037,52 +1035,47 @@ func (s *RelaySession) runVariantCleanupLoop() {
 // This is necessary because HLS/DASH are request-based protocols without persistent connections,
 // unlike MPEG-TS which maintains a persistent streaming connection.
 func (s *RelaySession) cleanupInactiveStreamingClients() {
-	s.processorsMu.RLock()
-	defer s.processorsMu.RUnlock()
-
 	totalRemoved := 0
+	sessionID := s.ID.String()
 
 	// Clean up inactive clients from all HLS-TS processors
-	for variant, processor := range s.hlsTSProcessors {
-		if processor != nil {
-			removed := processor.CleanupInactiveClients(HLSClientIdleTimeout)
-			if removed > 0 {
-				totalRemoved += removed
-				slog.Debug("Cleaned up inactive HLS-TS clients",
-					slog.String("session_id", s.ID.String()),
-					slog.String("variant", variant.String()),
-					slog.Int("removed", removed))
-			}
+	s.hlsTSProcessors.Range(func(variant CodecVariant, processor *HLSTSProcessor) bool {
+		removed := processor.CleanupInactiveClients(HLSClientIdleTimeout)
+		if removed > 0 {
+			totalRemoved += removed
+			slog.Debug("Cleaned up inactive HLS-TS clients",
+				slog.String("session_id", sessionID),
+				slog.String("variant", variant.String()),
+				slog.Int("removed", removed))
 		}
-	}
+		return true
+	})
 
 	// Clean up inactive clients from all HLS-fMP4 processors
-	for variant, processor := range s.hlsFMP4Processors {
-		if processor != nil {
-			removed := processor.CleanupInactiveClients(HLSClientIdleTimeout)
-			if removed > 0 {
-				totalRemoved += removed
-				slog.Debug("Cleaned up inactive HLS-fMP4 clients",
-					slog.String("session_id", s.ID.String()),
-					slog.String("variant", variant.String()),
-					slog.Int("removed", removed))
-			}
+	s.hlsFMP4Processors.Range(func(variant CodecVariant, processor *HLSfMP4Processor) bool {
+		removed := processor.CleanupInactiveClients(HLSClientIdleTimeout)
+		if removed > 0 {
+			totalRemoved += removed
+			slog.Debug("Cleaned up inactive HLS-fMP4 clients",
+				slog.String("session_id", sessionID),
+				slog.String("variant", variant.String()),
+				slog.Int("removed", removed))
 		}
-	}
+		return true
+	})
 
 	// Clean up inactive clients from all DASH processors
-	for variant, processor := range s.dashProcessors {
-		if processor != nil {
-			removed := processor.CleanupInactiveClients(HLSClientIdleTimeout)
-			if removed > 0 {
-				totalRemoved += removed
-				slog.Debug("Cleaned up inactive DASH clients",
-					slog.String("session_id", s.ID.String()),
-					slog.String("variant", variant.String()),
-					slog.Int("removed", removed))
-			}
+	s.dashProcessors.Range(func(variant CodecVariant, processor *DASHProcessor) bool {
+		removed := processor.CleanupInactiveClients(HLSClientIdleTimeout)
+		if removed > 0 {
+			totalRemoved += removed
+			slog.Debug("Cleaned up inactive DASH clients",
+				slog.String("session_id", sessionID),
+				slog.String("variant", variant.String()),
+				slog.Int("removed", removed))
 		}
-	}
+		return true
+	})
 
 	// If we removed clients, update session idle state
 	if totalRemoved > 0 {
@@ -1206,6 +1199,10 @@ func (s *RelaySession) handleVariantRequest(source, target CodecVariant) error {
 		sourceVideoCodec = s.CachedCodecInfo.VideoCodec
 	}
 
+	// Note: We keep the original source variant name (e.g., "h265/") even if we know the audio codec
+	// The ESBuffer stores variants by their created name, and the source variant was created before
+	// audio was detected. The transcoder will get the actual codec from the ESTrack, not the variant name.
+
 	// Check audio codec demuxability
 	if sourceAudioCodec != "" && !IsAudioCodecDemuxable(sourceAudioCodec) {
 		slog.Info("Source audio codec not demuxable, using direct URL input",
@@ -1295,17 +1292,13 @@ func (s *RelaySession) GetESBuffer() *SharedESBuffer {
 // GetHLSTSProcessor returns the HLS-TS processor for the default variant if it exists.
 // Returns nil if the processor hasn't been created yet.
 func (s *RelaySession) GetHLSTSProcessor() *HLSTSProcessor {
-	s.processorsMu.RLock()
-	defer s.processorsMu.RUnlock()
-	if s.hlsTSProcessors == nil {
-		return nil
-	}
 	// Return the processor for the session's default variant
+	variant := VariantCopy
 	if s.processorConfig != nil {
-		return s.hlsTSProcessors[s.processorConfig.TargetVariant]
+		variant = s.processorConfig.TargetVariant
 	}
-	// Fall back to VariantCopy
-	return s.hlsTSProcessors[VariantCopy]
+	processor, _ := s.hlsTSProcessors.Load(variant)
+	return processor
 }
 
 // GetOrCreateHLSTSProcessor returns the HLS-TS processor for the session's default variant.
@@ -1323,23 +1316,17 @@ func (s *RelaySession) GetOrCreateHLSTSProcessor() (*HLSTSProcessor, error) {
 // can receive different codecs from the same session by requesting different variants.
 // If the variant doesn't exist in the ES buffer, transcoding will be triggered automatically.
 func (s *RelaySession) GetOrCreateHLSTSProcessorForVariant(variant CodecVariant) (*HLSTSProcessor, error) {
-	s.processorsMu.Lock()
-	defer s.processorsMu.Unlock()
-
-	// Initialize map if needed
-	if s.hlsTSProcessors == nil {
-		s.hlsTSProcessors = make(map[CodecVariant]*HLSTSProcessor)
-	}
-
-	// Check if processor already exists for this variant
-	if processor, exists := s.hlsTSProcessors[variant]; exists {
+	// Fast path: check if processor already exists (lock-free read)
+	if processor, exists := s.hlsTSProcessors.Load(variant); exists {
 		return processor, nil
 	}
 
+	// Verify session is ready for processor creation
 	if s.processorConfig == nil || s.esBuffer == nil {
 		return nil, errors.New("session not ready for processor creation")
 	}
 
+	// Create config for new processor
 	config := DefaultHLSTSProcessorConfig()
 	config.Logger = slog.Default()
 	config.TargetSegmentDuration = s.processorConfig.TargetSegmentDuration
@@ -1359,12 +1346,18 @@ func (s *RelaySession) GetOrCreateHLSTSProcessorForVariant(variant CodecVariant)
 		return nil, fmt.Errorf("starting HLS-TS processor for variant %s: %w", variant.String(), err)
 	}
 
-	s.hlsTSProcessors[variant] = processor
+	// Atomically store or get existing - if another goroutine won the race, stop our duplicate
+	existing, loaded := s.hlsTSProcessors.LoadOrStore(variant, processor)
+	if loaded {
+		// Another goroutine created the processor first, stop ours
+		processor.Stop()
+		return existing, nil
+	}
 
 	slog.Debug("Created HLS-TS processor on-demand",
 		slog.String("session_id", s.ID.String()),
 		slog.String("variant", variant.String()),
-		slog.Int("total_hls_ts_processors", len(s.hlsTSProcessors)))
+		slog.Int("total_hls_ts_processors", s.hlsTSProcessors.Len()))
 
 	return processor, nil
 }
@@ -1382,23 +1375,17 @@ func (s *RelaySession) GetOrCreateHLSfMP4Processor() (*HLSfMP4Processor, error) 
 // GetOrCreateHLSfMP4ProcessorForVariant returns the HLS-fMP4 processor for a specific codec variant,
 // creating it on-demand if needed.
 func (s *RelaySession) GetOrCreateHLSfMP4ProcessorForVariant(variant CodecVariant) (*HLSfMP4Processor, error) {
-	s.processorsMu.Lock()
-	defer s.processorsMu.Unlock()
-
-	// Initialize map if needed
-	if s.hlsFMP4Processors == nil {
-		s.hlsFMP4Processors = make(map[CodecVariant]*HLSfMP4Processor)
-	}
-
-	// Check if processor already exists for this variant
-	if processor, exists := s.hlsFMP4Processors[variant]; exists {
+	// Fast path: check if processor already exists (lock-free read)
+	if processor, exists := s.hlsFMP4Processors.Load(variant); exists {
 		return processor, nil
 	}
 
+	// Verify session is ready for processor creation
 	if s.processorConfig == nil || s.esBuffer == nil {
 		return nil, errors.New("session not ready for processor creation")
 	}
 
+	// Create config for new processor
 	config := DefaultHLSfMP4ProcessorConfig()
 	config.Logger = slog.Default()
 	config.TargetSegmentDuration = s.processorConfig.TargetSegmentDuration
@@ -1418,12 +1405,18 @@ func (s *RelaySession) GetOrCreateHLSfMP4ProcessorForVariant(variant CodecVarian
 		return nil, fmt.Errorf("starting HLS-fMP4 processor for variant %s: %w", variant.String(), err)
 	}
 
-	s.hlsFMP4Processors[variant] = processor
+	// Atomically store or get existing - if another goroutine won the race, stop our duplicate
+	existing, loaded := s.hlsFMP4Processors.LoadOrStore(variant, processor)
+	if loaded {
+		// Another goroutine created the processor first, stop ours
+		processor.Stop()
+		return existing, nil
+	}
 
 	slog.Debug("Created HLS-fMP4 processor on-demand",
 		slog.String("session_id", s.ID.String()),
 		slog.String("variant", variant.String()),
-		slog.Int("total_hls_fmp4_processors", len(s.hlsFMP4Processors)))
+		slog.Int("total_hls_fmp4_processors", s.hlsFMP4Processors.Len()))
 
 	return processor, nil
 }
@@ -1441,23 +1434,17 @@ func (s *RelaySession) GetOrCreateDASHProcessor() (*DASHProcessor, error) {
 // GetOrCreateDASHProcessorForVariant returns the DASH processor for a specific codec variant,
 // creating it on-demand if needed.
 func (s *RelaySession) GetOrCreateDASHProcessorForVariant(variant CodecVariant) (*DASHProcessor, error) {
-	s.processorsMu.Lock()
-	defer s.processorsMu.Unlock()
-
-	// Initialize map if needed
-	if s.dashProcessors == nil {
-		s.dashProcessors = make(map[CodecVariant]*DASHProcessor)
-	}
-
-	// Check if processor already exists for this variant
-	if processor, exists := s.dashProcessors[variant]; exists {
+	// Fast path: check if processor already exists (lock-free read)
+	if processor, exists := s.dashProcessors.Load(variant); exists {
 		return processor, nil
 	}
 
+	// Verify session is ready for processor creation
 	if s.processorConfig == nil || s.esBuffer == nil {
 		return nil, errors.New("session not ready for processor creation")
 	}
 
+	// Create config for new processor
 	config := DefaultDASHProcessorConfig()
 	config.Logger = slog.Default()
 	config.TargetSegmentDuration = s.processorConfig.TargetSegmentDuration
@@ -1477,12 +1464,18 @@ func (s *RelaySession) GetOrCreateDASHProcessorForVariant(variant CodecVariant) 
 		return nil, fmt.Errorf("starting DASH processor for variant %s: %w", variant.String(), err)
 	}
 
-	s.dashProcessors[variant] = processor
+	// Atomically store or get existing - if another goroutine won the race, stop our duplicate
+	existing, loaded := s.dashProcessors.LoadOrStore(variant, processor)
+	if loaded {
+		// Another goroutine created the processor first, stop ours
+		processor.Stop()
+		return existing, nil
+	}
 
 	slog.Debug("Created DASH processor on-demand",
 		slog.String("session_id", s.ID.String()),
 		slog.String("variant", variant.String()),
-		slog.Int("total_dash_processors", len(s.dashProcessors)))
+		slog.Int("total_dash_processors", s.dashProcessors.Len()))
 
 	return processor, nil
 }
@@ -1500,23 +1493,17 @@ func (s *RelaySession) GetOrCreateMPEGTSProcessor() (*MPEGTSProcessor, error) {
 // GetOrCreateMPEGTSProcessorForVariant returns the MPEG-TS processor for a specific codec variant,
 // creating it on-demand if needed.
 func (s *RelaySession) GetOrCreateMPEGTSProcessorForVariant(variant CodecVariant) (*MPEGTSProcessor, error) {
-	s.processorsMu.Lock()
-	defer s.processorsMu.Unlock()
-
-	// Initialize map if needed
-	if s.mpegtsProcessors == nil {
-		s.mpegtsProcessors = make(map[CodecVariant]*MPEGTSProcessor)
-	}
-
-	// Check if processor already exists for this variant
-	if processor, exists := s.mpegtsProcessors[variant]; exists {
+	// Fast path: check if processor already exists (lock-free read)
+	if processor, exists := s.mpegtsProcessors.Load(variant); exists {
 		return processor, nil
 	}
 
+	// Verify session is ready for processor creation
 	if s.processorConfig == nil || s.esBuffer == nil {
 		return nil, errors.New("session not ready for processor creation")
 	}
 
+	// Create config for new processor
 	config := DefaultMPEGTSProcessorConfig()
 	config.Logger = slog.Default()
 
@@ -1541,12 +1528,18 @@ func (s *RelaySession) GetOrCreateMPEGTSProcessorForVariant(variant CodecVariant
 		return nil, fmt.Errorf("starting MPEG-TS processor for variant %s: %w", variant.String(), err)
 	}
 
-	s.mpegtsProcessors[variant] = processor
+	// Atomically store or get existing - if another goroutine won the race, stop our duplicate
+	existing, loaded := s.mpegtsProcessors.LoadOrStore(variant, processor)
+	if loaded {
+		// Another goroutine created the processor first, stop ours
+		processor.Stop()
+		return existing, nil
+	}
 
 	slog.Debug("Created MPEG-TS processor on-demand",
 		slog.String("session_id", s.ID.String()),
 		slog.String("variant", variant.String()),
-		slog.Int("total_mpegts_processors", len(s.mpegtsProcessors)))
+		slog.Int("total_mpegts_processors", s.mpegtsProcessors.Len()))
 
 	return processor, nil
 }
@@ -1554,38 +1547,31 @@ func (s *RelaySession) GetOrCreateMPEGTSProcessorForVariant(variant CodecVariant
 // ClientCount returns the number of connected clients.
 // With the ES pipeline architecture, clients are tracked per-processor across all variants.
 func (s *RelaySession) ClientCount() int {
-	s.processorsMu.RLock()
-	defer s.processorsMu.RUnlock()
-
 	count := 0
 
-	// Count clients across all HLS-TS processors
-	for _, p := range s.hlsTSProcessors {
-		if p != nil {
-			count += p.ClientCount()
-		}
-	}
+	// Count clients across all HLS-TS processors (lock-free iteration)
+	s.hlsTSProcessors.Range(func(_ CodecVariant, p *HLSTSProcessor) bool {
+		count += p.ClientCount()
+		return true
+	})
 
 	// Count clients across all HLS-fMP4 processors
-	for _, p := range s.hlsFMP4Processors {
-		if p != nil {
-			count += p.ClientCount()
-		}
-	}
+	s.hlsFMP4Processors.Range(func(_ CodecVariant, p *HLSfMP4Processor) bool {
+		count += p.ClientCount()
+		return true
+	})
 
 	// Count clients across all DASH processors
-	for _, p := range s.dashProcessors {
-		if p != nil {
-			count += p.ClientCount()
-		}
-	}
+	s.dashProcessors.Range(func(_ CodecVariant, p *DASHProcessor) bool {
+		count += p.ClientCount()
+		return true
+	})
 
 	// Count clients across all MPEG-TS processors
-	for _, p := range s.mpegtsProcessors {
-		if p != nil {
-			count += p.ClientCount()
-		}
-	}
+	s.mpegtsProcessors.Range(func(_ CodecVariant, p *MPEGTSProcessor) bool {
+		count += p.ClientCount()
+		return true
+	})
 
 	return count
 }
@@ -1624,50 +1610,56 @@ func (s *RelaySession) UpdateIdleState() {
 // StopProcessorIfIdle stops idle processors of a given type across all variants.
 // This is called when a client disconnects to immediately clean up unused processors.
 func (s *RelaySession) StopProcessorIfIdle(processorType string) {
-	s.processorsMu.Lock()
-	defer s.processorsMu.Unlock()
+	// Collect and remove idle processors atomically, then stop them outside the map
+	type processorToStop struct {
+		variant   CodecVariant
+		processor interface{ Stop() }
+	}
+	var toStop []processorToStop
+	sessionID := s.ID.String()
 
 	switch processorType {
 	case "mpegts":
-		for variant, processor := range s.mpegtsProcessors {
-			if processor != nil && processor.ClientCount() == 0 {
-				slog.Debug("Stopping idle MPEG-TS processor",
-					slog.String("session_id", s.ID.String()),
-					slog.String("variant", variant.String()))
-				processor.Stop()
-				delete(s.mpegtsProcessors, variant)
+		s.mpegtsProcessors.Range(func(variant CodecVariant, processor *MPEGTSProcessor) bool {
+			if processor.ClientCount() == 0 {
+				toStop = append(toStop, processorToStop{variant, processor})
+				s.mpegtsProcessors.Delete(variant)
 			}
-		}
+			return true
+		})
 	case "hls-ts":
-		for variant, processor := range s.hlsTSProcessors {
-			if processor != nil && processor.ClientCount() == 0 {
-				slog.Debug("Stopping idle HLS-TS processor",
-					slog.String("session_id", s.ID.String()),
-					slog.String("variant", variant.String()))
-				processor.Stop()
-				delete(s.hlsTSProcessors, variant)
+		s.hlsTSProcessors.Range(func(variant CodecVariant, processor *HLSTSProcessor) bool {
+			if processor.ClientCount() == 0 {
+				toStop = append(toStop, processorToStop{variant, processor})
+				s.hlsTSProcessors.Delete(variant)
 			}
-		}
+			return true
+		})
 	case "hls-fmp4":
-		for variant, processor := range s.hlsFMP4Processors {
-			if processor != nil && processor.ClientCount() == 0 {
-				slog.Debug("Stopping idle HLS-fMP4 processor",
-					slog.String("session_id", s.ID.String()),
-					slog.String("variant", variant.String()))
-				processor.Stop()
-				delete(s.hlsFMP4Processors, variant)
+		s.hlsFMP4Processors.Range(func(variant CodecVariant, processor *HLSfMP4Processor) bool {
+			if processor.ClientCount() == 0 {
+				toStop = append(toStop, processorToStop{variant, processor})
+				s.hlsFMP4Processors.Delete(variant)
 			}
-		}
+			return true
+		})
 	case "dash":
-		for variant, processor := range s.dashProcessors {
-			if processor != nil && processor.ClientCount() == 0 {
-				slog.Debug("Stopping idle DASH processor",
-					slog.String("session_id", s.ID.String()),
-					slog.String("variant", variant.String()))
-				processor.Stop()
-				delete(s.dashProcessors, variant)
+		s.dashProcessors.Range(func(variant CodecVariant, processor *DASHProcessor) bool {
+			if processor.ClientCount() == 0 {
+				toStop = append(toStop, processorToStop{variant, processor})
+				s.dashProcessors.Delete(variant)
 			}
-		}
+			return true
+		})
+	}
+
+	// Stop processors after removing from map - Stop() can block waiting for goroutines
+	for _, p := range toStop {
+		slog.Debug("Stopping idle processor",
+			slog.String("session_id", sessionID),
+			slog.String("type", processorType),
+			slog.String("variant", p.variant.String()))
+		p.processor.Stop()
 	}
 
 	// Update session idle state after processor cleanup
@@ -1676,7 +1668,7 @@ func (s *RelaySession) StopProcessorIfIdle(processorType string) {
 	if clientCount == 0 && idleSince.IsZero() {
 		s.idleSince.Store(time.Now())
 		slog.Debug("Session became idle after processor cleanup",
-			slog.String("session_id", s.ID.String()))
+			slog.String("session_id", sessionID))
 	}
 }
 
@@ -1714,42 +1706,13 @@ func (s *RelaySession) Close() {
 		transcoder.Stop()
 	}
 
-	// Collect processors to stop WITHOUT holding the lock during Stop calls
-	s.processorsMu.Lock()
-	var hlsTSToStop []*HLSTSProcessor
-	for _, processor := range s.hlsTSProcessors {
-		if processor != nil {
-			hlsTSToStop = append(hlsTSToStop, processor)
-		}
-	}
-	s.hlsTSProcessors = nil
+	// Clear and stop all processors using the Clear() method which returns them for cleanup
+	hlsTSToStop := s.hlsTSProcessors.Clear()
+	hlsFMP4ToStop := s.hlsFMP4Processors.Clear()
+	dashToStop := s.dashProcessors.Clear()
+	mpegtsToStop := s.mpegtsProcessors.Clear()
 
-	var hlsFMP4ToStop []*HLSfMP4Processor
-	for _, processor := range s.hlsFMP4Processors {
-		if processor != nil {
-			hlsFMP4ToStop = append(hlsFMP4ToStop, processor)
-		}
-	}
-	s.hlsFMP4Processors = nil
-
-	var dashToStop []*DASHProcessor
-	for _, processor := range s.dashProcessors {
-		if processor != nil {
-			dashToStop = append(dashToStop, processor)
-		}
-	}
-	s.dashProcessors = nil
-
-	var mpegtsToStop []*MPEGTSProcessor
-	for _, processor := range s.mpegtsProcessors {
-		if processor != nil {
-			mpegtsToStop = append(mpegtsToStop, processor)
-		}
-	}
-	s.mpegtsProcessors = nil
-	s.processorsMu.Unlock()
-
-	// Stop all processors outside the lock
+	// Stop all processors (these are already removed from the maps)
 	for _, processor := range hlsTSToStop {
 		processor.Stop()
 	}
@@ -1820,89 +1783,80 @@ func (s *RelaySession) Stats() SessionStats {
 		bytesWritten = esStats.TotalBytes
 	}
 
-	// Collect clients from all processors across all variants (separate lock scope)
-	// Also collect active formats in the same lock section to avoid double lock acquisition
+	// Collect clients from all processors across all variants (lock-free iteration)
 	var clientCount int
 	var clients []ClientStats
 	activeFormats := make([]string, 0, 4)
 
-	s.processorsMu.RLock()
-
 	// Track which format types have active processors
-	hasMpegts := len(s.mpegtsProcessors) > 0
-	hasHlsTS := len(s.hlsTSProcessors) > 0
-	hasHlsFMP4 := len(s.hlsFMP4Processors) > 0
-	hasDash := len(s.dashProcessors) > 0
+	hasMpegts := s.mpegtsProcessors.Len() > 0
+	hasHlsTS := s.hlsTSProcessors.Len() > 0
+	hasHlsFMP4 := s.hlsFMP4Processors.Len() > 0
+	hasDash := s.dashProcessors.Len() > 0
 
 	// MPEG-TS processor clients (all variants)
-	for _, processor := range s.mpegtsProcessors {
-		if processor != nil {
-			clientCount += processor.ClientCount()
-			for _, c := range processor.GetClients() {
-				clients = append(clients, ClientStats{
-					ID:           c.ID,
-					BytesRead:    c.BytesRead.Load(),
-					ConnectedAt:  c.ConnectedAt,
-					UserAgent:    c.UserAgent,
-					RemoteAddr:   c.RemoteAddr,
-					ClientFormat: "mpegts",
-				})
-			}
+	s.mpegtsProcessors.Range(func(_ CodecVariant, processor *MPEGTSProcessor) bool {
+		clientCount += processor.ClientCount()
+		for _, c := range processor.GetClients() {
+			clients = append(clients, ClientStats{
+				ID:           c.ID,
+				BytesRead:    c.BytesRead.Load(),
+				ConnectedAt:  c.ConnectedAt,
+				UserAgent:    c.UserAgent,
+				RemoteAddr:   c.RemoteAddr,
+				ClientFormat: "mpegts",
+			})
 		}
-	}
+		return true
+	})
 
 	// HLS TS processor clients (all variants)
-	for _, processor := range s.hlsTSProcessors {
-		if processor != nil {
-			clientCount += processor.ClientCount()
-			for _, c := range processor.GetClients() {
-				clients = append(clients, ClientStats{
-					ID:           c.ID,
-					BytesRead:    c.BytesRead.Load(),
-					ConnectedAt:  c.ConnectedAt,
-					UserAgent:    c.UserAgent,
-					RemoteAddr:   c.RemoteAddr,
-					ClientFormat: "hls",
-				})
-			}
+	s.hlsTSProcessors.Range(func(_ CodecVariant, processor *HLSTSProcessor) bool {
+		clientCount += processor.ClientCount()
+		for _, c := range processor.GetClients() {
+			clients = append(clients, ClientStats{
+				ID:           c.ID,
+				BytesRead:    c.BytesRead.Load(),
+				ConnectedAt:  c.ConnectedAt,
+				UserAgent:    c.UserAgent,
+				RemoteAddr:   c.RemoteAddr,
+				ClientFormat: "hls",
+			})
 		}
-	}
+		return true
+	})
 
 	// HLS fMP4 processor clients (all variants)
-	for _, processor := range s.hlsFMP4Processors {
-		if processor != nil {
-			clientCount += processor.ClientCount()
-			for _, c := range processor.GetClients() {
-				clients = append(clients, ClientStats{
-					ID:           c.ID,
-					BytesRead:    c.BytesRead.Load(),
-					ConnectedAt:  c.ConnectedAt,
-					UserAgent:    c.UserAgent,
-					RemoteAddr:   c.RemoteAddr,
-					ClientFormat: "hls",
-				})
-			}
+	s.hlsFMP4Processors.Range(func(_ CodecVariant, processor *HLSfMP4Processor) bool {
+		clientCount += processor.ClientCount()
+		for _, c := range processor.GetClients() {
+			clients = append(clients, ClientStats{
+				ID:           c.ID,
+				BytesRead:    c.BytesRead.Load(),
+				ConnectedAt:  c.ConnectedAt,
+				UserAgent:    c.UserAgent,
+				RemoteAddr:   c.RemoteAddr,
+				ClientFormat: "hls",
+			})
 		}
-	}
+		return true
+	})
 
 	// DASH processor clients (all variants)
-	for _, processor := range s.dashProcessors {
-		if processor != nil {
-			clientCount += processor.ClientCount()
-			for _, c := range processor.GetClients() {
-				clients = append(clients, ClientStats{
-					ID:           c.ID,
-					BytesRead:    c.BytesRead.Load(),
-					ConnectedAt:  c.ConnectedAt,
-					UserAgent:    c.UserAgent,
-					RemoteAddr:   c.RemoteAddr,
-					ClientFormat: "dash",
-				})
-			}
+	s.dashProcessors.Range(func(_ CodecVariant, processor *DASHProcessor) bool {
+		clientCount += processor.ClientCount()
+		for _, c := range processor.GetClients() {
+			clients = append(clients, ClientStats{
+				ID:           c.ID,
+				BytesRead:    c.BytesRead.Load(),
+				ConnectedAt:  c.ConnectedAt,
+				UserAgent:    c.UserAgent,
+				RemoteAddr:   c.RemoteAddr,
+				ClientFormat: "dash",
+			})
 		}
-	}
-
-	s.processorsMu.RUnlock()
+		return true
+	})
 
 	// Build active formats list (outside lock since we captured the bools)
 	if hasMpegts {
@@ -1952,7 +1906,7 @@ func (s *RelaySession) Stats() SessionStats {
 		stats.SourceFormat = string(classification.SourceFormat)
 	}
 
-	// Active processor formats already collected above with processorsMu
+	// Active processor formats already collected above (lock-free iteration)
 	stats.ActiveProcessorFormats = activeFormats
 
 	// Determine output format from active processors if ClientFormat not set

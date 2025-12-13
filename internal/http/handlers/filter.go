@@ -91,7 +91,7 @@ func FilterFromModel(f *models.Filter) FilterResponse {
 		SourceType:  string(f.SourceType),
 		Action:      string(f.Action),
 		Expression:  f.Expression,
-		IsEnabled:   f.IsEnabled,
+		IsEnabled:   models.BoolVal(f.IsEnabled),
 		IsSystem:    f.IsSystem,
 		CreatedAt:   f.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:   f.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -211,11 +211,11 @@ func (h *FilterHandler) Create(ctx context.Context, input *CreateFilterInput) (*
 		SourceType:  models.FilterSourceType(input.Body.SourceType),
 		Action:      models.FilterAction(input.Body.Action),
 		Expression:  input.Body.Expression,
-		IsEnabled:   true,
+		IsEnabled:   models.BoolPtr(true),
 	}
 
 	if input.Body.IsEnabled != nil {
-		filter.IsEnabled = *input.Body.IsEnabled
+		filter.IsEnabled = input.Body.IsEnabled
 	}
 
 	if input.Body.SourceID != nil && *input.Body.SourceID != "" {
@@ -281,7 +281,7 @@ func (h *FilterHandler) Update(ctx context.Context, input *UpdateFilterInput) (*
 		}
 		// Only allow is_enabled update
 		if input.Body.IsEnabled != nil {
-			filter.IsEnabled = *input.Body.IsEnabled
+			filter.IsEnabled = input.Body.IsEnabled
 		}
 	} else {
 		// Apply updates for non-system filters
@@ -301,7 +301,7 @@ func (h *FilterHandler) Update(ctx context.Context, input *UpdateFilterInput) (*
 			filter.Expression = *input.Body.Expression
 		}
 		if input.Body.IsEnabled != nil {
-			filter.IsEnabled = *input.Body.IsEnabled
+			filter.IsEnabled = input.Body.IsEnabled
 		}
 		if input.Body.SourceID != nil {
 			if *input.Body.SourceID == "" {

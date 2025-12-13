@@ -169,7 +169,8 @@ type StreamProxyRepository interface {
 	// GetEpgSources retrieves the EPG sources for a proxy with priority ordering.
 	GetEpgSources(ctx context.Context, proxyID models.ULID) ([]*models.EpgSource, error)
 	// SetFilters sets the filters for a proxy (replaces existing).
-	SetFilters(ctx context.Context, proxyID models.ULID, filterIDs []models.ULID, orders map[models.ULID]int) error
+	// The isActive map controls whether each filter is active (applied during generation).
+	SetFilters(ctx context.Context, proxyID models.ULID, filterIDs []models.ULID, orders map[models.ULID]int, isActive map[models.ULID]bool) error
 	// GetFilters retrieves the filters for a proxy with order.
 	GetFilters(ctx context.Context, proxyID models.ULID) ([]*models.Filter, error)
 	// GetBySourceID retrieves all proxies that use a specific stream source.

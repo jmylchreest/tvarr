@@ -110,27 +110,29 @@ func TestSelectDelivery(t *testing.T) {
 			expected:     DeliveryTranscode,
 		},
 
-		// No profile - format matching
+		// No profile - format matching uses repackage (buffer pipeline for connection sharing)
+		// NOTE: We use DeliveryRepackage instead of DeliveryPassthrough to enable
+		// multiple clients sharing a single upstream connection via the ES buffer
 		{
-			name:         "HLS to HLS - passthrough",
+			name:         "HLS to HLS - repackage for buffer sharing",
 			sourceFormat: SourceFormatHLS,
 			clientFormat: ClientFormatHLS,
 			profile:      nil,
-			expected:     DeliveryPassthrough,
+			expected:     DeliveryRepackage,
 		},
 		{
-			name:         "DASH to DASH - passthrough",
+			name:         "DASH to DASH - repackage for buffer sharing",
 			sourceFormat: SourceFormatDASH,
 			clientFormat: ClientFormatDASH,
 			profile:      nil,
-			expected:     DeliveryPassthrough,
+			expected:     DeliveryRepackage,
 		},
 		{
-			name:         "MPEGTS to MPEGTS - passthrough",
+			name:         "MPEGTS to MPEGTS - repackage for buffer sharing",
 			sourceFormat: SourceFormatMPEGTS,
 			clientFormat: ClientFormatMPEGTS,
 			profile:      nil,
-			expected:     DeliveryPassthrough,
+			expected:     DeliveryRepackage,
 		},
 
 		// Repackaging scenarios
@@ -165,20 +167,20 @@ func TestSelectDelivery(t *testing.T) {
 			expected:     DeliveryTranscode,
 		},
 
-		// Auto format - passthrough
+		// Auto format - repackage for buffer sharing
 		{
-			name:         "HLS to Auto - passthrough",
+			name:         "HLS to Auto - repackage",
 			sourceFormat: SourceFormatHLS,
 			clientFormat: ClientFormatAuto,
 			profile:      nil,
-			expected:     DeliveryPassthrough,
+			expected:     DeliveryRepackage,
 		},
 		{
-			name:         "MPEGTS to Auto - passthrough",
+			name:         "MPEGTS to Auto - repackage",
 			sourceFormat: SourceFormatMPEGTS,
 			clientFormat: ClientFormatAuto,
 			profile:      nil,
-			expected:     DeliveryPassthrough,
+			expected:     DeliveryRepackage,
 		},
 	}
 
@@ -187,6 +189,278 @@ func TestSelectDelivery(t *testing.T) {
 			source := ClassificationResult{SourceFormat: tt.sourceFormat}
 			result := SelectDelivery(source, tt.clientFormat, tt.profile)
 			assert.Equal(t, tt.expected, result, "expected %s, got %s", tt.expected, result)
+		})
+	}
+}
+
+func TestSelectDeliveryWithCodecCompatibility(t *testing.T) {
+	// Profile that would require transcoding (has target codecs set)
+	transcodeProfile := &models.EncodingProfile{
+		TargetVideoCodec: models.VideoCodecH264,
+		TargetAudioCodec: models.AudioCodecAAC,
+	}
+
+	tests := []struct {
+		name             string
+		sourceFormat     SourceFormat
+		clientFormat     ClientFormat
+		profile          *models.EncodingProfile
+		clientCaps       *ClientCapabilities
+		sourceVideoCodec string
+		sourceAudioCodec string
+		expected         DeliveryDecision
+	}{
+		// Client accepts source codecs with matching format - repackage (uses ES buffer for connection sharing)
+		// NOTE: We use DeliveryRepackage instead of DeliveryPassthrough to enable
+		// multiple clients sharing a single upstream connection via the ES buffer
+		{
+			name:         "client accepts h265/eac3 source - repackage for buffer sharing",
+			sourceFormat: SourceFormatMPEGTS,
+			clientFormat: ClientFormatMPEGTS,
+			profile:      transcodeProfile,
+			clientCaps: &ClientCapabilities{
+				AcceptedVideoCodecs: []string{"h264", "h265"},
+				AcceptedAudioCodecs: []string{"aac", "eac3"},
+			},
+			sourceVideoCodec: "h265",
+			sourceAudioCodec: "eac3",
+			expected:         DeliveryRepackage,
+		},
+		// Client accepts source codecs with auto format - repackage for buffer sharing
+		{
+			name:         "client accepts h265/eac3 with auto format - repackage",
+			sourceFormat: SourceFormatMPEGTS,
+			clientFormat: ClientFormatAuto,
+			profile:      transcodeProfile,
+			clientCaps: &ClientCapabilities{
+				AcceptedVideoCodecs: []string{"h264", "h265"},
+				AcceptedAudioCodecs: []string{"aac", "eac3"},
+			},
+			sourceVideoCodec: "h265",
+			sourceAudioCodec: "eac3",
+			expected:         DeliveryRepackage,
+		},
+		// hevc alias normalized to h265 - repackage
+		{
+			name:         "hevc normalized to h265 - repackage",
+			sourceFormat: SourceFormatMPEGTS,
+			clientFormat: ClientFormatMPEGTS,
+			profile:      transcodeProfile,
+			clientCaps: &ClientCapabilities{
+				AcceptedVideoCodecs: []string{"h265"},
+				AcceptedAudioCodecs: []string{"aac"},
+			},
+			sourceVideoCodec: "hevc", // Should be normalized to h265
+			sourceAudioCodec: "aac",
+			expected:         DeliveryRepackage,
+		},
+		// ec-3 alias normalized to eac3 - repackage
+		{
+			name:         "ec-3 normalized to eac3 - repackage",
+			sourceFormat: SourceFormatMPEGTS,
+			clientFormat: ClientFormatMPEGTS,
+			profile:      transcodeProfile,
+			clientCaps: &ClientCapabilities{
+				AcceptedVideoCodecs: []string{"h264"},
+				AcceptedAudioCodecs: []string{"eac3"},
+			},
+			sourceVideoCodec: "h264",
+			sourceAudioCodec: "ec-3", // Should be normalized to eac3
+			expected:         DeliveryRepackage,
+		},
+		// Client does not accept source video codec - transcode
+		{
+			name:         "client rejects h265 video - transcode",
+			sourceFormat: SourceFormatMPEGTS,
+			clientFormat: ClientFormatMPEGTS,
+			profile:      transcodeProfile,
+			clientCaps: &ClientCapabilities{
+				AcceptedVideoCodecs: []string{"h264"}, // Does not include h265
+				AcceptedAudioCodecs: []string{"aac", "eac3"},
+			},
+			sourceVideoCodec: "h265",
+			sourceAudioCodec: "eac3",
+			expected:         DeliveryTranscode,
+		},
+		// Client does not accept source audio codec - transcode
+		{
+			name:         "client rejects eac3 audio - transcode",
+			sourceFormat: SourceFormatMPEGTS,
+			clientFormat: ClientFormatMPEGTS,
+			profile:      transcodeProfile,
+			clientCaps: &ClientCapabilities{
+				AcceptedVideoCodecs: []string{"h264", "h265"},
+				AcceptedAudioCodecs: []string{"aac"}, // Does not include eac3
+			},
+			sourceVideoCodec: "h265",
+			sourceAudioCodec: "eac3",
+			expected:         DeliveryTranscode,
+		},
+		// Client accepts codecs but format doesn't match - transcode (TS to HLS)
+		{
+			name:         "client accepts codecs but wants HLS from TS - transcode",
+			sourceFormat: SourceFormatMPEGTS,
+			clientFormat: ClientFormatHLS,
+			profile:      transcodeProfile,
+			clientCaps: &ClientCapabilities{
+				AcceptedVideoCodecs: []string{"h265"},
+				AcceptedAudioCodecs: []string{"eac3"},
+			},
+			sourceVideoCodec: "h265",
+			sourceAudioCodec: "eac3",
+			expected:         DeliveryTranscode,
+		},
+		// Video-only stream (no audio) - repackage when video matches (buffer sharing)
+		{
+			name:         "video-only stream client accepts - repackage",
+			sourceFormat: SourceFormatMPEGTS,
+			clientFormat: ClientFormatMPEGTS,
+			profile:      transcodeProfile,
+			clientCaps: &ClientCapabilities{
+				AcceptedVideoCodecs: []string{"h264"},
+				AcceptedAudioCodecs: []string{"aac"},
+			},
+			sourceVideoCodec: "h264",
+			sourceAudioCodec: "", // Video-only
+			expected:         DeliveryRepackage,
+		},
+		// No client capabilities provided - falls back to profile check (transcode)
+		{
+			name:             "no client caps with profile - transcode",
+			sourceFormat:     SourceFormatMPEGTS,
+			clientFormat:     ClientFormatMPEGTS,
+			profile:          transcodeProfile,
+			clientCaps:       nil,
+			sourceVideoCodec: "h265",
+			sourceAudioCodec: "eac3",
+			expected:         DeliveryTranscode,
+		},
+		// No source video codec known - falls back to profile check (transcode)
+		{
+			name:         "no source codec known with profile - transcode",
+			sourceFormat: SourceFormatMPEGTS,
+			clientFormat: ClientFormatMPEGTS,
+			profile:      transcodeProfile,
+			clientCaps: &ClientCapabilities{
+				AcceptedVideoCodecs: []string{"h265"},
+				AcceptedAudioCodecs: []string{"eac3"},
+			},
+			sourceVideoCodec: "", // Unknown
+			sourceAudioCodec: "eac3",
+			expected:         DeliveryTranscode,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source := ClassificationResult{SourceFormat: tt.sourceFormat}
+			opts := SelectDeliveryOptions{
+				ClientCapabilities: tt.clientCaps,
+				SourceVideoCodec:   tt.sourceVideoCodec,
+				SourceAudioCodec:   tt.sourceAudioCodec,
+			}
+			result := SelectDelivery(source, tt.clientFormat, tt.profile, opts)
+			assert.Equal(t, tt.expected, result, "expected %s, got %s", tt.expected, result)
+		})
+	}
+}
+
+func TestClientAcceptsSourceCodecs(t *testing.T) {
+	tests := []struct {
+		name             string
+		caps             *ClientCapabilities
+		sourceVideoCodec string
+		sourceAudioCodec string
+		expected         bool
+	}{
+		// Basic acceptance
+		{
+			name: "accepts both codecs",
+			caps: &ClientCapabilities{
+				AcceptedVideoCodecs: []string{"h264", "h265"},
+				AcceptedAudioCodecs: []string{"aac", "eac3"},
+			},
+			sourceVideoCodec: "h265",
+			sourceAudioCodec: "eac3",
+			expected:         true,
+		},
+		// Codec normalization
+		{
+			name: "hevc normalized to h265",
+			caps: &ClientCapabilities{
+				AcceptedVideoCodecs: []string{"h265"},
+				AcceptedAudioCodecs: []string{"aac"},
+			},
+			sourceVideoCodec: "hevc",
+			sourceAudioCodec: "aac",
+			expected:         true,
+		},
+		{
+			name: "ec-3 normalized to eac3",
+			caps: &ClientCapabilities{
+				AcceptedVideoCodecs: []string{"h264"},
+				AcceptedAudioCodecs: []string{"eac3"},
+			},
+			sourceVideoCodec: "h264",
+			sourceAudioCodec: "ec-3",
+			expected:         true,
+		},
+		{
+			name: "avc normalized to h264",
+			caps: &ClientCapabilities{
+				AcceptedVideoCodecs: []string{"h264"},
+				AcceptedAudioCodecs: []string{"aac"},
+			},
+			sourceVideoCodec: "avc",
+			sourceAudioCodec: "aac",
+			expected:         true,
+		},
+		// Rejection cases
+		{
+			name: "video not accepted",
+			caps: &ClientCapabilities{
+				AcceptedVideoCodecs: []string{"h264"},
+				AcceptedAudioCodecs: []string{"aac", "eac3"},
+			},
+			sourceVideoCodec: "h265",
+			sourceAudioCodec: "eac3",
+			expected:         false,
+		},
+		{
+			name: "audio not accepted",
+			caps: &ClientCapabilities{
+				AcceptedVideoCodecs: []string{"h264", "h265"},
+				AcceptedAudioCodecs: []string{"aac"},
+			},
+			sourceVideoCodec: "h265",
+			sourceAudioCodec: "eac3",
+			expected:         false,
+		},
+		// Video-only stream
+		{
+			name: "video-only accepted",
+			caps: &ClientCapabilities{
+				AcceptedVideoCodecs: []string{"h264"},
+				AcceptedAudioCodecs: []string{"aac"},
+			},
+			sourceVideoCodec: "h264",
+			sourceAudioCodec: "",
+			expected:         true,
+		},
+		// Nil capabilities
+		{
+			name:             "nil caps",
+			caps:             nil,
+			sourceVideoCodec: "h264",
+			sourceAudioCodec: "aac",
+			expected:         false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := clientAcceptsSourceCodecs(tt.caps, tt.sourceVideoCodec, tt.sourceAudioCodec)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }

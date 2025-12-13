@@ -421,6 +421,81 @@ func (m *Manager) ProbeAndStoreCodecInfo(ctx context.Context, streamURL string) 
 	return codecInfo
 }
 
+// GetOrProbeCodecInfo intelligently retrieves codec information using this priority:
+// 1. If there's an active session for the channel, use its CachedCodecInfo (no network call)
+// 2. If no active session but stream URL is already being streamed, use cached database info
+// 3. If connection pool has capacity, probe fresh and store result
+// 4. Otherwise, return cached database info (may be stale or nil)
+//
+// This prevents probing from consuming extra connections when a stream is already active.
+func (m *Manager) GetOrProbeCodecInfo(ctx context.Context, channelID uuid.UUID, streamURL string) *models.LastKnownCodec {
+	// Priority 1: Check for active session - this is the fastest path and doesn't require a network call
+	if session := m.GetSessionForChannel(channelID); session != nil {
+		if session.CachedCodecInfo != nil {
+			m.logger.Debug("Using codec info from active session",
+				slog.String("channel_id", channelID.String()),
+				slog.String("video_codec", session.CachedCodecInfo.VideoCodec),
+				slog.String("audio_codec", session.CachedCodecInfo.AudioCodec))
+			return session.CachedCodecInfo
+		}
+	}
+
+	// Priority 2: Check if connection pool would allow a probe
+	// Extract host to check current connection count
+	host, err := extractHost(streamURL)
+	if err != nil {
+		m.logger.Debug("Failed to extract host from stream URL",
+			slog.String("stream_url", streamURL),
+			slog.String("error", err.Error()))
+		// Fall back to cached database info
+		return m.getCachedCodecInfo(ctx, streamURL)
+	}
+
+	// Check connection pool stats - if we're at or near the limit, don't probe
+	poolStats := m.connectionPool.Stats()
+	currentHostConns := poolStats.HostConnections[host]
+	atConnectionLimit := currentHostConns >= poolStats.MaxPerHost
+
+	if atConnectionLimit {
+		m.logger.Debug("Skipping probe - connection limit reached for host",
+			slog.String("host", host),
+			slog.Int("current_connections", currentHostConns),
+			slog.Int("max_per_host", poolStats.MaxPerHost))
+		// Fall back to cached database info
+		return m.getCachedCodecInfo(ctx, streamURL)
+	}
+
+	// Priority 3: We have capacity - probe fresh
+	return m.ProbeAndStoreCodecInfo(ctx, streamURL)
+}
+
+// getCachedCodecInfo retrieves cached codec info from the database.
+// Returns nil if not found or expired.
+func (m *Manager) getCachedCodecInfo(ctx context.Context, streamURL string) *models.LastKnownCodec {
+	if m.config.CodecRepo == nil {
+		return nil
+	}
+
+	cached, err := m.config.CodecRepo.GetByStreamURL(ctx, streamURL)
+	if err != nil {
+		m.logger.Debug("Failed to get cached codec info",
+			slog.String("stream_url", streamURL),
+			slog.String("error", err.Error()))
+		return nil
+	}
+
+	// Check if cached info has actual codec data (not just an error entry)
+	if cached != nil && (cached.VideoCodec != "" || cached.AudioCodec != "") {
+		m.logger.Debug("Using cached codec info from database",
+			slog.String("stream_url", streamURL),
+			slog.String("video_codec", cached.VideoCodec),
+			slog.String("audio_codec", cached.AudioCodec))
+		return cached
+	}
+
+	return nil
+}
+
 // createSession creates a new relay session.
 func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, channelName string, streamSourceName string, streamURL string, profile *models.EncodingProfile) (*RelaySession, error) {
 	// Check circuit breaker

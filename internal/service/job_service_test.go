@@ -416,7 +416,7 @@ func (m *jobMockProxyRepo) GetFilters(ctx context.Context, proxyID models.ULID) 
 	return nil, nil
 }
 
-func (m *jobMockProxyRepo) SetFilters(ctx context.Context, proxyID models.ULID, filterIDs []models.ULID, orders map[models.ULID]int) error {
+func (m *jobMockProxyRepo) SetFilters(ctx context.Context, proxyID models.ULID, filterIDs []models.ULID, orders map[models.ULID]int, isActive map[models.ULID]bool) error {
 	return nil
 }
 
@@ -801,7 +801,7 @@ func TestJobService_TriggerStreamIngestion_NoScheduler(t *testing.T) {
 	ctx := context.Background()
 
 	sourceID := models.NewULID()
-	source := &models.StreamSource{Name: "Test Source", Enabled: true}
+	source := &models.StreamSource{Name: "Test Source", Enabled:  models.BoolPtr(true)}
 	source.ID = sourceID
 	streamRepo.sources[sourceID] = source
 
@@ -832,7 +832,7 @@ func TestJobService_TriggerEpgIngestion_NoScheduler(t *testing.T) {
 	ctx := context.Background()
 
 	sourceID := models.NewULID()
-	source := &models.EpgSource{Name: "Test EPG", Enabled: true}
+	source := &models.EpgSource{Name: "Test EPG", Enabled:  models.BoolPtr(true)}
 	source.ID = sourceID
 	epgRepo.sources[sourceID] = source
 
@@ -862,7 +862,7 @@ func TestJobService_TriggerProxyGeneration_NoScheduler(t *testing.T) {
 	ctx := context.Background()
 
 	proxyID := models.NewULID()
-	proxy := &models.StreamProxy{Name: "Test Proxy", IsActive: true}
+	proxy := &models.StreamProxy{Name: "Test Proxy", IsActive: models.BoolPtr(true)}
 	proxy.ID = proxyID
 	proxyRepo.proxies[proxyID] = proxy
 
@@ -1024,7 +1024,7 @@ func TestJobService_TriggerWithScheduler(t *testing.T) {
 
 	t.Run("trigger stream ingestion", func(t *testing.T) {
 		sourceID := models.NewULID()
-		source := &models.StreamSource{Name: "Test Source", Enabled: true}
+		source := &models.StreamSource{Name: "Test Source", Enabled:  models.BoolPtr(true)}
 		source.ID = sourceID
 		streamRepo.sources[sourceID] = source
 
@@ -1038,7 +1038,7 @@ func TestJobService_TriggerWithScheduler(t *testing.T) {
 
 	t.Run("trigger EPG ingestion", func(t *testing.T) {
 		sourceID := models.NewULID()
-		source := &models.EpgSource{Name: "Test EPG", Enabled: true}
+		source := &models.EpgSource{Name: "Test EPG", Enabled:  models.BoolPtr(true)}
 		source.ID = sourceID
 		epgRepo.sources[sourceID] = source
 
@@ -1051,7 +1051,7 @@ func TestJobService_TriggerWithScheduler(t *testing.T) {
 
 	t.Run("trigger proxy generation", func(t *testing.T) {
 		proxyID := models.NewULID()
-		proxy := &models.StreamProxy{Name: "Test Proxy", IsActive: true}
+		proxy := &models.StreamProxy{Name: "Test Proxy", IsActive: models.BoolPtr(true)}
 		proxy.ID = proxyID
 		proxyRepo.proxies[proxyID] = proxy
 

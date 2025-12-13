@@ -238,7 +238,8 @@ func (r *streamProxyRepo) GetEpgSources(ctx context.Context, proxyID models.ULID
 }
 
 // SetFilters sets the filters for a proxy (replaces existing).
-func (r *streamProxyRepo) SetFilters(ctx context.Context, proxyID models.ULID, filterIDs []models.ULID, priorities map[models.ULID]int) error {
+// The isActive map controls whether each filter is active (applied during generation).
+func (r *streamProxyRepo) SetFilters(ctx context.Context, proxyID models.ULID, filterIDs []models.ULID, priorities map[models.ULID]int, isActive map[models.ULID]bool) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Hard delete existing associations (these are junction tables, no need for soft delete)
 		if err := tx.Unscoped().Where("proxy_id = ?", proxyID).Delete(&models.ProxyFilter{}).Error; err != nil {
@@ -253,10 +254,18 @@ func (r *streamProxyRepo) SetFilters(ctx context.Context, proxyID models.ULID, f
 					priority = p
 				}
 			}
+			// Default to active if not specified
+			active := true
+			if isActive != nil {
+				if a, ok := isActive[filterID]; ok {
+					active = a
+				}
+			}
 			pf := &models.ProxyFilter{
 				ProxyID:  proxyID,
 				FilterID: filterID,
 				Priority: priority,
+				IsActive: &active, // Pointer allows GORM to distinguish nil from false
 			}
 			if err := tx.Create(pf).Error; err != nil {
 				return fmt.Errorf("adding filter %s: %w", filterID, err)

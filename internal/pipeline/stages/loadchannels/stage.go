@@ -65,7 +65,7 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	var totalExpected int64
 	enabledSources := make([]*models.StreamSource, 0, len(state.Sources))
 	for _, source := range state.Sources {
-		if !source.Enabled {
+		if !models.BoolVal(source.Enabled) {
 			s.log(ctx, slog.LevelDebug, "skipping disabled source",
 				slog.String("source_id", source.ID.String()),
 				slog.String("source_name", source.Name))

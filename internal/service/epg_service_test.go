@@ -67,7 +67,7 @@ func (m *mockEpgSourceRepo) GetEnabled(ctx context.Context) ([]*models.EpgSource
 	}
 	var sources []*models.EpgSource
 	for _, s := range m.sources {
-		if s.Enabled {
+		if models.BoolVal(s.Enabled) {
 			sources = append(sources, s)
 		}
 	}
@@ -296,7 +296,7 @@ func TestEpgService_Create(t *testing.T) {
 		Name:    "Test EPG",
 		Type:    models.EpgSourceTypeXMLTV,
 		URL:     "http://example.com/epg.xml",
-		Enabled: true,
+		Enabled:          models.BoolPtr(true),
 	}
 
 	err := service.Create(context.Background(), source)
@@ -336,7 +336,7 @@ func TestEpgService_GetByID(t *testing.T) {
 		Name:    "Test EPG",
 		Type:    models.EpgSourceTypeXMLTV,
 		URL:     "http://example.com/epg.xml",
-		Enabled: true,
+		Enabled:          models.BoolPtr(true),
 	}
 	_ = service.Create(context.Background(), source)
 
@@ -358,7 +358,7 @@ func TestEpgService_Update(t *testing.T) {
 		Name:    "Test EPG",
 		Type:    models.EpgSourceTypeXMLTV,
 		URL:     "http://example.com/epg.xml",
-		Enabled: true,
+		Enabled:          models.BoolPtr(true),
 	}
 	_ = service.Create(context.Background(), source)
 
@@ -384,7 +384,7 @@ func TestEpgService_Delete(t *testing.T) {
 		Name:    "Test EPG",
 		Type:    models.EpgSourceTypeXMLTV,
 		URL:     "http://example.com/epg.xml",
-		Enabled: true,
+		Enabled:          models.BoolPtr(true),
 	}
 	_ = service.Create(context.Background(), source)
 
@@ -411,7 +411,7 @@ func TestEpgService_List(t *testing.T) {
 			Name:    "Test EPG",
 			Type:    models.EpgSourceTypeXMLTV,
 			URL:     "http://example.com/epg.xml",
-			Enabled: true,
+			Enabled:          models.BoolPtr(true),
 		}
 		_ = service.Create(context.Background(), source)
 	}
@@ -434,13 +434,13 @@ func TestEpgService_ListEnabled(t *testing.T) {
 		Name:    "Enabled EPG",
 		Type:    models.EpgSourceTypeXMLTV,
 		URL:     "http://example.com/epg1.xml",
-		Enabled: true,
+		Enabled:          models.BoolPtr(true),
 	}
 	source2 := &models.EpgSource{
 		Name:    "Disabled EPG",
 		Type:    models.EpgSourceTypeXMLTV,
 		URL:     "http://example.com/epg2.xml",
-		Enabled: false,
+		Enabled:          models.BoolPtr(false),
 	}
 	_ = service.Create(context.Background(), source1)
 	_ = service.Create(context.Background(), source2)
@@ -464,7 +464,7 @@ func TestEpgService_GetProgramCount(t *testing.T) {
 		Name:    "Test EPG",
 		Type:    models.EpgSourceTypeXMLTV,
 		URL:     "http://example.com/epg.xml",
-		Enabled: true,
+		Enabled:          models.BoolPtr(true),
 	}
 	_ = service.Create(context.Background(), source)
 
@@ -489,7 +489,7 @@ func TestEpgService_IsIngesting(t *testing.T) {
 		Name:    "Test EPG",
 		Type:    models.EpgSourceTypeXMLTV,
 		URL:     "http://example.com/epg.xml",
-		Enabled: true,
+		Enabled:          models.BoolPtr(true),
 	}
 	_ = service.Create(context.Background(), source)
 
@@ -510,7 +510,7 @@ func TestEpgService_GetIngestionState(t *testing.T) {
 		Name:    "Test EPG",
 		Type:    models.EpgSourceTypeXMLTV,
 		URL:     "http://example.com/epg.xml",
-		Enabled: true,
+		Enabled:          models.BoolPtr(true),
 	}
 	_ = service.Create(context.Background(), source)
 
@@ -533,7 +533,7 @@ func TestEpgService_DeleteOldPrograms(t *testing.T) {
 		Name:    "Test EPG",
 		Type:    models.EpgSourceTypeXMLTV,
 		URL:     "http://example.com/epg.xml",
-		Enabled: true,
+		Enabled:          models.BoolPtr(true),
 	}
 	_ = service.Create(context.Background(), source)
 

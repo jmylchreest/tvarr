@@ -737,57 +737,57 @@ func TestDefaultClientDetectorMultipleClients(t *testing.T) {
 	detector := NewDefaultClientDetector(nil)
 
 	tests := []struct {
-		name               string
-		userAgent          string
-		accept             string
-		formatOverride     string
-		expectedSource     string
-		expectSupportsFMP4 bool
+		name                 string
+		userAgent            string
+		accept               string
+		formatOverride       string
+		expectedSource       string
+		expectSupportsFMP4   bool
 		expectSupportsMPEGTS bool
 	}{
 		{
-			name:               "Format override takes precedence",
-			userAgent:          "VLC/3.0.20",
-			accept:             "*/*",
-			formatOverride:     "dash",
-			expectedSource:     "format_override",
-			expectSupportsFMP4: true,
+			name:                 "Format override takes precedence",
+			userAgent:            "VLC/3.0.20",
+			accept:               "*/*",
+			formatOverride:       "dash",
+			expectedSource:       "format_override",
+			expectSupportsFMP4:   true,
 			expectSupportsMPEGTS: false,
 		},
 		{
-			name:               "Accept header DASH",
-			userAgent:          "Mozilla/5.0",
-			accept:             "application/dash+xml",
-			formatOverride:     "",
-			expectedSource:     "accept",
-			expectSupportsFMP4: true,
+			name:                 "Accept header DASH",
+			userAgent:            "Mozilla/5.0",
+			accept:               "application/dash+xml",
+			formatOverride:       "",
+			expectedSource:       "accept",
+			expectSupportsFMP4:   true,
 			expectSupportsMPEGTS: false,
 		},
 		{
-			name:               "Accept header HLS",
-			userAgent:          "Mozilla/5.0",
-			accept:             "application/vnd.apple.mpegurl",
-			formatOverride:     "",
-			expectedSource:     "accept",
-			expectSupportsFMP4: true,
+			name:                 "Accept header HLS",
+			userAgent:            "Mozilla/5.0",
+			accept:               "application/vnd.apple.mpegurl",
+			formatOverride:       "",
+			expectedSource:       "accept",
+			expectSupportsFMP4:   true,
 			expectSupportsMPEGTS: true,
 		},
 		{
-			name:               "Accept header MPEG-TS",
-			userAgent:          "Mozilla/5.0",
-			accept:             "video/mp2t",
-			formatOverride:     "",
-			expectedSource:     "accept",
-			expectSupportsFMP4: false,
+			name:                 "Accept header MPEG-TS",
+			userAgent:            "Mozilla/5.0",
+			accept:               "video/mp2t",
+			formatOverride:       "",
+			expectedSource:       "accept",
+			expectSupportsFMP4:   false,
 			expectSupportsMPEGTS: true,
 		},
 		{
-			name:               "Default for unknown",
-			userAgent:          "Unknown/1.0",
-			accept:             "*/*",
-			formatOverride:     "",
-			expectedSource:     "default",
-			expectSupportsFMP4: true,
+			name:                 "Default for unknown",
+			userAgent:            "Unknown/1.0",
+			accept:               "*/*",
+			formatOverride:       "",
+			expectedSource:       "default",
+			expectSupportsFMP4:   true,
 			expectSupportsMPEGTS: true,
 		},
 	}

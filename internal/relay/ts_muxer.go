@@ -67,6 +67,95 @@ const (
 	StreamTypeMP3  = codec.StreamTypeMP3
 )
 
+// createVideoCodec creates a mediacommon video codec from a codec name.
+func createVideoCodec(codecName string) mpegts.Codec {
+	switch codecName {
+	case "h265", "hevc":
+		return &mpegts.CodecH265{}
+	default:
+		return &mpegts.CodecH264{}
+	}
+}
+
+// createAudioCodec creates a mediacommon audio codec from a codec name.
+// Returns the codec and the normalized codec name.
+func createAudioCodec(codecName string, aacConfig *mpeg4audio.Config) (mpegts.Codec, string) {
+	switch codecName {
+	case "ac3":
+		return &mpegts.CodecAC3{SampleRate: 48000, ChannelCount: 2}, "ac3"
+	case "eac3", "ec-3", "ec3":
+		return &mpegts.CodecEAC3{SampleRate: 48000, ChannelCount: 6}, "eac3"
+	case "mp3":
+		return &mpegts.CodecMPEG1Audio{}, "mp3"
+	case "opus":
+		return &mpegts.CodecOpus{ChannelCount: 2}, "opus"
+	default:
+		// Default to AAC
+		if aacConfig == nil {
+			aacConfig = &mpeg4audio.Config{
+				Type:         mpeg4audio.ObjectTypeAACLC,
+				SampleRate:   48000,
+				ChannelCount: 2,
+			}
+		}
+		return &mpegts.CodecMPEG4Audio{Config: *aacConfig}, "aac"
+	}
+}
+
+// codecNameFromTrack extracts the codec name from a mediacommon track's codec.
+// This is the single source of truth for codec type -> name mapping.
+func codecNameFromTrack(c mpegts.Codec) string {
+	switch c.(type) {
+	case *mpegts.CodecH264:
+		return "h264"
+	case *mpegts.CodecH265:
+		return "h265"
+	case *mpegts.CodecMPEG4Audio:
+		return "aac"
+	case *mpegts.CodecAC3:
+		return "ac3"
+	case *mpegts.CodecEAC3:
+		return "eac3"
+	case *mpegts.CodecMPEG1Audio:
+		return "mp3"
+	case *mpegts.CodecOpus:
+		return "opus"
+	default:
+		return ""
+	}
+}
+
+// isVideoCodec returns true if the codec name represents a video codec.
+func isVideoCodec(codecName string) bool {
+	switch codecName {
+	case "h264", "h265", "hevc":
+		return true
+	default:
+		return false
+	}
+}
+
+// streamTypeFromCodec returns the MPEG-TS stream type for a given codec.
+// This provides a DRY mapping from codec type to stream type constant.
+func streamTypeFromCodec(c mpegts.Codec) uint8 {
+	switch c.(type) {
+	case *mpegts.CodecH264:
+		return StreamTypeH264
+	case *mpegts.CodecH265:
+		return StreamTypeH265
+	case *mpegts.CodecMPEG4Audio:
+		return StreamTypeAAC
+	case *mpegts.CodecAC3:
+		return StreamTypeAC3
+	case *mpegts.CodecEAC3:
+		return StreamTypeEAC3
+	case *mpegts.CodecMPEG1Audio:
+		return StreamTypeMP3
+	default:
+		return 0
+	}
+}
+
 // TSMuxerConfig configures the TS muxer.
 type TSMuxerConfig struct {
 	VideoPID uint16
@@ -124,9 +213,11 @@ func NewTSMuxer(w io.Writer, config TSMuxerConfig) *TSMuxer {
 	if config.VideoCodec == "" {
 		config.VideoCodec = "h264" // Default to H.264
 	}
-	if config.AudioCodec == "" {
-		config.AudioCodec = "aac" // Default to AAC
-	}
+	// Note: AudioCodec is intentionally NOT defaulted here.
+	// Empty audio codec means video-only stream.
+	// The caller should explicitly pass the audio codec.
+	// Previous behavior was to default to "aac" which caused issues
+	// when the actual audio codec was different (e.g., E-AC3).
 
 	// Use provided VideoParams or create a new one
 	videoParams := config.VideoParams
@@ -151,83 +242,19 @@ func (m *TSMuxer) initialize() error {
 		return nil
 	}
 
-	// Create video track based on codec
-	switch m.videoCodec {
-	case "h264":
-		m.videoTrack = &mpegts.Track{
-			PID:   m.config.VideoPID,
-			Codec: &mpegts.CodecH264{},
-		}
-	case "h265":
-		m.videoTrack = &mpegts.Track{
-			PID:   m.config.VideoPID,
-			Codec: &mpegts.CodecH265{},
-		}
-	default:
-		// Default to H.264
-		m.videoTrack = &mpegts.Track{
-			PID:   m.config.VideoPID,
-			Codec: &mpegts.CodecH264{},
-		}
+	// Create video track using helper
+	m.videoTrack = &mpegts.Track{
+		PID:   m.config.VideoPID,
+		Codec: createVideoCodec(m.videoCodec),
 	}
 	m.tracks = append(m.tracks, m.videoTrack)
 
-	// Create audio track based on codec
-	switch m.audioCodec {
-	case "aac":
-		aacConfig := m.config.AACConfig
-		if aacConfig == nil {
-			// Default AAC config: LC, 48kHz, stereo
-			aacConfig = &mpeg4audio.Config{
-				Type:         mpeg4audio.ObjectTypeAACLC,
-				SampleRate:   48000,
-				ChannelCount: 2,
-			}
-		}
-		m.audioTrack = &mpegts.Track{
-			PID:   m.config.AudioPID,
-			Codec: &mpegts.CodecMPEG4Audio{Config: *aacConfig},
-		}
-	case "ac3":
-		m.audioTrack = &mpegts.Track{
-			PID: m.config.AudioPID,
-			Codec: &mpegts.CodecAC3{
-				SampleRate:   48000,
-				ChannelCount: 2,
-			},
-		}
-	case "eac3", "ec-3", "ec3":
-		m.audioTrack = &mpegts.Track{
-			PID: m.config.AudioPID,
-			Codec: &mpegts.CodecEAC3{
-				SampleRate:   48000,
-				ChannelCount: 6, // E-AC3 often has 5.1 channels
-			},
-		}
-	case "mp3":
-		m.audioTrack = &mpegts.Track{
-			PID:   m.config.AudioPID,
-			Codec: &mpegts.CodecMPEG1Audio{},
-		}
-	case "opus":
-		m.audioTrack = &mpegts.Track{
-			PID: m.config.AudioPID,
-			Codec: &mpegts.CodecOpus{
-				ChannelCount: 2,
-			},
-		}
-	default:
-		// Default to AAC
-		m.audioTrack = &mpegts.Track{
-			PID: m.config.AudioPID,
-			Codec: &mpegts.CodecMPEG4Audio{
-				Config: mpeg4audio.Config{
-					Type:         mpeg4audio.ObjectTypeAACLC,
-					SampleRate:   48000,
-					ChannelCount: 2,
-				},
-			},
-		}
+	// Create audio track using helper
+	audioCodec, normalizedName := createAudioCodec(m.audioCodec, m.config.AACConfig)
+	m.audioCodec = normalizedName // Normalize the codec name
+	m.audioTrack = &mpegts.Track{
+		PID:   m.config.AudioPID,
+		Codec: audioCodec,
 	}
 	m.tracks = append(m.tracks, m.audioTrack)
 
@@ -320,8 +347,8 @@ func (m *TSMuxer) WriteVideo(pts, dts int64, data []byte, isKeyframe bool) error
 		return nil
 	}
 
-	// Extract parameter sets from all frames (they might appear in any frame)
-	isH265 := m.videoCodec == "h265" || m.videoCodec == "hevc"
+	// Determine if H.265 based on track's codec type
+	_, isH265 := m.videoTrack.Codec.(*mpegts.CodecH265)
 	m.videoParams.ExtractFromNALUs(au, isH265)
 
 	// For keyframes, prepend VPS/SPS/PPS (H.265) or SPS/PPS (H.264) if not already present
@@ -330,13 +357,19 @@ func (m *TSMuxer) WriteVideo(pts, dts int64, data []byte, isKeyframe bool) error
 		au = m.videoParams.PrependParamsToKeyframeNALUs(au, isH265)
 	}
 
-	// Write based on video codec
-	switch m.videoCodec {
-	case "h264":
-		return m.muxer.WriteH264(m.videoTrack, pts, dts, au)
-	case "h265", "hevc":
+	// Write based on track's codec type
+	return m.writeVideoByCodecType(pts, dts, au)
+}
+
+// writeVideoByCodecType dispatches video writes based on the track's codec type.
+func (m *TSMuxer) writeVideoByCodecType(pts, dts int64, au [][]byte) error {
+	switch m.videoTrack.Codec.(type) {
+	case *mpegts.CodecH265:
 		return m.muxer.WriteH265(m.videoTrack, pts, dts, au)
+	case *mpegts.CodecH264:
+		return m.muxer.WriteH264(m.videoTrack, pts, dts, au)
 	default:
+		// Fallback to H.264
 		return m.muxer.WriteH264(m.videoTrack, pts, dts, au)
 	}
 }
@@ -357,28 +390,33 @@ func (m *TSMuxer) WriteAudio(pts int64, data []byte) error {
 		return nil
 	}
 
-	// Write based on audio codec
-	switch m.audioCodec {
-	case "aac":
+	// Write based on track's codec type - this is DRY as adding a new codec
+	// only requires updating createAudioCodec() and adding the write case here
+	return m.writeAudioByCodecType(pts, data)
+}
+
+// writeAudioByCodecType dispatches audio writes based on the track's codec type.
+func (m *TSMuxer) writeAudioByCodecType(pts int64, data []byte) error {
+	switch m.audioTrack.Codec.(type) {
+	case *mpegts.CodecMPEG4Audio:
 		// For AAC, data may be ADTS framed or raw - mediacommon expects raw AUs
 		aus := extractAACFrames(data)
 		if len(aus) == 0 {
 			return nil
 		}
 		return m.muxer.WriteMPEG4Audio(m.audioTrack, pts, aus)
-	case "ac3":
+	case *mpegts.CodecAC3:
 		return m.muxer.WriteAC3(m.audioTrack, pts, data)
-	case "eac3", "ec-3", "ec3":
+	case *mpegts.CodecEAC3:
 		return m.muxer.WriteEAC3(m.audioTrack, pts, data)
-	case "mp3":
-		// MP3 frames
+	case *mpegts.CodecMPEG1Audio:
 		frames := [][]byte{data}
 		return m.muxer.WriteMPEG1Audio(m.audioTrack, pts, frames)
-	case "opus":
+	case *mpegts.CodecOpus:
 		packets := [][]byte{data}
 		return m.muxer.WriteOpus(m.audioTrack, pts, packets)
 	default:
-		// Default to AAC
+		// Fallback to AAC for unknown codecs
 		aus := extractAACFrames(data)
 		if len(aus) == 0 {
 			return nil
@@ -498,30 +536,20 @@ func TSMuxerWithTracks(w io.Writer, tracks []*mpegts.Track, logger *slog.Logger)
 		videoParams: NewVideoParamHelper(),
 	}
 
-	// Find video and audio tracks
+	// Find video and audio tracks using codec type detection
 	for _, track := range tracks {
-		switch track.Codec.(type) {
-		case *mpegts.CodecH264:
+		codecName := codecNameFromTrack(track.Codec)
+		if codecName == "" {
+			continue
+		}
+
+		// Classify as video or audio using helper
+		if isVideoCodec(codecName) {
 			m.videoTrack = track
-			m.videoCodec = "h264"
-		case *mpegts.CodecH265:
-			m.videoTrack = track
-			m.videoCodec = "h265"
-		case *mpegts.CodecMPEG4Audio:
+			m.videoCodec = codecName
+		} else {
 			m.audioTrack = track
-			m.audioCodec = "aac"
-		case *mpegts.CodecAC3:
-			m.audioTrack = track
-			m.audioCodec = "ac3"
-		case *mpegts.CodecEAC3:
-			m.audioTrack = track
-			m.audioCodec = "eac3"
-		case *mpegts.CodecMPEG1Audio:
-			m.audioTrack = track
-			m.audioCodec = "mp3"
-		case *mpegts.CodecOpus:
-			m.audioTrack = track
-			m.audioCodec = "opus"
+			m.audioCodec = codecName
 		}
 	}
 

@@ -37,7 +37,8 @@ func TestAllMigrations_ReturnsExpectedCount(t *testing.T) {
 	// 008: Remove redundant priority column from filters table
 	// 009: Add dynamic codec header fields to client detection rules
 	// 010: Update client detection rules to use @dynamic() syntax for user-agent
-	assert.Len(t, migrations, 10)
+	// 011: Add is_active column to proxy_filters
+	assert.Len(t, migrations, 11)
 }
 
 func TestAllMigrations_VersionsAreUnique(t *testing.T) {
@@ -107,10 +108,10 @@ func TestMigrator_Status(t *testing.T) {
 	migrator := NewMigrator(db, nil)
 	migrator.RegisterAll(AllMigrations())
 
-	// Before running migrations (10 migrations total)
+	// Before running migrations (11 migrations total)
 	statuses, err := migrator.Status(ctx)
 	require.NoError(t, err)
-	assert.Len(t, statuses, 10)
+	assert.Len(t, statuses, 11)
 
 	for _, s := range statuses {
 		assert.False(t, s.Applied)
@@ -145,6 +146,14 @@ func TestMigrator_Down_RollsBackLastMigration(t *testing.T) {
 	assert.True(t, db.Migrator().HasTable("data_mapping_rules"))
 	assert.True(t, db.Migrator().HasTable("encoding_profiles"))
 	assert.True(t, db.Migrator().HasTable("client_detection_rules"))
+
+	// Roll back migration 011 (proxy_filter is_active column)
+	err = migrator.Down(ctx)
+	require.NoError(t, err)
+
+	// Tables still exist after rolling back is_active column
+	assert.True(t, db.Migrator().HasTable("filters"))
+	assert.True(t, db.Migrator().HasTable("proxy_filters"))
 
 	// Roll back migration 010 (update user-agent syntax)
 	// This reverts expression syntax in client detection rules
@@ -241,10 +250,10 @@ func TestMigrator_Pending(t *testing.T) {
 	migrator := NewMigrator(db, nil)
 	migrator.RegisterAll(AllMigrations())
 
-	// All should be pending initially (10 migrations total)
+	// All should be pending initially (11 migrations total)
 	pending, err := migrator.Pending(ctx)
 	require.NoError(t, err)
-	assert.Len(t, pending, 10)
+	assert.Len(t, pending, 11)
 
 	// Run migrations
 	err = migrator.Up(ctx)

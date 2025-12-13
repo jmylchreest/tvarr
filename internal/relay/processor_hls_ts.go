@@ -78,7 +78,7 @@ type HLSTSProcessor struct {
 	segmentNotify chan struct{} // Notifies waiters when new segment is added
 
 	// Persistent muxer - shared across all segments to maintain continuity counters
-	muxer          *TSMuxer
+	muxer           *TSMuxer
 	swappableWriter *SwappableWriter
 
 	// Current segment accumulator
@@ -96,6 +96,10 @@ type HLSTSProcessor struct {
 
 	// Reference to the ES variant for consumer tracking
 	esVariant *ESVariant
+
+	// Resolved codec names from the ES variant (handles VariantCopy → source codecs)
+	resolvedVideoCodec string
+	resolvedAudioCodec string
 
 	// Video parameter helper - persists across segments to retain SPS/PPS
 	videoParams *VideoParamHelper
@@ -156,12 +160,43 @@ func (p *HLSTSProcessor) Start(ctx context.Context) error {
 	p.esVariant = esVariant
 	esVariant.RegisterConsumer(p.id)
 
+	// Resolve actual codecs from the ES variant's tracks
+	// The variant key (e.g., "h265/") may not include audio if it wasn't detected
+	// when the source was created, but the track codec gets updated when audio arrives.
+	p.resolvedVideoCodec = esVariant.VideoTrack().Codec()
+	p.resolvedAudioCodec = esVariant.AudioTrack().Codec()
+
+	// If audio codec is empty, wait briefly for audio detection
+	if p.resolvedAudioCodec == "" {
+		p.config.Logger.Debug("Waiting for audio codec detection")
+		waitCtx, waitCancel := context.WithTimeout(p.ctx, 2*time.Second)
+		ticker := time.NewTicker(50 * time.Millisecond)
+		for p.resolvedAudioCodec == "" {
+			select {
+			case <-waitCtx.Done():
+				p.config.Logger.Debug("Audio codec detection timeout, proceeding without audio")
+				ticker.Stop()
+				waitCancel()
+				goto initMuxer
+			case <-ticker.C:
+				p.resolvedAudioCodec = esVariant.AudioTrack().Codec()
+			}
+		}
+		ticker.Stop()
+		waitCancel()
+		p.config.Logger.Debug("Audio codec detected", slog.String("audio_codec", p.resolvedAudioCodec))
+	}
+
+initMuxer:
 	// Initialize TS muxer for current segment
 	p.initNewSegment()
 
 	p.config.Logger.Debug("Starting HLS-TS processor",
 		slog.String("id", p.id),
-		slog.String("variant", p.variant.String()))
+		slog.String("requested_variant", p.variant.String()),
+		slog.String("resolved_variant", esVariant.Variant().String()),
+		slog.String("video_codec", p.resolvedVideoCodec),
+		slog.String("audio_codec", p.resolvedAudioCodec))
 
 	// Start processing loop
 	p.wg.Add(1)
@@ -398,10 +433,11 @@ func (p *HLSTSProcessor) initNewSegment() {
 	// This maintains continuity counters across segments
 	if p.muxer == nil {
 		p.swappableWriter = NewSwappableWriter(&p.currentSegment.buf)
+		// Use resolved codecs (handles VariantCopy → source codecs like "h265/eac3")
 		p.muxer = NewTSMuxer(p.swappableWriter, TSMuxerConfig{
 			Logger:      p.config.Logger,
-			VideoCodec:  p.variant.VideoCodec(),
-			AudioCodec:  p.variant.AudioCodec(),
+			VideoCodec:  p.resolvedVideoCodec,
+			AudioCodec:  p.resolvedAudioCodec,
 			VideoParams: p.videoParams,
 		})
 	} else {

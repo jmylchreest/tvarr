@@ -417,6 +417,15 @@ func (s *Stage) loadFiltersFromProxy(ctx context.Context, proxy *models.StreamPr
 	s.expressionFilters = make([]ExpressionFilter, 0, len(proxyFilters))
 
 	for _, pf := range proxyFilters {
+		// Skip inactive filter assignments (disabled at the proxy level)
+		// IsActive is a pointer; nil or true means active, false means inactive
+		if pf.IsActive != nil && !*pf.IsActive {
+			s.log(ctx, slog.LevelDebug, "skipping inactive filter assignment",
+				slog.String("proxy_filter_id", pf.ID.String()),
+				slog.String("filter_id", pf.FilterID.String()))
+			continue
+		}
+
 		// Skip if filter relationship is not loaded
 		if pf.Filter == nil {
 			s.log(ctx, slog.LevelWarn, "proxy filter has no loaded filter relationship",
@@ -427,8 +436,8 @@ func (s *Stage) loadFiltersFromProxy(ctx context.Context, proxy *models.StreamPr
 
 		f := pf.Filter
 
-		// Skip disabled filters
-		if !f.IsEnabled {
+		// Skip disabled filters (disabled at the filter level)
+		if !models.BoolVal(f.IsEnabled) {
 			s.log(ctx, slog.LevelDebug, "skipping disabled filter",
 				slog.String("filter_id", f.ID.String()),
 				slog.String("filter_name", f.Name))
@@ -464,7 +473,7 @@ func (s *Stage) loadFiltersFromProxy(ctx context.Context, proxy *models.StreamPr
 		s.expressionFilters = append(s.expressionFilters, ExpressionFilter{
 			ID:         f.ID.String(),
 			Name:       f.Name,
-			Enabled:    f.IsEnabled,
+			Enabled:    models.BoolVal(f.IsEnabled),
 			Target:     target,
 			Action:     action,
 			Expression: f.Expression,

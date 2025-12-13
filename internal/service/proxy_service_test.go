@@ -89,7 +89,7 @@ func (m *mockProxyRepo) GetActive(ctx context.Context) ([]*models.StreamProxy, e
 	}
 	result := make([]*models.StreamProxy, 0)
 	for _, p := range m.proxies {
-		if p.IsActive {
+		if models.BoolVal(p.IsActive) {
 			result = append(result, p)
 		}
 	}
@@ -154,7 +154,7 @@ func (m *mockProxyRepo) SetSources(ctx context.Context, proxyID models.ULID, sou
 	// Simplified - just store empty sources for the IDs
 	m.sources[proxyID] = make([]*models.StreamSource, len(sourceIDs))
 	for i, id := range sourceIDs {
-		m.sources[proxyID][i] = &models.StreamSource{BaseModel: models.BaseModel{ID: id}, Enabled: true}
+		m.sources[proxyID][i] = &models.StreamSource{BaseModel: models.BaseModel{ID: id}, Enabled:  models.BoolPtr(true)}
 	}
 	return nil
 }
@@ -165,7 +165,7 @@ func (m *mockProxyRepo) SetEpgSources(ctx context.Context, proxyID models.ULID, 
 	}
 	m.epgSources[proxyID] = make([]*models.EpgSource, len(sourceIDs))
 	for i, id := range sourceIDs {
-		m.epgSources[proxyID][i] = &models.EpgSource{BaseModel: models.BaseModel{ID: id}, Enabled: true}
+		m.epgSources[proxyID][i] = &models.EpgSource{BaseModel: models.BaseModel{ID: id}, Enabled:  models.BoolPtr(true)}
 	}
 	return nil
 }
@@ -188,7 +188,7 @@ func (m *mockProxyRepo) GetFilters(ctx context.Context, proxyID models.ULID) ([]
 	return nil, nil
 }
 
-func (m *mockProxyRepo) SetFilters(ctx context.Context, proxyID models.ULID, filterIDs []models.ULID, orders map[models.ULID]int) error {
+func (m *mockProxyRepo) SetFilters(ctx context.Context, proxyID models.ULID, filterIDs []models.ULID, orders map[models.ULID]int, isActive map[models.ULID]bool) error {
 	return nil
 }
 
@@ -337,7 +337,7 @@ func TestProxyService_GetActive(t *testing.T) {
 		Name:                  "Active",
 		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
-		IsActive:              true,
+		IsActive: models.BoolPtr(true),
 	}
 	require.NoError(t, svc.Create(ctx, active))
 
@@ -346,7 +346,7 @@ func TestProxyService_GetActive(t *testing.T) {
 		Name:                  "Inactive",
 		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
-		IsActive:              false,
+		IsActive: models.BoolPtr(false),
 	}
 	require.NoError(t, svc.Create(ctx, inactive))
 

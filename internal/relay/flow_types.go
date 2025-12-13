@@ -15,6 +15,8 @@ const (
 	FlowNodeTypeProcessor FlowNodeType = "processor"
 	// FlowNodeTypeClient represents a connected client node.
 	FlowNodeTypeClient FlowNodeType = "client"
+	// FlowNodeTypePassthrough represents a passthrough proxy connection.
+	FlowNodeTypePassthrough FlowNodeType = "passthrough"
 )
 
 // RelayFlowNode represents a node in the relay flow graph.

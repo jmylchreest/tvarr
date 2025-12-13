@@ -496,9 +496,9 @@ func (h *RelayStreamHandler) handleRawSmartMode(w http.ResponseWriter, r *http.R
 	clientFormat := h.capsToClientFormat(clientCaps)
 
 	// Get source codec info for smart delivery decision
-	// Always probe fresh and store result for channel UI
+	// Uses intelligent probing that respects connection limits and reuses session data
 	var sourceVideoCodec, sourceAudioCodec string
-	if codecInfo := h.relayService.ProbeAndStoreCodecInfo(ctx, streamURL); codecInfo != nil {
+	if codecInfo := h.relayService.GetOrProbeCodecInfo(ctx, info.Channel.ID, streamURL); codecInfo != nil {
 		sourceVideoCodec = codecInfo.VideoCodec
 		sourceAudioCodec = codecInfo.AudioCodec
 	}

@@ -176,7 +176,7 @@ func EncodingProfileFromModel(p *models.EncodingProfile) EncodingProfileResponse
 		},
 		IsDefault: p.IsDefault,
 		IsSystem:  p.IsSystem,
-		Enabled:   p.Enabled,
+		Enabled:   models.BoolVal(p.Enabled),
 		CreatedAt: p.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt: p.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
@@ -285,7 +285,7 @@ func (h *EncodingProfileHandler) Create(ctx context.Context, input *CreateEncodi
 		InputFlags:       input.Body.InputFlags,
 		OutputFlags:      input.Body.OutputFlags,
 		IsDefault:        input.Body.IsDefault,
-		Enabled:          true,
+		Enabled:          models.BoolPtr(true),
 	}
 
 	if err := h.service.Create(ctx, profile); err != nil {
@@ -356,7 +356,7 @@ func (h *EncodingProfileHandler) Update(ctx context.Context, input *UpdateEncodi
 		existing.HWAccel = models.HWAccelType(input.Body.HWAccel)
 	}
 	if input.Body.Enabled != nil {
-		existing.Enabled = *input.Body.Enabled
+		existing.Enabled = input.Body.Enabled
 	}
 	// Custom flag fields - use pointers to allow clearing by setting to empty string
 	if input.Body.GlobalFlags != nil {
@@ -547,10 +547,10 @@ func (h *EncodingProfileHandler) GetStats(ctx context.Context, input *struct{}) 
 // EncodingProfileOptionsOutput is the output for getting options.
 type EncodingProfileOptionsOutput struct {
 	Body struct {
-		VideoCodecs    []CodecOption        `json:"video_codecs" doc:"Available video codecs"`
-		AudioCodecs    []CodecOption        `json:"audio_codecs" doc:"Available audio codecs"`
-		QualityPresets []QualityPresetInfo  `json:"quality_presets" doc:"Available quality presets"`
-		HWAccelOptions []HWAccelOption      `json:"hw_accel_options" doc:"Available hardware acceleration options"`
+		VideoCodecs    []CodecOption       `json:"video_codecs" doc:"Available video codecs"`
+		AudioCodecs    []CodecOption       `json:"audio_codecs" doc:"Available audio codecs"`
+		QualityPresets []QualityPresetInfo `json:"quality_presets" doc:"Available quality presets"`
+		HWAccelOptions []HWAccelOption     `json:"hw_accel_options" doc:"Available hardware acceleration options"`
 	}
 }
 

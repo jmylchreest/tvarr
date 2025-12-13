@@ -45,7 +45,7 @@ func (m *MockManualChannelRepository) GetEnabledBySourceID(ctx context.Context, 
 	// Filter enabled from all channels
 	var enabled []*models.ManualStreamChannel
 	for _, ch := range m.channels {
-		if ch.Enabled {
+		if models.BoolVal(ch.Enabled) {
 			enabled = append(enabled, ch)
 		}
 	}
@@ -149,7 +149,7 @@ func TestManualHandler_Ingest(t *testing.T) {
 					ChannelName: "Channel 1",
 					StreamURL:   "http://stream1.com/live",
 					GroupTitle:  "Movies",
-					Enabled:     true,
+					Enabled:     models.BoolPtr(true),
 				},
 				{
 					BaseModel:   models.BaseModel{ID: ch2ID},
@@ -157,14 +157,14 @@ func TestManualHandler_Ingest(t *testing.T) {
 					ChannelName: "Channel 2",
 					StreamURL:   "http://stream2.com/live",
 					GroupTitle:  "Sports",
-					Enabled:     true,
+					Enabled:     models.BoolPtr(true),
 				},
 				{
 					BaseModel:   models.BaseModel{ID: ch3ID},
 					SourceID:    sourceID,
 					ChannelName: "Disabled Channel",
 					StreamURL:   "http://stream3.com/live",
-					Enabled:     false, // Should be filtered out
+					Enabled:     models.BoolPtr(false), // Should be filtered out
 				},
 			},
 		}
@@ -220,7 +220,7 @@ func TestManualHandler_Ingest(t *testing.T) {
 					SourceID:    sourceID,
 					ChannelName: "Channel 1",
 					StreamURL:   "http://stream1.com/live",
-					Enabled:     true,
+					Enabled:     models.BoolPtr(true),
 				},
 			},
 		}
@@ -278,7 +278,7 @@ func TestManualHandler_ChannelConversion(t *testing.T) {
 				Language:      "en",
 				Country:       "US",
 				IsAdult:       false,
-				Enabled:       true,
+				Enabled:       models.BoolPtr(true),
 				Priority:      10,
 				Extra:         `{"custom":"value"}`,
 			},

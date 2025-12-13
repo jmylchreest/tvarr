@@ -11,6 +11,26 @@ import (
 	"gorm.io/gorm"
 )
 
+// BoolPtr returns a pointer to a bool value.
+// Useful for setting *bool fields in structs.
+func BoolPtr(b bool) *bool {
+	return &b
+}
+
+// BoolVal returns the value of a bool pointer, defaulting to true if nil.
+// This matches GORM's default:true behavior for optional bool fields.
+func BoolVal(b *bool) bool {
+	return b == nil || *b
+}
+
+// BoolValDefault returns the value of a bool pointer with a custom default.
+func BoolValDefault(b *bool, defaultVal bool) bool {
+	if b == nil {
+		return defaultVal
+	}
+	return *b
+}
+
 // ULID is a wrapper around ulid.ULID for database storage as primary key.
 type ULID ulid.ULID
 

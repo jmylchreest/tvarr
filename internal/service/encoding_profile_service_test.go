@@ -160,7 +160,7 @@ func TestEncodingProfileService_Update_SystemProfile_OnlyEnabledToggle(t *testin
 		TargetAudioCodec: models.AudioCodecAAC,
 		QualityPreset:    models.QualityPresetMedium,
 		IsSystem:         true,
-		Enabled:          true,
+		Enabled:          models.BoolPtr(true),
 	}
 	require.NoError(t, db.Create(systemProfile).Error)
 
@@ -171,14 +171,14 @@ func TestEncodingProfileService_Update_SystemProfile_OnlyEnabledToggle(t *testin
 
 	// Toggle enabled - should work
 	systemProfile.Name = "System Profile" // Reset to original
-	systemProfile.Enabled = false
+	systemProfile.Enabled = models.BoolPtr(false)
 	err = svc.Update(ctx, systemProfile)
 	require.NoError(t, err)
 
 	// Verify enabled was toggled
 	found, err := svc.GetByID(ctx, systemProfile.ID)
 	require.NoError(t, err)
-	assert.False(t, found.Enabled)
+	assert.False(t, models.BoolVal(found.Enabled))
 }
 
 func TestEncodingProfileService_Delete(t *testing.T) {
@@ -279,19 +279,19 @@ func TestEncodingProfileService_ToggleEnabled(t *testing.T) {
 		TargetVideoCodec: models.VideoCodecH264,
 		TargetAudioCodec: models.AudioCodecAAC,
 		QualityPreset:    models.QualityPresetMedium,
-		Enabled:          true,
+		Enabled:          models.BoolPtr(true),
 	}
 	require.NoError(t, svc.Create(ctx, profile))
 
 	// Toggle off
 	toggled, err := svc.ToggleEnabled(ctx, profile.ID)
 	require.NoError(t, err)
-	assert.False(t, toggled.Enabled)
+	assert.False(t, models.BoolVal(toggled.Enabled))
 
 	// Toggle on
 	toggled, err = svc.ToggleEnabled(ctx, profile.ID)
 	require.NoError(t, err)
-	assert.True(t, toggled.Enabled)
+	assert.True(t, models.BoolVal(toggled.Enabled))
 }
 
 func TestEncodingProfileService_Clone(t *testing.T) {

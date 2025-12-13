@@ -34,6 +34,24 @@ func buildOrderMapFromIDs(ids []models.ULID) map[models.ULID]int {
 	return orders
 }
 
+// buildFilterMaps converts ProxyFilterAssignmentRequest slice to the maps needed by SetFilters.
+// Returns: filterIDs slice, orders map (by priority_order), isActive map.
+func buildFilterMaps(filters []ProxyFilterAssignmentRequest) ([]models.ULID, map[models.ULID]int, map[models.ULID]bool) {
+	if len(filters) == 0 {
+		return nil, nil, nil
+	}
+	filterIDs := make([]models.ULID, len(filters))
+	orders := make(map[models.ULID]int, len(filters))
+	isActive := make(map[models.ULID]bool, len(filters))
+
+	for i, f := range filters {
+		filterIDs[i] = f.FilterID
+		orders[f.FilterID] = f.PriorityOrder
+		isActive[f.FilterID] = f.IsActive
+	}
+	return filterIDs, orders, isActive
+}
+
 // NewStreamProxyHandler creates a new stream proxy handler.
 func NewStreamProxyHandler(proxyService *service.ProxyService) *StreamProxyHandler {
 	// Compute base URL from viper config (same logic as serve.go)
@@ -220,10 +238,16 @@ func (h *StreamProxyHandler) Create(ctx context.Context, input *CreateStreamProx
 		}
 	}
 
-	// Set filters if provided (order derived from array index)
-	if len(input.Body.FilterIDs) > 0 {
+	// Set filters if provided
+	if len(input.Body.Filters) > 0 {
+		filterIDs, orders, isActive := buildFilterMaps(input.Body.Filters)
+		if err := h.proxyService.SetFilters(ctx, proxy.ID, filterIDs, orders, isActive); err != nil {
+			return nil, huma.Error500InternalServerError("failed to set filters", err)
+		}
+	} else if len(input.Body.FilterIDs) > 0 {
+		// Backward compatibility: support legacy FilterIDs field (all active by default)
 		orders := buildOrderMapFromIDs(input.Body.FilterIDs)
-		if err := h.proxyService.SetFilters(ctx, proxy.ID, input.Body.FilterIDs, orders); err != nil {
+		if err := h.proxyService.SetFilters(ctx, proxy.ID, input.Body.FilterIDs, orders, nil); err != nil {
 			return nil, huma.Error500InternalServerError("failed to set filters", err)
 		}
 	}
@@ -281,10 +305,16 @@ func (h *StreamProxyHandler) Update(ctx context.Context, input *UpdateStreamProx
 		}
 	}
 
-	// Set filters if provided (order derived from array index)
-	if input.Body.FilterIDs != nil {
+	// Set filters if provided
+	if len(input.Body.Filters) > 0 {
+		filterIDs, orders, isActive := buildFilterMaps(input.Body.Filters)
+		if err := h.proxyService.SetFilters(ctx, id, filterIDs, orders, isActive); err != nil {
+			return nil, huma.Error500InternalServerError("failed to set filters", err)
+		}
+	} else if input.Body.FilterIDs != nil {
+		// Backward compatibility: support legacy FilterIDs field (all active by default)
 		orders := buildOrderMapFromIDs(input.Body.FilterIDs)
-		if err := h.proxyService.SetFilters(ctx, id, input.Body.FilterIDs, orders); err != nil {
+		if err := h.proxyService.SetFilters(ctx, id, input.Body.FilterIDs, orders, nil); err != nil {
 			return nil, huma.Error500InternalServerError("failed to set filters", err)
 		}
 	}

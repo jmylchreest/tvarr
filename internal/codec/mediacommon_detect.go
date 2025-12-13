@@ -11,16 +11,16 @@ import (
 // These are detected at init time using type assertions.
 var mediacommonSupportedCodecs = struct {
 	// Video codecs
-	H264      bool
-	H265      bool
-	MPEG1     bool
-	MPEG4     bool
+	H264  bool
+	H265  bool
+	MPEG1 bool
+	MPEG4 bool
 	// Audio codecs
-	AAC       bool
-	AC3       bool
-	EAC3      bool
-	MP3       bool
-	Opus      bool
+	AAC  bool
+	AC3  bool
+	EAC3 bool
+	MP3  bool
+	Opus bool
 }{}
 
 func init() {

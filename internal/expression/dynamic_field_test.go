@@ -386,11 +386,11 @@ func TestExplicitVideoCodecHeader(t *testing.T) {
 	evaluator := NewEvaluator()
 
 	tests := []struct {
-		name           string
-		videoCodec     string // X-Video-Codec header value
-		expression     string
-		expectedMatch  bool
-		description    string
+		name          string
+		videoCodec    string // X-Video-Codec header value
+		expression    string
+		expectedMatch bool
+		description   string
 	}{
 		{
 			name:          "h265 exact match",

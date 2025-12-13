@@ -76,7 +76,7 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	var totalExpected int64
 	enabledSources := make([]*models.EpgSource, 0, len(state.EpgSources))
 	for _, source := range state.EpgSources {
-		if !source.Enabled {
+		if !models.BoolVal(source.Enabled) {
 			s.log(ctx, slog.LevelDebug, "skipping disabled EPG source",
 				slog.String("source_id", source.ID.String()),
 				slog.String("source_name", source.Name))

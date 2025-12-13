@@ -93,7 +93,7 @@ func DataMappingRuleFromModel(r *models.DataMappingRule) DataMappingRuleResponse
 		Expression:  r.Expression,
 		Priority:    r.Priority,
 		StopOnMatch: r.StopOnMatch,
-		IsEnabled:   r.IsEnabled,
+		IsEnabled:   models.BoolVal(r.IsEnabled),
 		IsSystem:    r.IsSystem,
 		CreatedAt:   r.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:   r.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -215,7 +215,7 @@ func (h *DataMappingRuleHandler) Create(ctx context.Context, input *CreateDataMa
 		Expression:  input.Body.Expression,
 		Priority:    input.Body.Priority,
 		StopOnMatch: false,
-		IsEnabled:   true,
+		IsEnabled:   models.BoolPtr(true),
 	}
 
 	if input.Body.StopOnMatch != nil {
@@ -223,7 +223,7 @@ func (h *DataMappingRuleHandler) Create(ctx context.Context, input *CreateDataMa
 	}
 
 	if input.Body.IsEnabled != nil {
-		rule.IsEnabled = *input.Body.IsEnabled
+		rule.IsEnabled = input.Body.IsEnabled
 	}
 
 	if input.Body.SourceID != nil && *input.Body.SourceID != "" {
@@ -291,7 +291,7 @@ func (h *DataMappingRuleHandler) Update(ctx context.Context, input *UpdateDataMa
 		}
 		// Only allow is_enabled update
 		if input.Body.IsEnabled != nil {
-			rule.IsEnabled = *input.Body.IsEnabled
+			rule.IsEnabled = input.Body.IsEnabled
 		}
 	} else {
 		// Apply updates for non-system rules
@@ -314,7 +314,7 @@ func (h *DataMappingRuleHandler) Update(ctx context.Context, input *UpdateDataMa
 			rule.StopOnMatch = *input.Body.StopOnMatch
 		}
 		if input.Body.IsEnabled != nil {
-			rule.IsEnabled = *input.Body.IsEnabled
+			rule.IsEnabled = input.Body.IsEnabled
 		}
 		if input.Body.SourceID != nil {
 			if *input.Body.SourceID == "" {

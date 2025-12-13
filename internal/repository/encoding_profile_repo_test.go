@@ -160,7 +160,7 @@ func TestEncodingProfileRepo_GetEnabled(t *testing.T) {
 		TargetVideoCodec: models.VideoCodecH264,
 		TargetAudioCodec: models.AudioCodecAAC,
 		QualityPreset:    models.QualityPresetMedium,
-		Enabled:          true,
+		Enabled:          models.BoolPtr(true),
 	}
 	require.NoError(t, repo.Create(ctx, enabled))
 
@@ -374,7 +374,7 @@ func TestEncodingProfileRepo_CountEnabled(t *testing.T) {
 			TargetVideoCodec: models.VideoCodecH264,
 			TargetAudioCodec: models.AudioCodecAAC,
 			QualityPreset:    models.QualityPresetMedium,
-			Enabled:          true,
+			Enabled:          models.BoolPtr(true),
 		}
 		require.NoError(t, repo.Create(ctx, profile))
 	}

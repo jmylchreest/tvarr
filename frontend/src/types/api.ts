@@ -181,6 +181,69 @@ export type AudioCodec = string;
 export type ContainerFormat = 'auto' | 'fmp4' | 'mpegts';
 export type HWAccelType = string;
 
+// Track information types (from ffprobe)
+export interface VideoTrackInfo {
+  index: number;
+  codec: string;
+  profile?: string;
+  level?: string;
+  width: number;
+  height: number;
+  framerate?: number;
+  bitrate?: number;
+  pix_fmt?: string;
+  is_default: boolean;
+  language?: string;
+  title?: string;
+}
+
+export interface AudioTrackInfo {
+  index: number;
+  codec: string;
+  profile?: string;
+  sample_rate?: number;
+  channels: number;
+  channel_layout?: string;
+  bitrate?: number;
+  is_default: boolean;
+  language?: string;
+  title?: string;
+}
+
+export interface SubtitleTrackInfo {
+  index: number;
+  codec: string;
+  is_default: boolean;
+  is_forced: boolean;
+  language?: string;
+  title?: string;
+}
+
+// Stream probe response with full track information
+export interface ProbeStreamResponse {
+  channel_id?: string;
+  stream_url: string;
+  video_codec?: string;
+  video_width?: number;
+  video_height?: number;
+  video_framerate?: number;
+  video_bitrate?: number;
+  audio_codec?: string;
+  audio_sample_rate?: number;
+  audio_channels?: number;
+  audio_bitrate?: number;
+  container_format?: string;
+  is_live_stream: boolean;
+  has_subtitles: boolean;
+  stream_count: number;
+  // All discovered tracks
+  video_tracks?: VideoTrackInfo[];
+  audio_tracks?: AudioTrackInfo[];
+  subtitle_tracks?: SubtitleTrackInfo[];
+  selected_video_track: number;
+  selected_audio_track: number;
+}
+
 // Proxy mode: 'direct' = 302 redirect, 'smart' = intelligent delivery
 export type ProxyMode = 'direct' | 'smart';
 

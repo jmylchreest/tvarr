@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/service"
 )
 
@@ -75,7 +76,7 @@ func (h *UnifiedSourcesHandler) List(ctx context.Context, input *struct{}) (*Uni
 				SourceKind:      "stream",
 				SourceType:      string(s.Type),
 				URL:             s.URL,
-				Enabled:         s.Enabled,
+				Enabled:         models.BoolVal(s.Enabled),
 				Status:          string(s.Status),
 				ChannelCount:    s.ChannelCount,
 				LastIngestionAt: lastIngestion,
@@ -100,7 +101,7 @@ func (h *UnifiedSourcesHandler) List(ctx context.Context, input *struct{}) (*Uni
 				SourceKind:      "epg",
 				SourceType:      string(s.Type),
 				URL:             s.URL,
-				Enabled:         s.Enabled,
+				Enabled:         models.BoolVal(s.Enabled),
 				Status:          string(s.Status),
 				ChannelCount:    0, // EPG sources don't have channel count
 				ProgramCount:    s.ProgramCount,

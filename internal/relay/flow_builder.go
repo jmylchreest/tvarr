@@ -24,6 +24,13 @@ func NewFlowBuilder() *FlowBuilder {
 // Positions are set to zero - the frontend calculates actual layout using
 // measured node dimensions.
 func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph {
+	return b.BuildFlowGraphWithPassthrough(sessions, nil)
+}
+
+// BuildFlowGraphWithPassthrough builds a complete flow graph from session and passthrough information.
+// Positions are set to zero - the frontend calculates actual layout using
+// measured node dimensions.
+func (b *FlowBuilder) BuildFlowGraphWithPassthrough(sessions []RelaySessionInfo, passthroughConns []*PassthroughConnection) RelayFlowGraph {
 	graph := RelayFlowGraph{
 		Nodes: make([]RelayFlowNode, 0),
 		Edges: make([]RelayFlowEdge, 0),
@@ -36,6 +43,18 @@ func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph
 	b.collectSystemStats(&graph.Metadata)
 
 	var totalIngressBps, totalEgressBps uint64
+
+	// Build passthrough connection nodes first
+	for _, conn := range passthroughConns {
+		passthroughNode := b.buildPassthroughNode(conn)
+		graph.Nodes = append(graph.Nodes, passthroughNode)
+
+		// Passthrough counts as both a session and a client
+		graph.Metadata.TotalSessions++
+		graph.Metadata.TotalClients++
+		totalIngressBps += conn.IngressBps()
+		totalEgressBps += conn.EgressBps()
+	}
 
 	for _, session := range sessions {
 		// Create origin node
@@ -432,4 +451,40 @@ func truncateURL(url string, maxLen int) string {
 		return url
 	}
 	return url[:maxLen-3] + "..."
+}
+
+// buildPassthroughNode creates a node for a passthrough connection.
+// Passthrough connections are direct HTTP proxies without transcoding/buffering.
+func (b *FlowBuilder) buildPassthroughNode(conn *PassthroughConnection) RelayFlowNode {
+	// Extract a readable label from the channel name or remote addr
+	label := conn.ChannelName
+	if label == "" {
+		label = truncateString(conn.RemoteAddr, 20)
+	}
+
+	return RelayFlowNode{
+		ID:       fmt.Sprintf("passthrough-%s", conn.ID),
+		Type:     FlowNodeTypePassthrough,
+		Position: FlowPosition{X: 0, Y: 0}, // Frontend calculates layout
+		Data: FlowNodeData{
+			Label:          label,
+			ChannelID:      conn.ChannelID.String(),
+			ChannelName:    conn.ChannelName,
+			SourceURL:      truncateURL(conn.StreamURL, 60),
+			SourceFormat:   conn.SourceFormat,
+			VideoCodec:     conn.VideoCodec,
+			AudioCodec:     conn.AudioCodec,
+			RemoteAddr:     conn.RemoteAddr,
+			UserAgent:      conn.UserAgent,
+			IngressBps:     conn.IngressBps(),
+			EgressBps:      conn.EgressBps(),
+			TotalBytesIn:   conn.BytesIn(),
+			TotalBytesOut:  conn.BytesOut(),
+			DurationSecs:   conn.DurationSecs(),
+			IngressHistory: conn.IngressHistory(),
+			EgressHistory:  conn.EgressHistory(),
+			RouteType:      RouteTypePassthrough,
+			OutputFormat:   conn.SourceFormat,
+		},
+	}
 }

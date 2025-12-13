@@ -37,7 +37,8 @@ type DataMappingRule struct {
 	StopOnMatch bool `gorm:"default:false" json:"stop_on_match"`
 
 	// IsEnabled determines if the rule is active.
-	IsEnabled bool `gorm:"default:true" json:"is_enabled"`
+	// Using pointer to distinguish between "not set" (nil->default true) and "explicitly false".
+	IsEnabled *bool `gorm:"default:true" json:"is_enabled"`
 
 	// IsSystem indicates this is a system-provided default that cannot be edited or deleted.
 	// Only IsEnabled can be toggled for system rules.

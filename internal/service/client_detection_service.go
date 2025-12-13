@@ -223,7 +223,8 @@ func (s *ClientDetectionService) ToggleEnabled(ctx context.Context, id models.UL
 		return nil, ErrClientDetectionRuleNotFound
 	}
 
-	rule.IsEnabled = !rule.IsEnabled
+	newVal := !models.BoolVal(rule.IsEnabled)
+	rule.IsEnabled = &newVal
 	if err := s.repo.Update(ctx, rule); err != nil {
 		return nil, err
 	}
@@ -318,7 +319,7 @@ func (s *ClientDetectionService) EvaluateRequest(r *http.Request) *models.Client
 	)
 
 	for _, rule := range rules {
-		if !rule.IsEnabled {
+		if !models.BoolVal(rule.IsEnabled) {
 			continue
 		}
 
@@ -427,13 +428,13 @@ func (s *ClientDetectionService) EvaluateRequest(r *http.Request) *models.Client
 
 			// Merge fMP4 support if not already set
 			if !fmp4Set {
-				result.SupportsFMP4 = rule.SupportsFMP4
+				result.SupportsFMP4 = models.BoolVal(rule.SupportsFMP4)
 				fmp4Set = true
 			}
 
 			// Merge MPEG-TS support if not already set
 			if !mpegtsSet {
-				result.SupportsMPEGTS = rule.SupportsMPEGTS
+				result.SupportsMPEGTS = models.BoolVal(rule.SupportsMPEGTS)
 				mpegtsSet = true
 			}
 
@@ -494,6 +495,23 @@ func (s *ClientDetectionService) EvaluateRequest(r *http.Request) *models.Client
 		result.SupportsMPEGTS = true
 	}
 
+	// Log final client capabilities at INFO level for visibility
+	ruleName := "none (defaults)"
+	if matchedRule != nil {
+		ruleName = matchedRule.Name
+	}
+	s.logger.Info("client capabilities determined",
+		slog.String("user_agent", r.UserAgent()),
+		slog.String("matched_rule", ruleName),
+		slog.Any("accepted_video", result.AcceptedVideoCodecs),
+		slog.Any("accepted_audio", result.AcceptedAudioCodecs),
+		slog.String("preferred_video", result.PreferredVideoCodec),
+		slog.String("preferred_audio", result.PreferredAudioCodec),
+		slog.String("preferred_format", result.PreferredFormat),
+		slog.Bool("supports_fmp4", result.SupportsFMP4),
+		slog.Bool("supports_mpegts", result.SupportsMPEGTS),
+	)
+
 	if matchedRule == nil {
 		s.logger.Debug("no client detection rule matched, using defaults",
 			slog.String("user_agent", r.UserAgent()),
@@ -547,8 +565,8 @@ func (s *ClientDetectionService) ruleToResult(rule *models.ClientDetectionRule) 
 		AcceptedAudioCodecs: rule.GetAcceptedAudioCodecs(),
 		PreferredVideoCodec: string(rule.PreferredVideoCodec),
 		PreferredAudioCodec: string(rule.PreferredAudioCodec),
-		SupportsFMP4:        rule.SupportsFMP4,
-		SupportsMPEGTS:      rule.SupportsMPEGTS,
+		SupportsFMP4:        models.BoolVal(rule.SupportsFMP4),
+		SupportsMPEGTS:      models.BoolVal(rule.SupportsMPEGTS),
 		PreferredFormat:     rule.PreferredFormat,
 		DetectionSource:     "rule",
 	}

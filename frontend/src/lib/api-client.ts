@@ -536,17 +536,19 @@ class ApiClient {
       delete payload.epg_sources;
     }
 
-    // Convert filters array to filter_ids array of ULIDs
-    // Frontend uses ProxyFilterRequest with {filter_id, priority_order}
-    // Backend expects filter_ids as array of ULID strings, order derived from array index
-    if ('filters' in payload) {
-      const sorted = [...(payload.filters || [])].sort(
-        (a: any, b: any) => (a.priority_order ?? 0) - (b.priority_order ?? 0)
-      );
-      payload.filter_ids = sorted.map((f: any) =>
-        typeof f === 'string' ? f : (f.filter_id || f.id || f)
-      );
-      delete payload.filters;
+    // Keep filters array as-is - backend expects {filter_id, priority_order, is_active}
+    // Just ensure we're sending objects, not strings
+    if ('filters' in payload && Array.isArray(payload.filters)) {
+      payload.filters = payload.filters.map((f: any, index: number) => {
+        if (typeof f === 'string') {
+          return { filter_id: f, priority_order: index, is_active: true };
+        }
+        return {
+          filter_id: f.filter_id || f.id,
+          priority_order: f.priority_order ?? index,
+          is_active: f.is_active ?? true,
+        };
+      });
     }
 
     return this.request<ApiResponse<StreamProxy>>(API_CONFIG.endpoints.proxies, {
@@ -588,17 +590,19 @@ class ApiClient {
       delete payload.epg_sources;
     }
 
-    // Convert filters array to filter_ids array of ULIDs
-    // Frontend uses ProxyFilterRequest with {filter_id, priority_order}
-    // Backend expects filter_ids as array of ULID strings, order derived from array index
-    if ('filters' in payload) {
-      const sorted = [...(payload.filters || [])].sort(
-        (a: any, b: any) => (a.priority_order ?? 0) - (b.priority_order ?? 0)
-      );
-      payload.filter_ids = sorted.map((f: any) =>
-        typeof f === 'string' ? f : (f.filter_id || f.id || f)
-      );
-      delete payload.filters;
+    // Keep filters array as-is - backend expects {filter_id, priority_order, is_active}
+    // Just ensure we're sending objects, not strings
+    if ('filters' in payload && Array.isArray(payload.filters)) {
+      payload.filters = payload.filters.map((f: any, index: number) => {
+        if (typeof f === 'string') {
+          return { filter_id: f, priority_order: index, is_active: true };
+        }
+        return {
+          filter_id: f.filter_id || f.id,
+          priority_order: f.priority_order ?? index,
+          is_active: f.is_active ?? true,
+        };
+      });
     }
 
     // Remove empty encoding_profile_id - backend expects ULID or null, not empty string

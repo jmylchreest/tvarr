@@ -71,7 +71,8 @@ type StreamProxy struct {
 	ProxyMode StreamProxyMode `gorm:"not null;default:'direct';size:20" json:"proxy_mode"`
 
 	// IsActive indicates whether this proxy is active and should be served.
-	IsActive bool `gorm:"default:true" json:"is_active"`
+	// Using pointer to distinguish between "not set" (nil->default true) and "explicitly false".
+	IsActive *bool `gorm:"default:true" json:"is_active"`
 
 	// AutoRegenerate indicates whether to auto-regenerate when sources change.
 	AutoRegenerate bool `gorm:"default:false" json:"auto_regenerate"`
@@ -115,7 +116,8 @@ type StreamProxy struct {
 	// When true, the proxy uses client detection rules to determine the best
 	// output format and whether transcoding is needed for each client.
 	// When false, uses the EncodingProfile settings directly.
-	ClientDetectionEnabled bool `gorm:"default:true" json:"client_detection_enabled"`
+	// Using pointer to distinguish between "not set" (nil->default true) and "explicitly false".
+	ClientDetectionEnabled *bool `gorm:"default:true" json:"client_detection_enabled"`
 
 	// OutputPath is the path for generated files.
 	OutputPath string `gorm:"size:512" json:"output_path,omitempty"`
@@ -297,6 +299,11 @@ type ProxyFilter struct {
 
 	// Priority determines the order in which filters are applied (lower = first).
 	Priority int `gorm:"column:priority;default:0" json:"priority"`
+
+	// IsActive indicates whether this filter assignment is active.
+	// When false, the filter is attached but not applied during regeneration.
+	// Using pointer to distinguish between "not set" (nil->default true) and "explicitly false".
+	IsActive *bool `gorm:"default:true" json:"is_active"`
 
 	// Proxy is the relationship to the parent proxy.
 	Proxy *StreamProxy `gorm:"foreignKey:ProxyID" json:"proxy,omitempty"`

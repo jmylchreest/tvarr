@@ -200,7 +200,7 @@ func TestStreamProxyRepo_GetActive(t *testing.T) {
 		Name:                  "Active",
 		ProxyMode:             models.StreamProxyModeDirect,
 		StartingChannelNumber: 1,
-		IsActive:              true,
+		IsActive:              models.BoolPtr(true),
 	}
 	require.NoError(t, repo.Create(ctx, active))
 

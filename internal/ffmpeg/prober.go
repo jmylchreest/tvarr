@@ -88,9 +88,49 @@ type ProbeDisposition struct {
 	AttachedPic     int `json:"attached_pic"`
 }
 
+// VideoTrackInfo contains information about a video track.
+type VideoTrackInfo struct {
+	Index     int     `json:"index"`               // Stream index in the container
+	Codec     string  `json:"codec"`               // Codec name (h264, hevc, vp9, av1, etc.)
+	Profile   string  `json:"profile,omitempty"`   // Codec profile (High, Main, etc.)
+	Level     string  `json:"level,omitempty"`     // Codec level (4.1, 5.0, etc.)
+	Width     int     `json:"width"`               // Frame width
+	Height    int     `json:"height"`              // Frame height
+	Framerate float64 `json:"framerate,omitempty"` // Framerate (fps)
+	Bitrate   int     `json:"bitrate,omitempty"`   // Bitrate in bits/second
+	PixFmt    string  `json:"pix_fmt,omitempty"`   // Pixel format (yuv420p, etc.)
+	IsDefault bool    `json:"is_default"`          // True if marked as default track
+	Language  string  `json:"language,omitempty"`  // Language tag if available
+	Title     string  `json:"title,omitempty"`     // Track title if available
+}
+
+// AudioTrackInfo contains information about an audio track.
+type AudioTrackInfo struct {
+	Index         int    `json:"index"`                    // Stream index in the container
+	Codec         string `json:"codec"`                    // Codec name (aac, eac3, ac3, mp3, opus, etc.)
+	Profile       string `json:"profile,omitempty"`        // Codec profile (LC, HE-AAC, etc.)
+	SampleRate    int    `json:"sample_rate,omitempty"`    // Sample rate in Hz
+	Channels      int    `json:"channels"`                 // Number of audio channels
+	ChannelLayout string `json:"channel_layout,omitempty"` // Channel layout (stereo, 5.1, etc.)
+	Bitrate       int    `json:"bitrate,omitempty"`        // Bitrate in bits/second
+	IsDefault     bool   `json:"is_default"`               // True if marked as default track
+	Language      string `json:"language,omitempty"`       // Language tag if available
+	Title         string `json:"title,omitempty"`          // Track title if available
+}
+
+// SubtitleTrackInfo contains information about a subtitle track.
+type SubtitleTrackInfo struct {
+	Index     int    `json:"index"`              // Stream index in the container
+	Codec     string `json:"codec"`              // Codec name (subrip, ass, dvd_subtitle, etc.)
+	IsDefault bool   `json:"is_default"`         // True if marked as default track
+	IsForced  bool   `json:"is_forced"`          // True if marked as forced
+	Language  string `json:"language,omitempty"` // Language tag if available
+	Title     string `json:"title,omitempty"`    // Track title if available
+}
+
 // StreamInfo is a simplified view of stream information.
 type StreamInfo struct {
-	// Video properties
+	// Video properties (from selected/default track)
 	VideoCodec     string  `json:"video_codec,omitempty"`
 	VideoProfile   string  `json:"video_profile,omitempty"`
 	VideoLevel     string  `json:"video_level,omitempty"`
@@ -100,7 +140,7 @@ type StreamInfo struct {
 	VideoBitrate   int     `json:"video_bitrate,omitempty"`
 	VideoPixFmt    string  `json:"video_pix_fmt,omitempty"`
 
-	// Audio properties
+	// Audio properties (from selected/default track)
 	AudioCodec      string `json:"audio_codec,omitempty"`
 	AudioSampleRate int    `json:"audio_sample_rate,omitempty"`
 	AudioChannels   int    `json:"audio_channels,omitempty"`
@@ -113,6 +153,15 @@ type StreamInfo struct {
 	HasSubtitles    bool   `json:"has_subtitles"`
 	StreamCount     int    `json:"stream_count"`
 	Title           string `json:"title,omitempty"`
+
+	// All discovered tracks (for user selection or advanced display)
+	VideoTracks    []VideoTrackInfo    `json:"video_tracks,omitempty"`
+	AudioTracks    []AudioTrackInfo    `json:"audio_tracks,omitempty"`
+	SubtitleTracks []SubtitleTrackInfo `json:"subtitle_tracks,omitempty"`
+
+	// Selected track indices (-1 means auto/first)
+	SelectedVideoTrack int `json:"selected_video_track"`
+	SelectedAudioTrack int `json:"selected_audio_track"`
 }
 
 // Prober handles ffprobe operations.
@@ -189,8 +238,10 @@ func (p *Prober) ProbeSimple(ctx context.Context, url string) (*StreamInfo, erro
 // simplify converts detailed probe result to simplified stream info.
 func (p *Prober) simplify(result *ProbeResult) *StreamInfo {
 	info := &StreamInfo{
-		ContainerFormat: result.Format.FormatName,
-		StreamCount:     result.Format.NumStreams,
+		ContainerFormat:    result.Format.FormatName,
+		StreamCount:        result.Format.NumStreams,
+		SelectedVideoTrack: -1, // -1 means auto (use first/default)
+		SelectedAudioTrack: -1,
 	}
 
 	// Parse duration
@@ -210,56 +261,151 @@ func (p *Prober) simplify(result *ProbeResult) *StreamInfo {
 		info.Title = title
 	}
 
-	// Process streams
+	// Track the default track indices for selection
+	defaultVideoIdx := -1
+	defaultAudioIdx := -1
+
+	// Process streams - collect ALL tracks
 	for _, stream := range result.Streams {
 		switch stream.CodecType {
 		case "video":
-			if info.VideoCodec == "" { // Take first video stream
-				info.VideoCodec = stream.CodecName
-				info.VideoProfile = stream.Profile
-				if stream.Level > 0 {
-					info.VideoLevel = fmt.Sprintf("%.1f", float64(stream.Level)/10)
-				}
-				info.VideoWidth = stream.Width
-				info.VideoHeight = stream.Height
-				info.VideoPixFmt = stream.PixFmt
+			// Build video track info
+			track := VideoTrackInfo{
+				Index:     stream.Index,
+				Codec:     stream.CodecName,
+				Profile:   stream.Profile,
+				Width:     stream.Width,
+				Height:    stream.Height,
+				PixFmt:    stream.PixFmt,
+				IsDefault: stream.Disposition.Default == 1,
+			}
 
-				// Parse framerate
-				if stream.AvgFrameRate != "" {
-					info.VideoFramerate = parseFramerate(stream.AvgFrameRate)
-				} else if stream.RFrameRate != "" {
-					info.VideoFramerate = parseFramerate(stream.RFrameRate)
-				}
+			// Parse level
+			if stream.Level > 0 {
+				track.Level = fmt.Sprintf("%.1f", float64(stream.Level)/10)
+			}
 
-				// Parse bitrate
-				if stream.BitRate != "" {
-					if br, err := strconv.Atoi(stream.BitRate); err == nil {
-						info.VideoBitrate = br
-					}
+			// Parse framerate
+			if stream.AvgFrameRate != "" {
+				track.Framerate = parseFramerate(stream.AvgFrameRate)
+			} else if stream.RFrameRate != "" {
+				track.Framerate = parseFramerate(stream.RFrameRate)
+			}
+
+			// Parse bitrate
+			if stream.BitRate != "" {
+				if br, err := strconv.Atoi(stream.BitRate); err == nil {
+					track.Bitrate = br
 				}
+			}
+
+			// Extract language and title from tags
+			if lang, ok := stream.Tags["language"]; ok {
+				track.Language = lang
+			}
+			if title, ok := stream.Tags["title"]; ok {
+				track.Title = title
+			}
+
+			info.VideoTracks = append(info.VideoTracks, track)
+
+			// Track which is the default video track
+			if track.IsDefault && defaultVideoIdx == -1 {
+				defaultVideoIdx = len(info.VideoTracks) - 1
 			}
 
 		case "audio":
-			if info.AudioCodec == "" { // Take first audio stream
-				info.AudioCodec = stream.CodecName
-				info.AudioChannels = stream.Channels
+			// Build audio track info
+			track := AudioTrackInfo{
+				Index:         stream.Index,
+				Codec:         stream.CodecName,
+				Profile:       stream.Profile,
+				Channels:      stream.Channels,
+				ChannelLayout: stream.ChannelLayout,
+				IsDefault:     stream.Disposition.Default == 1,
+			}
 
-				if stream.SampleRate != "" {
-					if sr, err := strconv.Atoi(stream.SampleRate); err == nil {
-						info.AudioSampleRate = sr
-					}
-				}
-
-				if stream.BitRate != "" {
-					if br, err := strconv.Atoi(stream.BitRate); err == nil {
-						info.AudioBitrate = br
-					}
+			// Parse sample rate
+			if stream.SampleRate != "" {
+				if sr, err := strconv.Atoi(stream.SampleRate); err == nil {
+					track.SampleRate = sr
 				}
 			}
 
+			// Parse bitrate
+			if stream.BitRate != "" {
+				if br, err := strconv.Atoi(stream.BitRate); err == nil {
+					track.Bitrate = br
+				}
+			}
+
+			// Extract language and title from tags
+			if lang, ok := stream.Tags["language"]; ok {
+				track.Language = lang
+			}
+			if title, ok := stream.Tags["title"]; ok {
+				track.Title = title
+			}
+
+			info.AudioTracks = append(info.AudioTracks, track)
+
+			// Track which is the default audio track
+			if track.IsDefault && defaultAudioIdx == -1 {
+				defaultAudioIdx = len(info.AudioTracks) - 1
+			}
+
 		case "subtitle":
+			// Build subtitle track info
+			track := SubtitleTrackInfo{
+				Index:     stream.Index,
+				Codec:     stream.CodecName,
+				IsDefault: stream.Disposition.Default == 1,
+				IsForced:  stream.Disposition.Forced == 1,
+			}
+
+			// Extract language and title from tags
+			if lang, ok := stream.Tags["language"]; ok {
+				track.Language = lang
+			}
+			if title, ok := stream.Tags["title"]; ok {
+				track.Title = title
+			}
+
+			info.SubtitleTracks = append(info.SubtitleTracks, track)
 			info.HasSubtitles = true
 		}
+	}
+
+	// Set the "primary" video/audio properties from the selected/default track
+	// Default to first track if no default is marked
+	selectedVideo := 0
+	if defaultVideoIdx >= 0 {
+		selectedVideo = defaultVideoIdx
+	}
+	if len(info.VideoTracks) > 0 {
+		vt := info.VideoTracks[selectedVideo]
+		info.VideoCodec = vt.Codec
+		info.VideoProfile = vt.Profile
+		info.VideoLevel = vt.Level
+		info.VideoWidth = vt.Width
+		info.VideoHeight = vt.Height
+		info.VideoFramerate = vt.Framerate
+		info.VideoBitrate = vt.Bitrate
+		info.VideoPixFmt = vt.PixFmt
+		info.SelectedVideoTrack = selectedVideo
+	}
+
+	selectedAudio := 0
+	if defaultAudioIdx >= 0 {
+		selectedAudio = defaultAudioIdx
+	}
+	if len(info.AudioTracks) > 0 {
+		at := info.AudioTracks[selectedAudio]
+		info.AudioCodec = at.Codec
+		info.AudioSampleRate = at.SampleRate
+		info.AudioChannels = at.Channels
+		info.AudioBitrate = at.Bitrate
+		info.SelectedAudioTrack = selectedAudio
 	}
 
 	return info
@@ -419,4 +565,96 @@ func (s *ProbeStream) Framerate() float64 {
 		return parseFramerate(s.RFrameRate)
 	}
 	return 0
+}
+
+// IsAudioOnly returns true if the stream has audio tracks but no video tracks.
+// This is typical for radio streams.
+func (info *StreamInfo) IsAudioOnly() bool {
+	return len(info.AudioTracks) > 0 && len(info.VideoTracks) == 0
+}
+
+// IsVideoOnly returns true if the stream has video tracks but no audio tracks.
+func (info *StreamInfo) IsVideoOnly() bool {
+	return len(info.VideoTracks) > 0 && len(info.AudioTracks) == 0
+}
+
+// HasVideo returns true if the stream has at least one video track.
+func (info *StreamInfo) HasVideo() bool {
+	return len(info.VideoTracks) > 0
+}
+
+// HasAudio returns true if the stream has at least one audio track.
+func (info *StreamInfo) HasAudio() bool {
+	return len(info.AudioTracks) > 0
+}
+
+// GetVideoTrackByIndex returns the video track with the specified stream index.
+// Returns nil if not found.
+func (info *StreamInfo) GetVideoTrackByIndex(streamIndex int) *VideoTrackInfo {
+	for i := range info.VideoTracks {
+		if info.VideoTracks[i].Index == streamIndex {
+			return &info.VideoTracks[i]
+		}
+	}
+	return nil
+}
+
+// GetAudioTrackByIndex returns the audio track with the specified stream index.
+// Returns nil if not found.
+func (info *StreamInfo) GetAudioTrackByIndex(streamIndex int) *AudioTrackInfo {
+	for i := range info.AudioTracks {
+		if info.AudioTracks[i].Index == streamIndex {
+			return &info.AudioTracks[i]
+		}
+	}
+	return nil
+}
+
+// GetBestAudioTrack returns the audio track that best matches the given criteria.
+// Priority: language match + highest channel count + highest bitrate
+func (info *StreamInfo) GetBestAudioTrack(preferredLanguage string, preferHigherChannels bool) *AudioTrackInfo {
+	if len(info.AudioTracks) == 0 {
+		return nil
+	}
+
+	var best *AudioTrackInfo
+	for i := range info.AudioTracks {
+		track := &info.AudioTracks[i]
+
+		if best == nil {
+			best = track
+			continue
+		}
+
+		// If we have a language preference, prioritize matching tracks
+		if preferredLanguage != "" {
+			trackMatches := track.Language == preferredLanguage
+			bestMatches := best.Language == preferredLanguage
+			if trackMatches && !bestMatches {
+				best = track
+				continue
+			}
+			if !trackMatches && bestMatches {
+				continue
+			}
+		}
+
+		// If both match (or don't match) language, compare by channels or bitrate
+		if preferHigherChannels {
+			if track.Channels > best.Channels {
+				best = track
+				continue
+			}
+			if track.Channels == best.Channels && track.Bitrate > best.Bitrate {
+				best = track
+			}
+		} else {
+			// Prefer higher bitrate
+			if track.Bitrate > best.Bitrate {
+				best = track
+			}
+		}
+	}
+
+	return best
 }

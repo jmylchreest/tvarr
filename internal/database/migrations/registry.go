@@ -19,6 +19,7 @@ import (
 // - 008: Remove redundant priority column from filters table
 // - 009: Add dynamic codec header fields to client detection rules
 // - 010: Update client detection rules to use @dynamic() syntax for user-agent
+// - 011: Add is_active column to proxy_filters
 func AllMigrations() []Migration {
 	return []Migration{
 		migration001Schema(),
@@ -31,6 +32,7 @@ func AllMigrations() []Migration {
 		migration008RemoveFilterPriority(),
 		migration009DynamicCodecHeaders(),
 		migration010DynamicUserAgent(),
+		migration011ProxyFilterIsActive(),
 	}
 }
 
@@ -157,7 +159,7 @@ func createDefaultFilters(tx *gorm.DB) error {
 			SourceType: models.FilterSourceTypeStream,
 			Action:     models.FilterActionInclude,
 			Expression: `stream_url starts_with "http"`,
-			IsEnabled:  true,
+			IsEnabled:  models.BoolPtr(true),
 			IsSystem:   true,
 		},
 		{
@@ -166,7 +168,7 @@ func createDefaultFilters(tx *gorm.DB) error {
 			SourceType:  models.FilterSourceTypeStream,
 			Action:      models.FilterActionExclude,
 			Expression:  `group_title contains "adult" OR group_title contains "xxx" OR group_title contains "porn" OR channel_name contains "adult" OR channel_name contains "xxx" OR channel_name contains "porn"`,
-			IsEnabled:   true,
+			IsEnabled:   models.BoolPtr(true),
 			IsSystem:    true,
 		},
 	}
@@ -189,7 +191,7 @@ func createDefaultDataMappingRules(tx *gorm.DB) error {
 			Expression:  `channel_name matches ".*[ ](?:\\+([0-9]{1,2})|(-[0-9]{1,2}))([hH]?)(?:$|[ ]).*" AND channel_name not matches ".*(?:start:|stop:|24[-/]7).*" AND tvg_id matches "^.+$" SET tvg_shift = "$1$2"`,
 			Priority:    1,
 			StopOnMatch: false,
-			IsEnabled:   true,
+			IsEnabled:   models.BoolPtr(true),
 			IsSystem:    true,
 		},
 	}

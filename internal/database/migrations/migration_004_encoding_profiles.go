@@ -82,7 +82,7 @@ func createSystemEncodingProfiles(tx *gorm.DB) error {
 			HWAccel:          models.HWAccelAuto,
 			IsDefault:        true,
 			IsSystem:         true,
-			Enabled:          true,
+			Enabled:          models.BoolPtr(true),
 		},
 		{
 			Name:             "H.265/AAC (Modern)",
@@ -93,7 +93,7 @@ func createSystemEncodingProfiles(tx *gorm.DB) error {
 			HWAccel:          models.HWAccelAuto,
 			IsDefault:        false,
 			IsSystem:         true,
-			Enabled:          true,
+			Enabled:          models.BoolPtr(true),
 		},
 		{
 			Name:             "VP9/Opus (Web)",
@@ -104,7 +104,7 @@ func createSystemEncodingProfiles(tx *gorm.DB) error {
 			HWAccel:          models.HWAccelAuto,
 			IsDefault:        false,
 			IsSystem:         true,
-			Enabled:          true,
+			Enabled:          models.BoolPtr(true),
 		},
 		{
 			Name:             "AV1/Opus (Next-Gen)",
@@ -115,7 +115,7 @@ func createSystemEncodingProfiles(tx *gorm.DB) error {
 			HWAccel:          models.HWAccelAuto,
 			IsDefault:        false,
 			IsSystem:         true,
-			Enabled:          true,
+			Enabled:          models.BoolPtr(true),
 		},
 		{
 			Name:             "H.264 Low Bandwidth",
@@ -126,7 +126,7 @@ func createSystemEncodingProfiles(tx *gorm.DB) error {
 			HWAccel:          models.HWAccelAuto,
 			IsDefault:        false,
 			IsSystem:         true,
-			Enabled:          true,
+			Enabled:          models.BoolPtr(true),
 		},
 		{
 			Name:             "H.265 High Quality",
@@ -137,7 +137,7 @@ func createSystemEncodingProfiles(tx *gorm.DB) error {
 			HWAccel:          models.HWAccelAuto,
 			IsDefault:        false,
 			IsSystem:         true,
-			Enabled:          true,
+			Enabled:          models.BoolPtr(true),
 		},
 	}
 

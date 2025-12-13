@@ -36,7 +36,7 @@ const (
 	defaultCircuitBreakerThresh  = 3
 	defaultCircuitBreakerTimeout = 30 * time.Second
 	defaultConnectionPoolSize    = 100
-	defaultStreamTimeout = 5 * time.Minute
+	defaultStreamTimeout         = 5 * time.Minute
 )
 
 // Config holds all configuration for the application.

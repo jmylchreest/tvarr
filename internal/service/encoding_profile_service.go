@@ -166,7 +166,8 @@ func (s *EncodingProfileService) ToggleEnabled(ctx context.Context, id models.UL
 		return nil, models.ErrEncodingProfileNotFound
 	}
 
-	profile.Enabled = !profile.Enabled
+	newVal := !models.BoolVal(profile.Enabled)
+	profile.Enabled = &newVal
 	if err := s.repo.Update(ctx, profile); err != nil {
 		return nil, err
 	}

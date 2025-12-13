@@ -58,7 +58,7 @@ func (s *ProxyService) Create(ctx context.Context, proxy *models.StreamProxy) er
 	s.logger.InfoContext(ctx, "created stream proxy",
 		slog.String("id", proxy.ID.String()),
 		slog.String("name", proxy.Name),
-		slog.Bool("is_active", proxy.IsActive),
+		slog.Bool("is_active", models.BoolVal(proxy.IsActive)),
 	)
 
 	return nil
@@ -169,8 +169,9 @@ func (s *ProxyService) SetEpgSources(ctx context.Context, proxyID models.ULID, s
 }
 
 // SetFilters sets the filters for a proxy.
-func (s *ProxyService) SetFilters(ctx context.Context, proxyID models.ULID, filterIDs []models.ULID, orders map[models.ULID]int) error {
-	if err := s.proxyRepo.SetFilters(ctx, proxyID, filterIDs, orders); err != nil {
+// The isActive map controls whether each filter is active (applied during generation).
+func (s *ProxyService) SetFilters(ctx context.Context, proxyID models.ULID, filterIDs []models.ULID, orders map[models.ULID]int, isActive map[models.ULID]bool) error {
+	if err := s.proxyRepo.SetFilters(ctx, proxyID, filterIDs, orders, isActive); err != nil {
 		return fmt.Errorf("setting filters: %w", err)
 	}
 
@@ -193,7 +194,7 @@ func (s *ProxyService) Generate(ctx context.Context, proxyID models.ULID) (*pipe
 		return nil, fmt.Errorf("proxy not found: %s", proxyID)
 	}
 
-	if !proxy.IsActive {
+	if !models.BoolVal(proxy.IsActive) {
 		return nil, fmt.Errorf("proxy is not active: %s", proxy.Name)
 	}
 

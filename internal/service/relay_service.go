@@ -395,6 +395,26 @@ func (s *RelayService) ProbeAndStoreCodecInfo(ctx context.Context, streamURL str
 	return nil
 }
 
+// GetOrProbeCodecInfo intelligently retrieves codec information:
+// 1. If there's an active session for the channel, use its cached codec info (no network call)
+// 2. If connection pool has capacity, probe fresh and store result
+// 3. Otherwise, return cached database info (may be stale or nil)
+//
+// This is the preferred method for getting codec info before stream delivery,
+// as it avoids consuming extra connections when a stream is already active.
+func (s *RelayService) GetOrProbeCodecInfo(ctx context.Context, channelID models.ULID, streamURL string) *models.LastKnownCodec {
+	if s.relayManager == nil {
+		return nil
+	}
+
+	channelUUID, err := uuid.Parse(channelID.String())
+	if err != nil {
+		return nil
+	}
+
+	return s.relayManager.GetOrProbeCodecInfo(ctx, channelUUID, streamURL)
+}
+
 // StreamInfo contains the information needed to stream a channel through a proxy.
 type StreamInfo struct {
 	Proxy           *models.StreamProxy
