@@ -995,7 +995,7 @@ func (b *SharedESBuffer) CreateSourceVariant(videoCodec, audioCodec string) *ESV
 		close(b.sourceReadyCh)
 	})
 
-	b.config.Logger.Info("Created source variant",
+	b.config.Logger.Debug("Created source variant",
 		slog.String("channel_id", b.channelID),
 		slog.String("variant", variant.String()))
 
@@ -1118,7 +1118,7 @@ func (b *SharedESBuffer) GetOrCreateVariantWithContext(ctx context.Context, vari
 	b.variants[variant] = v
 	b.variantsMu.Unlock()
 
-	b.config.Logger.Info("Created new codec variant",
+	b.config.Logger.Debug("Created new codec variant",
 		slog.String("channel_id", b.channelID),
 		slog.String("variant", variant.String()),
 		slog.String("source", source.String()))
@@ -1203,7 +1203,7 @@ func (b *SharedESBuffer) SetVideoCodec(codec string, initData []byte) {
 	if created {
 		b.sourceReadyOnce.Do(func() {
 			close(b.sourceReadyCh)
-			b.config.Logger.Info("Source variant ready (video detected)",
+			b.config.Logger.Debug("Source variant ready (video detected)",
 				slog.String("channel_id", b.channelID),
 				slog.String("video_codec", codec))
 		})
@@ -1238,7 +1238,7 @@ func (b *SharedESBuffer) SetAudioCodec(codec string, initData []byte) {
 	if created {
 		b.sourceReadyOnce.Do(func() {
 			close(b.sourceReadyCh)
-			b.config.Logger.Info("Source variant ready (audio detected)",
+			b.config.Logger.Debug("Source variant ready (audio detected)",
 				slog.String("channel_id", b.channelID),
 				slog.String("audio_codec", codec))
 		})
@@ -1308,7 +1308,7 @@ func (b *SharedESBuffer) CreateVariant(variant CodecVariant) (*ESVariant, error)
 	v := NewESVariantWithMaxBytes(variant, maxVariantBytes, false)
 	b.variants[variant] = v
 
-	b.config.Logger.Info("Created codec variant",
+	b.config.Logger.Debug("Created codec variant",
 		slog.String("channel_id", b.channelID),
 		slog.String("variant", variant.String()))
 

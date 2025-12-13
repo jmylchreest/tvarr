@@ -159,7 +159,7 @@ func (p *HLSTSProcessor) Start(ctx context.Context) error {
 	// Initialize TS muxer for current segment
 	p.initNewSegment()
 
-	p.config.Logger.Info("Starting HLS-TS processor",
+	p.config.Logger.Debug("Starting HLS-TS processor",
 		slog.String("id", p.id),
 		slog.String("variant", p.variant.String()))
 
@@ -188,7 +188,7 @@ func (p *HLSTSProcessor) Stop() {
 	p.esBuffer.UnregisterProcessor(p.id)
 	p.BaseProcessor.Close()
 
-	p.config.Logger.Info("HLS-TS processor stopped",
+	p.config.Logger.Debug("Processor stopped",
 		slog.String("id", p.id))
 }
 

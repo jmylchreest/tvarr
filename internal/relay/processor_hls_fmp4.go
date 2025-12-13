@@ -194,7 +194,7 @@ func (p *HLSfMP4Processor) Start(ctx context.Context) error {
 	// Initialize segment accumulator
 	p.initNewSegment()
 
-	p.config.Logger.Info("Starting HLS-fMP4 processor",
+	p.config.Logger.Debug("Starting HLS-fMP4 processor",
 		slog.String("id", p.id),
 		slog.String("variant", p.variant.String()))
 
@@ -223,7 +223,7 @@ func (p *HLSfMP4Processor) Stop() {
 	p.esBuffer.UnregisterProcessor(p.id)
 	p.BaseProcessor.Close()
 
-	p.config.Logger.Info("HLS-fMP4 processor stopped",
+	p.config.Logger.Debug("Processor stopped",
 		slog.String("id", p.id))
 }
 

@@ -494,7 +494,7 @@ func (h *RelayStreamHandler) handleRawSmartMode(w http.ResponseWriter, r *http.R
 	// Get delivery decision using the smart delivery logic
 	deliveryDecision := relay.SelectDelivery(classification, clientFormat, info.EncodingProfile)
 
-	h.logger.Info("Smart mode: delivery decision",
+	h.logger.Debug("Smart mode: delivery decision",
 		"proxy_id", info.Proxy.ID,
 		"channel_id", info.Channel.ID,
 		"stream_url", streamURL,
@@ -703,7 +703,7 @@ func (h *RelayStreamHandler) handleSmartPassthrough(w http.ResponseWriter, r *ht
 	if info.Proxy != nil {
 		logAttrs = append([]any{"proxy_id", info.Proxy.ID}, logAttrs...)
 	}
-	h.logger.Info("Smart mode: passthrough delivery", logAttrs...)
+	h.logger.Debug("Smart mode: passthrough delivery", logAttrs...)
 
 	// Reuse the direct proxy streaming logic
 	h.streamRawDirectProxy(w, r, info, classification)
@@ -729,7 +729,7 @@ func (h *RelayStreamHandler) handleSmartRepackage(w http.ResponseWriter, r *http
 	if info.Proxy != nil {
 		logAttrs = append([]any{"proxy_id", info.Proxy.ID}, logAttrs...)
 	}
-	h.logger.Info("Smart mode: repackage delivery", logAttrs...)
+	h.logger.Debug("Smart mode: repackage delivery", logAttrs...)
 
 	// TODO: Implement manifest repackaging (HLS↔DASH)
 	// For now, fall back to passthrough with a warning
@@ -763,7 +763,7 @@ func (h *RelayStreamHandler) handleSmartTranscode(w http.ResponseWriter, r *http
 	if info.Proxy != nil {
 		logAttrs = append([]any{"proxy_id", info.Proxy.ID}, logAttrs...)
 	}
-	h.logger.Info("Smart mode: transcode delivery", logAttrs...)
+	h.logger.Debug("Smart mode: transcode delivery", logAttrs...)
 
 	// Get the encoding profile (no auto-detection needed with EncodingProfile)
 	profile := h.getEncodingProfile(info)
@@ -1041,7 +1041,7 @@ func (h *RelayStreamHandler) streamMPEGTSFromRelay(w http.ResponseWriter, r *htt
 	if info.Proxy != nil {
 		connAttrs = append([]any{"proxy_id", info.Proxy.ID}, connAttrs...)
 	}
-	h.logger.Info("Client connecting for MPEG-TS stream", connAttrs...)
+	h.logger.Debug("Client connecting for MPEG-TS stream", connAttrs...)
 
 	// Resolve the client's target codec variant from their profile
 	// This enables per-client codec variants - different clients can receive different codecs
@@ -1064,7 +1064,7 @@ func (h *RelayStreamHandler) streamMPEGTSFromRelay(w http.ResponseWriter, r *htt
 			// Create variant - MakeCodecVariant handles the "copy" values
 			clientVariant = relay.MakeCodecVariant(videoCodec, audioCodec)
 
-			h.logger.Info("MPEG-TS client requesting specific codec variant",
+			h.logger.Debug("MPEG-TS client requesting specific codec variant",
 				"session_id", session.ID,
 				"variant", clientVariant.String(),
 				"video_codec", videoCodec,

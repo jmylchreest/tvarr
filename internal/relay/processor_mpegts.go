@@ -145,7 +145,7 @@ func (p *MPEGTSProcessor) Start(ctx context.Context) error {
 		slog.String("video_codec", p.variant.VideoCodec()),
 		slog.String("audio_codec", p.variant.AudioCodec()))
 
-	p.config.Logger.Info("Starting MPEG-TS processor",
+	p.config.Logger.Debug("Starting MPEG-TS processor",
 		slog.String("id", p.id),
 		slog.String("variant", p.variant.String()))
 
@@ -182,7 +182,7 @@ func (p *MPEGTSProcessor) Stop() {
 	p.esBuffer.UnregisterProcessor(p.id)
 	p.BaseProcessor.Close()
 
-	p.config.Logger.Info("MPEG-TS processor stopped",
+	p.config.Logger.Debug("MPEG-TS processor stopped",
 		slog.String("id", p.id))
 }
 

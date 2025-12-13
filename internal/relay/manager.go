@@ -575,7 +575,7 @@ func (m *Manager) cleanupStaleSessions() {
 			// Session has no clients - check idle grace period
 			if !idleSince.IsZero() && time.Since(idleSince) > idleGracePeriod {
 				// Session has been idle longer than the grace period
-				m.logger.Info("Closing idle session after grace period",
+				m.logger.Debug("Closing idle session after grace period",
 					slog.String("session_id", id.String()),
 					slog.Duration("idle_duration", time.Since(idleSince)))
 				shouldRemove = true

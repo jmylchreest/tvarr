@@ -191,7 +191,7 @@ func (p *DASHProcessor) Start(ctx context.Context) error {
 	// Initialize segment accumulator
 	p.initNewSegment()
 
-	p.config.Logger.Info("Starting DASH processor",
+	p.config.Logger.Debug("Starting DASH processor",
 		slog.String("id", p.id),
 		slog.String("variant", p.variant.String()))
 
@@ -220,7 +220,7 @@ func (p *DASHProcessor) Stop() {
 	p.esBuffer.UnregisterProcessor(p.id)
 	p.BaseProcessor.Close()
 
-	p.config.Logger.Info("DASH processor stopped",
+	p.config.Logger.Debug("Processor stopped",
 		slog.String("id", p.id))
 }
 

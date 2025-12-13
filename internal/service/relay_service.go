@@ -242,7 +242,7 @@ func (s *RelayService) StartRelay(ctx context.Context, channelID models.ULID, pr
 		return nil, fmt.Errorf("starting relay session: %w", err)
 	}
 
-	s.logger.Info("Started relay session",
+	s.logger.Debug("Started relay session",
 		"session_id", session.ID,
 		"channel_id", channelID,
 		"stream_url", channel.StreamURL,
@@ -284,7 +284,7 @@ func (s *RelayService) StartRelayWithProfile(ctx context.Context, channelID mode
 		return nil, fmt.Errorf("starting relay session: %w", err)
 	}
 
-	s.logger.Info("Started relay session with resolved profile",
+	s.logger.Debug("Started relay session with resolved profile",
 		"session_id", session.ID,
 		"channel_id", channelID,
 		"stream_url", channel.StreamURL,

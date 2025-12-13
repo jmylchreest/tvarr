@@ -202,7 +202,7 @@ func (t *FFmpegTranscoder) Start(ctx context.Context) error {
 		return fmt.Errorf("starting ffmpeg: %w", err)
 	}
 
-	t.config.Logger.Info("Starting FFmpeg transcoder",
+	t.config.Logger.Debug("Starting FFmpeg transcoder",
 		slog.String("id", t.id),
 		slog.String("source", string(t.config.SourceVariant)),
 		slog.String("target", string(t.config.TargetVariant)),
@@ -271,11 +271,11 @@ func (t *FFmpegTranscoder) Stop() {
 		// Log any captured stderr on stop for debugging
 		stderrLines := t.GetStderrLines()
 		if len(stderrLines) > 0 {
-			t.config.Logger.Info("FFmpeg transcoder stopped with stderr output",
+			t.config.Logger.Debug("FFmpeg transcoder stopped with stderr output",
 				slog.String("id", t.id),
 				slog.Int("stderr_lines", len(stderrLines)))
 		} else {
-			t.config.Logger.Info("FFmpeg transcoder stopped",
+			t.config.Logger.Debug("FFmpeg transcoder stopped",
 				slog.String("id", t.id))
 		}
 	}
@@ -545,7 +545,7 @@ func (t *FFmpegTranscoder) startFFmpeg() error {
 
 	// Build command
 	ffmpegCmd := builder.Build()
-	t.config.Logger.Info("FFmpeg transcoder command",
+	t.config.Logger.Debug("FFmpeg transcoder command",
 		slog.String("id", t.id),
 		slog.Bool("direct_input", t.config.UseDirectInput),
 		slog.String("command", ffmpegCmd.String()))
@@ -1007,7 +1007,7 @@ func CreateTranscoderFromVariant(
 		UseDirectInput: opt.UseDirectInput,
 	}
 
-	logger.Info("Creating transcoder from variant",
+	logger.Debug("Creating transcoder from variant",
 		slog.String("id", id),
 		slog.String("source", sourceVariant.String()),
 		slog.String("target", targetVariant.String()),
