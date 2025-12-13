@@ -174,11 +174,27 @@ func (t *FFmpegTranscoder) Start(ctx context.Context) error {
 	sourceVariant.RegisterConsumer(t.id)
 
 	// Initialize TS muxer for FFmpeg input with source codec information
-	// Use the source variant's codec types (e.g., "h264/aac" -> video="h264", audio="aac")
+	// Get actual codec from the track (not from variant name which may be incomplete at startup)
+	videoCodec := sourceVariant.VideoTrack().Codec()
+	audioCodec := sourceVariant.AudioTrack().Codec()
+	// Fall back to variant name if track codec not yet set
+	if videoCodec == "" {
+		videoCodec = t.config.SourceVariant.VideoCodec()
+	}
+	if audioCodec == "" {
+		audioCodec = t.config.SourceVariant.AudioCodec()
+	}
+
+	t.config.Logger.Debug("Initializing transcoder input muxer",
+		slog.String("id", t.id),
+		slog.String("video_codec", videoCodec),
+		slog.String("audio_codec", audioCodec),
+		slog.String("source_variant", string(t.config.SourceVariant)))
+
 	t.inputMuxer = NewTSMuxer(&t.inputBuf, TSMuxerConfig{
 		Logger:     t.config.Logger,
-		VideoCodec: t.config.SourceVariant.VideoCodec(),
-		AudioCodec: t.config.SourceVariant.AudioCodec(),
+		VideoCodec: videoCodec,
+		AudioCodec: audioCodec,
 	})
 
 	// Initialize TS demuxer for FFmpeg output (writes to target variant)
@@ -532,6 +548,16 @@ func (t *FFmpegTranscoder) startFFmpeg() error {
 		builder.AudioCodec(t.config.AudioCodec)
 		if t.config.AudioBitrate > 0 {
 			builder.AudioBitrate(fmt.Sprintf("%dk", t.config.AudioBitrate))
+		}
+		// For AAC encoding, force stereo output to ensure FFmpeg uses an explicit
+		// channel configuration (channelConfig 1-7) in the ADTS header.
+		// Without this, FFmpeg may use channelConfig=0 (PCE-defined) when
+		// transcoding from multichannel sources like E-AC3 5.1.
+		// While our demuxer can parse PCE, most downstream players (mpv, browsers,
+		// smart TVs) cannot handle channelConfig=0 and fail with errors like
+		// "channel element 0.0 is not allocated".
+		if t.config.AudioCodec == "aac" {
+			builder.AudioChannels(2)
 		}
 	} else {
 		builder.AudioCodec("copy")
