@@ -13,6 +13,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/go-chi/chi/v5"
+	"github.com/jmylchreest/tvarr/internal/ffmpeg"
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/relay"
 	"github.com/jmylchreest/tvarr/internal/service"
@@ -488,18 +489,38 @@ func (h *RelayStreamHandler) handleRawSmartMode(w http.ResponseWriter, r *http.R
 		Reasons:               serviceClassification.Reasons,
 	}
 
-	// Determine client's desired format from query param or Accept header
-	clientFormat := h.resolveClientFormat(r, classification)
+	// Detect client capabilities (codecs, formats)
+	clientCaps := h.detectClientCapabilities(r)
 
-	// Get delivery decision using the smart delivery logic
-	deliveryDecision := relay.SelectDelivery(classification, clientFormat, info.EncodingProfile)
+	// Determine client's desired format
+	clientFormat := h.capsToClientFormat(clientCaps)
+
+	// Get source codec info for smart delivery decision
+	// Always probe fresh and store result for channel UI
+	var sourceVideoCodec, sourceAudioCodec string
+	if codecInfo := h.relayService.ProbeAndStoreCodecInfo(ctx, streamURL); codecInfo != nil {
+		sourceVideoCodec = codecInfo.VideoCodec
+		sourceAudioCodec = codecInfo.AudioCodec
+	}
+
+	// Get delivery decision using the smart delivery logic with codec compatibility
+	deliveryOpts := relay.SelectDeliveryOptions{
+		ClientCapabilities: &clientCaps,
+		SourceVideoCodec:   sourceVideoCodec,
+		SourceAudioCodec:   sourceAudioCodec,
+	}
+	deliveryDecision := relay.SelectDelivery(classification, clientFormat, info.EncodingProfile, deliveryOpts)
 
 	h.logger.Debug("Smart mode: delivery decision",
 		"proxy_id", info.Proxy.ID,
 		"channel_id", info.Channel.ID,
 		"stream_url", streamURL,
 		"source_format", classification.SourceFormat,
+		"source_video", sourceVideoCodec,
+		"source_audio", sourceAudioCodec,
 		"client_format", clientFormat,
+		"client_accepts_video", clientCaps.AcceptedVideoCodecs,
+		"client_accepts_audio", clientCaps.AcceptedAudioCodecs,
 		"decision", deliveryDecision.String(),
 	)
 
@@ -509,7 +530,12 @@ func (h *RelayStreamHandler) handleRawSmartMode(w http.ResponseWriter, r *http.R
 		h.handleSmartPassthrough(w, r, info, &serviceClassification)
 
 	case relay.DeliveryRepackage:
-		h.handleSmartRepackage(w, r, info, &serviceClassification, clientFormat)
+		// For repackage mode (client accepts source codecs), we need to clear the
+		// encoding profile so the relay session doesn't transcode. Create a copy
+		// of info without the encoding profile.
+		infoNoTranscode := *info
+		infoNoTranscode.EncodingProfile = nil
+		h.handleSmartRepackage(w, r, &infoNoTranscode, &serviceClassification, clientFormat)
 
 	case relay.DeliveryTranscode:
 		h.handleSmartTranscode(w, r, info, clientFormat)
@@ -710,7 +736,12 @@ func (h *RelayStreamHandler) handleSmartPassthrough(w http.ResponseWriter, r *ht
 }
 
 // handleSmartRepackage repackages the source stream to a different manifest format.
-// This is used for HLS↔DASH conversion without re-encoding.
+// This is used for:
+// - HLS↔DASH conversion without re-encoding
+// - MPEG-TS passthrough via the ES buffer pipeline (enables connection sharing)
+//
+// Even when no format conversion is needed, we route through the ES buffer pipeline
+// to enable multiple clients sharing a single upstream connection.
 func (h *RelayStreamHandler) handleSmartRepackage(w http.ResponseWriter, r *http.Request, info *service.StreamInfo, classification *service.ClassificationResult, clientFormat relay.ClientFormat) {
 	// Set common headers
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -731,14 +762,10 @@ func (h *RelayStreamHandler) handleSmartRepackage(w http.ResponseWriter, r *http
 	}
 	h.logger.Debug("Smart mode: repackage delivery", logAttrs...)
 
-	// TODO: Implement manifest repackaging (HLS↔DASH)
-	// For now, fall back to passthrough with a warning
-	warnAttrs := []any{"channel_id", info.Channel.ID}
-	if info.Proxy != nil {
-		warnAttrs = append([]any{"proxy_id", info.Proxy.ID}, warnAttrs...)
-	}
-	h.logger.Warn("Smart mode: repackage not yet implemented, falling back to passthrough", warnAttrs...)
-	h.streamRawDirectProxy(w, r, info, classification)
+	// For MPEG-TS sources where client accepts codecs directly, use the ES buffer pipeline
+	// without transcoding. This enables connection sharing between multiple clients.
+	// The transcode handler will detect that no transcoding is needed and just remux.
+	h.handleSmartTranscode(w, r, info, clientFormat)
 }
 
 // handleSmartTranscode transcodes the source stream using FFmpeg.
@@ -1241,20 +1268,31 @@ type ProbeStreamOutput struct {
 	Body struct {
 		ChannelID       string  `json:"channel_id,omitempty" doc:"Channel ULID if probed by channel_id"`
 		StreamURL       string  `json:"stream_url"`
-		VideoCodec      string  `json:"video_codec,omitempty"`
+		VideoCodec      string  `json:"video_codec,omitempty" doc:"Primary video codec (from selected track)"`
 		VideoWidth      int     `json:"video_width,omitempty"`
 		VideoHeight     int     `json:"video_height,omitempty"`
 		VideoFramerate  float64 `json:"video_framerate,omitempty"`
 		VideoBitrate    int     `json:"video_bitrate,omitempty"`
-		AudioCodec      string  `json:"audio_codec,omitempty"`
+		AudioCodec      string  `json:"audio_codec,omitempty" doc:"Primary audio codec (from selected track)"`
 		AudioSampleRate int     `json:"audio_sample_rate,omitempty"`
 		AudioChannels   int     `json:"audio_channels,omitempty"`
 		AudioBitrate    int     `json:"audio_bitrate,omitempty"`
+		ContainerFormat string  `json:"container_format,omitempty" doc:"Container format (hls, mpegts, dash, etc)"`
+		IsLiveStream    bool    `json:"is_live_stream" doc:"Whether stream is live (no duration)"`
+		HasSubtitles    bool    `json:"has_subtitles" doc:"Whether subtitles are present"`
+		StreamCount     int     `json:"stream_count" doc:"Total number of streams in container"`
+		// All discovered tracks for display and selection
+		VideoTracks        []ffmpeg.VideoTrackInfo    `json:"video_tracks,omitempty" doc:"All video tracks discovered"`
+		AudioTracks        []ffmpeg.AudioTrackInfo    `json:"audio_tracks,omitempty" doc:"All audio tracks discovered"`
+		SubtitleTracks     []ffmpeg.SubtitleTrackInfo `json:"subtitle_tracks,omitempty" doc:"All subtitle tracks discovered"`
+		SelectedVideoTrack int                        `json:"selected_video_track" doc:"Index of selected video track (-1=auto)"`
+		SelectedAudioTrack int                        `json:"selected_audio_track" doc:"Index of selected audio track (-1=auto)"`
 	}
 }
 
 // ProbeStream probes a stream URL for codec information.
 // Accepts either a URL directly or a channel_id to look up the URL from the database.
+// Returns full track information including all discovered video, audio, and subtitle tracks.
 func (h *RelayStreamHandler) ProbeStream(ctx context.Context, input *ProbeStreamInput) (*ProbeStreamOutput, error) {
 	var streamURL string
 	var channelIDStr string
@@ -1280,36 +1318,61 @@ func (h *RelayStreamHandler) ProbeStream(ctx context.Context, input *ProbeStream
 		return nil, huma.Error400BadRequest("either url or channel_id must be provided")
 	}
 
-	codec, err := h.relayService.ProbeStream(ctx, streamURL)
+	// Use ProbeStreamFull to get all track information
+	streamInfo, err := h.relayService.ProbeStreamFull(ctx, streamURL)
 	if err != nil {
 		return nil, huma.Error500InternalServerError("failed to probe stream", err)
 	}
 
+	// Also cache the result (ProbeStreamFull doesn't cache, so call ProbeStream for caching)
+	// This is done asynchronously to not delay the response
+	go func() {
+		_, _ = h.relayService.ProbeStream(context.Background(), streamURL)
+	}()
+
 	return &ProbeStreamOutput{
 		Body: struct {
-			ChannelID       string  `json:"channel_id,omitempty" doc:"Channel ULID if probed by channel_id"`
-			StreamURL       string  `json:"stream_url"`
-			VideoCodec      string  `json:"video_codec,omitempty"`
-			VideoWidth      int     `json:"video_width,omitempty"`
-			VideoHeight     int     `json:"video_height,omitempty"`
-			VideoFramerate  float64 `json:"video_framerate,omitempty"`
-			VideoBitrate    int     `json:"video_bitrate,omitempty"`
-			AudioCodec      string  `json:"audio_codec,omitempty"`
-			AudioSampleRate int     `json:"audio_sample_rate,omitempty"`
-			AudioChannels   int     `json:"audio_channels,omitempty"`
-			AudioBitrate    int     `json:"audio_bitrate,omitempty"`
+			ChannelID          string                     `json:"channel_id,omitempty" doc:"Channel ULID if probed by channel_id"`
+			StreamURL          string                     `json:"stream_url"`
+			VideoCodec         string                     `json:"video_codec,omitempty" doc:"Primary video codec (from selected track)"`
+			VideoWidth         int                        `json:"video_width,omitempty"`
+			VideoHeight        int                        `json:"video_height,omitempty"`
+			VideoFramerate     float64                    `json:"video_framerate,omitempty"`
+			VideoBitrate       int                        `json:"video_bitrate,omitempty"`
+			AudioCodec         string                     `json:"audio_codec,omitempty" doc:"Primary audio codec (from selected track)"`
+			AudioSampleRate    int                        `json:"audio_sample_rate,omitempty"`
+			AudioChannels      int                        `json:"audio_channels,omitempty"`
+			AudioBitrate       int                        `json:"audio_bitrate,omitempty"`
+			ContainerFormat    string                     `json:"container_format,omitempty" doc:"Container format (hls, mpegts, dash, etc)"`
+			IsLiveStream       bool                       `json:"is_live_stream" doc:"Whether stream is live (no duration)"`
+			HasSubtitles       bool                       `json:"has_subtitles" doc:"Whether subtitles are present"`
+			StreamCount        int                        `json:"stream_count" doc:"Total number of streams in container"`
+			VideoTracks        []ffmpeg.VideoTrackInfo    `json:"video_tracks,omitempty" doc:"All video tracks discovered"`
+			AudioTracks        []ffmpeg.AudioTrackInfo    `json:"audio_tracks,omitempty" doc:"All audio tracks discovered"`
+			SubtitleTracks     []ffmpeg.SubtitleTrackInfo `json:"subtitle_tracks,omitempty" doc:"All subtitle tracks discovered"`
+			SelectedVideoTrack int                        `json:"selected_video_track" doc:"Index of selected video track (-1=auto)"`
+			SelectedAudioTrack int                        `json:"selected_audio_track" doc:"Index of selected audio track (-1=auto)"`
 		}{
-			ChannelID:       channelIDStr,
-			StreamURL:       codec.StreamURL,
-			VideoCodec:      codec.VideoCodec,
-			VideoWidth:      codec.VideoWidth,
-			VideoHeight:     codec.VideoHeight,
-			VideoFramerate:  codec.VideoFramerate,
-			VideoBitrate:    codec.VideoBitrate,
-			AudioCodec:      codec.AudioCodec,
-			AudioSampleRate: codec.AudioSampleRate,
-			AudioChannels:   codec.AudioChannels,
-			AudioBitrate:    codec.AudioBitrate,
+			ChannelID:          channelIDStr,
+			StreamURL:          streamURL,
+			VideoCodec:         streamInfo.VideoCodec,
+			VideoWidth:         streamInfo.VideoWidth,
+			VideoHeight:        streamInfo.VideoHeight,
+			VideoFramerate:     streamInfo.VideoFramerate,
+			VideoBitrate:       streamInfo.VideoBitrate,
+			AudioCodec:         streamInfo.AudioCodec,
+			AudioSampleRate:    streamInfo.AudioSampleRate,
+			AudioChannels:      streamInfo.AudioChannels,
+			AudioBitrate:       streamInfo.AudioBitrate,
+			ContainerFormat:    streamInfo.ContainerFormat,
+			IsLiveStream:       streamInfo.IsLiveStream,
+			HasSubtitles:       streamInfo.HasSubtitles,
+			StreamCount:        streamInfo.StreamCount,
+			VideoTracks:        streamInfo.VideoTracks,
+			AudioTracks:        streamInfo.AudioTracks,
+			SubtitleTracks:     streamInfo.SubtitleTracks,
+			SelectedVideoTrack: streamInfo.SelectedVideoTrack,
+			SelectedAudioTrack: streamInfo.SelectedAudioTrack,
 		},
 	}, nil
 }
@@ -1479,9 +1542,12 @@ func (h *RelayStreamHandler) ListRelaySessions(ctx context.Context, input *ListR
 		sessions = append(sessions, sessionStats.ToSessionInfo())
 	}
 
-	// Build the flow graph
+	// Get passthrough connections
+	passthroughConns := h.relayService.GetPassthroughConnections()
+
+	// Build the flow graph with both sessions and passthrough connections
 	builder := relay.NewFlowBuilder()
-	flowGraph := builder.BuildFlowGraph(sessions)
+	flowGraph := builder.BuildFlowGraphWithPassthrough(sessions, passthroughConns)
 
 	return &ListRelaySessionsOutput{
 		Body: flowGraph,

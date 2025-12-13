@@ -103,9 +103,10 @@ type Manager struct {
 	// channelSessions maps channel IDs to session IDs for reuse
 	channelSessions map[uuid.UUID]uuid.UUID
 
-	circuitBreakers   *CircuitBreakerRegistry
-	connectionPool    *ConnectionPool
-	fallbackGenerator *FallbackGenerator
+	circuitBreakers    *CircuitBreakerRegistry
+	connectionPool     *ConnectionPool
+	fallbackGenerator  *FallbackGenerator
+	passthroughTracker *PassthroughTracker
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -127,18 +128,19 @@ func NewManager(config ManagerConfig) *Manager {
 	}
 
 	m := &Manager{
-		config:            config,
-		ffmpegBin:         ffmpegBin,
-		prober:            prober,
-		classifier:        NewStreamClassifier(config.HTTPClient),
-		logger:            logger,
-		sessions:          make(map[uuid.UUID]*RelaySession),
-		channelSessions:   make(map[uuid.UUID]uuid.UUID),
-		circuitBreakers:   NewCircuitBreakerRegistry(config.CircuitBreakerConfig),
-		connectionPool:    NewConnectionPool(config.ConnectionPoolConfig),
-		fallbackGenerator: NewFallbackGenerator(config.FallbackConfig, logger),
-		ctx:               ctx,
-		cancel:            cancel,
+		config:             config,
+		ffmpegBin:          ffmpegBin,
+		prober:             prober,
+		classifier:         NewStreamClassifier(config.HTTPClient),
+		logger:             logger,
+		sessions:           make(map[uuid.UUID]*RelaySession),
+		channelSessions:    make(map[uuid.UUID]uuid.UUID),
+		circuitBreakers:    NewCircuitBreakerRegistry(config.CircuitBreakerConfig),
+		connectionPool:     NewConnectionPool(config.ConnectionPoolConfig),
+		fallbackGenerator:  NewFallbackGenerator(config.FallbackConfig, logger),
+		passthroughTracker: NewPassthroughTracker(),
+		ctx:                ctx,
+		cancel:             cancel,
 	}
 
 	// Start cleanup goroutine
@@ -158,13 +160,17 @@ func (m *Manager) FallbackGenerator() *FallbackGenerator {
 	return m.fallbackGenerator
 }
 
+// PassthroughTracker returns the manager's passthrough connection tracker.
+func (m *Manager) PassthroughTracker() *PassthroughTracker {
+	return m.passthroughTracker
+}
+
 // GetOrCreateSession gets an existing session for the channel or creates a new one.
-// channelUpdatedAt is used to invalidate stale codec cache entries.
 //
 // This function is carefully designed to avoid holding the manager lock during slow
 // operations (stream classification, codec probing) to prevent blocking API requests
 // like /api/v1/relay/sessions while a new session is being created.
-func (m *Manager) GetOrCreateSession(ctx context.Context, channelID uuid.UUID, channelName string, streamSourceName string, streamURL string, profile *models.EncodingProfile, channelUpdatedAt time.Time) (*RelaySession, error) {
+func (m *Manager) GetOrCreateSession(ctx context.Context, channelID uuid.UUID, channelName string, streamSourceName string, streamURL string, profile *models.EncodingProfile) (*RelaySession, error) {
 	// First, check if session already exists (fast path with read lock)
 	m.mu.RLock()
 	if sessionID, ok := m.channelSessions[channelID]; ok {
@@ -189,7 +195,7 @@ func (m *Manager) GetOrCreateSession(ctx context.Context, channelID uuid.UUID, c
 
 	// Perform slow operations (classify, probe) WITHOUT holding the manager lock
 	// This prevents blocking Stats() and other operations during session creation
-	session, err := m.createSession(ctx, channelID, channelName, streamSourceName, streamURL, profile, channelUpdatedAt)
+	session, err := m.createSession(ctx, channelID, channelName, streamSourceName, streamURL, profile)
 	if err != nil {
 		return nil, err
 	}
@@ -332,49 +338,16 @@ func (m *Manager) HTTPClient() *http.Client {
 	return http.DefaultClient
 }
 
-// GetOrProbeCodecInfo retrieves cached codec info or probes the stream.
+// ProbeAndStoreCodecInfo always probes the stream fresh and stores the result.
+// The stored result is used by the channel UI to display codec information.
 // Returns nil if probing is not available or fails (non-fatal).
-func (m *Manager) GetOrProbeCodecInfo(ctx context.Context, streamURL string) *models.LastKnownCodec {
-	return m.GetOrProbeCodecInfoWithFreshness(ctx, streamURL, time.Time{})
-}
-
-// GetOrProbeCodecInfoWithFreshness retrieves cached codec info or probes the stream.
-// If mustBeNewerThan is non-zero, cached entries older than this are considered stale.
-// This allows forcing a re-probe when the channel has been updated.
-// Returns nil if probing is not available or fails (non-fatal).
-func (m *Manager) GetOrProbeCodecInfoWithFreshness(ctx context.Context, streamURL string, mustBeNewerThan time.Time) *models.LastKnownCodec {
+func (m *Manager) ProbeAndStoreCodecInfo(ctx context.Context, streamURL string) *models.LastKnownCodec {
 	// If no prober available, skip
 	if m.prober == nil {
 		return nil
 	}
 
-	// Try to get from cache first
-	if m.config.CodecRepo != nil {
-		cached, err := m.config.CodecRepo.GetByStreamURL(ctx, streamURL)
-		if err == nil && cached != nil && !cached.IsExpired() && cached.IsValid() {
-			// Check freshness - if cache is older than mustBeNewerThan, treat as stale
-			if !mustBeNewerThan.IsZero() && time.Time(cached.ProbedAt).Before(mustBeNewerThan) {
-				m.logger.Debug("Cached codec info is stale (older than channel update), will re-probe",
-					slog.String("stream_url", streamURL),
-					slog.Time("probed_at", time.Time(cached.ProbedAt)),
-					slog.Time("must_be_newer_than", mustBeNewerThan))
-				// Continue to re-probe below
-			} else {
-				// Update hit count in background
-				go func() {
-					if touchErr := m.config.CodecRepo.Touch(context.Background(), streamURL); touchErr != nil {
-						m.logger.Debug("Failed to touch codec cache", slog.String("error", touchErr.Error()))
-					}
-				}()
-				m.logger.Debug("Using cached codec info",
-					slog.String("stream_url", streamURL),
-					slog.String("video_codec", cached.VideoCodec),
-					slog.String("audio_codec", cached.AudioCodec))
-				return cached
-			}
-		}
-	}
-
+	// Always probe fresh - no cache lookup
 	// Probe the stream using QuickProbe for fast detection
 	start := time.Now()
 	streamInfo, err := m.prober.QuickProbe(ctx, streamURL)
@@ -449,8 +422,7 @@ func (m *Manager) GetOrProbeCodecInfoWithFreshness(ctx context.Context, streamUR
 }
 
 // createSession creates a new relay session.
-// channelUpdatedAt is used to invalidate stale codec cache entries.
-func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, channelName string, streamSourceName string, streamURL string, profile *models.EncodingProfile, channelUpdatedAt time.Time) (*RelaySession, error) {
+func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, channelName string, streamSourceName string, streamURL string, profile *models.EncodingProfile) (*RelaySession, error) {
 	// Check circuit breaker
 	cb := m.circuitBreakers.Get(streamURL)
 	if !cb.Allow() {
@@ -467,9 +439,9 @@ func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, channe
 	}
 
 	// Pre-probe codec info for faster FFmpeg startup
-	// Use channelUpdatedAt to invalidate stale cache entries (e.g., after channel re-ingestion)
+	// Always probe fresh and store result for channel UI
 	// This is non-blocking - if probe fails, we continue without cached info
-	codecInfo := m.GetOrProbeCodecInfoWithFreshness(ctx, probeURL, channelUpdatedAt)
+	codecInfo := m.ProbeAndStoreCodecInfo(ctx, probeURL)
 
 	sessionCtx, sessionCancel := context.WithCancel(m.ctx)
 
@@ -500,8 +472,8 @@ func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, channe
 		session.fallbackGenerator = m.fallbackGenerator
 		session.fallbackController = NewFallbackController(
 			m.fallbackGenerator,
-			3,    // Default error threshold
-			30,   // Default recovery interval in seconds
+			3,  // Default error threshold
+			30, // Default recovery interval in seconds
 			m.logger.With(slog.String("session_id", session.ID.String())),
 		)
 	}

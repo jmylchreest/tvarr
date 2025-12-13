@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jmylchreest/tvarr/internal/config"
@@ -127,20 +126,11 @@ func (s *RelayService) GetLastKnownCodec(ctx context.Context, streamURL string) 
 }
 
 // ProbeStream probes a stream URL for codec information.
+// Returns LastKnownCodec with the selected/primary track info (cached to database).
 func (s *RelayService) ProbeStream(ctx context.Context, streamURL string) (*models.LastKnownCodec, error) {
-	binInfo, err := s.ffmpegDetector.Detect(ctx)
+	streamInfo, err := s.ProbeStreamFull(ctx, streamURL)
 	if err != nil {
-		return nil, fmt.Errorf("detecting FFmpeg: %w", err)
-	}
-
-	if s.prober == nil {
-		s.prober = ffmpeg.NewProber(binInfo.FFprobePath)
-	}
-
-	// Use QuickProbe for stream info
-	streamInfo, err := s.prober.QuickProbe(ctx, streamURL)
-	if err != nil {
-		return nil, fmt.Errorf("probing stream: %w", err)
+		return nil, err
 	}
 
 	// Convert to LastKnownCodec model (StreamInfo has direct video/audio fields)
@@ -174,6 +164,27 @@ func (s *RelayService) ProbeStream(ctx context.Context, streamURL string) (*mode
 	}
 
 	return codec, nil
+}
+
+// ProbeStreamFull probes a stream URL and returns full stream info including all tracks.
+// Use this when you need track lists for UI display or track selection.
+func (s *RelayService) ProbeStreamFull(ctx context.Context, streamURL string) (*ffmpeg.StreamInfo, error) {
+	binInfo, err := s.ffmpegDetector.Detect(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("detecting FFmpeg: %w", err)
+	}
+
+	if s.prober == nil {
+		s.prober = ffmpeg.NewProber(binInfo.FFprobePath)
+	}
+
+	// Use QuickProbe for stream info
+	streamInfo, err := s.prober.QuickProbe(ctx, streamURL)
+	if err != nil {
+		return nil, fmt.Errorf("probing stream: %w", err)
+	}
+
+	return streamInfo, nil
 }
 
 // GetCodecCacheStats returns statistics about the codec cache.
@@ -236,8 +247,8 @@ func (s *RelayService) StartRelay(ctx context.Context, channelID models.ULID, pr
 		streamSourceName = channel.Source.Name
 	}
 
-	// Start the relay session, passing channel's UpdatedAt to invalidate stale codec cache
-	session, err := s.relayManager.GetOrCreateSession(ctx, channelUUID, channel.ChannelName, streamSourceName, channel.StreamURL, profile, time.Time(channel.UpdatedAt))
+	// Start the relay session
+	session, err := s.relayManager.GetOrCreateSession(ctx, channelUUID, channel.ChannelName, streamSourceName, channel.StreamURL, profile)
 	if err != nil {
 		return nil, fmt.Errorf("starting relay session: %w", err)
 	}
@@ -278,8 +289,8 @@ func (s *RelayService) StartRelayWithProfile(ctx context.Context, channelID mode
 		streamSourceName = channel.Source.Name
 	}
 
-	// Start the relay session, passing channel's UpdatedAt to invalidate stale codec cache
-	session, err := s.relayManager.GetOrCreateSession(ctx, channelUUID, channel.ChannelName, streamSourceName, channel.StreamURL, profile, time.Time(channel.UpdatedAt))
+	// Start the relay session
+	session, err := s.relayManager.GetOrCreateSession(ctx, channelUUID, channel.ChannelName, streamSourceName, channel.StreamURL, profile)
 	if err != nil {
 		return nil, fmt.Errorf("starting relay session: %w", err)
 	}
@@ -325,6 +336,28 @@ func (s *RelayService) GetRelayStats() relay.ManagerStats {
 	return s.relayManager.Stats()
 }
 
+// GetPassthroughConnections returns all active passthrough connections.
+func (s *RelayService) GetPassthroughConnections() []*relay.PassthroughConnection {
+	if s.relayManager == nil {
+		return nil
+	}
+	return s.relayManager.PassthroughTracker().List()
+}
+
+// RegisterPassthroughConnection registers a new passthrough connection for tracking.
+func (s *RelayService) RegisterPassthroughConnection(conn *relay.PassthroughConnection) {
+	if s.relayManager != nil {
+		s.relayManager.PassthroughTracker().Register(conn)
+	}
+}
+
+// UnregisterPassthroughConnection removes a passthrough connection from tracking.
+func (s *RelayService) UnregisterPassthroughConnection(id string) {
+	if s.relayManager != nil {
+		s.relayManager.PassthroughTracker().Unregister(id)
+	}
+}
+
 // GetFFmpegInfo returns information about the detected FFmpeg installation.
 func (s *RelayService) GetFFmpegInfo(ctx context.Context) (*ffmpeg.BinaryInfo, error) {
 	return s.ffmpegDetector.Detect(ctx)
@@ -350,6 +383,16 @@ func (s *RelayService) GetHTTPClient() *http.Client {
 		return s.relayManager.HTTPClient()
 	}
 	return http.DefaultClient
+}
+
+// ProbeAndStoreCodecInfo always probes the stream fresh and stores the result.
+// The stored result is used by the channel UI to display codec information.
+// Returns nil if probing is not available or fails (non-fatal).
+func (s *RelayService) ProbeAndStoreCodecInfo(ctx context.Context, streamURL string) *models.LastKnownCodec {
+	if s.relayManager != nil {
+		return s.relayManager.ProbeAndStoreCodecInfo(ctx, streamURL)
+	}
+	return nil
 }
 
 // StreamInfo contains the information needed to stream a channel through a proxy.

@@ -81,8 +81,8 @@ type mpegtsStreamClient struct {
 	writer          http.ResponseWriter
 	flusher         http.Flusher
 	done            chan struct{}
-	mu              sync.Mutex     // Protects waitForKeyframe only
-	bytesWritten    atomic.Uint64  // Atomic for lock-free updates
+	mu              sync.Mutex    // Protects waitForKeyframe only
+	bytesWritten    atomic.Uint64 // Atomic for lock-free updates
 	startedAt       time.Time
 	waitForKeyframe bool // True if client is waiting for next keyframe before receiving data
 }
@@ -134,16 +134,48 @@ func (p *MPEGTSProcessor) Start(ctx context.Context) error {
 	p.esVariant = esVariant
 	esVariant.RegisterConsumer(p.id)
 
-	// Initialize TS muxer with the correct codec types from the variant
+	// Resolve actual codecs from the ES variant's tracks
+	// The variant key (e.g., "h265/") may not include audio if it wasn't detected
+	// when the source was created, but the track codec gets updated when audio arrives.
+	// For accurate codec info, we read directly from the tracks.
+	videoCodec := esVariant.VideoTrack().Codec()
+	audioCodec := esVariant.AudioTrack().Codec()
+
+	// If audio codec is empty, wait briefly for audio detection
+	// Audio often arrives shortly after video in the stream
+	if audioCodec == "" {
+		p.config.Logger.Debug("Waiting for audio codec detection")
+		waitCtx, waitCancel := context.WithTimeout(p.ctx, 2*time.Second)
+		ticker := time.NewTicker(50 * time.Millisecond)
+		for audioCodec == "" {
+			select {
+			case <-waitCtx.Done():
+				p.config.Logger.Debug("Audio codec detection timeout, proceeding without audio")
+				ticker.Stop()
+				waitCancel()
+				goto initMuxer
+			case <-ticker.C:
+				audioCodec = esVariant.AudioTrack().Codec()
+			}
+		}
+		ticker.Stop()
+		waitCancel()
+		p.config.Logger.Debug("Audio codec detected", slog.String("audio_codec", audioCodec))
+	}
+
+initMuxer:
+	// Initialize TS muxer with the correct codec types from the tracks
 	p.muxer = NewTSMuxer(&p.muxerBuf, TSMuxerConfig{
 		Logger:     p.config.Logger,
-		VideoCodec: p.variant.VideoCodec(),
-		AudioCodec: p.variant.AudioCodec(),
+		VideoCodec: videoCodec,
+		AudioCodec: audioCodec,
 	})
 
 	p.config.Logger.Debug("MPEG-TS muxer initialized",
-		slog.String("video_codec", p.variant.VideoCodec()),
-		slog.String("audio_codec", p.variant.AudioCodec()))
+		slog.String("requested_variant", p.variant.String()),
+		slog.String("resolved_variant", esVariant.Variant().String()),
+		slog.String("video_codec", videoCodec),
+		slog.String("audio_codec", audioCodec))
 
 	p.config.Logger.Debug("Starting MPEG-TS processor",
 		slog.String("id", p.id),
@@ -360,16 +392,27 @@ func (p *MPEGTSProcessor) processAvailableSamples(videoTrack, audioTrack *ESTrac
 			}
 			hasKeyframe = true
 		}
-		// Ignore muxer errors - continue streaming on failures
-		_ = p.muxer.WriteVideo(sample.PTS, sample.DTS, sample.Data, sample.IsKeyframe)
+		// Log muxer errors for debugging but continue streaming
+		if err := p.muxer.WriteVideo(sample.PTS, sample.DTS, sample.Data, sample.IsKeyframe); err != nil {
+			p.config.Logger.Debug("WriteVideo error",
+				slog.String("error", err.Error()),
+				slog.Int64("pts", sample.PTS),
+				slog.Int("data_len", len(sample.Data)),
+				slog.Bool("keyframe", sample.IsKeyframe))
+		}
 		p.lastVideoSeq = sample.Sequence
 	}
 
 	// Read audio samples
 	audioSamples := audioTrack.ReadFrom(p.lastAudioSeq, 200)
 	for _, sample := range audioSamples {
-		// Ignore muxer errors - continue streaming on failures
-		_ = p.muxer.WriteAudio(sample.PTS, sample.Data)
+		// Log muxer errors for debugging but continue streaming
+		if err := p.muxer.WriteAudio(sample.PTS, sample.Data); err != nil {
+			p.config.Logger.Debug("WriteAudio error",
+				slog.String("error", err.Error()),
+				slog.Int64("pts", sample.PTS),
+				slog.Int("data_len", len(sample.Data)))
+		}
 		p.lastAudioSeq = sample.Sequence
 	}
 
