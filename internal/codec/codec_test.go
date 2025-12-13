@@ -327,7 +327,7 @@ func TestIsDemuxable(t *testing.T) {
 		{AudioMP3, true},
 		{AudioAC3, true},
 		{AudioOpus, true},
-		{AudioEAC3, false},
+		{AudioEAC3, true}, // Now demuxable with mediacommon fork
 		{AudioDTS, false},
 		{AudioTrueHD, false},
 		{AudioFLAC, false},
@@ -391,14 +391,15 @@ func TestIsAudioDemuxable(t *testing.T) {
 		{"opus", true},
 		{"libfdk_aac", true},
 		{"libmp3lame", true},
+		// Now demuxable with mediacommon fork
+		{"eac3", true},
+		{"ec-3", true}, // E-AC3 alias
 		// Not demuxable
-		{"eac3", false},
 		{"dts", false},
 		{"truehd", false},
 		{"flac", false},
 		{"vorbis", false},
 		{"pcm", false},
-		{"ec-3", false}, // E-AC3 alias
 		// Unknown - defaults to false (safer)
 		{"unknown", false},
 	}
