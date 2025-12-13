@@ -63,6 +63,7 @@ const (
 	StreamTypeH265 = codec.StreamTypeH265
 	StreamTypeAAC  = codec.StreamTypeAAC
 	StreamTypeAC3  = codec.StreamTypeAC3
+	StreamTypeEAC3 = codec.StreamTypeEAC3
 	StreamTypeMP3  = codec.StreamTypeMP3
 )
 
@@ -195,6 +196,14 @@ func (m *TSMuxer) initialize() error {
 				ChannelCount: 2,
 			},
 		}
+	case "eac3", "ec-3", "ec3":
+		m.audioTrack = &mpegts.Track{
+			PID: m.config.AudioPID,
+			Codec: &mpegts.CodecEAC3{
+				SampleRate:   48000,
+				ChannelCount: 6, // E-AC3 often has 5.1 channels
+			},
+		}
 	case "mp3":
 		m.audioTrack = &mpegts.Track{
 			PID:   m.config.AudioPID,
@@ -265,6 +274,8 @@ func (m *TSMuxer) SetAudioStreamType(streamType uint8) {
 		m.audioCodec = "aac"
 	case StreamTypeAC3:
 		m.audioCodec = "ac3"
+	case StreamTypeEAC3:
+		m.audioCodec = "eac3"
 	case StreamTypeMP3:
 		m.audioCodec = "mp3"
 	}
@@ -357,6 +368,8 @@ func (m *TSMuxer) WriteAudio(pts int64, data []byte) error {
 		return m.muxer.WriteMPEG4Audio(m.audioTrack, pts, aus)
 	case "ac3":
 		return m.muxer.WriteAC3(m.audioTrack, pts, data)
+	case "eac3", "ec-3", "ec3":
+		return m.muxer.WriteEAC3(m.audioTrack, pts, data)
 	case "mp3":
 		// MP3 frames
 		frames := [][]byte{data}
@@ -500,6 +513,9 @@ func TSMuxerWithTracks(w io.Writer, tracks []*mpegts.Track, logger *slog.Logger)
 		case *mpegts.CodecAC3:
 			m.audioTrack = track
 			m.audioCodec = "ac3"
+		case *mpegts.CodecEAC3:
+			m.audioTrack = track
+			m.audioCodec = "eac3"
 		case *mpegts.CodecMPEG1Audio:
 			m.audioTrack = track
 			m.audioCodec = "mp3"

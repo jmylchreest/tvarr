@@ -143,6 +143,7 @@ const (
 	StreamTypeH265 uint8 = 0x24
 	StreamTypeAAC  uint8 = 0x0F
 	StreamTypeAC3  uint8 = 0x81
+	StreamTypeEAC3 uint8 = 0x87
 	StreamTypeMP3  uint8 = 0x03
 )
 
