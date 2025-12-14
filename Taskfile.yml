@@ -721,6 +721,7 @@ tasks:
     desc: Run Go backend with hot reload (API only, no frontend)
     summary: |
       Runs the Go backend server with hot reload using air.
+      JSON logs are formatted with humanlog for readability.
 
       For full-stack development:
         Terminal 1: task run:dev       (Go backend on :8080)
@@ -728,12 +729,19 @@ tasks:
 
       The frontend dev server proxies API requests to the backend.
       For production builds, use 'task frontend:embed' to embed the UI.
+
+      Use 'task run:dev:json' for raw JSON log output.
+    deps: [tools:humanlog, tools:air]
     cmds:
-      - |
-        if ! command -v air &> /dev/null; then
-          echo "Installing air..."
-          go install github.com/air-verse/air@latest
-        fi
+      - air 2>&1 | humanlog
+
+  run:dev:json:
+    desc: Run Go backend with hot reload (raw JSON logs)
+    summary: |
+      Same as run:dev but outputs raw JSON logs without formatting.
+      Useful for piping to other tools or debugging log parsing issues.
+    deps: [tools:air]
+    cmds:
       - air
 
   run:prod:
@@ -742,6 +750,24 @@ tasks:
       - task: frontend:embed
       - task: build
       - ./{{.DEBUG_DIR}}/{{.BINARY_NAME}} serve
+
+  # ============================================
+  # Tool Installation Tasks
+  # ============================================
+
+  tools:humanlog:
+    desc: Install humanlog for formatted JSON log output
+    status:
+      - command -v humanlog
+    cmds:
+      - go install github.com/humanlogio/humanlog/cmd/humanlog@latest
+
+  tools:air:
+    desc: Install air for hot reload development
+    status:
+      - command -v air
+    cmds:
+      - go install github.com/air-verse/air@latest
 
   # ============================================
   # Dependency Tasks
