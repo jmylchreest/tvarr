@@ -14,6 +14,8 @@ import (
 
 	"github.com/jmylchreest/tvarr/internal/assets"
 	"github.com/jmylchreest/tvarr/internal/models"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 var (
@@ -301,7 +303,7 @@ func (s *ThemeService) formatThemeName(id string) string {
 	// Replace hyphens/underscores with spaces and title case
 	name := strings.ReplaceAll(id, "-", " ")
 	name = strings.ReplaceAll(name, "_", " ")
-	return strings.Title(name)
+	return cases.Title(language.English).String(name)
 }
 
 // extractColors extracts color values from CSS for theme previews.

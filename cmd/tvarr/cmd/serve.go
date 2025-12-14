@@ -82,9 +82,14 @@ func init() {
 	mustBindPFlag("scheduler.job_history_retention", serveCmd.Flags().Lookup("job-history-retention"))
 }
 
-func runServe(cmd *cobra.Command, args []string) error {
-	// Initialize log level from config before creating logger
+func runServe(_ *cobra.Command, _ []string) error {
+	// Log level is already set by initLogging() in PersistentPreRunE.
+	// Here we just ensure the runtime-modifiable GlobalLogLevel is synced,
+	// which is needed for runtime log level changes via API.
 	logLevel := viper.GetString("logging.level")
+	if rootCmd.PersistentFlags().Changed("log-level") {
+		logLevel, _ = rootCmd.PersistentFlags().GetString("log-level")
+	}
 	if logLevel == "" {
 		logLevel = "info"
 	}

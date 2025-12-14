@@ -557,37 +557,6 @@ func (s *ClientDetectionService) TestExpression(expr string, r *http.Request) (b
 	return result.Matches, nil
 }
 
-// ruleToResult converts a rule to a detection result.
-func (s *ClientDetectionService) ruleToResult(rule *models.ClientDetectionRule) *models.ClientDetectionResult {
-	return &models.ClientDetectionResult{
-		MatchedRule:         rule,
-		AcceptedVideoCodecs: rule.GetAcceptedVideoCodecs(),
-		AcceptedAudioCodecs: rule.GetAcceptedAudioCodecs(),
-		PreferredVideoCodec: string(rule.PreferredVideoCodec),
-		PreferredAudioCodec: string(rule.PreferredAudioCodec),
-		SupportsFMP4:        models.BoolVal(rule.SupportsFMP4),
-		SupportsMPEGTS:      models.BoolVal(rule.SupportsMPEGTS),
-		PreferredFormat:     rule.PreferredFormat,
-		DetectionSource:     "rule",
-	}
-}
-
-// defaultResult returns a default detection result when no rule matches.
-// Uses conservative defaults (H.264/AAC, both containers).
-func (s *ClientDetectionService) defaultResult() *models.ClientDetectionResult {
-	return &models.ClientDetectionResult{
-		MatchedRule:         nil,
-		AcceptedVideoCodecs: []string{"h264"},
-		AcceptedAudioCodecs: []string{"aac"},
-		PreferredVideoCodec: "h264",
-		PreferredAudioCodec: "aac",
-		SupportsFMP4:        true,
-		SupportsMPEGTS:      true,
-		PreferredFormat:     "",
-		DetectionSource:     "default",
-	}
-}
-
 // isClientDetectionSystemFieldChanged checks if any system-protected field has been changed.
 func isClientDetectionSystemFieldChanged(existing, updated *models.ClientDetectionRule) bool {
 	return existing.Name != updated.Name ||

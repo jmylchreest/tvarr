@@ -363,3 +363,199 @@ func TestChainedWith(t *testing.T) {
 	assert.Contains(t, output, `"request_id":"req-chain"`)
 	assert.Contains(t, output, `"component":"service"`)
 }
+
+func TestSensitiveDataRedaction(t *testing.T) {
+	tests := []struct {
+		name          string
+		fieldName     string
+		sensitiveData string
+	}{
+		{"password lowercase", "password", "secret123"},
+		{"password capitalized", "Password", "MyP@ssw0rd"},
+		{"secret lowercase", "secret", "topsecret"},
+		{"secret capitalized", "Secret", "TopSecret"},
+		{"token lowercase", "token", "jwt-token-abc"},
+		{"token capitalized", "Token", "Bearer xyz"},
+		{"apikey lowercase", "apikey", "ak_12345"},
+		{"apikey capitalized", "ApiKey", "AK_67890"},
+		{"api_key snake case", "api_key", "api-key-value"},
+		{"credential lowercase", "credential", "cred-abc"},
+		{"credential capitalized", "Credential", "CRED-XYZ"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			cfg := config.LoggingConfig{Level: "info", Format: "json"}
+			logger := NewLoggerWithWriter(cfg, &buf)
+
+			// Log with sensitive field
+			logger.Info("test message", slog.String(tt.fieldName, tt.sensitiveData))
+
+			output := buf.String()
+			// Should NOT contain the actual sensitive data
+			assert.NotContains(t, output, tt.sensitiveData,
+				"sensitive data should be redacted for field %s", tt.fieldName)
+			// Should contain a redaction marker
+			assert.Contains(t, output, "[REDACTED]",
+				"should contain redaction marker for field %s", tt.fieldName)
+		})
+	}
+}
+
+func TestSensitiveDataRedaction_NestedStruct(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := config.LoggingConfig{Level: "info", Format: "json"}
+	logger := NewLoggerWithWriter(cfg, &buf)
+
+	// Test with slog.Group containing sensitive data
+	logger.Info("test with group",
+		slog.Group("credentials",
+			slog.String("username", "admin"),
+			slog.String("password", "secret123"),
+		),
+	)
+
+	output := buf.String()
+	// Username should be visible
+	assert.Contains(t, output, "admin")
+	// Password should be redacted
+	assert.NotContains(t, output, "secret123")
+	assert.Contains(t, output, "[REDACTED]")
+}
+
+func TestNonSensitiveDataNotRedacted(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := config.LoggingConfig{Level: "info", Format: "json"}
+	logger := NewLoggerWithWriter(cfg, &buf)
+
+	// Log with non-sensitive fields
+	logger.Info("test message",
+		slog.String("username", "john"),
+		slog.String("url", "http://example.com"),
+		slog.Int("count", 42),
+	)
+
+	output := buf.String()
+	// Should contain all non-sensitive data
+	assert.Contains(t, output, "john")
+	assert.Contains(t, output, "http://example.com")
+	assert.Contains(t, output, "42")
+}
+
+func TestURLParameterRedaction(t *testing.T) {
+	tests := []struct {
+		name           string
+		url            string
+		sensitiveValue string
+		paramName      string
+	}{
+		{
+			name:           "password in URL query",
+			url:            "http://example.com/api?username=user&password=secret123&action=login",
+			sensitiveValue: "secret123",
+			paramName:      "password",
+		},
+		{
+			name:           "password URL encoded",
+			url:            "http://example.com/api?password=%2A%2A%2A&username=foo",
+			sensitiveValue: "%2A%2A%2A",
+			paramName:      "password",
+		},
+		{
+			name:           "token in URL query",
+			url:            "http://api.example.com/v1?token=abc123xyz&user=admin",
+			sensitiveValue: "abc123xyz",
+			paramName:      "token",
+		},
+		{
+			name:           "apikey in URL query",
+			url:            "http://api.example.com/data?apikey=sk_live_12345&format=json",
+			sensitiveValue: "sk_live_12345",
+			paramName:      "apikey",
+		},
+		{
+			name:           "api_key snake case",
+			url:            "http://example.com?api_key=my-secret-key&v=1",
+			sensitiveValue: "my-secret-key",
+			paramName:      "api_key",
+		},
+		{
+			name:           "secret in URL query",
+			url:            "http://example.com/webhook?secret=webhook_secret_value",
+			sensitiveValue: "webhook_secret_value",
+			paramName:      "secret",
+		},
+		{
+			name:           "credential in URL query",
+			url:            "http://example.com/auth?credential=cred_abc123",
+			sensitiveValue: "cred_abc123",
+			paramName:      "credential",
+		},
+		{
+			name:           "case insensitive PASSWORD",
+			url:            "http://example.com/api?PASSWORD=MySecret&user=test",
+			sensitiveValue: "MySecret",
+			paramName:      "PASSWORD",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			cfg := config.LoggingConfig{Level: "info", Format: "json"}
+			logger := NewLoggerWithWriter(cfg, &buf)
+
+			// Log with URL containing sensitive parameter
+			logger.Info("request completed", slog.String("url", tt.url))
+
+			output := buf.String()
+			// Should NOT contain the actual sensitive value
+			assert.NotContains(t, output, tt.sensitiveValue,
+				"URL should have %s value redacted", tt.paramName)
+			// Should contain [REDACTED] marker
+			assert.Contains(t, output, "[REDACTED]",
+				"should contain redaction marker for %s parameter", tt.paramName)
+			// Should still contain the parameter name
+			assert.Contains(t, output, tt.paramName+"=[REDACTED]",
+				"should show parameter name with redacted value")
+		})
+	}
+}
+
+func TestURLParameterRedaction_MultipleParams(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := config.LoggingConfig{Level: "info", Format: "json"}
+	logger := NewLoggerWithWriter(cfg, &buf)
+
+	// URL with multiple sensitive parameters
+	url := "http://example.com/api?username=admin&password=secret123&token=bearer_xyz&apikey=ak_test"
+	logger.Info("request", slog.String("url", url))
+
+	output := buf.String()
+	// None of the sensitive values should appear
+	assert.NotContains(t, output, "secret123")
+	assert.NotContains(t, output, "bearer_xyz")
+	assert.NotContains(t, output, "ak_test")
+	// Username should be preserved (not sensitive)
+	assert.Contains(t, output, "admin")
+}
+
+func TestURLParameterRedaction_PreservesNonSensitiveURL(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := config.LoggingConfig{Level: "info", Format: "json"}
+	logger := NewLoggerWithWriter(cfg, &buf)
+
+	// URL without sensitive parameters
+	url := "http://example.com/api?username=john&action=get_data&format=json&page=1"
+	logger.Info("request", slog.String("url", url))
+
+	output := buf.String()
+	// All non-sensitive params should be preserved
+	assert.Contains(t, output, "username=john")
+	assert.Contains(t, output, "action=get_data")
+	assert.Contains(t, output, "format=json")
+	assert.Contains(t, output, "page=1")
+	// No redaction should occur
+	assert.NotContains(t, output, "[REDACTED]")
+}

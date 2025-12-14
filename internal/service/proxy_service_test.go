@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/jmylchreest/tvarr/internal/models"
-	"github.com/jmylchreest/tvarr/internal/pipeline"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -208,21 +207,6 @@ func (m *mockProxyRepo) GetByEncodingProfileID(ctx context.Context, profileID mo
 	return nil, nil
 }
 
-// mockPipelineFactory implements pipeline.OrchestratorFactory for testing.
-type mockPipelineFactory struct {
-	createErr error
-	execErr   error
-	result    *pipeline.Result
-}
-
-func (m *mockPipelineFactory) Create(proxy *models.StreamProxy) (*pipeline.Orchestrator, error) {
-	if m.createErr != nil {
-		return nil, m.createErr
-	}
-	// Return a minimal orchestrator - we can't easily mock this
-	// so we'll skip the Generate tests for now
-	return nil, nil
-}
 
 func TestProxyService_Create(t *testing.T) {
 	repo := newMockProxyRepo()

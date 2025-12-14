@@ -316,29 +316,6 @@ func (s *RelaySession) runNormalPipeline() error {
 	}
 }
 
-// runPassthroughBySourceFormat runs the appropriate passthrough pipeline based on source format.
-func (s *RelaySession) runPassthroughBySourceFormat() error {
-	// Handle passthrough based on source format classification
-	switch s.Classification.Mode {
-	case StreamModeCollapsedHLS:
-		return s.runHLSCollapsePipeline()
-	case StreamModePassthroughHLS, StreamModeTransparentHLS:
-		// Use HLS passthrough handler for HLS sources
-		return s.runHLSPassthroughPipeline()
-	case StreamModePassthroughDASH:
-		// Use DASH passthrough handler for DASH sources
-		return s.runDASHPassthroughPipeline()
-	default:
-		// Raw MPEG-TS or unknown - use ES-based pipeline for proper HLS segment generation
-		// The ES pipeline demuxes MPEG-TS to elementary streams, then muxes back to HLS segments
-		// with proper timing, enabling multi-variant codec support
-		slog.Debug("Using ES-based pipeline for raw MPEG-TS source",
-			slog.String("session_id", s.ID.String()),
-			slog.String("stream_url", s.StreamURL))
-		return s.runESPipeline()
-	}
-}
-
 // runFallbackStream runs the fallback stream until recovery or cancellation.
 // Note: Fallback now streams directly through the ES pipeline's MPEG-TS processor
 func (s *RelaySession) runFallbackStream() error {
@@ -1136,31 +1113,6 @@ func (s *RelaySession) stopTranscodersForVariants(variants map[CodecVariant]bool
 			slog.Debug("Stopping transcoder for removed variant",
 				slog.String("session_id", s.ID.String()),
 				slog.String("target_variant", stats.TargetVariant.String()))
-			transcoder.Stop()
-		} else {
-			remaining = append(remaining, transcoder)
-		}
-	}
-	s.esTranscoders = remaining
-}
-
-// cleanupIdleTranscoders stops transcoders that have been idle too long.
-// This is called in addition to variant cleanup to handle transcoders that
-// may have stopped producing output.
-func (s *RelaySession) cleanupIdleTranscoders() {
-	s.esTranscodersMu.Lock()
-	defer s.esTranscodersMu.Unlock()
-
-	cutoff := time.Now().Add(-VariantIdleTimeout)
-	var remaining []*FFmpegTranscoder
-
-	for _, transcoder := range s.esTranscoders {
-		stats := transcoder.Stats()
-		if stats.LastActivity.Before(cutoff) && !stats.LastActivity.IsZero() {
-			slog.Debug("Stopping idle transcoder",
-				slog.String("session_id", s.ID.String()),
-				slog.String("target_variant", stats.TargetVariant.String()),
-				slog.Duration("idle_time", time.Since(stats.LastActivity)))
 			transcoder.Stop()
 		} else {
 			remaining = append(remaining, transcoder)
@@ -2337,24 +2289,4 @@ func (s *RelaySession) GetHLSPassthrough() *HLSPassthroughHandler {
 // pipeline init and only read afterward.
 func (s *RelaySession) GetDASHPassthrough() *DASHPassthroughHandler {
 	return s.dashPassthrough
-}
-
-// demuxerWriter wraps TSDemuxer to implement io.Writer for FFmpeg output.
-// It feeds FFmpeg's MPEG-TS output to the demuxer which populates the ES buffer.
-type demuxerWriter struct {
-	demuxer *TSDemuxer
-	session *RelaySession
-}
-
-// Write implements io.Writer, feeding data to the demuxer.
-func (dw *demuxerWriter) Write(p []byte) (int, error) {
-	if err := dw.demuxer.Write(p); err != nil {
-		slog.Warn("Demuxer write error", slog.String("error", err.Error()))
-		// Don't fail the write - demuxer errors shouldn't stop FFmpeg
-	}
-
-	// Update activity timestamp using atomic to avoid blocking stats collection
-	dw.session.lastActivity.Store(time.Now())
-
-	return len(p), nil
 }

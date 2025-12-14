@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -364,70 +363,6 @@ func TestClient_CircuitBreakerIntegration(t *testing.T) {
 		assert.ErrorIs(t, err, ErrMaxRetries)
 		assert.Contains(t, err.Error(), ErrCircuitOpen.Error())
 	})
-}
-
-func TestObfuscateURL(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "obfuscates password",
-			input:    "http://example.com/api?username=user&password=secret123",
-			expected: "http://example.com/api?password=***&username=user",
-		},
-		{
-			name:     "obfuscates token",
-			input:    "http://example.com/api?token=abc123",
-			expected: "http://example.com/api?token=***",
-		},
-		{
-			name:     "obfuscates api_key",
-			input:    "http://example.com/api?api_key=secret",
-			expected: "http://example.com/api?api_key=***",
-		},
-		{
-			name:     "preserves non-sensitive params",
-			input:    "http://example.com/api?action=get&id=123",
-			expected: "http://example.com/api?action=get&id=123",
-		},
-		{
-			name:     "handles multiple sensitive params",
-			input:    "http://example.com/api?password=p1&token=t1&key=k1",
-			expected: "http://example.com/api?key=***&password=***&token=***",
-		},
-		{
-			name:     "handles nil url",
-			input:    "",
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var u *url.URL
-			if tt.input != "" {
-				var err error
-				u, err = url.Parse(tt.input)
-				require.NoError(t, err)
-			}
-
-			result := obfuscateURL(u)
-
-			if tt.expected == "" {
-				assert.Empty(t, result)
-			} else {
-				// Parse both to compare ignoring query param order
-				expectedURL, _ := url.Parse(tt.expected)
-				resultURL, _ := url.Parse(result)
-				assert.Equal(t, expectedURL.Host, resultURL.Host)
-				assert.Equal(t, expectedURL.Path, resultURL.Path)
-				// Query params should match (already sorted by url.Values.Encode)
-				assert.Equal(t, expectedURL.Query(), resultURL.Query())
-			}
-		})
-	}
 }
 
 func TestIsRetryableStatus(t *testing.T) {

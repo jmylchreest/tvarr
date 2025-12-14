@@ -338,21 +338,7 @@ func (h *RelayStreamHandler) handleChannelPreview(w http.ResponseWriter, r *http
 	streamURL := channel.StreamURL
 
 	// Classify the source stream
-	serviceClassification := h.relayService.ClassifyStream(ctx, streamURL)
-
-	// Convert service classification to relay classification
-	classification := relay.ClassificationResult{
-		Mode:                  serviceClassification.Mode,
-		SourceFormat:          serviceClassification.SourceFormat,
-		VariantCount:          serviceClassification.VariantCount,
-		TargetDuration:        serviceClassification.TargetDuration,
-		IsEncrypted:           serviceClassification.IsEncrypted,
-		UsesFMP4:              serviceClassification.UsesFMP4,
-		EligibleForCollapse:   serviceClassification.EligibleForCollapse,
-		SelectedMediaPlaylist: serviceClassification.SelectedMediaPlaylist,
-		SelectedBandwidth:     serviceClassification.SelectedBandwidth,
-		Reasons:               serviceClassification.Reasons,
-	}
+	classification := relay.ClassificationResult(h.relayService.ClassifyStream(ctx, streamURL))
 
 	// Determine client's desired format from query param or Accept header
 	clientFormat := h.resolveClientFormat(r, classification)
@@ -421,11 +407,11 @@ func (h *RelayStreamHandler) handleChannelPreview(w http.ResponseWriter, r *http
 			)
 			h.handleSmartTranscode(w, r, previewInfo, clientFormat)
 		} else {
-			h.handleSmartPassthrough(w, r, previewInfo, &serviceClassification)
+			h.handleSmartPassthrough(w, r, previewInfo, &classification)
 		}
 
 	case relay.DeliveryRepackage:
-		h.handleSmartRepackage(w, r, previewInfo, &serviceClassification, clientFormat)
+		h.handleSmartRepackage(w, r, previewInfo, &classification, clientFormat)
 
 	case relay.DeliveryTranscode:
 		// For HLS/DASH/MPEGTS format requests, use the ES pipeline
@@ -440,7 +426,7 @@ func (h *RelayStreamHandler) handleChannelPreview(w http.ResponseWriter, r *http
 			h.logger.Info("Channel preview: transcoding requested but falling back to passthrough",
 				"channel_id", channel.ID,
 			)
-			h.handleSmartPassthrough(w, r, previewInfo, &serviceClassification)
+			h.handleSmartPassthrough(w, r, previewInfo, &classification)
 		}
 	}
 }
@@ -473,21 +459,7 @@ func (h *RelayStreamHandler) handleRawSmartMode(w http.ResponseWriter, r *http.R
 	streamURL := info.Channel.StreamURL
 
 	// Classify the source stream
-	serviceClassification := h.relayService.ClassifyStream(ctx, streamURL)
-
-	// Convert service classification to relay classification for SelectDelivery
-	classification := relay.ClassificationResult{
-		Mode:                  serviceClassification.Mode,
-		SourceFormat:          serviceClassification.SourceFormat,
-		VariantCount:          serviceClassification.VariantCount,
-		TargetDuration:        serviceClassification.TargetDuration,
-		IsEncrypted:           serviceClassification.IsEncrypted,
-		UsesFMP4:              serviceClassification.UsesFMP4,
-		EligibleForCollapse:   serviceClassification.EligibleForCollapse,
-		SelectedMediaPlaylist: serviceClassification.SelectedMediaPlaylist,
-		SelectedBandwidth:     serviceClassification.SelectedBandwidth,
-		Reasons:               serviceClassification.Reasons,
-	}
+	classification := relay.ClassificationResult(h.relayService.ClassifyStream(ctx, streamURL))
 
 	// Detect client capabilities (codecs, formats)
 	clientCaps := h.detectClientCapabilities(r)
@@ -527,7 +499,7 @@ func (h *RelayStreamHandler) handleRawSmartMode(w http.ResponseWriter, r *http.R
 	// Dispatch based on delivery decision
 	switch deliveryDecision {
 	case relay.DeliveryPassthrough:
-		h.handleSmartPassthrough(w, r, info, &serviceClassification)
+		h.handleSmartPassthrough(w, r, info, &classification)
 
 	case relay.DeliveryRepackage:
 		// For repackage mode (client accepts source codecs), we need to clear the
@@ -535,7 +507,7 @@ func (h *RelayStreamHandler) handleRawSmartMode(w http.ResponseWriter, r *http.R
 		// of info without the encoding profile.
 		infoNoTranscode := *info
 		infoNoTranscode.EncodingProfile = nil
-		h.handleSmartRepackage(w, r, &infoNoTranscode, &serviceClassification, clientFormat)
+		h.handleSmartRepackage(w, r, &infoNoTranscode, &classification, clientFormat)
 
 	case relay.DeliveryTranscode:
 		h.handleSmartTranscode(w, r, info, clientFormat)
@@ -668,39 +640,6 @@ func (h *RelayStreamHandler) capsToClientFormat(caps relay.ClientCapabilities) r
 
 	// Default to auto (serve source format as-is)
 	return relay.ClientFormatAuto
-}
-
-// contains checks if substr is in s (case-insensitive).
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsLower(s, substr))
-}
-
-func containsLower(s, substr string) bool {
-	for i := 0; i+len(substr) <= len(s); i++ {
-		if matchLower(s[i:i+len(substr)], substr) {
-			return true
-		}
-	}
-	return false
-}
-
-func matchLower(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := 0; i < len(a); i++ {
-		ca, cb := a[i], b[i]
-		if ca >= 'A' && ca <= 'Z' {
-			ca += 'a' - 'A'
-		}
-		if cb >= 'A' && cb <= 'Z' {
-			cb += 'a' - 'A'
-		}
-		if ca != cb {
-			return false
-		}
-	}
-	return true
 }
 
 // getEncodingProfile returns the encoding profile from stream info.
