@@ -459,7 +459,7 @@ func TestESSampleAdapter_ConfigureWriter(t *testing.T) {
 	}
 	adapter.audioParams = &AudioCodecParams{
 		Codec: "aac",
-		AACConfig: &mpeg4audio.Config{
+		AACConfig: &mpeg4audio.AudioSpecificConfig{
 			Type:         mpeg4audio.ObjectTypeAACLC,
 			SampleRate:   48000,
 			ChannelCount: 2,

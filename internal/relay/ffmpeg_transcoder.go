@@ -157,10 +157,14 @@ func (t *FFmpegTranscoder) Start(ctx context.Context) error {
 	t.ctx, t.cancel = context.WithCancel(ctx)
 	t.startedAt = time.Now()
 
-	// Get source variant to read from
-	sourceVariant := t.buffer.GetVariant(t.config.SourceVariant)
+	// Get source variant to read from.
+	// Use the buffer's current source variant key instead of the configured one,
+	// because the source variant may have been updated (e.g., audio codec detected
+	// after video) between when the transcoder was created and when Start() is called.
+	currentSourceKey := t.buffer.SourceVariantKey()
+	sourceVariant := t.buffer.GetVariant(currentSourceKey)
 	if sourceVariant == nil {
-		return fmt.Errorf("source variant %s not found", t.config.SourceVariant)
+		return fmt.Errorf("source variant %s not found", currentSourceKey)
 	}
 
 	// Create or get target variant
@@ -177,19 +181,19 @@ func (t *FFmpegTranscoder) Start(ctx context.Context) error {
 	// Get actual codec from the track (not from variant name which may be incomplete at startup)
 	videoCodec := sourceVariant.VideoTrack().Codec()
 	audioCodec := sourceVariant.AudioTrack().Codec()
-	// Fall back to variant name if track codec not yet set
+	// Fall back to current source variant name if track codec not yet set
 	if videoCodec == "" {
-		videoCodec = t.config.SourceVariant.VideoCodec()
+		videoCodec = currentSourceKey.VideoCodec()
 	}
 	if audioCodec == "" {
-		audioCodec = t.config.SourceVariant.AudioCodec()
+		audioCodec = currentSourceKey.AudioCodec()
 	}
 
 	t.config.Logger.Debug("Initializing transcoder input muxer",
 		slog.String("id", t.id),
 		slog.String("video_codec", videoCodec),
 		slog.String("audio_codec", audioCodec),
-		slog.String("source_variant", string(t.config.SourceVariant)))
+		slog.String("source_variant", string(currentSourceKey)))
 
 	t.inputMuxer = NewTSMuxer(&t.inputBuf, TSMuxerConfig{
 		Logger:     t.config.Logger,
@@ -220,7 +224,7 @@ func (t *FFmpegTranscoder) Start(ctx context.Context) error {
 
 	t.config.Logger.Debug("Starting FFmpeg transcoder",
 		slog.String("id", t.id),
-		slog.String("source", string(t.config.SourceVariant)),
+		slog.String("source", string(currentSourceKey)),
 		slog.String("target", string(t.config.TargetVariant)),
 		slog.Bool("direct_input", t.config.UseDirectInput))
 

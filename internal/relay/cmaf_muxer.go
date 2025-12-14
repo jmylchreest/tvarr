@@ -925,7 +925,7 @@ type FMP4Writer struct {
 	h265VPS []byte
 	h265SPS []byte
 	h265PPS []byte
-	aacConf *mpeg4audio.Config
+	aacConf *mpeg4audio.AudioSpecificConfig
 
 	// State
 	seqNum      uint32
@@ -959,7 +959,7 @@ func (w *FMP4Writer) SetH265Params(vps, sps, pps []byte) {
 }
 
 // SetAACConfig sets AAC codec configuration.
-func (w *FMP4Writer) SetAACConfig(config *mpeg4audio.Config) {
+func (w *FMP4Writer) SetAACConfig(config *mpeg4audio.AudioSpecificConfig) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 

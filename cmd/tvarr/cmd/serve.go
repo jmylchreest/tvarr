@@ -82,9 +82,14 @@ func init() {
 	mustBindPFlag("scheduler.job_history_retention", serveCmd.Flags().Lookup("job-history-retention"))
 }
 
-func runServe(cmd *cobra.Command, args []string) error {
-	// Initialize log level from config before creating logger
+func runServe(_ *cobra.Command, _ []string) error {
+	// Log level is already set by initLogging() in PersistentPreRunE.
+	// Here we just ensure the runtime-modifiable GlobalLogLevel is synced,
+	// which is needed for runtime log level changes via API.
 	logLevel := viper.GetString("logging.level")
+	if rootCmd.PersistentFlags().Changed("log-level") {
+		logLevel, _ = rootCmd.PersistentFlags().GetString("log-level")
+	}
 	if logLevel == "" {
 		logLevel = "info"
 	}
@@ -518,6 +523,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	logsHandler := handlers.NewLogsHandler(logsService)
 	logsHandler.Register(server.API())
 	logsHandler.RegisterSSE(server.Router())
+
+	systemHandler := handlers.NewSystemHandler(relayService)
+	systemHandler.Register(server.API())
 	logger.Debug("http handlers registered")
 
 	// Register job handler
@@ -545,11 +553,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	defer sched.Stop()
 
-	// Start job runner
-	if err := runner.Start(ctx); err != nil {
-		return fmt.Errorf("starting runner: %w", err)
-	}
-	defer runner.Stop()
+	// Schedule startup jobs BEFORE starting the runner to avoid database contention.
+	// The runner's workers immediately start polling for jobs, so we need all
+	// startup jobs to be created first.
 
 	// Schedule initial logo maintenance job on startup if configured
 	if logoScanSchedule != "" {
@@ -566,6 +572,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Warn("failed to catch up missed runs", slog.Any("error", err))
 		}
 	}
+
+	// Start job runner (workers begin polling for jobs)
+	if err := runner.Start(ctx); err != nil {
+		return fmt.Errorf("starting runner: %w", err)
+	}
+	defer runner.Stop()
 
 	// Start server
 	logger.Info("starting tvarr server",

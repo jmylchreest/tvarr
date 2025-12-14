@@ -125,9 +125,10 @@ func (d *TSDemuxer) runReader() {
 
 	d.initOnce.Do(func() {
 		d.initialized = true
-		d.config.Logger.Debug("MPEG-TS demuxer initialized",
+		d.config.Logger.Debug("MPEG-TS demuxer ready",
 			slog.String("video_codec", d.videoCodec),
-			slog.String("audio_codec", d.audioCodec))
+			slog.String("audio_codec", d.audioCodec),
+			slog.Int("audio_sample_rate", d.audioSampleRate))
 	})
 
 	// Set up decode error callback
@@ -177,7 +178,8 @@ func (d *TSDemuxer) setupTrackCallback(track *mpegts.Track) {
 		d.reader.OnDataH264(track, func(pts, dts int64, au [][]byte) error {
 			return d.handleH264(pts, dts, au)
 		})
-		d.config.Logger.Debug("Found H.264 video track",
+		d.config.Logger.Debug("Found video track",
+			slog.String("codec", "h264"),
 			slog.Uint64("pid", uint64(track.PID)))
 
 	case *mpegts.CodecH265:
@@ -191,7 +193,8 @@ func (d *TSDemuxer) setupTrackCallback(track *mpegts.Track) {
 		d.reader.OnDataH265(track, func(pts, dts int64, au [][]byte) error {
 			return d.handleH265(pts, dts, au)
 		})
-		d.config.Logger.Debug("Found H.265 video track",
+		d.config.Logger.Debug("Found video track",
+			slog.String("codec", "h265"),
 			slog.Uint64("pid", uint64(track.PID)))
 
 	case *mpegts.CodecMPEG4Audio:
@@ -212,7 +215,8 @@ func (d *TSDemuxer) setupTrackCallback(track *mpegts.Track) {
 		d.reader.OnDataMPEG4Audio(track, func(pts int64, aus [][]byte) error {
 			return d.handleMPEG4Audio(pts, aus)
 		})
-		d.config.Logger.Debug("Found AAC audio track",
+		d.config.Logger.Debug("Found audio track",
+			slog.String("codec", "aac"),
 			slog.Uint64("pid", uint64(track.PID)),
 			slog.Int("sample_rate", codec.Config.SampleRate),
 			slog.Int("channels", codec.Config.ChannelCount),
@@ -228,7 +232,8 @@ func (d *TSDemuxer) setupTrackCallback(track *mpegts.Track) {
 		d.reader.OnDataAC3(track, func(pts int64, frame []byte) error {
 			return d.handleAC3(pts, frame)
 		})
-		d.config.Logger.Debug("Found AC-3 audio track",
+		d.config.Logger.Debug("Found audio track",
+			slog.String("codec", "ac3"),
 			slog.Uint64("pid", uint64(track.PID)),
 			slog.Int("sample_rate", codec.SampleRate),
 			slog.Int("channels", codec.ChannelCount))
@@ -250,7 +255,8 @@ func (d *TSDemuxer) setupTrackCallback(track *mpegts.Track) {
 		d.reader.OnDataEAC3(track, func(pts int64, frame []byte) error {
 			return d.handleEAC3(pts, frame)
 		})
-		d.config.Logger.Debug("Found E-AC-3 audio track",
+		d.config.Logger.Debug("Found audio track",
+			slog.String("codec", "eac3"),
 			slog.Uint64("pid", uint64(track.PID)),
 			slog.Int("sample_rate", codec.SampleRate),
 			slog.Int("channels", codec.ChannelCount),
@@ -269,8 +275,10 @@ func (d *TSDemuxer) setupTrackCallback(track *mpegts.Track) {
 		d.reader.OnDataMPEG1Audio(track, func(pts int64, frames [][]byte) error {
 			return d.handleMPEG1Audio(pts, frames)
 		})
-		d.config.Logger.Debug("Found MPEG-1 audio track",
+		d.config.Logger.Debug("Found audio track",
+			slog.String("codec", "mp3"),
 			slog.Uint64("pid", uint64(track.PID)),
+			slog.Int("sample_rate", d.audioSampleRate),
 			slog.Int64("frame_duration_ticks", d.audioFrameDuration))
 
 	case *mpegts.CodecOpus:
@@ -286,8 +294,10 @@ func (d *TSDemuxer) setupTrackCallback(track *mpegts.Track) {
 		d.reader.OnDataOpus(track, func(pts int64, packets [][]byte) error {
 			return d.handleOpus(pts, packets)
 		})
-		d.config.Logger.Debug("Found Opus audio track",
+		d.config.Logger.Debug("Found audio track",
+			slog.String("codec", "opus"),
 			slog.Uint64("pid", uint64(track.PID)),
+			slog.Int("sample_rate", d.audioSampleRate),
 			slog.Int("channels", codec.ChannelCount),
 			slog.Int64("frame_duration_ticks", d.audioFrameDuration))
 
@@ -301,9 +311,9 @@ func (d *TSDemuxer) setupTrackCallback(track *mpegts.Track) {
 				if d.buffer != nil && d.config.TargetVariant == "" {
 					d.buffer.SetAudioCodec(d.config.ProbeOverrideAudioCodec, nil)
 				}
-				d.config.Logger.Info("Using probe override for unsupported audio track",
-					slog.Uint64("pid", uint64(track.PID)),
-					slog.String("override_codec", d.config.ProbeOverrideAudioCodec))
+				d.config.Logger.Debug("Found audio track (unsupported, using probe override)",
+					slog.String("codec", d.config.ProbeOverrideAudioCodec),
+					slog.Uint64("pid", uint64(track.PID)))
 				// Note: We cannot demux audio frames for unsupported codecs.
 				// The transcoder will need to read from the original MPEG-TS stream.
 			} else {
@@ -591,9 +601,10 @@ func TSDemuxerFromReader(ctx context.Context, r io.Reader, buffer *SharedESBuffe
 	d.initialized = true
 	close(d.initDone)
 
-	d.config.Logger.Debug("MPEG-TS demuxer initialized from reader",
+	d.config.Logger.Debug("MPEG-TS demuxer ready",
 		slog.String("video_codec", d.videoCodec),
-		slog.String("audio_codec", d.audioCodec))
+		slog.String("audio_codec", d.audioCodec),
+		slog.Int("audio_sample_rate", d.audioSampleRate))
 
 	// Set up decode error callback
 	d.reader.OnDecodeError(func(err error) {

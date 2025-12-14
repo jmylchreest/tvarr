@@ -455,7 +455,7 @@ func TestFMP4Writer_SetH264Params(t *testing.T) {
 func TestFMP4Writer_SetAACConfig(t *testing.T) {
 	writer := NewFMP4Writer()
 
-	config := &mpeg4audio.Config{
+	config := &mpeg4audio.AudioSpecificConfig{
 		Type:         mpeg4audio.ObjectTypeAACLC,
 		SampleRate:   48000,
 		ChannelCount: 2,
@@ -506,7 +506,7 @@ func TestFMP4Writer_GenerateInit_AudioOnly(t *testing.T) {
 	writer := NewFMP4Writer()
 
 	// Set AAC config
-	config := &mpeg4audio.Config{
+	config := &mpeg4audio.AudioSpecificConfig{
 		Type:         mpeg4audio.ObjectTypeAACLC,
 		SampleRate:   48000,
 		ChannelCount: 2,

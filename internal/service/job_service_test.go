@@ -436,15 +436,6 @@ func (m *jobMockProxyRepo) GetByEncodingProfileID(ctx context.Context, profileID
 	return nil, nil
 }
 
-// mockScheduler wraps the real scheduler for testing.
-type mockScheduler struct {
-	scheduleImmediateJob *models.Job
-	scheduleImmediateErr error
-	validateCronErr      error
-	parseCronTime        time.Time
-	parseCronErr         error
-}
-
 func TestJobService_GetByID(t *testing.T) {
 	jobRepo := newJobMockJobRepo()
 	svc := NewJobService(jobRepo, newJobMockStreamSourceRepo(), newJobMockEpgSourceRepo(), newJobMockProxyRepo())

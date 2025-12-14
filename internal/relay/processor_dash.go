@@ -329,6 +329,7 @@ func (p *DASHProcessor) ServeManifest(w http.ResponseWriter, r *http.Request) er
 	buf.WriteString("  </Period>\n")
 	buf.WriteString("</MPD>\n")
 
+	p.SetStreamHeaders(w)
 	w.Header().Set("Content-Type", "application/dash+xml")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	_, err := w.Write(buf.Bytes())
@@ -348,6 +349,7 @@ func (p *DASHProcessor) ServeSegment(w http.ResponseWriter, r *http.Request, seg
 			return ErrDASHInitSegmentNotReady
 		}
 
+		p.SetStreamHeaders(w)
 		w.Header().Set("Content-Type", "video/mp4")
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(initSeg.Data)))
 		w.Header().Set("Cache-Control", "public, max-age=31536000")
@@ -378,6 +380,7 @@ func (p *DASHProcessor) ServeSegment(w http.ResponseWriter, r *http.Request, seg
 		return fmt.Errorf("segment %d not found", seq)
 	}
 
+	p.SetStreamHeaders(w)
 	w.Header().Set("Content-Type", "video/mp4")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(segment.data)))
 	w.Header().Set("Cache-Control", "public, max-age=31536000")

@@ -883,6 +883,25 @@ type SharedESBufferConfig struct {
 	// When disabled, eviction is controlled only by consumer position tracking.
 	MaxVariantBytes uint64
 	Logger          *slog.Logger
+
+	// Expected codec hints from probing - used to initialize the source variant
+	// with both video and audio codecs upfront, avoiding the delay of waiting
+	// for demuxer detection. These are hints and can be overridden by actual
+	// codec detection from the stream.
+	ExpectedVideoCodec   string
+	ExpectedVideoProfile string
+	ExpectedVideoWidth   int
+	ExpectedVideoHeight  int
+	ExpectedFramerate    float64
+	ExpectedVideoBitrate int // bps
+
+	ExpectedAudioCodec      string
+	ExpectedAudioChannels   int
+	ExpectedAudioSampleRate int
+	ExpectedAudioBitrate    int // bps
+
+	ExpectedContainer string
+	ExpectedIsLive    bool
 }
 
 // DefaultMaxVariantBytes is the default maximum bytes per variant.
@@ -940,12 +959,15 @@ type SharedESBuffer struct {
 }
 
 // NewSharedESBuffer creates a new shared elementary stream buffer.
+// If ExpectedVideoCodec and ExpectedAudioCodec hints are set in the config,
+// the source variant is pre-created with both codecs immediately, avoiding
+// the delay of waiting for demuxer detection.
 func NewSharedESBuffer(channelID, proxyID string, config SharedESBufferConfig) *SharedESBuffer {
 	if config.Logger == nil {
 		config.Logger = slog.Default()
 	}
 
-	return &SharedESBuffer{
+	b := &SharedESBuffer{
 		channelID:     channelID,
 		proxyID:       proxyID,
 		config:        config,
@@ -955,6 +977,29 @@ func NewSharedESBuffer(channelID, proxyID string, config SharedESBufferConfig) *
 		processors:    make(map[string]struct{}),
 		closedCh:      make(chan struct{}),
 	}
+
+	// Pre-create source variant if we have codec hints from probing
+	// This allows the source variant to be immediately available with both
+	// video and audio codecs, eliminating the delay of waiting for demuxer
+	// detection to discover the audio codec
+	if config.ExpectedVideoCodec != "" && config.ExpectedAudioCodec != "" {
+		config.Logger.Debug("Pre-creating source variant from codec hints",
+			slog.String("channel_id", channelID),
+			slog.String("container", config.ExpectedContainer),
+			slog.String("video_codec", config.ExpectedVideoCodec),
+			slog.String("video_profile", config.ExpectedVideoProfile),
+			slog.String("resolution", fmt.Sprintf("%dx%d", config.ExpectedVideoWidth, config.ExpectedVideoHeight)),
+			slog.Float64("framerate", config.ExpectedFramerate),
+			slog.String("video_bitrate_kbps", formatBitrateKbps(config.ExpectedVideoBitrate)),
+			slog.String("audio_codec", config.ExpectedAudioCodec),
+			slog.Int("audio_channels", config.ExpectedAudioChannels),
+			slog.Int("audio_sample_rate", config.ExpectedAudioSampleRate),
+			slog.String("audio_bitrate_kbps", formatBitrateKbps(config.ExpectedAudioBitrate)),
+			slog.Bool("is_live", config.ExpectedIsLive))
+		b.CreateSourceVariant(config.ExpectedVideoCodec, config.ExpectedAudioCodec)
+	}
+
+	return b
 }
 
 // ChannelID returns the channel ID this buffer is for.

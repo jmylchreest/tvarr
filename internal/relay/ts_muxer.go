@@ -79,7 +79,7 @@ func createVideoCodec(codecName string) mpegts.Codec {
 
 // createAudioCodec creates a mediacommon audio codec from a codec name.
 // Returns the codec and the normalized codec name.
-func createAudioCodec(codecName string, aacConfig *mpeg4audio.Config) (mpegts.Codec, string) {
+func createAudioCodec(codecName string, aacConfig *mpeg4audio.AudioSpecificConfig) (mpegts.Codec, string) {
 	switch codecName {
 	case "ac3":
 		return &mpegts.CodecAC3{SampleRate: 48000, ChannelCount: 2}, "ac3"
@@ -92,7 +92,7 @@ func createAudioCodec(codecName string, aacConfig *mpeg4audio.Config) (mpegts.Co
 	default:
 		// Default to AAC
 		if aacConfig == nil {
-			aacConfig = &mpeg4audio.Config{
+			aacConfig = &mpeg4audio.AudioSpecificConfig{
 				Type:         mpeg4audio.ObjectTypeAACLC,
 				SampleRate:   48000,
 				ChannelCount: 2,
@@ -135,27 +135,6 @@ func isVideoCodec(codecName string) bool {
 	}
 }
 
-// streamTypeFromCodec returns the MPEG-TS stream type for a given codec.
-// This provides a DRY mapping from codec type to stream type constant.
-func streamTypeFromCodec(c mpegts.Codec) uint8 {
-	switch c.(type) {
-	case *mpegts.CodecH264:
-		return StreamTypeH264
-	case *mpegts.CodecH265:
-		return StreamTypeH265
-	case *mpegts.CodecMPEG4Audio:
-		return StreamTypeAAC
-	case *mpegts.CodecAC3:
-		return StreamTypeAC3
-	case *mpegts.CodecEAC3:
-		return StreamTypeEAC3
-	case *mpegts.CodecMPEG1Audio:
-		return StreamTypeMP3
-	default:
-		return 0
-	}
-}
-
 // TSMuxerConfig configures the TS muxer.
 type TSMuxerConfig struct {
 	VideoPID uint16
@@ -167,7 +146,7 @@ type TSMuxerConfig struct {
 	AudioCodec string // "aac", "ac3", "mp3", "opus"
 
 	// AAC configuration (required for AAC audio)
-	AACConfig *mpeg4audio.Config
+	AACConfig *mpeg4audio.AudioSpecificConfig
 
 	// VideoParams is an optional shared VideoParamHelper for persistent SPS/PPS across segments.
 	// If nil, a new one will be created.
@@ -323,7 +302,7 @@ func (m *TSMuxer) SetAudioCodec(codec string) {
 }
 
 // SetAACConfig sets the AAC configuration for audio.
-func (m *TSMuxer) SetAACConfig(config *mpeg4audio.Config) {
+func (m *TSMuxer) SetAACConfig(config *mpeg4audio.AudioSpecificConfig) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.config.AACConfig = config

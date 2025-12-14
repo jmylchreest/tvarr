@@ -111,14 +111,6 @@ func (g *TestDataGenerator) generateChannels() []testutil.SampleChannel {
 	categories := []string{"news", "sports", "movies", "entertainment", "music", "kids"}
 
 	// Calculate distribution
-	baseCount := g.config.ChannelCount
-	if g.config.IncludeHDVariants {
-		baseCount = baseCount * 2 / 3 // Reserve space for HD variants
-	}
-	if g.config.IncludePlusOneChans {
-		baseCount = baseCount * 3 / 4 // Reserve space for +1 variants
-	}
-
 	channelNum := 101
 
 	for i := 0; len(channels) < g.config.ChannelCount; i++ {

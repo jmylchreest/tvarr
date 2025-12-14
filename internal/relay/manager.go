@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jmylchreest/tvarr/internal/ffmpeg"
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/repository"
@@ -30,6 +29,14 @@ var ErrBufferClosed = errors.New("buffer closed")
 
 // ErrClientNotFound is returned when a client is not found in the buffer.
 var ErrClientNotFound = errors.New("client not found")
+
+// formatBitrateKbps returns bitrate in kbps as a string, or "unknown" if 0
+func formatBitrateKbps(bitrate int) string {
+	if bitrate == 0 {
+		return "unknown"
+	}
+	return fmt.Sprintf("%d", bitrate/1000)
+}
 
 // ManagerConfig holds configuration for the relay manager.
 type ManagerConfig struct {
@@ -99,9 +106,9 @@ type Manager struct {
 	logger     *slog.Logger
 
 	mu       sync.RWMutex
-	sessions map[uuid.UUID]*RelaySession
+	sessions map[models.ULID]*RelaySession
 	// channelSessions maps channel IDs to session IDs for reuse
-	channelSessions map[uuid.UUID]uuid.UUID
+	channelSessions map[models.ULID]models.ULID
 
 	circuitBreakers    *CircuitBreakerRegistry
 	connectionPool     *ConnectionPool
@@ -133,8 +140,8 @@ func NewManager(config ManagerConfig) *Manager {
 		prober:             prober,
 		classifier:         NewStreamClassifier(config.HTTPClient),
 		logger:             logger,
-		sessions:           make(map[uuid.UUID]*RelaySession),
-		channelSessions:    make(map[uuid.UUID]uuid.UUID),
+		sessions:           make(map[models.ULID]*RelaySession),
+		channelSessions:    make(map[models.ULID]models.ULID),
 		circuitBreakers:    NewCircuitBreakerRegistry(config.CircuitBreakerConfig),
 		connectionPool:     NewConnectionPool(config.ConnectionPoolConfig),
 		fallbackGenerator:  NewFallbackGenerator(config.FallbackConfig, logger),
@@ -170,7 +177,7 @@ func (m *Manager) PassthroughTracker() *PassthroughTracker {
 // This function is carefully designed to avoid holding the manager lock during slow
 // operations (stream classification, codec probing) to prevent blocking API requests
 // like /api/v1/relay/sessions while a new session is being created.
-func (m *Manager) GetOrCreateSession(ctx context.Context, channelID uuid.UUID, channelName string, streamSourceName string, streamURL string, profile *models.EncodingProfile) (*RelaySession, error) {
+func (m *Manager) GetOrCreateSession(ctx context.Context, channelID models.ULID, channelName string, streamSourceName string, streamURL string, profile *models.EncodingProfile) (*RelaySession, error) {
 	// First, check if session already exists (fast path with read lock)
 	m.mu.RLock()
 	if sessionID, ok := m.channelSessions[channelID]; ok {
@@ -232,7 +239,7 @@ func (m *Manager) GetOrCreateSession(ctx context.Context, channelID uuid.UUID, c
 }
 
 // GetSession returns a session by ID.
-func (m *Manager) GetSession(sessionID uuid.UUID) (*RelaySession, bool) {
+func (m *Manager) GetSession(sessionID models.ULID) (*RelaySession, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	session, ok := m.sessions[sessionID]
@@ -242,7 +249,7 @@ func (m *Manager) GetSession(sessionID uuid.UUID) (*RelaySession, bool) {
 // GetSessionForChannel returns an existing session for the channel if one exists.
 // Unlike GetOrCreateSession, this does not create a new session if none exists.
 // Returns nil if no active session exists for the channel.
-func (m *Manager) GetSessionForChannel(channelID uuid.UUID) *RelaySession {
+func (m *Manager) GetSessionForChannel(channelID models.ULID) *RelaySession {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -264,12 +271,12 @@ func (m *Manager) GetSessionForChannel(channelID uuid.UUID) *RelaySession {
 }
 
 // HasSessionForChannel checks if an active session exists for the given channel.
-func (m *Manager) HasSessionForChannel(channelID uuid.UUID) bool {
+func (m *Manager) HasSessionForChannel(channelID models.ULID) bool {
 	return m.GetSessionForChannel(channelID) != nil
 }
 
 // CloseSession closes a specific session.
-func (m *Manager) CloseSession(sessionID uuid.UUID) error {
+func (m *Manager) CloseSession(sessionID models.ULID) error {
 	m.mu.Lock()
 	session, ok := m.sessions[sessionID]
 	if !ok {
@@ -344,6 +351,8 @@ func (m *Manager) HTTPClient() *http.Client {
 func (m *Manager) ProbeAndStoreCodecInfo(ctx context.Context, streamURL string) *models.LastKnownCodec {
 	// If no prober available, skip
 	if m.prober == nil {
+		m.logger.Debug("Skipping probe - prober not available (ffprobe not detected)",
+			slog.String("stream_url", streamURL))
 		return nil
 	}
 
@@ -406,9 +415,18 @@ func (m *Manager) ProbeAndStoreCodecInfo(ctx context.Context, streamURL string) 
 
 	m.logger.Info("Probed stream codec",
 		slog.String("stream_url", streamURL),
+		slog.String("container", codecInfo.ContainerFormat),
 		slog.String("video_codec", codecInfo.VideoCodec),
-		slog.String("audio_codec", codecInfo.AudioCodec),
+		slog.String("video_profile", codecInfo.VideoProfile),
 		slog.String("resolution", fmt.Sprintf("%dx%d", codecInfo.VideoWidth, codecInfo.VideoHeight)),
+		slog.Float64("framerate", codecInfo.VideoFramerate),
+		slog.String("video_bitrate_kbps", formatBitrateKbps(codecInfo.VideoBitrate)),
+		slog.String("audio_codec", codecInfo.AudioCodec),
+		slog.Int("audio_channels", codecInfo.AudioChannels),
+		slog.Int("audio_sample_rate", codecInfo.AudioSampleRate),
+		slog.String("audio_bitrate_kbps", formatBitrateKbps(codecInfo.AudioBitrate)),
+		slog.Int("stream_count", codecInfo.StreamCount),
+		slog.Bool("is_live", codecInfo.IsLiveStream),
 		slog.Int64("probe_ms", probeMs))
 
 	// Cache in database
@@ -428,27 +446,31 @@ func (m *Manager) ProbeAndStoreCodecInfo(ctx context.Context, streamURL string) 
 // 4. Otherwise, return cached database info (may be stale or nil)
 //
 // This prevents probing from consuming extra connections when a stream is already active.
-func (m *Manager) GetOrProbeCodecInfo(ctx context.Context, channelID uuid.UUID, streamURL string) *models.LastKnownCodec {
+func (m *Manager) GetOrProbeCodecInfo(ctx context.Context, channelID models.ULID, streamURL string) *models.LastKnownCodec {
+	var result *models.LastKnownCodec
+	var source string
+
 	// Priority 1: Check for active session - this is the fastest path and doesn't require a network call
-	if session := m.GetSessionForChannel(channelID); session != nil {
-		if session.CachedCodecInfo != nil {
-			m.logger.Debug("Using codec info from active session",
-				slog.String("channel_id", channelID.String()),
-				slog.String("video_codec", session.CachedCodecInfo.VideoCodec),
-				slog.String("audio_codec", session.CachedCodecInfo.AudioCodec))
-			return session.CachedCodecInfo
-		}
+	session := m.GetSessionForChannel(channelID)
+	if session != nil && session.CachedCodecInfo != nil {
+		result = session.CachedCodecInfo
+		source = "session"
+		m.logger.Debug("Codec info resolved",
+			slog.String("channel_id", channelID.String()),
+			slog.String("source", source),
+			slog.String("video_codec", result.VideoCodec),
+			slog.String("audio_codec", result.AudioCodec))
+		return result
 	}
 
 	// Priority 2: Check if connection pool would allow a probe
-	// Extract host to check current connection count
 	host, err := extractHost(streamURL)
 	if err != nil {
-		m.logger.Debug("Failed to extract host from stream URL",
-			slog.String("stream_url", streamURL),
-			slog.String("error", err.Error()))
 		// Fall back to cached database info
-		return m.getCachedCodecInfo(ctx, streamURL)
+		result = m.getCachedCodecInfo(ctx, streamURL)
+		source = "cache"
+		m.logCodecResolution(channelID, source, result, "host_extraction_failed")
+		return result
 	}
 
 	// Check connection pool stats - if we're at or near the limit, don't probe
@@ -457,16 +479,36 @@ func (m *Manager) GetOrProbeCodecInfo(ctx context.Context, channelID uuid.UUID, 
 	atConnectionLimit := currentHostConns >= poolStats.MaxPerHost
 
 	if atConnectionLimit {
-		m.logger.Debug("Skipping probe - connection limit reached for host",
-			slog.String("host", host),
-			slog.Int("current_connections", currentHostConns),
-			slog.Int("max_per_host", poolStats.MaxPerHost))
 		// Fall back to cached database info
-		return m.getCachedCodecInfo(ctx, streamURL)
+		result = m.getCachedCodecInfo(ctx, streamURL)
+		source = "cache"
+		m.logCodecResolution(channelID, source, result, "connection_limit")
+		return result
 	}
 
 	// Priority 3: We have capacity - probe fresh
-	return m.ProbeAndStoreCodecInfo(ctx, streamURL)
+	result = m.ProbeAndStoreCodecInfo(ctx, streamURL)
+	source = "probe"
+	m.logCodecResolution(channelID, source, result, "")
+	return result
+}
+
+// logCodecResolution emits a single consolidated log for codec resolution
+func (m *Manager) logCodecResolution(channelID models.ULID, source string, codec *models.LastKnownCodec, reason string) {
+	attrs := []any{
+		slog.String("channel_id", channelID.String()),
+		slog.String("source", source),
+		slog.Bool("found", codec != nil),
+	}
+	if codec != nil {
+		attrs = append(attrs,
+			slog.String("video_codec", codec.VideoCodec),
+			slog.String("audio_codec", codec.AudioCodec))
+	}
+	if reason != "" {
+		attrs = append(attrs, slog.String("reason", reason))
+	}
+	m.logger.Debug("Codec info resolved", attrs...)
 }
 
 // getCachedCodecInfo retrieves cached codec info from the database.
@@ -486,10 +528,6 @@ func (m *Manager) getCachedCodecInfo(ctx context.Context, streamURL string) *mod
 
 	// Check if cached info has actual codec data (not just an error entry)
 	if cached != nil && (cached.VideoCodec != "" || cached.AudioCodec != "") {
-		m.logger.Debug("Using cached codec info from database",
-			slog.String("stream_url", streamURL),
-			slog.String("video_codec", cached.VideoCodec),
-			slog.String("audio_codec", cached.AudioCodec))
 		return cached
 	}
 
@@ -497,7 +535,7 @@ func (m *Manager) getCachedCodecInfo(ctx context.Context, streamURL string) *mod
 }
 
 // createSession creates a new relay session.
-func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, channelName string, streamSourceName string, streamURL string, profile *models.EncodingProfile) (*RelaySession, error) {
+func (m *Manager) createSession(ctx context.Context, channelID models.ULID, channelName string, streamSourceName string, streamURL string, profile *models.EncodingProfile) (*RelaySession, error) {
 	// Check circuit breaker
 	cb := m.circuitBreakers.Get(streamURL)
 	if !cb.Allow() {
@@ -513,15 +551,38 @@ func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, channe
 		probeURL = classification.SelectedMediaPlaylist
 	}
 
-	// Pre-probe codec info for faster FFmpeg startup
-	// Always probe fresh and store result for channel UI
-	// This is non-blocking - if probe fails, we continue without cached info
-	codecInfo := m.ProbeAndStoreCodecInfo(ctx, probeURL)
+	// Get codec info - use recent cache if available to avoid re-probing
+	// Cache is valid for 60 minutes since codec info rarely changes for a source
+	var codecInfo *models.LastKnownCodec
+	var codecSource string
+	if cached := m.getCachedCodecInfo(ctx, probeURL); cached != nil {
+		// Use cached info if it's recent (probed within last 60 minutes)
+		if cached.ProbedAt.After(time.Now().Add(-60 * time.Minute)) {
+			codecInfo = cached
+			codecSource = "cache"
+		}
+	}
+
+	// Only probe fresh if no recent cache
+	if codecInfo == nil {
+		codecInfo = m.ProbeAndStoreCodecInfo(ctx, probeURL)
+		codecSource = "probe"
+	}
+
+	// Log codec resolution result
+	if codecInfo != nil {
+		m.logger.Debug("Codec info resolved",
+			slog.String("stream_url", probeURL),
+			slog.String("source", codecSource),
+			slog.String("video_codec", codecInfo.VideoCodec),
+			slog.String("audio_codec", codecInfo.AudioCodec),
+			slog.Duration("cache_age", time.Since(codecInfo.ProbedAt)))
+	}
 
 	sessionCtx, sessionCancel := context.WithCancel(m.ctx)
 
 	session := &RelaySession{
-		ID:               uuid.New(),
+		ID:               models.NewULID(),
 		ChannelID:        channelID,
 		ChannelName:      channelName,
 		StreamSourceName: streamSourceName,
@@ -588,7 +649,7 @@ func (m *Manager) cleanupStaleSessions() {
 	// First, copy session pointers while holding the lock briefly
 	m.mu.RLock()
 	sessionList := make([]*RelaySession, 0, len(m.sessions))
-	sessionIDs := make([]uuid.UUID, 0, len(m.sessions))
+	sessionIDs := make([]models.ULID, 0, len(m.sessions))
 	for id, session := range m.sessions {
 		sessionList = append(sessionList, session)
 		sessionIDs = append(sessionIDs, id)
@@ -599,7 +660,7 @@ func (m *Manager) cleanupStaleSessions() {
 
 	// Evaluate each session WITHOUT holding the manager lock
 	// This allows Stats() and other operations to proceed concurrently
-	var toRemove []uuid.UUID
+	var toRemove []models.ULID
 
 	for i, session := range sessionList {
 		id := sessionIDs[i]

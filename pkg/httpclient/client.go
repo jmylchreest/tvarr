@@ -5,7 +5,7 @@
 //   - Circuit breaker to prevent cascading failures
 //   - Automatic retries with exponential backoff
 //   - Transparent decompression (gzip, deflate, brotli)
-//   - Structured logging with credential obfuscation
+//   - Structured logging (credential redaction handled by observability package)
 //   - Configurable timeouts at connect and request levels
 package httpclient
 
@@ -18,7 +18,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -225,7 +224,7 @@ func (c *Client) DoWithContext(ctx context.Context, req *http.Request) (*http.Re
 			c.logger.Debug("retrying request",
 				slog.Int("attempt", attempt),
 				slog.Duration("delay", delay),
-				slog.String("url", obfuscateURL(req.URL)),
+				slog.String("url", req.URL.String()),
 			)
 
 			select {
@@ -245,7 +244,7 @@ func (c *Client) DoWithContext(ctx context.Context, req *http.Request) (*http.Re
 		if !c.breaker.Allow() {
 			lastErr = ErrCircuitOpen
 			c.logger.Warn("circuit breaker open, skipping request",
-				slog.String("url", obfuscateURL(req.URL)),
+				slog.String("url", req.URL.String()),
 				slog.String("state", c.breaker.State().String()),
 			)
 			continue
@@ -260,7 +259,7 @@ func (c *Client) DoWithContext(ctx context.Context, req *http.Request) (*http.Re
 			c.breaker.RecordFailure()
 			lastErr = err
 			c.logger.Warn("request failed",
-				slog.String("url", obfuscateURL(req.URL)),
+				slog.String("url", req.URL.String()),
 				slog.String("method", req.Method),
 				slog.Duration("duration", duration),
 				slog.String("error", err.Error()),
@@ -279,7 +278,7 @@ func (c *Client) DoWithContext(ctx context.Context, req *http.Request) (*http.Re
 			c.breaker.RecordFailure()
 			lastErr = fmt.Errorf("retryable status code: %d", resp.StatusCode)
 			c.logger.Warn("retryable status code",
-				slog.String("url", obfuscateURL(req.URL)),
+				slog.String("url", req.URL.String()),
 				slog.String("method", req.Method),
 				slog.Int("status", resp.StatusCode),
 				slog.Duration("duration", duration),
@@ -297,12 +296,12 @@ func (c *Client) DoWithContext(ctx context.Context, req *http.Request) (*http.Re
 			// but we don't retry them - just record the failure
 			c.breaker.RecordFailure()
 			c.logger.Debug("non-acceptable status code recorded as failure",
-				slog.String("url", obfuscateURL(req.URL)),
+				slog.String("url", req.URL.String()),
 				slog.Int("status", resp.StatusCode),
 			)
 		}
 		c.logger.Debug("request completed",
-			slog.String("url", obfuscateURL(req.URL)),
+			slog.String("url", req.URL.String()),
 			slog.String("method", req.Method),
 			slog.Int("status", resp.StatusCode),
 			slog.Duration("duration", duration),
@@ -491,33 +490,6 @@ func (c *Client) isAcceptableStatus(code int) bool {
 	return code >= 200 && code < 300
 }
 
-// obfuscateURL returns a URL string with sensitive query parameters obfuscated.
-func obfuscateURL(u *url.URL) string {
-	if u == nil {
-		return ""
-	}
-
-	// Make a copy to avoid modifying the original
-	sanitized := *u
-	query := sanitized.Query()
-
-	// List of sensitive parameter names to obfuscate
-	sensitiveParams := []string{
-		"password", "passwd", "pass", "pwd",
-		"token", "api_key", "apikey", "key",
-		"secret", "auth", "authorization",
-		"credential", "credentials",
-	}
-
-	for _, param := range sensitiveParams {
-		if query.Has(param) {
-			query.Set(param, "***")
-		}
-	}
-
-	sanitized.RawQuery = query.Encode()
-	return sanitized.String()
-}
 
 // CircuitState represents the state of a circuit breaker.
 type CircuitState int

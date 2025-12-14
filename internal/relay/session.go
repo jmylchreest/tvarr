@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jmylchreest/tvarr/internal/ffmpeg"
 	"github.com/jmylchreest/tvarr/internal/models"
+	"github.com/jmylchreest/tvarr/internal/version"
 )
 
 // Variant cleanup configuration
@@ -120,8 +120,8 @@ type ProcessorConfig struct {
 
 // RelaySession represents an active relay session.
 type RelaySession struct {
-	ID               uuid.UUID
-	ChannelID        uuid.UUID
+	ID               models.ULID
+	ChannelID        models.ULID
 	ChannelName      string // Display name of the channel
 	StreamSourceName string // Name of the stream source (e.g., "s8k")
 	StreamURL        string
@@ -259,6 +259,9 @@ func (s *RelaySession) runPipeline() {
 // 4. Transcoder reads from source variant, writes to target variant
 // 5. Processors read from appropriate variant
 func (s *RelaySession) runNormalPipeline() error {
+	// Log the pipeline decision with all relevant context
+	s.logPipelineDecision()
+
 	// If smart delivery context is set, use its decision for special cases
 	if s.DeliveryContext != nil {
 		switch s.DeliveryContext.Decision {
@@ -316,27 +319,94 @@ func (s *RelaySession) runNormalPipeline() error {
 	}
 }
 
-// runPassthroughBySourceFormat runs the appropriate passthrough pipeline based on source format.
-func (s *RelaySession) runPassthroughBySourceFormat() error {
-	// Handle passthrough based on source format classification
-	switch s.Classification.Mode {
-	case StreamModeCollapsedHLS:
-		return s.runHLSCollapsePipeline()
-	case StreamModePassthroughHLS, StreamModeTransparentHLS:
-		// Use HLS passthrough handler for HLS sources
-		return s.runHLSPassthroughPipeline()
-	case StreamModePassthroughDASH:
-		// Use DASH passthrough handler for DASH sources
-		return s.runDASHPassthroughPipeline()
-	default:
-		// Raw MPEG-TS or unknown - use ES-based pipeline for proper HLS segment generation
-		// The ES pipeline demuxes MPEG-TS to elementary streams, then muxes back to HLS segments
-		// with proper timing, enabling multi-variant codec support
-		slog.Debug("Using ES-based pipeline for raw MPEG-TS source",
-			slog.String("session_id", s.ID.String()),
-			slog.String("stream_url", s.StreamURL))
-		return s.runESPipeline()
+// logPipelineDecision logs an INFO message summarizing the pipeline decision and context.
+func (s *RelaySession) logPipelineDecision() {
+	// Determine pipeline type and reason
+	pipelineType := "es"
+	reason := "default"
+
+	if s.DeliveryContext != nil {
+		switch s.DeliveryContext.Decision {
+		case DeliveryPassthrough:
+			switch s.Classification.Mode {
+			case StreamModePassthroughHLS, StreamModeTransparentHLS:
+				pipelineType = "hls-passthrough"
+				reason = "client supports HLS passthrough"
+			case StreamModePassthroughDASH:
+				pipelineType = "dash-passthrough"
+				reason = "client supports DASH passthrough"
+			default:
+				reason = "passthrough via ES pipeline"
+			}
+		case DeliveryRepackage:
+			if s.Classification.SourceFormat == SourceFormatHLS {
+				pipelineType = "hls-repackage"
+				reason = "repackaging HLS segments"
+			} else {
+				reason = "repackaging via ES pipeline"
+			}
+		case DeliveryTranscode:
+			reason = "transcoding required"
+		}
+	} else {
+		// No delivery context - use classification
+		switch s.Classification.Mode {
+		case StreamModeCollapsedHLS:
+			pipelineType = "hls-collapse"
+			reason = "collapsing HLS to MPEG-TS"
+		case StreamModePassthroughHLS, StreamModeTransparentHLS:
+			if s.EncodingProfile != nil && s.EncodingProfile.NeedsTranscode() {
+				reason = "HLS source requires transcoding"
+			} else {
+				pipelineType = "hls-passthrough"
+				reason = "HLS passthrough mode"
+			}
+		case StreamModePassthroughDASH:
+			if s.EncodingProfile != nil && s.EncodingProfile.NeedsTranscode() {
+				reason = "DASH source requires transcoding"
+			} else {
+				pipelineType = "dash-passthrough"
+				reason = "DASH passthrough mode"
+			}
+		default:
+			reason = "raw MPEG-TS source"
+		}
 	}
+
+	// Build log fields
+	logFields := []any{
+		slog.String("session_id", s.ID.String()),
+		slog.String("channel", s.ChannelName),
+		slog.String("pipeline", pipelineType),
+		slog.String("reason", reason),
+		slog.String("source_format", string(s.Classification.SourceFormat)),
+		slog.String("stream_mode", s.Classification.Mode.String()),
+	}
+
+	// Add codec info if available
+	if s.CachedCodecInfo != nil {
+		logFields = append(logFields,
+			slog.String("source_video", s.CachedCodecInfo.VideoCodec),
+			slog.String("source_audio", s.CachedCodecInfo.AudioCodec),
+			slog.String("resolution", fmt.Sprintf("%dx%d", s.CachedCodecInfo.VideoWidth, s.CachedCodecInfo.VideoHeight)),
+		)
+	}
+
+	// Add profile info if available
+	if s.EncodingProfile != nil {
+		logFields = append(logFields,
+			slog.String("profile", s.EncodingProfile.Name),
+			slog.Bool("needs_transcode", s.EncodingProfile.NeedsTranscode()),
+		)
+		if s.EncodingProfile.NeedsTranscode() {
+			logFields = append(logFields,
+				slog.String("target_video", string(s.EncodingProfile.TargetVideoCodec)),
+				slog.String("target_audio", string(s.EncodingProfile.TargetAudioCodec)),
+			)
+		}
+	}
+
+	slog.Info("Starting relay pipeline", logFields...)
 }
 
 // runFallbackStream runs the fallback stream until recovery or cancellation.
@@ -455,6 +525,21 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 	// Use buffer config from the manager if available, otherwise defaults
 	esConfig := s.manager.config.BufferConfig
 	esConfig.Logger = slog.Default()
+	// Pass codec hints from probing to pre-create source variant with both codecs
+	if s.CachedCodecInfo != nil {
+		esConfig.ExpectedVideoCodec = s.CachedCodecInfo.VideoCodec
+		esConfig.ExpectedVideoProfile = s.CachedCodecInfo.VideoProfile
+		esConfig.ExpectedVideoWidth = s.CachedCodecInfo.VideoWidth
+		esConfig.ExpectedVideoHeight = s.CachedCodecInfo.VideoHeight
+		esConfig.ExpectedFramerate = s.CachedCodecInfo.VideoFramerate
+		esConfig.ExpectedVideoBitrate = s.CachedCodecInfo.VideoBitrate
+		esConfig.ExpectedAudioCodec = s.CachedCodecInfo.AudioCodec
+		esConfig.ExpectedAudioChannels = s.CachedCodecInfo.AudioChannels
+		esConfig.ExpectedAudioSampleRate = s.CachedCodecInfo.AudioSampleRate
+		esConfig.ExpectedAudioBitrate = s.CachedCodecInfo.AudioBitrate
+		esConfig.ExpectedContainer = s.CachedCodecInfo.ContainerFormat
+		esConfig.ExpectedIsLive = s.CachedCodecInfo.IsLiveStream
+	}
 	s.esBuffer = NewSharedESBuffer(s.ChannelID.String(), s.ID.String(), esConfig)
 
 	// Set up the transcoding callback
@@ -491,6 +576,7 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 	if err := hlsTSProcessor.Start(s.ctx); err != nil {
 		return fmt.Errorf("starting HLS-TS processor: %w", err)
 	}
+	s.configureProcessorStreamContext(hlsTSProcessor.BaseProcessor)
 	s.hlsTSProcessors.Store(VariantCopy, hlsTSProcessor)
 
 	// Start MPEG-TS processor for raw streaming
@@ -505,6 +591,7 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 	if err := mpegtsProcessor.Start(s.ctx); err != nil {
 		slog.Warn("Failed to start MPEG-TS processor", slog.String("error", err.Error()))
 	} else {
+		s.configureProcessorStreamContext(mpegtsProcessor.BaseProcessor)
 		s.mpegtsProcessors.Store(VariantCopy, mpegtsProcessor)
 	}
 
@@ -766,6 +853,21 @@ func (s *RelaySession) runESPipeline() error {
 	// Use buffer config from the manager if available, otherwise defaults
 	esConfig := s.manager.config.BufferConfig
 	esConfig.Logger = slog.Default()
+	// Pass codec hints from probing to pre-create source variant with both codecs
+	if s.CachedCodecInfo != nil {
+		esConfig.ExpectedVideoCodec = s.CachedCodecInfo.VideoCodec
+		esConfig.ExpectedVideoProfile = s.CachedCodecInfo.VideoProfile
+		esConfig.ExpectedVideoWidth = s.CachedCodecInfo.VideoWidth
+		esConfig.ExpectedVideoHeight = s.CachedCodecInfo.VideoHeight
+		esConfig.ExpectedFramerate = s.CachedCodecInfo.VideoFramerate
+		esConfig.ExpectedVideoBitrate = s.CachedCodecInfo.VideoBitrate
+		esConfig.ExpectedAudioCodec = s.CachedCodecInfo.AudioCodec
+		esConfig.ExpectedAudioChannels = s.CachedCodecInfo.AudioChannels
+		esConfig.ExpectedAudioSampleRate = s.CachedCodecInfo.AudioSampleRate
+		esConfig.ExpectedAudioBitrate = s.CachedCodecInfo.AudioBitrate
+		esConfig.ExpectedContainer = s.CachedCodecInfo.ContainerFormat
+		esConfig.ExpectedIsLive = s.CachedCodecInfo.IsLiveStream
+	}
 	s.esBuffer = NewSharedESBuffer(s.ChannelID.String(), s.ID.String(), esConfig)
 
 	// Set up the transcoding callback - spawns FFmpeg transcoder when new codec variant is requested
@@ -1144,31 +1246,6 @@ func (s *RelaySession) stopTranscodersForVariants(variants map[CodecVariant]bool
 	s.esTranscoders = remaining
 }
 
-// cleanupIdleTranscoders stops transcoders that have been idle too long.
-// This is called in addition to variant cleanup to handle transcoders that
-// may have stopped producing output.
-func (s *RelaySession) cleanupIdleTranscoders() {
-	s.esTranscodersMu.Lock()
-	defer s.esTranscodersMu.Unlock()
-
-	cutoff := time.Now().Add(-VariantIdleTimeout)
-	var remaining []*FFmpegTranscoder
-
-	for _, transcoder := range s.esTranscoders {
-		stats := transcoder.Stats()
-		if stats.LastActivity.Before(cutoff) && !stats.LastActivity.IsZero() {
-			slog.Debug("Stopping idle transcoder",
-				slog.String("session_id", s.ID.String()),
-				slog.String("target_variant", stats.TargetVariant.String()),
-				slog.Duration("idle_time", time.Since(stats.LastActivity)))
-			transcoder.Stop()
-		} else {
-			remaining = append(remaining, transcoder)
-		}
-	}
-	s.esTranscoders = remaining
-}
-
 // handleVariantRequest is called when a processor requests a codec variant that doesn't exist.
 // It spawns an FFmpeg transcoder to produce the requested variant from the source.
 func (s *RelaySession) handleVariantRequest(source, target CodecVariant) error {
@@ -1289,6 +1366,19 @@ func (s *RelaySession) GetESBuffer() *SharedESBuffer {
 	return s.esBuffer
 }
 
+// configureProcessorStreamContext sets the X-Stream headers context on a processor.
+// This enables processors to include mode, decision, and version headers in responses.
+func (s *RelaySession) configureProcessorStreamContext(p *BaseProcessor) {
+	ctx := StreamContext{
+		ProxyMode: "smart", // Sessions are only used in smart mode
+		Version:   version.Version,
+	}
+	if s.DeliveryContext != nil {
+		ctx.DeliveryDecision = s.DeliveryContext.Decision.String()
+	}
+	p.SetStreamContext(ctx)
+}
+
 // GetHLSTSProcessor returns the HLS-TS processor for the default variant if it exists.
 // Returns nil if the processor hasn't been created yet.
 func (s *RelaySession) GetHLSTSProcessor() *HLSTSProcessor {
@@ -1345,6 +1435,7 @@ func (s *RelaySession) GetOrCreateHLSTSProcessorForVariant(variant CodecVariant)
 	if err := processor.Start(s.ctx); err != nil {
 		return nil, fmt.Errorf("starting HLS-TS processor for variant %s: %w", variant.String(), err)
 	}
+	s.configureProcessorStreamContext(processor.BaseProcessor)
 
 	// Atomically store or get existing - if another goroutine won the race, stop our duplicate
 	existing, loaded := s.hlsTSProcessors.LoadOrStore(variant, processor)
@@ -1404,6 +1495,7 @@ func (s *RelaySession) GetOrCreateHLSfMP4ProcessorForVariant(variant CodecVarian
 	if err := processor.Start(s.ctx); err != nil {
 		return nil, fmt.Errorf("starting HLS-fMP4 processor for variant %s: %w", variant.String(), err)
 	}
+	s.configureProcessorStreamContext(processor.BaseProcessor)
 
 	// Atomically store or get existing - if another goroutine won the race, stop our duplicate
 	existing, loaded := s.hlsFMP4Processors.LoadOrStore(variant, processor)
@@ -1463,6 +1555,7 @@ func (s *RelaySession) GetOrCreateDASHProcessorForVariant(variant CodecVariant) 
 	if err := processor.Start(s.ctx); err != nil {
 		return nil, fmt.Errorf("starting DASH processor for variant %s: %w", variant.String(), err)
 	}
+	s.configureProcessorStreamContext(processor.BaseProcessor)
 
 	// Atomically store or get existing - if another goroutine won the race, stop our duplicate
 	existing, loaded := s.dashProcessors.LoadOrStore(variant, processor)
@@ -1527,6 +1620,7 @@ func (s *RelaySession) GetOrCreateMPEGTSProcessorForVariant(variant CodecVariant
 	if err := processor.Start(s.ctx); err != nil {
 		return nil, fmt.Errorf("starting MPEG-TS processor for variant %s: %w", variant.String(), err)
 	}
+	s.configureProcessorStreamContext(processor.BaseProcessor)
 
 	// Atomically store or get existing - if another goroutine won the race, stop our duplicate
 	existing, loaded := s.mpegtsProcessors.LoadOrStore(variant, processor)
@@ -2337,24 +2431,4 @@ func (s *RelaySession) GetHLSPassthrough() *HLSPassthroughHandler {
 // pipeline init and only read afterward.
 func (s *RelaySession) GetDASHPassthrough() *DASHPassthroughHandler {
 	return s.dashPassthrough
-}
-
-// demuxerWriter wraps TSDemuxer to implement io.Writer for FFmpeg output.
-// It feeds FFmpeg's MPEG-TS output to the demuxer which populates the ES buffer.
-type demuxerWriter struct {
-	demuxer *TSDemuxer
-	session *RelaySession
-}
-
-// Write implements io.Writer, feeding data to the demuxer.
-func (dw *demuxerWriter) Write(p []byte) (int, error) {
-	if err := dw.demuxer.Write(p); err != nil {
-		slog.Warn("Demuxer write error", slog.String("error", err.Error()))
-		// Don't fail the write - demuxer errors shouldn't stop FFmpeg
-	}
-
-	// Update activity timestamp using atomic to avoid blocking stats collection
-	dw.session.lastActivity.Store(time.Now())
-
-	return len(p), nil
 }

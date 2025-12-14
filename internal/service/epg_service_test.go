@@ -255,33 +255,6 @@ func (m *mockEpgProgramRepo) CountBySourceID(ctx context.Context, sourceID model
 	return m.countBySource[sourceID], nil
 }
 
-// Mock EPG Handler
-type mockEpgHandler struct {
-	sourceType models.EpgSourceType
-	ingestErr  error
-	programs   []*models.EpgProgram
-}
-
-func (h *mockEpgHandler) Type() models.EpgSourceType {
-	return h.sourceType
-}
-
-func (h *mockEpgHandler) Ingest(ctx context.Context, source *models.EpgSource, callback ingestor.ProgramCallback) error {
-	if h.ingestErr != nil {
-		return h.ingestErr
-	}
-	for _, p := range h.programs {
-		if err := callback(p); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (h *mockEpgHandler) Validate(source *models.EpgSource) error {
-	return nil
-}
-
 // Tests
 
 func TestEpgService_Create(t *testing.T) {

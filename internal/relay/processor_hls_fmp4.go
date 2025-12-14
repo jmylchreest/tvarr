@@ -286,6 +286,7 @@ func (p *HLSfMP4Processor) ServeManifest(w http.ResponseWriter, r *http.Request)
 		buf.WriteString(fmt.Sprintf("segment%d.m4s\n", seg.sequence))
 	}
 
+	p.SetStreamHeaders(w)
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	_, err := w.Write(buf.Bytes())
@@ -305,6 +306,7 @@ func (p *HLSfMP4Processor) ServeSegment(w http.ResponseWriter, r *http.Request, 
 			return ErrInitSegmentNotReady
 		}
 
+		p.SetStreamHeaders(w)
 		w.Header().Set("Content-Type", "video/mp4")
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(initSeg.Data)))
 		w.Header().Set("Cache-Control", "public, max-age=31536000") // Init segment is immutable
@@ -335,6 +337,7 @@ func (p *HLSfMP4Processor) ServeSegment(w http.ResponseWriter, r *http.Request, 
 		return fmt.Errorf("segment %d not found", seq)
 	}
 
+	p.SetStreamHeaders(w)
 	w.Header().Set("Content-Type", "video/mp4")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(segment.data)))
 	w.Header().Set("Cache-Control", "public, max-age=31536000") // Segments are immutable

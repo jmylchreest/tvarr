@@ -32,12 +32,10 @@ import {
   ChevronRight,
   Image,
   Hash,
-  Play,
-  Square,
-  Video,
 } from 'lucide-react';
-import Hls from 'hls.js';
 import { Input } from '@/components/ui/input';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid } from 'recharts';
 import {
   ChartContainer,
@@ -546,179 +544,397 @@ function JobsCard() {
   );
 }
 
-function HLSTestPlayer() {
-  const [channelId, setChannelId] = useState('');
-  const [isPlaying, setIsPlaying] = useState(false);
+// FFmpeg Info Types
+interface FFmpegCodec {
+  name: string;
+  long_name?: string;
+  type: string;
+  can_decode: boolean;
+  can_encode: boolean;
+  is_lossy?: boolean;
+  is_lossless?: boolean;
+  is_intra_only?: boolean;
+}
+
+interface FFmpegHWAccel {
+  type: string;
+  name: string;
+  available: boolean;
+  device_name?: string;
+  encoders?: string[];
+  decoders?: string[];
+}
+
+interface FFmpegFormat {
+  name: string;
+  long_name?: string;
+  can_mux: boolean;
+  can_demux: boolean;
+}
+
+interface FFmpegRecommended {
+  hw_accel?: string;
+  hw_accel_name?: string;
+  video_encoder?: string;
+  audio_encoder?: string;
+}
+
+interface FFmpegInfo {
+  available: boolean;
+  ffmpeg_path?: string;
+  ffprobe_path?: string;
+  version?: string;
+  major_version?: number;
+  minor_version?: number;
+  build_date?: string;
+  configuration?: string;
+  codecs?: FFmpegCodec[];
+  encoders?: string[];
+  decoders?: string[];
+  hw_accels?: FFmpegHWAccel[];
+  formats?: FFmpegFormat[];
+  recommended?: FFmpegRecommended;
+}
+
+function FFmpegCard() {
+  const [ffmpegInfo, setFfmpegInfo] = useState<FFmpegInfo | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<string>('');
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const hlsRef = useRef<Hls | null>(null);
-  const backendUrl = getBackendUrl();
-
-  const stopPlayback = useCallback(() => {
-    if (hlsRef.current) {
-      hlsRef.current.destroy();
-      hlsRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.pause();
-      videoRef.current.src = '';
-    }
-    setIsPlaying(false);
-    setStatus('');
-    setError(null);
-  }, []);
-
-  const startPlayback = useCallback(() => {
-    if (!channelId.trim()) {
-      setError('Please enter a channel ID');
-      return;
-    }
-
-    stopPlayback();
-    setError(null);
-    setStatus('Initializing...');
-
-    const streamUrl = `${backendUrl}/proxy/${channelId.trim()}?format=hls`;
-
-    if (videoRef.current) {
-      if (Hls.isSupported()) {
-        const hls = new Hls({
-          debug: false,
-          enableWorker: true,
-          lowLatencyMode: true,
-        });
-
-        hls.loadSource(streamUrl);
-        hls.attachMedia(videoRef.current);
-
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          setStatus('Manifest loaded, starting playback...');
-          videoRef.current?.play().catch((e) => {
-            setError(`Playback error: ${e.message}`);
-          });
-        });
-
-        hls.on(Hls.Events.ERROR, (_event, data) => {
-          if (data.fatal) {
-            switch (data.type) {
-              case Hls.ErrorTypes.NETWORK_ERROR:
-                setError(`Network error: ${data.details}`);
-                hls.startLoad();
-                break;
-              case Hls.ErrorTypes.MEDIA_ERROR:
-                setError(`Media error: ${data.details}`);
-                hls.recoverMediaError();
-                break;
-              default:
-                setError(`Fatal error: ${data.details}`);
-                stopPlayback();
-                break;
-            }
-          } else {
-            setStatus(`Warning: ${data.details}`);
-          }
-        });
-
-        hls.on(Hls.Events.FRAG_LOADED, () => {
-          setStatus('Playing');
-          setIsPlaying(true);
-        });
-
-        hlsRef.current = hls;
-      } else if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
-        videoRef.current.src = streamUrl;
-        videoRef.current.addEventListener('loadedmetadata', () => {
-          setStatus('Playing (native HLS)');
-          setIsPlaying(true);
-          videoRef.current?.play().catch((e) => {
-            setError(`Playback error: ${e.message}`);
-          });
-        });
-      } else {
-        setError('HLS is not supported in this browser');
-      }
-    }
-  }, [channelId, backendUrl, stopPlayback]);
+  const [expanded, setExpanded] = useState({
+    hwaccels: true,
+    codecs: false,
+    encoders: false,
+    decoders: false,
+    formats: false,
+  });
 
   useEffect(() => {
-    return () => {
-      stopPlayback();
+    const fetchFFmpegInfo = async () => {
+      try {
+        const backendUrl = getBackendUrl();
+        const response = await fetch(`${backendUrl}/api/v1/system/ffmpeg`);
+        if (response.ok) {
+          const data = await response.json();
+          setFfmpegInfo(data);
+        } else {
+          setError('Failed to fetch FFmpeg info');
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unknown error');
+      } finally {
+        setLoading(false);
+      }
     };
-  }, [stopPlayback]);
+
+    fetchFFmpegInfo();
+  }, []);
+
+  const toggleSection = (section: keyof typeof expanded) => {
+    setExpanded((prev) => ({ ...prev, [section]: !prev[section] }));
+  };
+
+  // Group codecs by type
+  const groupedCodecs = ffmpegInfo?.codecs?.reduce(
+    (acc, codec) => {
+      const type = codec.type || 'other';
+      if (!acc[type]) acc[type] = [];
+      acc[type].push(codec);
+      return acc;
+    },
+    {} as Record<string, FFmpegCodec[]>
+  );
+
+  // Count available HW accels
+  const availableHWAccels = ffmpegInfo?.hw_accels?.filter((a) => a.available) || [];
+
+  if (loading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Settings className="h-5 w-5" />
+            FFmpeg Capabilities
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <RefreshCw className="h-4 w-4 animate-spin" />
+            Loading FFmpeg information...
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (error || !ffmpegInfo?.available) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Settings className="h-5 w-5" />
+            FFmpeg Capabilities
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-2">
+            <XCircle className="h-4 w-4 text-red-500" />
+            <Badge variant="destructive">Unavailable</Badge>
+          </div>
+          {error && <p className="text-sm text-muted-foreground mt-2">{error}</p>}
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Video className="h-5 w-5" />
-          HLS Test Player
-          <Badge variant="outline" className="text-xs">Debug</Badge>
+          <Settings className="h-5 w-5" />
+          FFmpeg Capabilities
+          <Badge variant="default" className="ml-2">v{ffmpegInfo.version}</Badge>
         </CardTitle>
         <CardDescription>
-          Test HLS streaming via relay endpoint (/proxy/channelId?format=hls)
+          Detected FFmpeg installation and hardware acceleration support
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex gap-2">
-          <Input
-            placeholder="Enter channel ULID (e.g., 01ABC123...)"
-            value={channelId}
-            onChange={(e) => setChannelId(e.target.value)}
-            className="flex-1"
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !isPlaying) {
-                startPlayback();
-              }
-            }}
-          />
-          {!isPlaying ? (
-            <Button onClick={startPlayback} disabled={!channelId.trim()}>
-              <Play className="h-4 w-4 mr-1" />
-              Play
-            </Button>
-          ) : (
-            <Button onClick={stopPlayback} variant="destructive">
-              <Square className="h-4 w-4 mr-1" />
-              Stop
-            </Button>
-          )}
+        {/* Basic Info */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">FFmpeg Path:</span>
+              <span className="font-mono text-xs truncate max-w-[200px]" title={ffmpegInfo.ffmpeg_path}>
+                {ffmpegInfo.ffmpeg_path}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">FFprobe Path:</span>
+              <span className="font-mono text-xs truncate max-w-[200px]" title={ffmpegInfo.ffprobe_path}>
+                {ffmpegInfo.ffprobe_path || 'Not found'}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Version:</span>
+              <span className="font-medium">{ffmpegInfo.version}</span>
+            </div>
+          </div>
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Encoders:</span>
+              <Badge variant="outline">{ffmpegInfo.encoders?.length || 0}</Badge>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Decoders:</span>
+              <Badge variant="outline">{ffmpegInfo.decoders?.length || 0}</Badge>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Formats:</span>
+              <Badge variant="outline">{ffmpegInfo.formats?.length || 0}</Badge>
+            </div>
+          </div>
         </div>
 
-        {error && (
-          <div className="flex items-center gap-2 text-destructive text-sm">
-            <XCircle className="h-4 w-4" />
-            {error}
+        {/* Recommended Config */}
+        {ffmpegInfo.recommended && (
+          <div className="bg-muted/50 rounded-lg p-3 space-y-2">
+            <h4 className="text-sm font-medium flex items-center gap-2">
+              <Zap className="h-4 w-4 text-yellow-500" />
+              Recommended Configuration
+            </h4>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              {ffmpegInfo.recommended.hw_accel && (
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">HW Accel:</span>
+                  <Badge variant="default">{ffmpegInfo.recommended.hw_accel_name || ffmpegInfo.recommended.hw_accel}</Badge>
+                </div>
+              )}
+              {ffmpegInfo.recommended.video_encoder && (
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">Video:</span>
+                  <Badge variant="outline">{ffmpegInfo.recommended.video_encoder}</Badge>
+                </div>
+              )}
+              {ffmpegInfo.recommended.audio_encoder && (
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">Audio:</span>
+                  <Badge variant="outline">{ffmpegInfo.recommended.audio_encoder}</Badge>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
-        {status && !error && (
-          <div className="flex items-center gap-2 text-muted-foreground text-sm">
-            <Activity className="h-4 w-4" />
-            {status}
+        {/* Hardware Acceleration */}
+        <div className="space-y-2">
+          <div
+            className="flex items-center gap-2 cursor-pointer select-none"
+            onClick={() => toggleSection('hwaccels')}
+          >
+            {expanded.hwaccels ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            <h4 className="text-sm font-medium">Hardware Acceleration</h4>
+            <Badge variant={availableHWAccels.length > 0 ? 'default' : 'secondary'}>
+              {availableHWAccels.length} available
+            </Badge>
           </div>
-        )}
-
-        <div className="relative bg-black rounded-lg overflow-hidden aspect-video">
-          <video
-            ref={videoRef}
-            className="w-full h-full"
-            controls
-            playsInline
-            muted
-          />
-          {!isPlaying && !status && (
-            <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
-              <div className="text-center">
-                <Video className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                <p className="text-sm">Enter a channel ID and click Play</p>
-              </div>
+          {expanded.hwaccels && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {ffmpegInfo.hw_accels?.map((accel) => (
+                <div
+                  key={accel.name}
+                  className={`p-2 rounded border ${accel.available ? 'bg-green-50 dark:bg-green-950 border-green-200 dark:border-green-800' : 'bg-muted/50 border-transparent'}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      {accel.available ? (
+                        <CheckCircle className="h-4 w-4 text-green-500" />
+                      ) : (
+                        <XCircle className="h-4 w-4 text-muted-foreground" />
+                      )}
+                      <span className="font-medium text-sm">{accel.name.toUpperCase()}</span>
+                    </div>
+                    {accel.available && accel.device_name && (
+                      <span className="text-xs text-muted-foreground truncate max-w-[120px]" title={accel.device_name}>
+                        {accel.device_name}
+                      </span>
+                    )}
+                  </div>
+                  {accel.available && (accel.encoders?.length || accel.decoders?.length) && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {accel.encoders?.slice(0, 4).map((enc) => (
+                        <Badge key={enc} variant="outline" className="text-xs">
+                          {enc}
+                        </Badge>
+                      ))}
+                      {(accel.encoders?.length || 0) > 4 && (
+                        <Badge variant="secondary" className="text-xs">
+                          +{(accel.encoders?.length || 0) - 4} more
+                        </Badge>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           )}
         </div>
 
-        <div className="text-xs text-muted-foreground">
-          <p>Stream URL: {backendUrl}/proxy/{channelId || '<channel-id>'}?format=hls</p>
+        {/* Codecs Tabs */}
+        {groupedCodecs && Object.keys(groupedCodecs).length > 0 && (
+          <div className="space-y-2">
+            <div
+              className="flex items-center gap-2 cursor-pointer select-none"
+              onClick={() => toggleSection('codecs')}
+            >
+              {expanded.codecs ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              <h4 className="text-sm font-medium">Codecs</h4>
+              <Badge variant="outline">{ffmpegInfo.codecs?.length || 0} total</Badge>
+            </div>
+            {expanded.codecs && (
+              <Tabs defaultValue="video" className="w-full">
+                <TabsList className="grid w-full grid-cols-4">
+                  <TabsTrigger value="video">Video ({groupedCodecs['video']?.length || 0})</TabsTrigger>
+                  <TabsTrigger value="audio">Audio ({groupedCodecs['audio']?.length || 0})</TabsTrigger>
+                  <TabsTrigger value="subtitle">Subtitle ({groupedCodecs['subtitle']?.length || 0})</TabsTrigger>
+                  <TabsTrigger value="data">Data ({groupedCodecs['data']?.length || 0})</TabsTrigger>
+                </TabsList>
+                {['video', 'audio', 'subtitle', 'data'].map((type) => (
+                  <TabsContent key={type} value={type}>
+                    <ScrollArea className="h-[200px] rounded border p-2">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-1">
+                        {groupedCodecs[type]?.map((codec) => (
+                          <div
+                            key={codec.name}
+                            className="flex items-center gap-1 text-xs p-1 rounded bg-muted/50"
+                            title={codec.long_name}
+                          >
+                            <span className="font-mono">{codec.name}</span>
+                            {codec.can_decode && <Badge variant="outline" className="text-[10px] h-4">D</Badge>}
+                            {codec.can_encode && <Badge variant="outline" className="text-[10px] h-4">E</Badge>}
+                          </div>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  </TabsContent>
+                ))}
+              </Tabs>
+            )}
+          </div>
+        )}
+
+        {/* Encoders List */}
+        <div className="space-y-2">
+          <div
+            className="flex items-center gap-2 cursor-pointer select-none"
+            onClick={() => toggleSection('encoders')}
+          >
+            {expanded.encoders ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            <h4 className="text-sm font-medium">Encoders</h4>
+            <Badge variant="outline">{ffmpegInfo.encoders?.length || 0}</Badge>
+          </div>
+          {expanded.encoders && (
+            <ScrollArea className="h-[150px] rounded border p-2">
+              <div className="flex flex-wrap gap-1">
+                {ffmpegInfo.encoders?.map((enc) => (
+                  <Badge key={enc} variant="secondary" className="text-xs font-mono">
+                    {enc}
+                  </Badge>
+                ))}
+              </div>
+            </ScrollArea>
+          )}
+        </div>
+
+        {/* Decoders List */}
+        <div className="space-y-2">
+          <div
+            className="flex items-center gap-2 cursor-pointer select-none"
+            onClick={() => toggleSection('decoders')}
+          >
+            {expanded.decoders ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            <h4 className="text-sm font-medium">Decoders</h4>
+            <Badge variant="outline">{ffmpegInfo.decoders?.length || 0}</Badge>
+          </div>
+          {expanded.decoders && (
+            <ScrollArea className="h-[150px] rounded border p-2">
+              <div className="flex flex-wrap gap-1">
+                {ffmpegInfo.decoders?.map((dec) => (
+                  <Badge key={dec} variant="secondary" className="text-xs font-mono">
+                    {dec}
+                  </Badge>
+                ))}
+              </div>
+            </ScrollArea>
+          )}
+        </div>
+
+        {/* Formats List */}
+        <div className="space-y-2">
+          <div
+            className="flex items-center gap-2 cursor-pointer select-none"
+            onClick={() => toggleSection('formats')}
+          >
+            {expanded.formats ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            <h4 className="text-sm font-medium">Formats</h4>
+            <Badge variant="outline">{ffmpegInfo.formats?.length || 0}</Badge>
+          </div>
+          {expanded.formats && (
+            <ScrollArea className="h-[150px] rounded border p-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1">
+                {ffmpegInfo.formats?.map((fmt) => (
+                  <div
+                    key={fmt.name}
+                    className="flex items-center gap-1 text-xs p-1 rounded bg-muted/50"
+                    title={fmt.long_name}
+                  >
+                    <span className="font-mono">{fmt.name}</span>
+                    {fmt.can_demux && <Badge variant="outline" className="text-[10px] h-4">D</Badge>}
+                    {fmt.can_mux && <Badge variant="outline" className="text-[10px] h-4">M</Badge>}
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -1449,8 +1665,8 @@ export function Debug() {
           {/* Jobs Card - replaces old Scheduler component */}
           <JobsCard />
 
-          {/* HLS Test Player */}
-          <HLSTestPlayer />
+          {/* FFmpeg Capabilities */}
+          <FFmpegCard />
 
           {/* Sandbox Manager Component - Enhanced */}
           {healthData?.components?.sandbox_manager && (
@@ -1540,91 +1756,6 @@ export function Debug() {
 
           {/* Logo Cache Component */}
           <LogoCacheCard />
-
-          {/* FFmpeg Information */}
-          {healthData?.components?.relay_system && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Settings className="h-5 w-5" />
-                  FFmpeg
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex items-center gap-2">
-                  {healthData.components.relay_system?.ffmpeg_available ? (
-                    <CheckCircle className="h-4 w-4 text-green-500" />
-                  ) : (
-                    <XCircle className="h-4 w-4 text-red-500" />
-                  )}
-                  <Badge
-                    variant={
-                      healthData.components.relay_system?.ffmpeg_available ? 'default' : 'destructive'
-                    }
-                  >
-                    {healthData.components.relay_system?.ffmpeg_available
-                      ? 'Available'
-                      : 'Unavailable'}
-                  </Badge>
-                </div>
-                <div className="space-y-1 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">FFmpeg Version:</span>
-                    <span className="font-medium">
-                      {healthData.components.relay_system?.ffmpeg_version || 'N/A'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">FFprobe Version:</span>
-                    <span className="font-medium">
-                      {healthData.components.relay_system?.ffprobe_version || 'N/A'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">HW Accel:</span>
-                    <span className="font-medium">
-                      {healthData.components.relay_system?.hwaccel_available ? (
-                        <CheckCircle className="h-3 w-3 text-green-500 inline" />
-                      ) : (
-                        <XCircle className="h-3 w-3 text-red-500 inline" />
-                      )}
-                    </span>
-                  </div>
-                  {healthData.components.relay_system?.hwaccel_available &&
-                    healthData.components.relay_system?.hwaccel_capabilities && (
-                      <div className="pt-2 border-t">
-                        <p className="text-xs font-medium text-muted-foreground mb-2">
-                          Hardware Acceleration Support Matrix:
-                        </p>
-                        <div className="space-y-2">
-                          {healthData.components.relay_system.hwaccel_capabilities?.support_matrix &&
-                            Object.entries(
-                              healthData.components.relay_system.hwaccel_capabilities.support_matrix
-                            ).map(([accel, support]) => (
-                              <div key={accel} className="bg-muted/50 rounded p-2">
-                                <div className="flex justify-between items-center text-xs">
-                                  <div className="font-medium">{accel.toUpperCase()}</div>
-                                  <div className="flex gap-1">
-                                    {Object.entries(support as Record<string, boolean>).map(([codec, supported]) => (
-                                      <Badge
-                                        key={codec}
-                                        variant={supported ? 'default' : 'outline'}
-                                        className={`text-xs ${supported ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100' : 'text-muted-foreground'}`}
-                                      >
-                                        {codec.toUpperCase()}
-                                      </Badge>
-                                    ))}
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                        </div>
-                      </div>
-                    )}
-                </div>
-              </CardContent>
-            </Card>
-          )}
         </div>
       )}
 

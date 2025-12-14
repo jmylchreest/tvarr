@@ -480,3 +480,4 @@ func TestJobRepo_AcquireJob(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, acquired3)
 }
+

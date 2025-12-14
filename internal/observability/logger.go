@@ -6,11 +6,18 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"regexp"
 	"sync/atomic"
 	"time"
 
 	"github.com/jmylchreest/tvarr/internal/config"
+	"github.com/m-mizutani/masq"
 )
+
+// urlSensitiveParamPattern matches sensitive query parameters in URLs.
+// Matches: password=value, secret=value, token=value, apikey=value, api_key=value, credential=value
+// Case-insensitive, captures until next & or end of query string.
+var urlSensitiveParamPattern = regexp.MustCompile(`(?i)(password|secret|token|apikey|api_key|credential)=([^&\s"']+)`)
 
 // contextKey is a type for context keys to avoid collisions.
 type contextKey string
@@ -35,19 +42,60 @@ func NewLogger(cfg config.LoggingConfig) *slog.Logger {
 	return NewLoggerWithWriter(cfg, os.Stdout)
 }
 
+// sensitiveFieldRedactor creates a masq redactor for sensitive field names.
+// This redacts passwords, secrets, tokens, API keys, and credentials from logs.
+func sensitiveFieldRedactor() func(groups []string, a slog.Attr) slog.Attr {
+	return masq.New(
+		masq.WithFieldName("password"),
+		masq.WithFieldName("Password"),
+		masq.WithFieldName("secret"),
+		masq.WithFieldName("Secret"),
+		masq.WithFieldName("token"),
+		masq.WithFieldName("Token"),
+		masq.WithFieldName("apikey"),
+		masq.WithFieldName("ApiKey"),
+		masq.WithFieldName("api_key"),
+		masq.WithFieldName("credential"),
+		masq.WithFieldName("Credential"),
+	)
+}
+
+// redactURLParams redacts sensitive query parameters from URL strings.
+// This handles cases where passwords appear in URL query strings like:
+// http://example.com/api?username=foo&password=secret123
+func redactURLParams(s string) string {
+	return urlSensitiveParamPattern.ReplaceAllString(s, "$1=[REDACTED]")
+}
+
 // NewLoggerWithWriter creates a new slog.Logger that writes to the provided writer.
 // This is useful for testing or custom output destinations.
 // The logger uses GlobalLogLevel for dynamic log level changes at runtime.
+// Sensitive fields (password, secret, token, apikey, credential) are automatically redacted.
 func NewLoggerWithWriter(cfg config.LoggingConfig, w io.Writer) *slog.Logger {
 	// Set the initial level from config
 	level := parseLevel(cfg.Level)
 	GlobalLogLevel.Set(level)
 
+	// Create the sensitive data redactor
+	redactor := sensitiveFieldRedactor()
+
 	opts := &slog.HandlerOptions{
 		Level:     GlobalLogLevel, // Use the global LevelVar for dynamic changes
 		AddSource: cfg.AddSource,
-		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
-			// Customize time format if specified
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			// First apply sensitive data redaction (field-name based)
+			a = redactor(groups, a)
+
+			// Then redact sensitive URL query parameters in string values
+			if a.Value.Kind() == slog.KindString {
+				str := a.Value.String()
+				redacted := redactURLParams(str)
+				if redacted != str {
+					a = slog.String(a.Key, redacted)
+				}
+			}
+
+			// Finally customize time format if specified
 			if a.Key == slog.TimeKey && cfg.TimeFormat != "" {
 				if t, ok := a.Value.Any().(time.Time); ok {
 					return slog.String(slog.TimeKey, t.Format(cfg.TimeFormat))

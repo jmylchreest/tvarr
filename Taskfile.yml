@@ -105,6 +105,13 @@ tasks:
 
   build:
     desc: Build the application binary (debug, uncompressed)
+    preconditions:
+      - sh: command -v go
+        msg: |
+          Go not found. Install Go 1.23+ via:
+            https://go.dev/dl/
+            brew install go (macOS)
+            sudo apt install golang-go (Debian/Ubuntu)
     cmds:
       - mkdir -p {{.DEBUG_DIR}}
       - go build -ldflags "{{.LDFLAGS}}" -o {{.DEBUG_DIR}}/{{.BINARY_NAME}} ./cmd/tvarr
@@ -582,6 +589,13 @@ tasks:
 
   test:
     desc: Run all tests with coverage
+    preconditions:
+      - sh: command -v go
+        msg: |
+          Go not found. Install Go 1.23+ via:
+            https://go.dev/dl/
+            brew install go (macOS)
+            sudo apt install golang-go (Debian/Ubuntu)
     cmds:
       - go test -v -coverprofile={{.COVERAGE_FILE}} ./...
 
@@ -630,6 +644,13 @@ tasks:
 
   lint:install:
     desc: Install or update golangci-lint v2
+    preconditions:
+      - sh: command -v go
+        msg: |
+          Go not found. Install Go 1.23+ via:
+            https://go.dev/dl/
+            brew install go (macOS)
+            sudo apt install golang-go (Debian/Ubuntu)
     cmds:
       - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
       - golangci-lint version
@@ -683,6 +704,13 @@ tasks:
 
   security:install:
     desc: Install security scanning tools
+    preconditions:
+      - sh: command -v go
+        msg: |
+          Go not found. Install Go 1.23+ via:
+            https://go.dev/dl/
+            brew install go (macOS)
+            sudo apt install golang-go (Debian/Ubuntu)
     cmds:
       - go install github.com/securego/gosec/v2/cmd/gosec@latest
       - go install golang.org/x/vuln/cmd/govulncheck@latest
@@ -721,6 +749,7 @@ tasks:
     desc: Run Go backend with hot reload (API only, no frontend)
     summary: |
       Runs the Go backend server with hot reload using air.
+      JSON logs are formatted with hl for readability.
 
       For full-stack development:
         Terminal 1: task run:dev       (Go backend on :8080)
@@ -728,12 +757,19 @@ tasks:
 
       The frontend dev server proxies API requests to the backend.
       For production builds, use 'task frontend:embed' to embed the UI.
+
+      Use 'task run:dev:json' for raw JSON log output.
+    deps: [tools:hl, tools:air]
     cmds:
-      - |
-        if ! command -v air &> /dev/null; then
-          echo "Installing air..."
-          go install github.com/air-verse/air@latest
-        fi
+      - air 2>&1 | hl
+
+  run:dev:json:
+    desc: Run Go backend with hot reload (raw JSON logs)
+    summary: |
+      Same as run:dev but outputs raw JSON logs without formatting.
+      Useful for piping to other tools or debugging log parsing issues.
+    deps: [tools:air]
+    cmds:
       - air
 
   run:prod:
@@ -742,6 +778,97 @@ tasks:
       - task: frontend:embed
       - task: build
       - ./{{.DEBUG_DIR}}/{{.BINARY_NAME}} serve
+
+  # ============================================
+  # Tool Installation Tasks
+  # ============================================
+
+  tools:hl:
+    desc: Install hl (pamburus/hl) for formatted JSON log output
+    status:
+      - command -v hl
+      - hl --version 2>&1 | grep -q pamburus
+    cmds:
+      - |
+        set -e
+
+        # Detect OS
+        OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+        case "$OS" in
+          linux)  OS="linux" ;;
+          darwin) OS="macos" ;;
+          *)      echo "Unsupported OS: $OS"; exit 1 ;;
+        esac
+
+        # Detect architecture
+        ARCH="$(uname -m)"
+        case "$ARCH" in
+          x86_64|amd64)  ARCH="x86_64" ;;
+          aarch64|arm64) ARCH="arm64" ;;
+          *)             echo "Unsupported architecture: $ARCH"; exit 1 ;;
+        esac
+
+        # Build download URL (use musl for Linux for better portability)
+        if [ "$OS" = "linux" ]; then
+          FILENAME="hl-${OS}-${ARCH}-musl.tar.gz"
+        else
+          FILENAME="hl-${OS}-${ARCH}.tar.gz"
+        fi
+
+        # Get latest release URL
+        RELEASE_URL="https://github.com/pamburus/hl/releases/latest/download/${FILENAME}"
+
+        # Create temp directory
+        TMPDIR="$(mktemp -d)"
+        trap "rm -rf $TMPDIR" EXIT
+
+        echo "Downloading hl from ${RELEASE_URL}..."
+        curl -fsSL "$RELEASE_URL" -o "$TMPDIR/hl.tar.gz"
+
+        # Extract
+        tar -xzf "$TMPDIR/hl.tar.gz" -C "$TMPDIR"
+
+        # Install to ~/.local/bin (create if needed)
+        INSTALL_DIR="${HOME}/.local/bin"
+        mkdir -p "$INSTALL_DIR"
+        mv "$TMPDIR/hl" "$INSTALL_DIR/hl"
+        chmod +x "$INSTALL_DIR/hl"
+
+        echo "hl installed to ${INSTALL_DIR}/hl"
+
+        # Check if ~/.local/bin is in PATH
+        if ! echo "$PATH" | grep -q "${HOME}/.local/bin"; then
+          echo ""
+          echo "NOTE: Add ~/.local/bin to your PATH:"
+          echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+        fi
+
+  tools:hl:cargo:
+    desc: Install hl via cargo (requires Rust)
+    preconditions:
+      - sh: command -v cargo
+        msg: |
+          cargo (Rust) not found. Install Rust via:
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    status:
+      - command -v hl
+      - hl --version 2>&1 | grep -q pamburus
+    cmds:
+      - cargo install --locked --git https://github.com/pamburus/hl.git
+
+  tools:air:
+    desc: Install air for hot reload development
+    preconditions:
+      - sh: command -v go
+        msg: |
+          Go not found. Install Go 1.23+ via:
+            https://go.dev/dl/
+            brew install go (macOS)
+            sudo apt install golang-go (Debian/Ubuntu)
+    status:
+      - command -v air
+    cmds:
+      - go install github.com/air-verse/air@latest
 
   # ============================================
   # Dependency Tasks
@@ -841,6 +968,12 @@ tasks:
       - rm -rf {{.ASSETS_DIR}}/*
       - touch {{.ASSETS_DIR}}/.gitkeep
 
+  clean:frontend:all:
+    desc: Clean frontend build artifacts AND node_modules
+    cmds:
+      - task: clean:frontend
+      - rm -rf {{.FRONTEND_DIR}}/node_modules
+
   clean:all:
     desc: Clean everything including caches
     cmds:
@@ -848,6 +981,35 @@ tasks:
       - task: clean:dist
       - task: clean:frontend
       - go clean -cache -testcache
+
+  clean:deep:
+    desc: Deep clean - removes ALL transient/regeneratable artifacts
+    summary: |
+      Performs a comprehensive cleanup of all transient files that can be regenerated.
+      This includes everything from clean:all plus:
+        - Go test binaries (*.test) in project root
+        - Taskfile cache (.task/)
+        - Frontend node_modules (requires pnpm install to restore)
+
+      Safe to run anytime - all removed files are regenerated by builds/tests.
+      Estimated space savings: 3-4GB depending on cache sizes.
+
+      Use clean:deep:full to also clear Go module cache (requires re-download).
+    cmds:
+      - task: clean
+      - task: clean:dist
+      - task: clean:frontend:all
+      - rm -f *.test
+      - rm -rf .task/
+      - go clean -cache -testcache
+      - echo "Deep clean complete. Run 'task clean:deep:full' to also clear Go module cache."
+
+  clean:deep:full:
+    desc: Full deep clean including Go module cache (requires re-download)
+    cmds:
+      - task: clean:deep
+      - go clean -modcache
+      - echo "Full deep clean complete. Go modules will be re-downloaded on next build."
 
   # ============================================
   # Version Info

@@ -11,6 +11,7 @@ require (
 	github.com/dsnet/compress v0.0.1
 	github.com/go-chi/chi/v5 v5.2.3
 	github.com/google/uuid v1.6.0
+	github.com/m-mizutani/masq v0.2.0
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/shirou/gopsutil/v3 v3.24.5
@@ -21,6 +22,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/ulikunitz/xz v0.5.15
 	golang.org/x/image v0.34.0
+	golang.org/x/text v0.32.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/postgres v1.6.0
@@ -62,9 +64,8 @@ require (
 	golang.org/x/crypto v0.45.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.39.0 // indirect
-	golang.org/x/text v0.32.0 // indirect
 )
 
 // Fork with E-AC3 support - will be removed when upstream PR is merged
 // Branch: feat/eac3-support (github.com/jmylchreest/mediacommon)
-replace github.com/bluenviron/mediacommon/v2 => ../mediacommon
+replace github.com/bluenviron/mediacommon/v2 => github.com/jmylchreest/mediacommon/v2 v2.5.4-0.20251213220906-d41f5a08b110

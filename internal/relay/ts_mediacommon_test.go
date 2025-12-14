@@ -20,7 +20,7 @@ func TestTSMuxer_BasicWrite(t *testing.T) {
 	muxer := NewTSMuxer(&buf, TSMuxerConfig{
 		VideoCodec: "h264",
 		AudioCodec: "aac",
-		AACConfig: &mpeg4audio.Config{
+		AACConfig: &mpeg4audio.AudioSpecificConfig{
 			Type:         mpeg4audio.ObjectTypeAACLC,
 			SampleRate:   48000,
 			ChannelCount: 2,
@@ -145,7 +145,7 @@ func TestTSMuxer_WithTracks(t *testing.T) {
 	tracks := []*mpegts.Track{
 		{PID: 256, Codec: &mpegts.CodecH264{}},
 		{PID: 257, Codec: &mpegts.CodecMPEG4Audio{
-			Config: mpeg4audio.Config{
+			Config: mpeg4audio.AudioSpecificConfig{
 				Type:         mpeg4audio.ObjectTypeAACLC,
 				SampleRate:   48000,
 				ChannelCount: 2,
@@ -429,7 +429,7 @@ func TestTSMuxer_RoundTrip(t *testing.T) {
 	muxer := NewTSMuxer(pw, TSMuxerConfig{
 		VideoCodec: "h264",
 		AudioCodec: "aac",
-		AACConfig: &mpeg4audio.Config{
+		AACConfig: &mpeg4audio.AudioSpecificConfig{
 			Type:         mpeg4audio.ObjectTypeAACLC,
 			SampleRate:   48000,
 			ChannelCount: 2,

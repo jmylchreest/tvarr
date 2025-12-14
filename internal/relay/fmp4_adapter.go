@@ -25,7 +25,7 @@ type VideoCodecParams struct {
 // AudioCodecParams holds extracted audio codec parameters.
 type AudioCodecParams struct {
 	Codec     string // "aac", "ac3", etc.
-	AACConfig *mpeg4audio.Config
+	AACConfig *mpeg4audio.AudioSpecificConfig
 }
 
 // ExtractVideoCodecParams extracts video codec parameters from ES samples.
@@ -146,7 +146,7 @@ func ExtractAudioCodecParams(samples []ESSample) *AudioCodecParams {
 		// Default to AAC if we have audio data
 		return &AudioCodecParams{
 			Codec: "aac",
-			AACConfig: &mpeg4audio.Config{
+			AACConfig: &mpeg4audio.AudioSpecificConfig{
 				Type:         mpeg4audio.ObjectTypeAACLC,
 				SampleRate:   48000,
 				ChannelCount: 2,
@@ -157,7 +157,7 @@ func ExtractAudioCodecParams(samples []ESSample) *AudioCodecParams {
 	// Default AAC config
 	return &AudioCodecParams{
 		Codec: "aac",
-		AACConfig: &mpeg4audio.Config{
+		AACConfig: &mpeg4audio.AudioSpecificConfig{
 			Type:         mpeg4audio.ObjectTypeAACLC,
 			SampleRate:   48000,
 			ChannelCount: 2,
@@ -166,7 +166,7 @@ func ExtractAudioCodecParams(samples []ESSample) *AudioCodecParams {
 }
 
 // parseADTSHeader extracts MPEG-4 Audio config from an ADTS header.
-func parseADTSHeader(data []byte) *mpeg4audio.Config {
+func parseADTSHeader(data []byte) *mpeg4audio.AudioSpecificConfig {
 	if len(data) < 7 {
 		return nil
 	}
@@ -208,7 +208,7 @@ func parseADTSHeader(data []byte) *mpeg4audio.Config {
 		objectType = mpeg4audio.ObjectTypeAACLC
 	}
 
-	return &mpeg4audio.Config{
+	return &mpeg4audio.AudioSpecificConfig{
 		Type:         objectType,
 		SampleRate:   sampleRates[sampleRateIndex],
 		ChannelCount: int(channelConfig),
@@ -245,47 +245,6 @@ func extractNALUnitsFromData(data []byte) [][]byte {
 
 	// Raw NAL unit
 	return [][]byte{data}
-}
-
-// extractNALUnitsLengthPrefixed extracts NAL units from length-prefixed format using mediacommon.
-// This is a fallback for formats not handled by AVCC.Unmarshal.
-func extractNALUnitsLengthPrefixed(data []byte, lengthSize int) [][]byte {
-	// For 4-byte length prefix, use mediacommon's AVCC
-	if lengthSize == 4 {
-		var au h264.AVCC
-		if err := au.Unmarshal(data); err == nil {
-			return au
-		}
-	}
-
-	// Manual fallback for non-standard length sizes
-	var units [][]byte
-	offset := 0
-
-	for offset+lengthSize <= len(data) {
-		var nalLen int
-		switch lengthSize {
-		case 4:
-			nalLen = int(data[offset])<<24 | int(data[offset+1])<<16 | int(data[offset+2])<<8 | int(data[offset+3])
-		case 2:
-			nalLen = int(data[offset])<<8 | int(data[offset+1])
-		case 1:
-			nalLen = int(data[offset])
-		default:
-			return units
-		}
-
-		offset += lengthSize
-
-		if nalLen <= 0 || offset+nalLen > len(data) {
-			break
-		}
-
-		units = append(units, data[offset:offset+nalLen])
-		offset += nalLen
-	}
-
-	return units
 }
 
 // ConvertESSamplesToFMP4Video converts ES video samples to fmp4.Sample format.
