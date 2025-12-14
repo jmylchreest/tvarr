@@ -498,37 +498,45 @@ GET    /health                        Health check endpoint
 
 ## Configuration
 
-Configuration via YAML file or environment variables:
+Configuration via YAML file or environment variables. See [docs/README-CONFIGURABLES.md](docs/README-CONFIGURABLES.md) for the complete reference.
 
 ```yaml
 server:
   host: "0.0.0.0"
   port: 8080
+  base_url: ""  # e.g., "https://mysite.com" for external access
 
 database:
-  path: "./data/tvarr.db"
+  driver: sqlite
+  dsn: tvarr.db
 
 storage:
-  data_dir: "./data"
-  logo_cache_dir: "./data/logos"
+  base_dir: ./data
+  logo_dir: logos
+  logo_retention: 1mo
+  max_logo_size: 5MB
 
 logging:
-  level: "info"      # debug, info, warn, error
-  format: "json"     # json or text
+  level: info      # debug, info, warn, error
+  format: json     # json or text
 
-scheduler:
-  worker_count: 2
-  poll_interval: "5s"
-  job_timeout: "1h"
-  cleanup_age: "168h"  # 7 days
+relay:
+  enabled: false
+  max_concurrent_streams: 10
+
+ffmpeg:
+  hwaccel_priority:
+    - vaapi
+    - nvenc
+    - qsv
+    - amf
 ```
 
 **Environment Variables:**
-- `TVARR_SERVER_HOST`
-- `TVARR_SERVER_PORT`
-- `TVARR_DATABASE_PATH`
-- `TVARR_STORAGE_DATA_DIR`
-- `TVARR_LOGGING_LEVEL`
+- `TVARR_SERVER_HOST`, `TVARR_SERVER_PORT`, `TVARR_SERVER_BASE_URL`
+- `TVARR_DATABASE_DRIVER`, `TVARR_DATABASE_DSN`
+- `TVARR_STORAGE_BASE_DIR`, `TVARR_STORAGE_LOGO_DIR`
+- `TVARR_LOGGING_LEVEL`, `TVARR_LOGGING_FORMAT`
 
 ---
 
@@ -536,8 +544,9 @@ scheduler:
 
 ### Prerequisites
 
-- Go 1.21+
-- SQLite3
+- Go 1.23+
+- SQLite3 (or PostgreSQL/MySQL)
+- FFmpeg (optional, for stream relay/transcoding)
 
 ### Build
 
@@ -553,16 +562,24 @@ go build -o tvarr ./cmd/tvarr
 
 ### Docker
 
-```dockerfile
-FROM golang:1.21-alpine AS builder
-WORKDIR /app
-COPY . .
-RUN go build -o tvarr ./cmd/tvarr
+Pre-built images are available at `ghcr.io/jmylchreest/tvarr:latest`.
 
-FROM alpine:latest
-COPY --from=builder /app/tvarr /usr/local/bin/
-EXPOSE 8080
-CMD ["tvarr", "serve"]
+```bash
+# Basic usage
+docker run -d \
+  -p 8080:8080 \
+  -v tvarr-data:/data \
+  -e TVARR_SERVER_BASE_URL=http://your-host:8080 \
+  ghcr.io/jmylchreest/tvarr:latest
+
+# With GPU acceleration (Intel/AMD)
+docker run -d \
+  -p 8080:8080 \
+  -v tvarr-data:/data \
+  --device /dev/dri:/dev/dri \
+  -e PUID=1000 \
+  -e PGID=1000 \
+  ghcr.io/jmylchreest/tvarr:latest
 ```
 
 ---

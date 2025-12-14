@@ -249,17 +249,7 @@ func (s *RelayService) StartRelay(ctx context.Context, channelID models.ULID, pr
 		return nil, fmt.Errorf("starting relay session: %w", err)
 	}
 
-	s.logger.Debug("Started relay session",
-		"session_id", session.ID,
-		"channel_id", channelID,
-		"stream_url", channel.StreamURL,
-		"profile", func() string {
-			if profile != nil {
-				return profile.Name
-			}
-			return "passthrough"
-		}(),
-	)
+	s.logSessionStart(session, channelID, channel.StreamURL, profile)
 
 	return session, nil
 }
@@ -288,19 +278,32 @@ func (s *RelayService) StartRelayWithProfile(ctx context.Context, channelID mode
 		return nil, fmt.Errorf("starting relay session: %w", err)
 	}
 
-	s.logger.Debug("Started relay session with resolved profile",
-		"session_id", session.ID,
-		"channel_id", channelID,
-		"stream_url", channel.StreamURL,
-		"profile", func() string {
-			if profile != nil {
-				return profile.Name
-			}
-			return "passthrough"
-		}(),
-	)
+	s.logSessionStart(session, channelID, channel.StreamURL, profile)
 
 	return session, nil
+}
+
+// logSessionStart logs session start with detailed profile information
+func (s *RelayService) logSessionStart(session *relay.RelaySession, channelID models.ULID, streamURL string, profile *models.EncodingProfile) {
+	attrs := []any{
+		"session_id", session.ID,
+		"channel_id", channelID,
+		"stream_url", streamURL,
+	}
+
+	if profile != nil {
+		attrs = append(attrs,
+			"profile_name", profile.Name,
+			"video_codec", string(profile.TargetVideoCodec),
+			"audio_codec", string(profile.TargetAudioCodec),
+			"quality", string(profile.QualityPreset),
+			"hw_accel", string(profile.HWAccel),
+		)
+	} else {
+		attrs = append(attrs, "profile_name", "passthrough")
+	}
+
+	s.logger.Debug("Started relay session", attrs...)
 }
 
 // StopRelay stops a relay session.
@@ -393,25 +396,9 @@ func (s *RelayService) ProbeAndStoreCodecInfo(ctx context.Context, streamURL str
 // as it avoids consuming extra connections when a stream is already active.
 func (s *RelayService) GetOrProbeCodecInfo(ctx context.Context, channelID models.ULID, streamURL string) *models.LastKnownCodec {
 	if s.relayManager == nil {
-		s.logger.Debug("GetOrProbeCodecInfo: relayManager is nil")
 		return nil
 	}
-
-	s.logger.Debug("GetOrProbeCodecInfo: delegating to relay manager",
-		"channel_id", channelID.String(),
-		"stream_url", streamURL)
-
-	result := s.relayManager.GetOrProbeCodecInfo(ctx, channelID, streamURL)
-	if result == nil {
-		s.logger.Debug("GetOrProbeCodecInfo: relay manager returned nil",
-			"channel_id", channelID.String())
-	} else {
-		s.logger.Debug("GetOrProbeCodecInfo: got codec info",
-			"channel_id", channelID.String(),
-			"video_codec", result.VideoCodec,
-			"audio_codec", result.AudioCodec)
-	}
-	return result
+	return s.relayManager.GetOrProbeCodecInfo(ctx, channelID, streamURL)
 }
 
 // StreamInfo contains the information needed to stream a channel through a proxy.

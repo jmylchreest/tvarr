@@ -193,67 +193,57 @@ func (r *jobRepo) acquireJobWithRowLocking(ctx context.Context, workerID string)
 	return &job, nil
 }
 
-// acquireJobSQLite uses optimistic locking with an atomic UPDATE for SQLite.
-// SQLite doesn't support SELECT FOR UPDATE, but its transaction model provides
-// serializable isolation within transactions with WAL mode.
+// acquireJobSQLite uses a single atomic UPDATE with subquery to claim a job.
+// This avoids the SELECT-then-UPDATE race condition by finding and claiming
+// in one statement. The first UPDATE to execute claims the job; subsequent
+// concurrent attempts will find no matching rows.
 func (r *jobRepo) acquireJobSQLite(ctx context.Context, workerID string) (*models.Job, error) {
-	var job models.Job
 	now := time.Now()
 	nowTime := models.Now()
 
-	// Use a transaction for atomic acquire
-	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// First, find a candidate job (SQLite's IMMEDIATE transaction prevents concurrent writes)
-		query := tx.
-			Where("(status = ? OR (status = ? AND next_run_at <= ?))", models.JobStatusPending, models.JobStatusScheduled, now).
-			Where("locked_by IS NULL OR locked_by = ''").
-			Order("priority DESC, next_run_at ASC, created_at ASC").
-			Limit(1)
+	// Build subquery to find the best candidate job using GORM's query builder.
+	// This maintains schema awareness and lets GORM handle table/column names.
+	subQuery := r.db.Model(&models.Job{}).
+		Select("id").
+		Where("(status = ? OR (status = ? AND next_run_at <= ?))",
+			models.JobStatusPending, models.JobStatusScheduled, now).
+		Where("locked_by IS NULL OR locked_by = ''").
+		Order("priority DESC, next_run_at ASC, created_at ASC").
+		Limit(1)
 
-		if err := query.First(&job).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return err // Will cause nil return
-			}
-			return fmt.Errorf("finding pending job: %w", err)
-		}
+	// Single atomic UPDATE with subquery - finds and claims job in one statement.
+	// This is the SQLite-idiomatic way to handle job claiming without row locking.
+	// If two workers execute simultaneously, SQLite's write serialization ensures
+	// only one succeeds in updating the row.
+	// Use UpdateColumns to bypass model hooks (BeforeUpdate validation).
+	result := r.db.WithContext(ctx).
+		Model(&models.Job{}).
+		Where("id = (?)", subQuery).
+		UpdateColumns(map[string]interface{}{
+			"status":        models.JobStatusRunning,
+			"started_at":    nowTime,
+			"locked_by":     workerID,
+			"locked_at":     nowTime,
+			"attempt_count": gorm.Expr("attempt_count + 1"),
+		})
 
-		// Atomically update the job with optimistic locking on the original status
-		// This prevents race conditions where two workers select the same job
-		// Use UpdateColumns to bypass BeforeUpdate validation hooks
-		result := tx.Model(&models.Job{}).
-			Where("id = ? AND status = ? AND (locked_by IS NULL OR locked_by = '')", job.ID, job.Status).
-			UpdateColumns(map[string]interface{}{
-				"status":        models.JobStatusRunning,
-				"started_at":    nowTime,
-				"locked_by":     workerID,
-				"locked_at":     nowTime,
-				"attempt_count": job.AttemptCount + 1,
-			})
+	if result.Error != nil {
+		return nil, fmt.Errorf("acquiring job: %w", result.Error)
+	}
 
-		if result.Error != nil {
-			return fmt.Errorf("acquiring job: %w", result.Error)
-		}
+	if result.RowsAffected == 0 {
+		// No jobs available
+		return nil, nil
+	}
 
-		// If no rows were affected, another worker got the job first
-		if result.RowsAffected == 0 {
-			return gorm.ErrRecordNotFound
-		}
-
-		// Update the local job struct with new values
-		job.Status = models.JobStatusRunning
-		job.StartedAt = &nowTime
-		job.LockedBy = workerID
-		job.LockedAt = &nowTime
-		job.AttemptCount++
-
-		return nil
-	})
-
+	// Fetch the job we just claimed by looking for our worker's most recent lock
+	var job models.Job
+	err := r.db.WithContext(ctx).
+		Where("locked_by = ? AND status = ?", workerID, models.JobStatusRunning).
+		Order("locked_at DESC").
+		First(&job).Error
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, nil // No jobs available or lost race
-		}
-		return nil, err
+		return nil, fmt.Errorf("fetching acquired job: %w", err)
 	}
 
 	return &job, nil

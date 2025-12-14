@@ -72,8 +72,8 @@ Configuration can be set via:
 | `storage.logo_dir` | `TVARR_STORAGE_LOGO_DIR` | `logos` | Subdirectory for cached logos |
 | `storage.output_dir` | `TVARR_STORAGE_OUTPUT_DIR` | `output` | Subdirectory for generated files |
 | `storage.temp_dir` | `TVARR_STORAGE_TEMP_DIR` | `temp` | Subdirectory for temporary files |
-| `storage.logo_retention` | `TVARR_STORAGE_LOGO_RETENTION` | `720h` | Logo cache retention (30 days) |
-| `storage.max_logo_size` | `TVARR_STORAGE_MAX_LOGO_SIZE` | `5242880` | Max logo size in bytes (5MB) |
+| `storage.logo_retention` | `TVARR_STORAGE_LOGO_RETENTION` | `1mo` | Logo cache retention (supports durations like `720h`, `30d`, `1mo`) |
+| `storage.max_logo_size` | `TVARR_STORAGE_MAX_LOGO_SIZE` | `5MB` | Max logo size (supports human-readable like `5MB`, `1GB`, or raw bytes) |
 
 ---
 
@@ -112,7 +112,10 @@ Controls the proxy generation pipeline (filtering, data mapping, M3U/XMLTV gener
 | `pipeline.stream_batch_size` | `TVARR_PIPELINE_STREAM_BATCH_SIZE` | `1000` | Batch size for stream processing |
 | `pipeline.enable_gc_hints` | `TVARR_PIPELINE_ENABLE_GC_HINTS` | `true` | Enable GC hints between stages |
 | `pipeline.logo_batch_size` | `TVARR_PIPELINE_LOGO_BATCH_SIZE` | `50` | Batch size for logo caching |
-| `pipeline.ingestion_guard` | `TVARR_PIPELINE_INGESTION_GUARD` | `true` | Enable ingestion guard (waits for active ingestions before generating proxies) |
+| `pipeline.logo_concurrency` | `TVARR_PIPELINE_LOGO_CONCURRENCY` | `10` | Number of concurrent logo downloads |
+| `pipeline.logo_timeout` | `TVARR_PIPELINE_LOGO_TIMEOUT` | `30s` | Timeout for individual logo downloads |
+| `pipeline.logo_retry_attempts` | `TVARR_PIPELINE_LOGO_RETRY_ATTEMPTS` | `3` | Number of retry attempts for failed logo downloads |
+| `pipeline.logo_circuit_breaker` | `TVARR_PIPELINE_LOGO_CIRCUIT_BREAKER` | `logos` | Circuit breaker namespace for logos |
 
 ---
 
@@ -128,6 +131,20 @@ Controls the stream relay/proxy functionality.
 | `relay.circuit_breaker_timeout` | `TVARR_RELAY_CIRCUIT_BREAKER_TIMEOUT` | `30s` | Circuit breaker reset timeout |
 | `relay.connection_pool_size` | `TVARR_RELAY_CONNECTION_POOL_SIZE` | `100` | HTTP connection pool size |
 | `relay.stream_timeout` | `TVARR_RELAY_STREAM_TIMEOUT` | `5m` | Stream idle timeout |
+
+### Relay Buffer Configuration
+
+| Config Key | Environment Variable | Default | Description |
+|------------|---------------------|---------|-------------|
+| `relay.buffer.max_variant_bytes` | `TVARR_RELAY_BUFFER_MAX_VARIANT_BYTES` | `null` | Max bytes per codec variant (supports `100MB`, `1GB`, or raw bytes; null/0 = unlimited) |
+
+---
+
+## Scheduler Configuration
+
+| Config Key | Environment Variable | Default | Description |
+|------------|---------------------|---------|-------------|
+| `scheduler.catchup_missed_runs` | `TVARR_SCHEDULER_CATCHUP_MISSED_RUNS` | `true` | Trigger ingestion for sources that missed scheduled runs while service was down |
 
 ---
 
@@ -169,13 +186,14 @@ storage:
   logo_dir: logos
   output_dir: output
   temp_dir: temp
-  logo_retention: 720h
-  max_logo_size: 5242880
+  logo_retention: 1mo       # Supports: 720h, 30d, 1mo
+  max_logo_size: 5MB        # Supports: 5MB, 5242880
 
 logging:
   level: info
   format: json
   add_source: false
+  time_format: "2006-01-02T15:04:05Z07:00"
 
 ingestion:
   channel_batch_size: 1000
@@ -185,11 +203,17 @@ ingestion:
   retry_attempts: 3
   retry_delay: 5s
 
+scheduler:
+  catchup_missed_runs: true  # Catch up missed scheduled jobs on startup
+
 pipeline:
   stream_batch_size: 1000
   enable_gc_hints: true
   logo_batch_size: 50
-  ingestion_guard: true  # Wait for active ingestions before proxy generation
+  logo_concurrency: 10
+  logo_timeout: 30s
+  logo_retry_attempts: 3
+  logo_circuit_breaker: logos
 
 relay:
   enabled: false
@@ -198,6 +222,8 @@ relay:
   circuit_breaker_timeout: 30s
   connection_pool_size: 100
   stream_timeout: 5m
+  buffer:
+    max_variant_bytes: null  # Supports: 100MB, 1GB, or null for unlimited
 
 ffmpeg:
   binary_path: ""

@@ -80,9 +80,8 @@ func TestRedirectModeHandler(t *testing.T) {
 		// Create a test HTTP handler that simulates redirect behavior
 		targetURL := "http://example.com/stream.ts"
 		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("X-Stream-Origin-Kind", "REDIRECT")
+			w.Header().Set("X-Stream-Mode", "direct")
 			w.Header().Set("X-Stream-Decision", "redirect")
-			w.Header().Set("X-Stream-Mode", "redirect")
 			w.Header().Set("Location", targetURL)
 			w.WriteHeader(http.StatusFound)
 		})
@@ -94,8 +93,7 @@ func TestRedirectModeHandler(t *testing.T) {
 
 		assert.Equal(t, http.StatusFound, w.Code)
 		assert.Equal(t, targetURL, w.Header().Get("Location"))
-		assert.Equal(t, "REDIRECT", w.Header().Get("X-Stream-Origin-Kind"))
-		assert.Equal(t, "redirect", w.Header().Get("X-Stream-Mode"))
+		assert.Equal(t, "direct", w.Header().Get("X-Stream-Mode"))
 	})
 }
 
@@ -108,9 +106,8 @@ func TestDirectModeReturns302Redirect(t *testing.T) {
 		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// This simulates handleRawDirectMode behavior
 			w.Header().Set("Location", targetURL)
-			w.Header().Set("X-Stream-Origin-Kind", "REDIRECT")
-			w.Header().Set("X-Stream-Decision", "direct")
 			w.Header().Set("X-Stream-Mode", "direct")
+			w.Header().Set("X-Stream-Decision", "redirect")
 			w.WriteHeader(http.StatusFound)
 		})
 
@@ -124,8 +121,7 @@ func TestDirectModeReturns302Redirect(t *testing.T) {
 		assert.Equal(t, targetURL, w.Header().Get("Location"), "Location header should contain stream URL")
 
 		// Verify direct mode headers
-		assert.Equal(t, "REDIRECT", w.Header().Get("X-Stream-Origin-Kind"), "Should indicate REDIRECT origin kind")
-		assert.Equal(t, "direct", w.Header().Get("X-Stream-Decision"), "Should indicate direct decision")
+		assert.Equal(t, "redirect", w.Header().Get("X-Stream-Decision"), "Should indicate redirect decision")
 		assert.Equal(t, "direct", w.Header().Get("X-Stream-Mode"), "Should indicate direct mode")
 	})
 
@@ -212,7 +208,7 @@ func TestDirectModeIgnoresEncodingProfile(t *testing.T) {
 		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Direct mode: no stream classification, no codec detection, just redirect
 			w.Header().Set("Location", "http://upstream/stream.ts")
-			w.Header().Set("X-Stream-Decision", "direct")
+			w.Header().Set("X-Stream-Decision", "redirect")
 			w.WriteHeader(http.StatusFound)
 		})
 
@@ -223,7 +219,7 @@ func TestDirectModeIgnoresEncodingProfile(t *testing.T) {
 
 		// Verify it's a simple redirect
 		assert.Equal(t, http.StatusFound, w.Code)
-		assert.Equal(t, "direct", w.Header().Get("X-Stream-Decision"))
+		assert.Equal(t, "redirect", w.Header().Get("X-Stream-Decision"))
 		assert.Empty(t, w.Body.String(), "Direct mode should not stream any content")
 	})
 }
@@ -231,36 +227,48 @@ func TestDirectModeIgnoresEncodingProfile(t *testing.T) {
 // Test X-Stream debug headers
 func TestXStreamDebugHeaders(t *testing.T) {
 	tests := []struct {
-		name     string
-		mode     string
-		wantKind string
-		wantMode string
+		name         string
+		proxyMode    string
+		wantMode     string
+		wantDecision string
 	}{
 		{
-			name:     "redirect mode headers",
-			mode:     "redirect",
-			wantKind: "REDIRECT",
-			wantMode: "redirect",
+			name:         "direct mode with redirect",
+			proxyMode:    "direct",
+			wantMode:     "direct",
+			wantDecision: "redirect",
 		},
 		{
-			name:     "proxy mode headers",
-			mode:     "proxy",
-			wantKind: "PROXY",
-			wantMode: "proxy",
+			name:         "direct mode with proxy",
+			proxyMode:    "direct",
+			wantMode:     "direct",
+			wantDecision: "proxy",
 		},
 		{
-			name:     "relay mode headers",
-			mode:     "relay",
-			wantKind: "RELAY",
-			wantMode: "relay-transcode",
+			name:         "smart mode passthrough",
+			proxyMode:    "smart",
+			wantMode:     "smart",
+			wantDecision: "passthrough",
+		},
+		{
+			name:         "smart mode repackage",
+			proxyMode:    "smart",
+			wantMode:     "smart",
+			wantDecision: "repackage",
+		},
+		{
+			name:         "smart mode transcode",
+			proxyMode:    "smart",
+			wantMode:     "smart",
+			wantDecision: "transcode",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Verify the expected header values are correct
-			assert.NotEmpty(t, tt.wantKind)
 			assert.NotEmpty(t, tt.wantMode)
+			assert.NotEmpty(t, tt.wantDecision)
 		})
 	}
 }

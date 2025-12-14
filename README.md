@@ -39,8 +39,8 @@ The web UI will be available at `http://localhost:8080`.
 |----------|-------------|---------|
 | `TVARR_SERVER_BASE_URL` | Public URL for generated playlist links | `http://localhost:8080` |
 | `TVARR_SERVER_PORT` | HTTP server port | `8080` |
-| `TVARR_DATABASE_DSN` | SQLite database path | `/data/tvarr.db` |
-| `TVARR_LOG_LEVEL` | Log level (debug, info, warn, error) | `info` |
+| `TVARR_DATABASE_DSN` | SQLite database path | `tvarr.db` |
+| `TVARR_LOGGING_LEVEL` | Log level (debug, info, warn, error) | `info` |
 | `PUID` | User ID for file ownership | `1000` |
 | `PGID` | Group ID for file ownership | `1000` |
 | `TZ` | Timezone | `UTC` |

@@ -17,6 +17,7 @@ import (
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/relay"
 	"github.com/jmylchreest/tvarr/internal/service"
+	"github.com/jmylchreest/tvarr/internal/version"
 )
 
 // RelayStreamHandler handles stream relay API endpoints.
@@ -44,6 +45,22 @@ func (h *RelayStreamHandler) WithLogger(logger *slog.Logger) *RelayStreamHandler
 func (h *RelayStreamHandler) WithClientDetectionService(svc *service.ClientDetectionService) *RelayStreamHandler {
 	h.clientDetectionService = svc
 	return h
+}
+
+// setStreamHeaders sets the X-Stream-* and X-Tvarr-Version headers on the response.
+// This centralizes all stream header logic to avoid repetition.
+func setStreamHeaders(w http.ResponseWriter, mode, decision string) {
+	w.Header().Set("X-Stream-Mode", mode)
+	w.Header().Set("X-Stream-Decision", decision)
+	w.Header().Set("X-Tvarr-Version", version.Version)
+}
+
+// setCORSHeaders sets the CORS headers for cross-origin streaming.
+func setCORSHeaders(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept, Range")
+	w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range")
 }
 
 // Register registers the relay stream routes with the API (Huma routes).
@@ -154,9 +171,10 @@ func (h *RelayStreamHandler) registerProxyStreamDocs(api huma.API) {
   - Transcode: FFmpeg transcoding when codec conversion is needed
 
 **Response Headers:**
-- X-Stream-Origin-Kind: REDIRECT or SMART
-- X-Stream-Decision: direct, passthrough, repackage, or transcode
-- X-Stream-Mode: The proxy mode used (direct or smart)
+- X-Stream-Mode: direct or smart (matches proxy mode)
+- X-Stream-Decision: redirect, proxy, passthrough, repackage, or transcode
+- X-Stream-Format: output format (hls-ts, hls-fmp4, dash, mpegts)
+- X-Tvarr-Version: tvarr version
 - Access-Control-Allow-Origin: * (for smart mode)`,
 		Tags: []string{"Stream Proxy"},
 		Responses: map[string]*huma.Response{
@@ -164,9 +182,10 @@ func (h *RelayStreamHandler) registerProxyStreamDocs(api huma.API) {
 				Description: "Stream content (smart mode)",
 				Headers: map[string]*huma.Param{
 					"Content-Type":                 {Description: "video/mp2t, application/vnd.apple.mpegurl, or upstream content type"},
-					"X-Stream-Origin-Kind":         {Description: "SMART"},
-					"X-Stream-Decision":            {Description: "Processing decision made (passthrough, repackage, transcode)"},
 					"X-Stream-Mode":                {Description: "smart"},
+					"X-Stream-Decision":            {Description: "Processing decision made (passthrough, repackage, transcode)"},
+					"X-Stream-Format":              {Description: "Output format (hls-ts, hls-fmp4, dash, mpegts)"},
+					"X-Tvarr-Version":              {Description: "tvarr version"},
 					"Access-Control-Allow-Origin":  {Description: "CORS header (always *)"},
 					"Access-Control-Allow-Methods": {Description: "Allowed HTTP methods"},
 				},
@@ -174,9 +193,10 @@ func (h *RelayStreamHandler) registerProxyStreamDocs(api huma.API) {
 			"302": {
 				Description: "Redirect to source stream (direct mode)",
 				Headers: map[string]*huma.Param{
-					"Location":             {Description: "Source stream URL"},
-					"X-Stream-Origin-Kind": {Description: "REDIRECT"},
-					"X-Stream-Mode":        {Description: "direct"},
+					"Location":          {Description: "Source stream URL"},
+					"X-Stream-Mode":     {Description: "direct"},
+					"X-Stream-Decision": {Description: "redirect"},
+					"X-Tvarr-Version":   {Description: "tvarr version"},
 				},
 			},
 			"400": {Description: "Invalid proxy or channel ID format"},
@@ -362,13 +382,8 @@ func (h *RelayStreamHandler) handleChannelPreview(w http.ResponseWriter, r *http
 		)
 
 		// Set common headers
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept, Range")
-		w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range")
-		w.Header().Set("X-Stream-Origin-Kind", "SMART")
-		w.Header().Set("X-Stream-Mode", "smart")
-		w.Header().Set("X-Stream-Decision", "join-existing")
+		setCORSHeaders(w)
+		setStreamHeaders(w, "smart", "join-existing")
 
 		// Use the existing session's SharedESBuffer
 		switch clientFormat {
@@ -443,9 +458,7 @@ func (h *RelayStreamHandler) handleRawDirectMode(w http.ResponseWriter, r *http.
 	)
 
 	w.Header().Set("Location", streamURL)
-	w.Header().Set("X-Stream-Origin-Kind", "REDIRECT")
-	w.Header().Set("X-Stream-Decision", "direct")
-	w.Header().Set("X-Stream-Mode", "direct")
+	setStreamHeaders(w, "direct", "redirect")
 	w.WriteHeader(http.StatusFound)
 }
 
@@ -483,17 +496,15 @@ func (h *RelayStreamHandler) handleRawSmartMode(w http.ResponseWriter, r *http.R
 	}
 	deliveryDecision := relay.SelectDelivery(classification, clientFormat, info.EncodingProfile, deliveryOpts)
 
-	h.logger.Debug("Smart mode: delivery decision",
+	h.logger.Info("Delivery decision",
 		"proxy_id", info.Proxy.ID,
 		"channel_id", info.Channel.ID,
-		"stream_url", streamURL,
+		"decision", deliveryDecision.String(),
 		"source_format", classification.SourceFormat,
 		"source_video", sourceVideoCodec,
 		"source_audio", sourceAudioCodec,
 		"client_format", clientFormat,
-		"client_accepts_video", clientCaps.AcceptedVideoCodecs,
-		"client_accepts_audio", clientCaps.AcceptedAudioCodecs,
-		"decision", deliveryDecision.String(),
+		"client_player", clientCaps.PlayerName,
 	)
 
 	// Dispatch based on delivery decision
@@ -653,22 +664,8 @@ func (h *RelayStreamHandler) getEncodingProfile(info *service.StreamInfo) *model
 // This is used when source format matches client format.
 func (h *RelayStreamHandler) handleSmartPassthrough(w http.ResponseWriter, r *http.Request, info *service.StreamInfo, classification *service.ClassificationResult) {
 	// Set common headers
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept, Range")
-	w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range")
-	w.Header().Set("X-Stream-Origin-Kind", "SMART")
-	w.Header().Set("X-Stream-Mode", "smart")
-	w.Header().Set("X-Stream-Decision", "passthrough")
-
-	logAttrs := []any{
-		"channel_id", info.Channel.ID,
-		"source_format", classification.SourceFormat,
-	}
-	if info.Proxy != nil {
-		logAttrs = append([]any{"proxy_id", info.Proxy.ID}, logAttrs...)
-	}
-	h.logger.Debug("Smart mode: passthrough delivery", logAttrs...)
+	setCORSHeaders(w)
+	setStreamHeaders(w, "smart", "passthrough")
 
 	// Reuse the direct proxy streaming logic
 	h.streamRawDirectProxy(w, r, info, classification)
@@ -683,23 +680,8 @@ func (h *RelayStreamHandler) handleSmartPassthrough(w http.ResponseWriter, r *ht
 // to enable multiple clients sharing a single upstream connection.
 func (h *RelayStreamHandler) handleSmartRepackage(w http.ResponseWriter, r *http.Request, info *service.StreamInfo, classification *service.ClassificationResult, clientFormat relay.ClientFormat) {
 	// Set common headers
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept, Range")
-	w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range")
-	w.Header().Set("X-Stream-Origin-Kind", "SMART")
-	w.Header().Set("X-Stream-Mode", "smart")
-	w.Header().Set("X-Stream-Decision", "repackage")
-
-	logAttrs := []any{
-		"channel_id", info.Channel.ID,
-		"source_format", classification.SourceFormat,
-		"target_format", clientFormat,
-	}
-	if info.Proxy != nil {
-		logAttrs = append([]any{"proxy_id", info.Proxy.ID}, logAttrs...)
-	}
-	h.logger.Debug("Smart mode: repackage delivery", logAttrs...)
+	setCORSHeaders(w)
+	setStreamHeaders(w, "smart", "repackage")
 
 	// For MPEG-TS sources where client accepts codecs directly, use the ES buffer pipeline
 	// without transcoding. This enables connection sharing between multiple clients.
@@ -714,22 +696,8 @@ func (h *RelayStreamHandler) handleSmartTranscode(w http.ResponseWriter, r *http
 	ctx := r.Context()
 
 	// Set common headers
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept, Range")
-	w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range")
-	w.Header().Set("X-Stream-Origin-Kind", "SMART")
-	w.Header().Set("X-Stream-Mode", "smart")
-	w.Header().Set("X-Stream-Decision", "transcode")
-
-	logAttrs := []any{
-		"channel_id", info.Channel.ID,
-		"client_format", clientFormat,
-	}
-	if info.Proxy != nil {
-		logAttrs = append([]any{"proxy_id", info.Proxy.ID}, logAttrs...)
-	}
-	h.logger.Debug("Smart mode: transcode delivery", logAttrs...)
+	setCORSHeaders(w)
+	setStreamHeaders(w, "smart", "transcode")
 
 	// Get the encoding profile (no auto-detection needed with EncodingProfile)
 	profile := h.getEncodingProfile(info)
@@ -1092,7 +1060,7 @@ func (h *RelayStreamHandler) streamRawDirectProxy(w http.ResponseWriter, r *http
 	}
 	h.logger.Info("Proxy mode: direct proxy", logAttrs...)
 
-	w.Header().Set("X-Stream-Decision", "direct-proxy")
+	setStreamHeaders(w, "direct", "proxy")
 
 	// Create HTTP request to upstream
 	req, err := http.NewRequest(http.MethodGet, streamURL, nil)

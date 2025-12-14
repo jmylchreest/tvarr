@@ -122,18 +122,26 @@ func (c *ProcessorClient) Done() <-chan struct{} {
 	return c.done
 }
 
+// StreamContext holds metadata for X-Stream headers.
+type StreamContext struct {
+	ProxyMode        string // "direct" or "smart"
+	DeliveryDecision string // "redirect", "proxy", "passthrough", "repackage", "transcode"
+	Version          string // tvarr version
+}
+
 // BaseProcessor provides common functionality for all processor types.
 type BaseProcessor struct {
-	id           string
-	format       OutputFormat
-	buffer       *SharedESBuffer
-	clients      map[string]*ProcessorClient
-	clientsMu    sync.RWMutex
-	startedAt    time.Time
-	lastActivity atomic.Value // time.Time
-	bytesWritten atomic.Uint64
-	closed       atomic.Bool
-	closedCh     chan struct{}
+	id            string
+	format        OutputFormat
+	buffer        *SharedESBuffer
+	clients       map[string]*ProcessorClient
+	clientsMu     sync.RWMutex
+	startedAt     time.Time
+	lastActivity  atomic.Value // time.Time
+	bytesWritten  atomic.Uint64
+	closed        atomic.Bool
+	closedCh      chan struct{}
+	streamContext StreamContext
 }
 
 // NewBaseProcessor creates a new base processor.
@@ -162,6 +170,25 @@ func (p *BaseProcessor) Format() OutputFormat {
 // Buffer returns the shared buffer.
 func (p *BaseProcessor) Buffer() *SharedESBuffer {
 	return p.buffer
+}
+
+// SetStreamContext sets the stream context for header generation.
+func (p *BaseProcessor) SetStreamContext(ctx StreamContext) {
+	p.streamContext = ctx
+}
+
+// SetStreamHeaders sets the X-Stream-* and X-Tvarr-Version headers on the response.
+func (p *BaseProcessor) SetStreamHeaders(w http.ResponseWriter) {
+	if p.streamContext.ProxyMode != "" {
+		w.Header().Set("X-Stream-Mode", p.streamContext.ProxyMode)
+	}
+	if p.streamContext.DeliveryDecision != "" {
+		w.Header().Set("X-Stream-Decision", p.streamContext.DeliveryDecision)
+	}
+	w.Header().Set("X-Stream-Format", string(p.format))
+	if p.streamContext.Version != "" {
+		w.Header().Set("X-Tvarr-Version", p.streamContext.Version)
+	}
 }
 
 // RegisterClientBase adds a client (used by specific processor implementations).

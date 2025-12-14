@@ -300,6 +300,7 @@ func (p *MPEGTSProcessor) ServeStream(w http.ResponseWriter, r *http.Request, cl
 	defer p.UnregisterClient(clientID)
 
 	// Set headers for streaming
+	p.SetStreamHeaders(w)
 	w.Header().Set("Content-Type", "video/mp2t")
 	w.Header().Set("Transfer-Encoding", "chunked")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")

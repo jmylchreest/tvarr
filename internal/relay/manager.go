@@ -30,6 +30,14 @@ var ErrBufferClosed = errors.New("buffer closed")
 // ErrClientNotFound is returned when a client is not found in the buffer.
 var ErrClientNotFound = errors.New("client not found")
 
+// formatBitrateKbps returns bitrate in kbps as a string, or "unknown" if 0
+func formatBitrateKbps(bitrate int) string {
+	if bitrate == 0 {
+		return "unknown"
+	}
+	return fmt.Sprintf("%d", bitrate/1000)
+}
+
 // ManagerConfig holds configuration for the relay manager.
 type ManagerConfig struct {
 	// MaxSessions is the maximum number of concurrent relay sessions.
@@ -407,9 +415,18 @@ func (m *Manager) ProbeAndStoreCodecInfo(ctx context.Context, streamURL string) 
 
 	m.logger.Info("Probed stream codec",
 		slog.String("stream_url", streamURL),
+		slog.String("container", codecInfo.ContainerFormat),
 		slog.String("video_codec", codecInfo.VideoCodec),
-		slog.String("audio_codec", codecInfo.AudioCodec),
+		slog.String("video_profile", codecInfo.VideoProfile),
 		slog.String("resolution", fmt.Sprintf("%dx%d", codecInfo.VideoWidth, codecInfo.VideoHeight)),
+		slog.Float64("framerate", codecInfo.VideoFramerate),
+		slog.String("video_bitrate_kbps", formatBitrateKbps(codecInfo.VideoBitrate)),
+		slog.String("audio_codec", codecInfo.AudioCodec),
+		slog.Int("audio_channels", codecInfo.AudioChannels),
+		slog.Int("audio_sample_rate", codecInfo.AudioSampleRate),
+		slog.String("audio_bitrate_kbps", formatBitrateKbps(codecInfo.AudioBitrate)),
+		slog.Int("stream_count", codecInfo.StreamCount),
+		slog.Bool("is_live", codecInfo.IsLiveStream),
 		slog.Int64("probe_ms", probeMs))
 
 	// Cache in database
@@ -430,39 +447,30 @@ func (m *Manager) ProbeAndStoreCodecInfo(ctx context.Context, streamURL string) 
 //
 // This prevents probing from consuming extra connections when a stream is already active.
 func (m *Manager) GetOrProbeCodecInfo(ctx context.Context, channelID models.ULID, streamURL string) *models.LastKnownCodec {
-	m.logger.Debug("GetOrProbeCodecInfo called",
-		slog.String("channel_id", channelID.String()),
-		slog.String("stream_url", streamURL))
+	var result *models.LastKnownCodec
+	var source string
 
 	// Priority 1: Check for active session - this is the fastest path and doesn't require a network call
 	session := m.GetSessionForChannel(channelID)
-	if session != nil {
-		if session.CachedCodecInfo != nil {
-			m.logger.Debug("Using codec info from active session",
-				slog.String("channel_id", channelID.String()),
-				slog.String("video_codec", session.CachedCodecInfo.VideoCodec),
-				slog.String("audio_codec", session.CachedCodecInfo.AudioCodec))
-			return session.CachedCodecInfo
-		}
-		m.logger.Debug("Active session exists but has no cached codec info",
-			slog.String("channel_id", channelID.String()))
-	} else {
-		m.logger.Debug("No active session for channel",
-			slog.String("channel_id", channelID.String()))
+	if session != nil && session.CachedCodecInfo != nil {
+		result = session.CachedCodecInfo
+		source = "session"
+		m.logger.Debug("Codec info resolved",
+			slog.String("channel_id", channelID.String()),
+			slog.String("source", source),
+			slog.String("video_codec", result.VideoCodec),
+			slog.String("audio_codec", result.AudioCodec))
+		return result
 	}
 
 	// Priority 2: Check if connection pool would allow a probe
-	// Extract host to check current connection count
 	host, err := extractHost(streamURL)
 	if err != nil {
-		m.logger.Debug("Failed to extract host from stream URL",
-			slog.String("stream_url", streamURL),
-			slog.String("error", err.Error()))
 		// Fall back to cached database info
-		cached := m.getCachedCodecInfo(ctx, streamURL)
-		m.logger.Debug("Returning cached codec info after host extraction failure",
-			slog.Bool("cached_found", cached != nil))
-		return cached
+		result = m.getCachedCodecInfo(ctx, streamURL)
+		source = "cache"
+		m.logCodecResolution(channelID, source, result, "host_extraction_failed")
+		return result
 	}
 
 	// Check connection pool stats - if we're at or near the limit, don't probe
@@ -471,32 +479,36 @@ func (m *Manager) GetOrProbeCodecInfo(ctx context.Context, channelID models.ULID
 	atConnectionLimit := currentHostConns >= poolStats.MaxPerHost
 
 	if atConnectionLimit {
-		m.logger.Debug("Skipping probe - connection limit reached for host",
-			slog.String("host", host),
-			slog.Int("current_connections", currentHostConns),
-			slog.Int("max_per_host", poolStats.MaxPerHost))
 		// Fall back to cached database info
-		cached := m.getCachedCodecInfo(ctx, streamURL)
-		m.logger.Debug("Returning cached codec info due to connection limit",
-			slog.Bool("cached_found", cached != nil))
-		return cached
+		result = m.getCachedCodecInfo(ctx, streamURL)
+		source = "cache"
+		m.logCodecResolution(channelID, source, result, "connection_limit")
+		return result
 	}
 
 	// Priority 3: We have capacity - probe fresh
-	m.logger.Debug("Probing stream for codec info",
-		slog.String("channel_id", channelID.String()),
-		slog.String("stream_url", streamURL),
-		slog.String("host", host),
-		slog.Int("current_host_connections", currentHostConns),
-		slog.Int("max_per_host", poolStats.MaxPerHost),
-		slog.Bool("prober_available", m.prober != nil))
-
-	result := m.ProbeAndStoreCodecInfo(ctx, streamURL)
-	if result == nil {
-		m.logger.Debug("ProbeAndStoreCodecInfo returned nil",
-			slog.String("stream_url", streamURL))
-	}
+	result = m.ProbeAndStoreCodecInfo(ctx, streamURL)
+	source = "probe"
+	m.logCodecResolution(channelID, source, result, "")
 	return result
+}
+
+// logCodecResolution emits a single consolidated log for codec resolution
+func (m *Manager) logCodecResolution(channelID models.ULID, source string, codec *models.LastKnownCodec, reason string) {
+	attrs := []any{
+		slog.String("channel_id", channelID.String()),
+		slog.String("source", source),
+		slog.Bool("found", codec != nil),
+	}
+	if codec != nil {
+		attrs = append(attrs,
+			slog.String("video_codec", codec.VideoCodec),
+			slog.String("audio_codec", codec.AudioCodec))
+	}
+	if reason != "" {
+		attrs = append(attrs, slog.String("reason", reason))
+	}
+	m.logger.Debug("Codec info resolved", attrs...)
 }
 
 // getCachedCodecInfo retrieves cached codec info from the database.
@@ -516,10 +528,6 @@ func (m *Manager) getCachedCodecInfo(ctx context.Context, streamURL string) *mod
 
 	// Check if cached info has actual codec data (not just an error entry)
 	if cached != nil && (cached.VideoCodec != "" || cached.AudioCodec != "") {
-		m.logger.Debug("Using cached codec info from database",
-			slog.String("stream_url", streamURL),
-			slog.String("video_codec", cached.VideoCodec),
-			slog.String("audio_codec", cached.AudioCodec))
 		return cached
 	}
 
@@ -543,10 +551,33 @@ func (m *Manager) createSession(ctx context.Context, channelID models.ULID, chan
 		probeURL = classification.SelectedMediaPlaylist
 	}
 
-	// Pre-probe codec info for faster FFmpeg startup
-	// Always probe fresh and store result for channel UI
-	// This is non-blocking - if probe fails, we continue without cached info
-	codecInfo := m.ProbeAndStoreCodecInfo(ctx, probeURL)
+	// Get codec info - use recent cache if available to avoid re-probing
+	// Cache is valid for 60 minutes since codec info rarely changes for a source
+	var codecInfo *models.LastKnownCodec
+	var codecSource string
+	if cached := m.getCachedCodecInfo(ctx, probeURL); cached != nil {
+		// Use cached info if it's recent (probed within last 60 minutes)
+		if cached.ProbedAt.After(time.Now().Add(-60 * time.Minute)) {
+			codecInfo = cached
+			codecSource = "cache"
+		}
+	}
+
+	// Only probe fresh if no recent cache
+	if codecInfo == nil {
+		codecInfo = m.ProbeAndStoreCodecInfo(ctx, probeURL)
+		codecSource = "probe"
+	}
+
+	// Log codec resolution result
+	if codecInfo != nil {
+		m.logger.Debug("Codec info resolved",
+			slog.String("stream_url", probeURL),
+			slog.String("source", codecSource),
+			slog.String("video_codec", codecInfo.VideoCodec),
+			slog.String("audio_codec", codecInfo.AudioCodec),
+			slog.Duration("cache_age", time.Since(codecInfo.ProbedAt)))
+	}
 
 	sessionCtx, sessionCancel := context.WithCancel(m.ctx)
 

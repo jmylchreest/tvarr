@@ -133,7 +133,7 @@ export function VideoPlayerModal({ isOpen, onClose, channel, program }: VideoPla
 
   const streamUrl = channel?.stream_url || program?.stream_url || '';
 
-  // Detected stream kind from server headers (X-Stream-Origin-Kind)
+  // Detected stream format from server headers (X-Stream-Format)
   const [streamKind, setStreamKind] = useState<'RAW_TS' | 'HLS_PLAYLIST' | 'UNKNOWN' | null>(null);
   const [streamDecision, setStreamDecision] = useState<string | null>(null);
 
@@ -157,14 +157,23 @@ export function VideoPlayerModal({ isOpen, onClose, channel, program }: VideoPla
           headers: { [PLAYER_HEADER_NAME]: 'mpegts.js' },
         });
         if (canceled) return;
-        const kind = (res.headers.get('X-Stream-Origin-Kind') || '').toUpperCase();
+        // X-Stream-Format indicates output format: hls-ts, hls-fmp4, dash, mpegts
+        const format = (res.headers.get('X-Stream-Format') || '').toLowerCase();
         const decision = res.headers.get('X-Stream-Decision');
-        if (kind === 'HLS_PLAYLIST') {
+        if (format.startsWith('hls') || format === 'dash') {
           setStreamKind('HLS_PLAYLIST');
-        } else if (kind === 'RAW_TS') {
+        } else if (format === 'mpegts') {
           setStreamKind('RAW_TS');
         } else {
-          setStreamKind('UNKNOWN');
+          // Fallback: check Content-Type for direct mode (no X-Stream-Format)
+          const contentType = res.headers.get('Content-Type') || '';
+          if (contentType.includes('mpegurl') || contentType.includes('dash')) {
+            setStreamKind('HLS_PLAYLIST');
+          } else if (contentType.includes('mp2t') || contentType.includes('mpeg')) {
+            setStreamKind('RAW_TS');
+          } else {
+            setStreamKind('UNKNOWN');
+          }
         }
         if (decision) setStreamDecision(decision);
       } catch {

@@ -523,6 +523,9 @@ func runServe(_ *cobra.Command, _ []string) error {
 	logsHandler := handlers.NewLogsHandler(logsService)
 	logsHandler.Register(server.API())
 	logsHandler.RegisterSSE(server.Router())
+
+	systemHandler := handlers.NewSystemHandler(relayService)
+	systemHandler.Register(server.API())
 	logger.Debug("http handlers registered")
 
 	// Register job handler
@@ -550,11 +553,9 @@ func runServe(_ *cobra.Command, _ []string) error {
 	}
 	defer sched.Stop()
 
-	// Start job runner
-	if err := runner.Start(ctx); err != nil {
-		return fmt.Errorf("starting runner: %w", err)
-	}
-	defer runner.Stop()
+	// Schedule startup jobs BEFORE starting the runner to avoid database contention.
+	// The runner's workers immediately start polling for jobs, so we need all
+	// startup jobs to be created first.
 
 	// Schedule initial logo maintenance job on startup if configured
 	if logoScanSchedule != "" {
@@ -571,6 +572,12 @@ func runServe(_ *cobra.Command, _ []string) error {
 			logger.Warn("failed to catch up missed runs", slog.Any("error", err))
 		}
 	}
+
+	// Start job runner (workers begin polling for jobs)
+	if err := runner.Start(ctx); err != nil {
+		return fmt.Errorf("starting runner: %w", err)
+	}
+	defer runner.Stop()
 
 	// Start server
 	logger.Info("starting tvarr server",

@@ -325,6 +325,7 @@ func (p *HLSTSProcessor) ServeManifest(w http.ResponseWriter, r *http.Request) e
 		buf.WriteString(fmt.Sprintf("segment%d.ts\n", seg.sequence))
 	}
 
+	p.SetStreamHeaders(w)
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	_, err := w.Write(buf.Bytes())
@@ -356,6 +357,7 @@ func (p *HLSTSProcessor) ServeSegment(w http.ResponseWriter, r *http.Request, se
 		return fmt.Errorf("segment %d not found", seq)
 	}
 
+	p.SetStreamHeaders(w)
 	w.Header().Set("Content-Type", "video/mp2t")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(segment.data)))
 	w.Header().Set("Cache-Control", "public, max-age=31536000") // Segments are immutable
