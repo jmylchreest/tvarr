@@ -356,6 +356,18 @@ func runServe(_ *cobra.Command, _ []string) error {
 
 	logger.Debug("services initialized")
 
+	// Initialize backup service (needed for both scheduler and HTTP handler)
+	backupConfig := config.BackupConfig{
+		Directory: viper.GetString("backup.directory"),
+		Schedule: config.BackupScheduleConfig{
+			Enabled:   viper.GetBool("backup.schedule.enabled"),
+			Cron:      viper.GetString("backup.schedule.cron"),
+			Retention: viper.GetInt("backup.schedule.retention"),
+		},
+	}
+	backupService := service.NewBackupService(db, backupConfig, viper.GetString("storage.base_dir")).
+		WithLogger(logger)
+
 	// Configure internal recurring jobs
 	logger.Debug("configuring scheduler")
 	var internalJobs []scheduler.InternalJobConfig
@@ -366,6 +378,18 @@ func runServe(_ *cobra.Command, _ []string) error {
 			TargetName:   "Logo Maintenance",
 			CronSchedule: logoScanSchedule,
 		})
+	}
+
+	// Add scheduled backup job if enabled
+	if backupConfig.Schedule.Enabled && backupConfig.Schedule.Cron != "" {
+		internalJobs = append(internalJobs, scheduler.InternalJobConfig{
+			JobType:      models.JobTypeBackup,
+			TargetName:   "Scheduled Backup",
+			CronSchedule: backupConfig.Schedule.Cron,
+		})
+		logger.Info("scheduled backups configured",
+			slog.String("schedule", backupConfig.Schedule.Cron),
+			slog.Int("retention", backupConfig.Schedule.Retention))
 	}
 
 	// Initialize scheduler and runner
@@ -414,6 +438,10 @@ func runServe(_ *cobra.Command, _ []string) error {
 	// Register logo maintenance handler
 	logoMaintenanceHandler := scheduler.NewLogoMaintenanceHandler(logoService).WithLogger(logger)
 	executor.RegisterHandler(models.JobTypeLogoCleanup, logoMaintenanceHandler)
+
+	// Register backup handler (using adapter to implement scheduler interface)
+	backupJobHandler := scheduler.NewBackupJobHandler(&backupServiceAdapter{backupService}).WithLogger(logger)
+	executor.RegisterHandler(models.JobTypeBackup, backupJobHandler)
 
 	// Create job runner
 	runner := scheduler.NewRunner(jobRepo, executor).
@@ -532,6 +560,30 @@ func runServe(_ *cobra.Command, _ []string) error {
 	jobHandler := handlers.NewJobHandler(jobService)
 	jobHandler.Register(server.API())
 
+	// Register export/import handlers
+	exportService := service.NewExportService(
+		filterRepo,
+		dataMappingRuleRepo,
+		clientDetectionRuleRepo,
+		encodingProfileRepo,
+	).WithLogger(logger)
+
+	importService := service.NewImportService(
+		db,
+		filterRepo,
+		dataMappingRuleRepo,
+		clientDetectionRuleRepo,
+		encodingProfileRepo,
+	).WithLogger(logger)
+
+	exportHandler := handlers.NewExportHandler(exportService, importService)
+	exportHandler.Register(server.API())
+
+	// Register backup/restore handlers (backupService created earlier for scheduler)
+	backupHandler := handlers.NewBackupHandler(backupService)
+	backupHandler.Register(server.API())
+	backupHandler.RegisterChiRoutes(server.Router())
+
 	// Setup graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -638,4 +690,30 @@ func viperGetByteSizePtr(key string) *config.ByteSize {
 		bs = config.ByteSize(v)
 	}
 	return &bs
+}
+
+// backupServiceAdapter adapts *service.BackupService to implement scheduler.BackupCreateService.
+type backupServiceAdapter struct {
+	svc *service.BackupService
+}
+
+// backupResult wraps the backup filename for scheduler use.
+type backupResult struct {
+	filename string
+}
+
+func (r *backupResult) GetFilename() string {
+	return r.filename
+}
+
+func (a *backupServiceAdapter) CreateBackupForScheduler(ctx context.Context) (scheduler.BackupCreateResult, error) {
+	meta, err := a.svc.CreateBackup(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &backupResult{filename: meta.Filename}, nil
+}
+
+func (a *backupServiceAdapter) CleanupOldBackups(ctx context.Context) (int, error) {
+	return a.svc.CleanupOldBackups(ctx)
 }

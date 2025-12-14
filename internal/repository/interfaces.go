@@ -191,10 +191,16 @@ type FilterRepository interface {
 	Create(ctx context.Context, filter *models.Filter) error
 	// GetByID retrieves a filter by ID.
 	GetByID(ctx context.Context, id models.ULID) (*models.Filter, error)
+	// GetByIDs retrieves filters by multiple IDs.
+	GetByIDs(ctx context.Context, ids []models.ULID) ([]*models.Filter, error)
+	// GetByName retrieves a filter by name.
+	GetByName(ctx context.Context, name string) (*models.Filter, error)
 	// GetAll retrieves all filters.
 	GetAll(ctx context.Context) ([]*models.Filter, error)
 	// GetEnabled retrieves all enabled filters.
 	GetEnabled(ctx context.Context) ([]*models.Filter, error)
+	// GetUserCreated retrieves all user-created filters (IsSystem=false).
+	GetUserCreated(ctx context.Context) ([]*models.Filter, error)
 	// GetBySourceType retrieves filters by source type (stream/epg).
 	GetBySourceType(ctx context.Context, sourceType models.FilterSourceType) ([]*models.Filter, error)
 	// GetBySourceID retrieves filters for a specific source (or global if sourceID is nil).
@@ -215,10 +221,16 @@ type DataMappingRuleRepository interface {
 	Create(ctx context.Context, rule *models.DataMappingRule) error
 	// GetByID retrieves a data mapping rule by ID.
 	GetByID(ctx context.Context, id models.ULID) (*models.DataMappingRule, error)
+	// GetByIDs retrieves data mapping rules by multiple IDs.
+	GetByIDs(ctx context.Context, ids []models.ULID) ([]*models.DataMappingRule, error)
+	// GetByName retrieves a data mapping rule by name.
+	GetByName(ctx context.Context, name string) (*models.DataMappingRule, error)
 	// GetAll retrieves all data mapping rules.
 	GetAll(ctx context.Context) ([]*models.DataMappingRule, error)
 	// GetEnabled retrieves all enabled data mapping rules.
 	GetEnabled(ctx context.Context) ([]*models.DataMappingRule, error)
+	// GetUserCreated retrieves all user-created data mapping rules (IsSystem=false).
+	GetUserCreated(ctx context.Context) ([]*models.DataMappingRule, error)
 	// GetBySourceType retrieves rules by source type (stream/epg).
 	GetBySourceType(ctx context.Context, sourceType models.DataMappingRuleSourceType) ([]*models.DataMappingRule, error)
 	// GetBySourceID retrieves rules for a specific source (or global if sourceID is nil).
@@ -329,10 +341,14 @@ type EncodingProfileRepository interface {
 	Create(ctx context.Context, profile *models.EncodingProfile) error
 	// GetByID retrieves an encoding profile by ID.
 	GetByID(ctx context.Context, id models.ULID) (*models.EncodingProfile, error)
+	// GetByIDs retrieves encoding profiles by multiple IDs.
+	GetByIDs(ctx context.Context, ids []models.ULID) ([]*models.EncodingProfile, error)
 	// GetAll retrieves all encoding profiles.
 	GetAll(ctx context.Context) ([]*models.EncodingProfile, error)
 	// GetEnabled retrieves all enabled encoding profiles.
 	GetEnabled(ctx context.Context) ([]*models.EncodingProfile, error)
+	// GetUserCreated retrieves all user-created encoding profiles (IsSystem=false).
+	GetUserCreated(ctx context.Context) ([]*models.EncodingProfile, error)
 	// GetByName retrieves an encoding profile by name.
 	GetByName(ctx context.Context, name string) (*models.EncodingProfile, error)
 	// GetDefault retrieves the default encoding profile.
@@ -357,10 +373,14 @@ type ClientDetectionRuleRepository interface {
 	Create(ctx context.Context, rule *models.ClientDetectionRule) error
 	// GetByID retrieves a client detection rule by ID.
 	GetByID(ctx context.Context, id models.ULID) (*models.ClientDetectionRule, error)
+	// GetByIDs retrieves client detection rules by multiple IDs.
+	GetByIDs(ctx context.Context, ids []models.ULID) ([]*models.ClientDetectionRule, error)
 	// GetAll retrieves all client detection rules ordered by priority.
 	GetAll(ctx context.Context) ([]*models.ClientDetectionRule, error)
 	// GetEnabled retrieves all enabled rules ordered by priority.
 	GetEnabled(ctx context.Context) ([]*models.ClientDetectionRule, error)
+	// GetUserCreated retrieves all user-created client detection rules (IsSystem=false).
+	GetUserCreated(ctx context.Context) ([]*models.ClientDetectionRule, error)
 	// GetByName retrieves a rule by name.
 	GetByName(ctx context.Context, name string) (*models.ClientDetectionRule, error)
 	// GetSystem retrieves all system rules.

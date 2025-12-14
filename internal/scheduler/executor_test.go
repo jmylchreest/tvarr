@@ -262,3 +262,104 @@ func TestProxyGenerationHandler(t *testing.T) {
 		assert.Error(t, err)
 	})
 }
+
+// mockBackupResult implements BackupCreateResult for testing.
+type mockBackupResult struct {
+	filename string
+}
+
+func (r *mockBackupResult) GetFilename() string {
+	return r.filename
+}
+
+// mockBackupService implements BackupCreateService for testing.
+type mockBackupService struct {
+	createBackupResult   *mockBackupResult
+	createBackupErr      error
+	cleanupOldBackups    int
+	cleanupOldBackupsErr error
+	createCalled         bool
+	cleanupCalled        bool
+}
+
+func (m *mockBackupService) CreateBackupForScheduler(ctx context.Context) (BackupCreateResult, error) {
+	m.createCalled = true
+	if m.createBackupErr != nil {
+		return nil, m.createBackupErr
+	}
+	return m.createBackupResult, nil
+}
+
+func (m *mockBackupService) CleanupOldBackups(ctx context.Context) (int, error) {
+	m.cleanupCalled = true
+	return m.cleanupOldBackups, m.cleanupOldBackupsErr
+}
+
+func TestBackupJobHandler(t *testing.T) {
+	job := &models.Job{
+		Type:       models.JobTypeBackup,
+		TargetName: "Scheduled Backup",
+	}
+	job.ID = models.NewULID()
+
+	ctx := context.Background()
+
+	t.Run("success_creates_backup_and_cleans_up", func(t *testing.T) {
+		service := &mockBackupService{
+			createBackupResult: &mockBackupResult{filename: "tvarr-backup-2025-01-15T10-00-00.db.gz"},
+			cleanupOldBackups:  3,
+		}
+		handler := NewBackupJobHandler(service)
+
+		result, err := handler.Execute(ctx, job)
+		require.NoError(t, err)
+		assert.True(t, service.createCalled)
+		assert.True(t, service.cleanupCalled)
+		assert.Contains(t, result, "created backup")
+		assert.Contains(t, result, "tvarr-backup-2025-01-15T10-00-00.db.gz")
+		assert.Contains(t, result, "cleaned up 3 old backups")
+	})
+
+	t.Run("success_no_cleanup_needed", func(t *testing.T) {
+		service := &mockBackupService{
+			createBackupResult: &mockBackupResult{filename: "tvarr-backup-2025-01-15T10-00-00.db.gz"},
+			cleanupOldBackups:  0,
+		}
+		handler := NewBackupJobHandler(service)
+
+		result, err := handler.Execute(ctx, job)
+		require.NoError(t, err)
+		assert.True(t, service.createCalled)
+		assert.True(t, service.cleanupCalled)
+		assert.Contains(t, result, "created backup")
+		assert.NotContains(t, result, "cleaned up")
+	})
+
+	t.Run("failure_backup_creation_fails", func(t *testing.T) {
+		service := &mockBackupService{
+			createBackupErr: errors.New("disk full"),
+		}
+		handler := NewBackupJobHandler(service)
+
+		_, err := handler.Execute(ctx, job)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "backup creation failed")
+		assert.Contains(t, err.Error(), "disk full")
+		assert.True(t, service.createCalled)
+		assert.False(t, service.cleanupCalled)
+	})
+
+	t.Run("success_cleanup_failure_does_not_fail_job", func(t *testing.T) {
+		service := &mockBackupService{
+			createBackupResult:   &mockBackupResult{filename: "tvarr-backup-2025-01-15T10-00-00.db.gz"},
+			cleanupOldBackupsErr: errors.New("permission denied"),
+		}
+		handler := NewBackupJobHandler(service)
+
+		result, err := handler.Execute(ctx, job)
+		require.NoError(t, err) // Cleanup failure doesn't fail the job
+		assert.True(t, service.createCalled)
+		assert.True(t, service.cleanupCalled)
+		assert.Contains(t, result, "created backup")
+	})
+}

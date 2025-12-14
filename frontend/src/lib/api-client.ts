@@ -33,6 +33,18 @@ import {
   LogoAssetUpdateRequest,
   LogoUploadRequest,
   ManualChannelInput,
+  ExportRequest,
+  ConfigExport,
+  FilterExportItem,
+  DataMappingRuleExportItem,
+  ClientDetectionRuleExportItem,
+  EncodingProfileExportItem,
+  ImportPreview,
+  ImportResult,
+  ConflictResolution,
+  BackupListResponse,
+  BackupInfo,
+  RestoreResult,
 } from '@/types/api';
 
 class ApiError extends Error {
@@ -1174,6 +1186,231 @@ class ApiClient {
     return this.request('/api/v1/relay/lastknowncodecs', {
       method: 'DELETE',
     });
+  }
+
+  // =============================================================================
+  // CONFIG EXPORT API
+  // =============================================================================
+
+  async exportFilters(request: ExportRequest): Promise<ConfigExport<FilterExportItem>> {
+    return this.request<ConfigExport<FilterExportItem>>(
+      `${API_CONFIG.endpoints.filters}/export`,
+      {
+        method: 'POST',
+        body: JSON.stringify(request),
+      }
+    );
+  }
+
+  async exportDataMappingRules(request: ExportRequest): Promise<ConfigExport<DataMappingRuleExportItem>> {
+    return this.request<ConfigExport<DataMappingRuleExportItem>>(
+      `${API_CONFIG.endpoints.dataMapping}/export`,
+      {
+        method: 'POST',
+        body: JSON.stringify(request),
+      }
+    );
+  }
+
+  async exportClientDetectionRules(request: ExportRequest): Promise<ConfigExport<ClientDetectionRuleExportItem>> {
+    return this.request<ConfigExport<ClientDetectionRuleExportItem>>(
+      `${API_CONFIG.endpoints.clientDetectionRules}/export`,
+      {
+        method: 'POST',
+        body: JSON.stringify(request),
+      }
+    );
+  }
+
+  async exportEncodingProfiles(request: ExportRequest): Promise<ConfigExport<EncodingProfileExportItem>> {
+    return this.request<ConfigExport<EncodingProfileExportItem>>(
+      `${API_CONFIG.endpoints.encodingProfiles}/export`,
+      {
+        method: 'POST',
+        body: JSON.stringify(request),
+      }
+    );
+  }
+
+  // =============================================================================
+  // CONFIG IMPORT API
+  // =============================================================================
+
+  async importFiltersPreview(file: File): Promise<ImportPreview> {
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.request<ImportPreview>(
+      `${API_CONFIG.endpoints.filters}/import?preview=true`,
+      {
+        method: 'POST',
+        body: formData,
+      }
+    );
+  }
+
+  async importFilters(
+    file: File,
+    conflicts: Record<string, ConflictResolution>,
+    bulkResolution?: ConflictResolution
+  ): Promise<ImportResult> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('conflicts', JSON.stringify(conflicts));
+    if (bulkResolution) {
+      formData.append('bulk_resolution', bulkResolution);
+    }
+    return this.request<ImportResult>(
+      `${API_CONFIG.endpoints.filters}/import`,
+      {
+        method: 'POST',
+        body: formData,
+      }
+    );
+  }
+
+  async importDataMappingRulesPreview(file: File): Promise<ImportPreview> {
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.request<ImportPreview>(
+      `${API_CONFIG.endpoints.dataMapping}/import?preview=true`,
+      {
+        method: 'POST',
+        body: formData,
+      }
+    );
+  }
+
+  async importDataMappingRules(
+    file: File,
+    conflicts: Record<string, ConflictResolution>,
+    bulkResolution?: ConflictResolution
+  ): Promise<ImportResult> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('conflicts', JSON.stringify(conflicts));
+    if (bulkResolution) {
+      formData.append('bulk_resolution', bulkResolution);
+    }
+    return this.request<ImportResult>(
+      `${API_CONFIG.endpoints.dataMapping}/import`,
+      {
+        method: 'POST',
+        body: formData,
+      }
+    );
+  }
+
+  async importClientDetectionRulesPreview(file: File): Promise<ImportPreview> {
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.request<ImportPreview>(
+      `${API_CONFIG.endpoints.clientDetectionRules}/import?preview=true`,
+      {
+        method: 'POST',
+        body: formData,
+      }
+    );
+  }
+
+  async importClientDetectionRules(
+    file: File,
+    conflicts: Record<string, ConflictResolution>,
+    bulkResolution?: ConflictResolution
+  ): Promise<ImportResult> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('conflicts', JSON.stringify(conflicts));
+    if (bulkResolution) {
+      formData.append('bulk_resolution', bulkResolution);
+    }
+    return this.request<ImportResult>(
+      `${API_CONFIG.endpoints.clientDetectionRules}/import`,
+      {
+        method: 'POST',
+        body: formData,
+      }
+    );
+  }
+
+  async importEncodingProfilesPreview(file: File): Promise<ImportPreview> {
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.request<ImportPreview>(
+      `${API_CONFIG.endpoints.encodingProfiles}/import?preview=true`,
+      {
+        method: 'POST',
+        body: formData,
+      }
+    );
+  }
+
+  async importEncodingProfiles(
+    file: File,
+    conflicts: Record<string, ConflictResolution>,
+    bulkResolution?: ConflictResolution
+  ): Promise<ImportResult> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('conflicts', JSON.stringify(conflicts));
+    if (bulkResolution) {
+      formData.append('bulk_resolution', bulkResolution);
+    }
+    return this.request<ImportResult>(
+      `${API_CONFIG.endpoints.encodingProfiles}/import`,
+      {
+        method: 'POST',
+        body: formData,
+      }
+    );
+  }
+
+  // =============================================================================
+  // BACKUP API
+  // =============================================================================
+
+  async listBackups(): Promise<BackupListResponse> {
+    return this.request<BackupListResponse>('/api/v1/backups');
+  }
+
+  async createBackup(): Promise<BackupInfo> {
+    return this.request<BackupInfo>('/api/v1/backups', {
+      method: 'POST',
+    });
+  }
+
+  async getBackup(filename: string): Promise<BackupInfo> {
+    return this.request<BackupInfo>(`/api/v1/backups/${encodeURIComponent(filename)}`);
+  }
+
+  async deleteBackup(filename: string): Promise<{ success: boolean; message: string }> {
+    return this.request<{ success: boolean; message: string }>(
+      `/api/v1/backups/${encodeURIComponent(filename)}`,
+      {
+        method: 'DELETE',
+      }
+    );
+  }
+
+  async restoreBackup(filename: string): Promise<RestoreResult> {
+    return this.request<RestoreResult>(
+      `/api/v1/backups/${encodeURIComponent(filename)}/restore?confirm=true`,
+      {
+        method: 'POST',
+      }
+    );
+  }
+
+  async uploadBackup(file: File): Promise<BackupInfo> {
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.request<BackupInfo>('/api/v1/backups/upload', {
+      method: 'POST',
+      body: formData,
+    });
+  }
+
+  getBackupDownloadUrl(filename: string): string {
+    return `${this.baseUrl}/api/v1/backups/${encodeURIComponent(filename)}/download`;
   }
 }
 

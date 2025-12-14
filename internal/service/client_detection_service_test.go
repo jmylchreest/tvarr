@@ -109,6 +109,29 @@ func (m *mockClientDetectionRuleRepo) Reorder(_ context.Context, _ []repository.
 	return nil
 }
 
+func (m *mockClientDetectionRuleRepo) GetByIDs(_ context.Context, ids []models.ULID) ([]*models.ClientDetectionRule, error) {
+	var result []*models.ClientDetectionRule
+	for _, id := range ids {
+		for _, r := range m.rules {
+			if r.BaseModel.ID == id {
+				result = append(result, r)
+				break
+			}
+		}
+	}
+	return result, nil
+}
+
+func (m *mockClientDetectionRuleRepo) GetUserCreated(_ context.Context) ([]*models.ClientDetectionRule, error) {
+	var result []*models.ClientDetectionRule
+	for _, r := range m.rules {
+		if !r.IsSystem {
+			result = append(result, r)
+		}
+	}
+	return result, nil
+}
+
 func newMockRepo() *mockClientDetectionRuleRepo {
 	return &mockClientDetectionRuleRepo{rules: []*models.ClientDetectionRule{}}
 }

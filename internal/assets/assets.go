@@ -22,7 +22,7 @@ import (
 // StaticFS embeds the static/ directory containing the built Next.js frontend.
 // This will be empty in development builds but populated in production.
 //
-//go:embed static/*
+//go:embed all:static
 var StaticFS embed.FS
 
 // GetStaticFS returns a sub-filesystem rooted at "static/" for easier access.

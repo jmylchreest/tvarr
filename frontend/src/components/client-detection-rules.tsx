@@ -70,6 +70,7 @@ import {
   ClientDetectionRuleUpdateRequest,
 } from '@/types/api';
 import { apiClient, ApiError } from '@/lib/api-client';
+import { ExportDialog, ImportDialog } from '@/components/config-export';
 
 interface LoadingState {
   rules: boolean;
@@ -723,20 +724,32 @@ export function ClientDetectionRules() {
             Configure client detection rules to optimize stream delivery based on device capabilities
           </p>
         </div>
-        <RuleFormSheet
-          onSave={handleCreate}
-          loading={loading.create}
-          error={errors.create}
-          title="Create Client Detection Rule"
-          description="Create a rule to detect client capabilities and optimize stream delivery"
-          nextPriority={nextPriority}
-          trigger={
-            <Button className="gap-2">
-              <Plus className="h-4 w-4" />
-              Create Rule
-            </Button>
-          }
-        />
+        <div className="flex items-center gap-2">
+          <ImportDialog
+            importType="client_detection_rules"
+            title="Import Client Detection Rules"
+            onImportComplete={loadRules}
+          />
+          <ExportDialog
+            exportType="client_detection_rules"
+            items={allRules.map((r) => ({ id: r.id, name: r.name, is_system: r.is_system }))}
+            title="Export Client Detection Rules"
+          />
+          <RuleFormSheet
+            onSave={handleCreate}
+            loading={loading.create}
+            error={errors.create}
+            title="Create Client Detection Rule"
+            description="Create a rule to detect client capabilities and optimize stream delivery"
+            nextPriority={nextPriority}
+            trigger={
+              <Button className="gap-2">
+                <Plus className="h-4 w-4" />
+                Create Rule
+              </Button>
+            }
+          />
+        </div>
       </div>
 
       {/* Stats */}

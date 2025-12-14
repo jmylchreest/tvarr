@@ -49,6 +49,7 @@ type Config struct {
 	Pipeline  PipelineConfig  `mapstructure:"pipeline"`
 	Relay     RelayConfig     `mapstructure:"relay"`
 	FFmpeg    FFmpegConfig    `mapstructure:"ffmpeg"`
+	Backup    BackupConfig    `mapstructure:"backup"`
 }
 
 // ServerConfig holds HTTP server configuration.
@@ -137,6 +138,19 @@ type FFmpegConfig struct {
 	ProbePath       string   `mapstructure:"probe_path"`       // Path to ffprobe binary (empty = auto-detect)
 	UseEmbedded     bool     `mapstructure:"use_embedded"`     // Use embedded binary if available
 	HWAccelPriority []string `mapstructure:"hwaccel_priority"` // Priority order: vaapi, nvenc, qsv, amf
+}
+
+// BackupConfig holds backup configuration.
+type BackupConfig struct {
+	Directory string               `mapstructure:"directory"` // Backup storage location (empty = {storage.base_dir}/backups)
+	Schedule  BackupScheduleConfig `mapstructure:"schedule"`
+}
+
+// BackupScheduleConfig holds scheduled backup configuration.
+type BackupScheduleConfig struct {
+	Enabled   bool   `mapstructure:"enabled"`   // Enable scheduled backups
+	Cron      string `mapstructure:"cron"`      // 6-field cron expression (default: "0 0 2 * * *" daily at 2 AM)
+	Retention int    `mapstructure:"retention"` // Number of backups to keep
 }
 
 // Load reads configuration from file and environment variables.
@@ -254,6 +268,12 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("ffmpeg.probe_path", "")
 	v.SetDefault("ffmpeg.use_embedded", false)
 	v.SetDefault("ffmpeg.hwaccel_priority", []string{"vaapi", "nvenc", "qsv", "amf"})
+
+	// Backup defaults
+	v.SetDefault("backup.directory", "")                // Empty = {storage.base_dir}/backups
+	v.SetDefault("backup.schedule.enabled", true)       // Enabled by default
+	v.SetDefault("backup.schedule.cron", "0 0 2 * * *") // Daily at 2 AM (6-field cron)
+	v.SetDefault("backup.schedule.retention", 7)        // Keep last 7 backups
 }
 
 // Validate checks the configuration for errors.
@@ -317,4 +337,13 @@ func (c *StorageConfig) OutputPath() string {
 // TempPath returns the full path to the temp directory.
 func (c *StorageConfig) TempPath() string {
 	return fmt.Sprintf("%s/%s", c.BaseDir, c.TempDir)
+}
+
+// BackupPath returns the backup directory path.
+// If Directory is set, returns it directly; otherwise returns {BaseDir}/backups.
+func (c *BackupConfig) BackupPath(storageBaseDir string) string {
+	if c.Directory != "" {
+		return c.Directory
+	}
+	return fmt.Sprintf("%s/backups", storageBaseDir)
 }

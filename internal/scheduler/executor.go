@@ -47,6 +47,19 @@ type LogoMaintenanceService interface {
 	RunMaintenance(ctx context.Context) (scanned int, pruned int, err error)
 }
 
+// BackupCreateResult defines what the backup service returns.
+type BackupCreateResult interface {
+	GetFilename() string
+}
+
+// BackupCreateService defines the service interface for database backup.
+type BackupCreateService interface {
+	// CreateBackupForScheduler creates a full database backup and returns the result.
+	CreateBackupForScheduler(ctx context.Context) (BackupCreateResult, error)
+	// CleanupOldBackups removes backups exceeding the retention limit.
+	CleanupOldBackups(ctx context.Context) (deleted int, err error)
+}
+
 // StreamIngestionHandler handles stream source ingestion jobs.
 type StreamIngestionHandler struct {
 	sourceService    SourceIngestService
@@ -188,6 +201,51 @@ func (h *LogoMaintenanceHandler) Execute(ctx context.Context, job *models.Job) (
 
 	// Service already logs detailed completion message
 	return fmt.Sprintf("scanned %d logos, pruned %d stale", scanned, pruned), nil
+}
+
+// BackupJobHandler handles scheduled database backup jobs.
+type BackupJobHandler struct {
+	backupService BackupCreateService
+	logger        *slog.Logger
+}
+
+// NewBackupJobHandler creates a new handler for backup jobs.
+func NewBackupJobHandler(service BackupCreateService) *BackupJobHandler {
+	return &BackupJobHandler{
+		backupService: service,
+		logger:        slog.Default(),
+	}
+}
+
+// WithLogger sets the logger.
+func (h *BackupJobHandler) WithLogger(logger *slog.Logger) *BackupJobHandler {
+	h.logger = logger
+	return h
+}
+
+// Execute runs a backup job.
+func (h *BackupJobHandler) Execute(ctx context.Context, job *models.Job) (string, error) {
+	// Create backup
+	result, err := h.backupService.CreateBackupForScheduler(ctx)
+	if err != nil {
+		return "", fmt.Errorf("backup creation failed: %w", err)
+	}
+
+	h.logger.Info("scheduled backup created", slog.String("filename", result.GetFilename()))
+
+	// Cleanup old backups according to retention policy
+	deleted, err := h.backupService.CleanupOldBackups(ctx)
+	if err != nil {
+		// Log but don't fail - the backup was created successfully
+		h.logger.Warn("failed to cleanup old backups", slog.Any("error", err))
+	} else if deleted > 0 {
+		h.logger.Info("cleaned up old backups", slog.Int("deleted", deleted))
+	}
+
+	if deleted > 0 {
+		return fmt.Sprintf("created backup %s, cleaned up %d old backups", result.GetFilename(), deleted), nil
+	}
+	return fmt.Sprintf("created backup %s", result.GetFilename()), nil
 }
 
 // Executor dispatches jobs to the appropriate handlers.

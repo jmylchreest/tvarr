@@ -1,0 +1,860 @@
+openapi: 3.1.0
+info:
+  title: tvarr Config Export/Import & Backup API
+  version: 1.0.0
+  description: |
+    API contracts for configuration export/import and database backup/restore functionality.
+
+    ## Export Types
+    - Filters
+    - Data Mapping Rules
+    - Client Detection Rules
+    - Encoding Profiles
+
+    ## Backup Operations
+    - Create manual backup
+    - List available backups
+    - Download backup
+    - Restore from backup
+    - Delete backup
+
+    ## Scheduled Backups
+    - Managed via configuration file (not API)
+    - Uses existing job scheduler
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: Config Export
+    description: Export configuration items
+  - name: Config Import
+    description: Import configuration items
+  - name: Backup
+    description: Database backup and restore operations
+
+paths:
+  # =============================================================================
+  # FILTER EXPORT/IMPORT
+  # =============================================================================
+  /api/v1/filters/export:
+    post:
+      operationId: exportFilters
+      summary: Export selected filters
+      description: |
+        Exports selected filter configurations to a JSON file.
+        Only user-created filters (IsSystem=false) can be exported.
+      tags:
+        - Config Export
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExportRequest'
+      responses:
+        '200':
+          description: Filters exported successfully
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+                example: attachment; filename="filters-export-2025-12-14.json"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FilterExport'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/filters/import:
+    post:
+      operationId: importFilters
+      summary: Import filters from file
+      description: |
+        Imports filter configurations from a JSON file.
+        Supports preview mode to show conflicts before applying.
+      tags:
+        - Config Import
+      parameters:
+        - name: preview
+          in: query
+          description: If true, returns preview without applying changes
+          schema:
+            type: boolean
+            default: false
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: JSON export file
+                conflicts:
+                  type: string
+                  description: |
+                    JSON object mapping item names to resolution actions.
+                    Only used when preview=false.
+                  example: '{"Sports Filter": "overwrite", "News Filter": "rename"}'
+      responses:
+        '200':
+          description: Import completed or preview generated
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ImportPreview'
+                  - $ref: '#/components/schemas/ImportResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # =============================================================================
+  # DATA MAPPING RULE EXPORT/IMPORT
+  # =============================================================================
+  /api/v1/data-mapping-rules/export:
+    post:
+      operationId: exportDataMappingRules
+      summary: Export selected data mapping rules
+      description: |
+        Exports selected data mapping rule configurations to a JSON file.
+        Only user-created rules (IsSystem=false) can be exported.
+      tags:
+        - Config Export
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExportRequest'
+      responses:
+        '200':
+          description: Rules exported successfully
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataMappingRuleExport'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/data-mapping-rules/import:
+    post:
+      operationId: importDataMappingRules
+      summary: Import data mapping rules from file
+      tags:
+        - Config Import
+      parameters:
+        - name: preview
+          in: query
+          schema:
+            type: boolean
+            default: false
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ImportFileRequest'
+      responses:
+        '200':
+          description: Import completed or preview generated
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ImportPreview'
+                  - $ref: '#/components/schemas/ImportResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # =============================================================================
+  # CLIENT DETECTION RULE EXPORT/IMPORT
+  # =============================================================================
+  /api/v1/client-detection-rules/export:
+    post:
+      operationId: exportClientDetectionRules
+      summary: Export selected client detection rules
+      tags:
+        - Config Export
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExportRequest'
+      responses:
+        '200':
+          description: Rules exported successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientDetectionRuleExport'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/client-detection-rules/import:
+    post:
+      operationId: importClientDetectionRules
+      summary: Import client detection rules from file
+      tags:
+        - Config Import
+      parameters:
+        - name: preview
+          in: query
+          schema:
+            type: boolean
+            default: false
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ImportFileRequest'
+      responses:
+        '200':
+          description: Import completed or preview generated
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ImportPreview'
+                  - $ref: '#/components/schemas/ImportResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # =============================================================================
+  # ENCODING PROFILE EXPORT/IMPORT
+  # =============================================================================
+  /api/v1/encoding-profiles/export:
+    post:
+      operationId: exportEncodingProfiles
+      summary: Export selected encoding profiles
+      tags:
+        - Config Export
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExportRequest'
+      responses:
+        '200':
+          description: Profiles exported successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EncodingProfileExport'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/encoding-profiles/import:
+    post:
+      operationId: importEncodingProfiles
+      summary: Import encoding profiles from file
+      tags:
+        - Config Import
+      parameters:
+        - name: preview
+          in: query
+          schema:
+            type: boolean
+            default: false
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ImportFileRequest'
+      responses:
+        '200':
+          description: Import completed or preview generated
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ImportPreview'
+                  - $ref: '#/components/schemas/ImportResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # =============================================================================
+  # BACKUP OPERATIONS
+  # =============================================================================
+  /api/v1/backups:
+    get:
+      operationId: listBackups
+      summary: List available backups
+      description: Returns all backup files in the backup directory with metadata
+      tags:
+        - Backup
+      responses:
+        '200':
+          description: List of backups
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  backups:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BackupInfo'
+                  backup_directory:
+                    type: string
+                    description: Configured backup directory path
+                  schedule:
+                    $ref: '#/components/schemas/BackupScheduleInfo'
+
+    post:
+      operationId: createBackup
+      summary: Create a new backup
+      description: |
+        Creates a new full database backup.
+        The backup is compressed with gzip and stored in the backup directory.
+      tags:
+        - Backup
+      responses:
+        '201':
+          description: Backup created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupInfo'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/backups/{filename}:
+    get:
+      operationId: downloadBackup
+      summary: Download a backup file
+      description: Downloads the specified backup file
+      tags:
+        - Backup
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+          example: tvarr-backup-2025-12-14T10-30-00.db.gz
+      responses:
+        '200':
+          description: Backup file
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+            Content-Type:
+              schema:
+                type: string
+                example: application/gzip
+          content:
+            application/gzip:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      operationId: deleteBackup
+      summary: Delete a backup file
+      description: Permanently deletes the specified backup file
+      tags:
+        - Backup
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Backup deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/backups/{filename}/restore:
+    post:
+      operationId: restoreBackup
+      summary: Restore from a backup
+      description: |
+        Restores the database from the specified backup file.
+
+        **Warning**: This will replace all current data with the backup contents.
+        Active streams will be interrupted.
+
+        A pre-restore backup is automatically created for rollback capability.
+      tags:
+        - Backup
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: confirm
+          in: query
+          required: true
+          description: Must be "true" to confirm destructive operation
+          schema:
+            type: string
+            enum: ["true"]
+      responses:
+        '200':
+          description: Restore completed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  pre_restore_backup:
+                    type: string
+                    description: Filename of automatic pre-restore backup
+        '400':
+          description: Confirmation not provided
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  schemas:
+    # ==========================================================================
+    # EXPORT/IMPORT COMMON
+    # ==========================================================================
+    ExportRequest:
+      type: object
+      properties:
+        ids:
+          type: array
+          items:
+            type: string
+          description: |
+            List of IDs to export. If empty, exports all user-created items.
+          example: ["01HQXR5ABC123", "01HQXR5DEF456"]
+        all:
+          type: boolean
+          default: false
+          description: Export all user-created items (overrides ids)
+
+    ImportFileRequest:
+      type: object
+      required:
+        - file
+      properties:
+        file:
+          type: string
+          format: binary
+        conflicts:
+          type: string
+          description: JSON object mapping item names to resolution actions
+
+    ExportMetadata:
+      type: object
+      required:
+        - version
+        - tvarr_version
+        - export_type
+        - exported_at
+        - item_count
+      properties:
+        version:
+          type: string
+          description: Export format version
+          example: "1.0.0"
+        tvarr_version:
+          type: string
+          description: tvarr application version
+          example: "1.2.3"
+        export_type:
+          type: string
+          enum: [filters, data_mapping_rules, client_detection_rules, encoding_profiles]
+        exported_at:
+          type: string
+          format: date-time
+        item_count:
+          type: integer
+
+    ImportPreview:
+      type: object
+      properties:
+        total_items:
+          type: integer
+        new_items:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+        conflicts:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConflictItem'
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportError'
+
+    ConflictItem:
+      type: object
+      properties:
+        import_name:
+          type: string
+        existing_id:
+          type: string
+        existing_name:
+          type: string
+        resolution:
+          type: string
+          enum: [skip, rename, overwrite]
+          default: skip
+
+    ImportResult:
+      type: object
+      properties:
+        total_items:
+          type: integer
+        imported:
+          type: integer
+        skipped:
+          type: integer
+        overwritten:
+          type: integer
+        renamed:
+          type: integer
+        errors:
+          type: integer
+        error_details:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportError'
+        imported_items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportedItem'
+
+    ImportError:
+      type: object
+      properties:
+        item_name:
+          type: string
+        error:
+          type: string
+
+    ImportedItem:
+      type: object
+      properties:
+        original_name:
+          type: string
+        final_name:
+          type: string
+        id:
+          type: string
+        action:
+          type: string
+          enum: [created, overwritten, renamed]
+
+    # ==========================================================================
+    # FILTER EXPORT
+    # ==========================================================================
+    FilterExport:
+      type: object
+      properties:
+        metadata:
+          $ref: '#/components/schemas/ExportMetadata'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/FilterExportItem'
+
+    FilterExportItem:
+      type: object
+      required:
+        - name
+        - expression
+        - source_type
+        - action
+        - is_enabled
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        expression:
+          type: string
+        source_type:
+          type: string
+          enum: [stream, epg]
+        action:
+          type: string
+          enum: [include, exclude]
+        is_enabled:
+          type: boolean
+        source_id:
+          type: string
+          nullable: true
+
+    # ==========================================================================
+    # DATA MAPPING RULE EXPORT
+    # ==========================================================================
+    DataMappingRuleExport:
+      type: object
+      properties:
+        metadata:
+          $ref: '#/components/schemas/ExportMetadata'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataMappingRuleExportItem'
+
+    DataMappingRuleExportItem:
+      type: object
+      required:
+        - name
+        - expression
+        - source_type
+        - priority
+        - is_enabled
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        expression:
+          type: string
+        source_type:
+          type: string
+          enum: [stream, epg]
+        priority:
+          type: integer
+        stop_on_match:
+          type: boolean
+        is_enabled:
+          type: boolean
+        source_id:
+          type: string
+          nullable: true
+
+    # ==========================================================================
+    # CLIENT DETECTION RULE EXPORT
+    # ==========================================================================
+    ClientDetectionRuleExport:
+      type: object
+      properties:
+        metadata:
+          $ref: '#/components/schemas/ExportMetadata'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClientDetectionRuleExportItem'
+
+    ClientDetectionRuleExportItem:
+      type: object
+      required:
+        - name
+        - expression
+        - priority
+        - is_enabled
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        expression:
+          type: string
+        priority:
+          type: integer
+        is_enabled:
+          type: boolean
+        accepted_video_codecs:
+          type: array
+          items:
+            type: string
+        accepted_audio_codecs:
+          type: array
+          items:
+            type: string
+        preferred_video_codec:
+          type: string
+        preferred_audio_codec:
+          type: string
+        supports_fmp4:
+          type: boolean
+        supports_mpegts:
+          type: boolean
+        preferred_format:
+          type: string
+        encoding_profile_name:
+          type: string
+          nullable: true
+
+    # ==========================================================================
+    # ENCODING PROFILE EXPORT
+    # ==========================================================================
+    EncodingProfileExport:
+      type: object
+      properties:
+        metadata:
+          $ref: '#/components/schemas/ExportMetadata'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EncodingProfileExportItem'
+
+    EncodingProfileExportItem:
+      type: object
+      required:
+        - name
+        - target_video_codec
+        - target_audio_codec
+        - quality_preset
+        - hw_accel
+        - enabled
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        target_video_codec:
+          type: string
+        target_audio_codec:
+          type: string
+        quality_preset:
+          type: string
+          enum: [low, medium, high, ultra]
+        hw_accel:
+          type: string
+          enum: [auto, none, cuda, vaapi, qsv, videotoolbox]
+        global_flags:
+          type: string
+          nullable: true
+        input_flags:
+          type: string
+          nullable: true
+        output_flags:
+          type: string
+          nullable: true
+        is_default:
+          type: boolean
+        enabled:
+          type: boolean
+
+    # ==========================================================================
+    # BACKUP
+    # ==========================================================================
+    BackupInfo:
+      type: object
+      properties:
+        filename:
+          type: string
+          example: tvarr-backup-2025-12-14T10-30-00.db.gz
+        file_path:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        file_size:
+          type: integer
+          format: int64
+          description: Compressed size in bytes
+        database_size:
+          type: integer
+          format: int64
+          description: Uncompressed database size in bytes
+        tvarr_version:
+          type: string
+        checksum:
+          type: string
+          description: SHA256 hash
+        table_counts:
+          type: object
+          additionalProperties:
+            type: integer
+
+    BackupScheduleInfo:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        cron:
+          type: string
+          description: Cron expression for schedule
+        retention:
+          type: integer
+          description: Number of backups to retain
+        next_run:
+          type: string
+          format: date-time
+          nullable: true
+
+    # ==========================================================================
+    # ERROR
+    # ==========================================================================
+    Error:
+      type: object
+      properties:
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

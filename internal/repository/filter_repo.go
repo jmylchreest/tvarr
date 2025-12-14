@@ -39,6 +39,33 @@ func (r *filterRepository) GetByID(ctx context.Context, id models.ULID) (*models
 	return &filter, nil
 }
 
+// GetByIDs retrieves filters by multiple IDs.
+func (r *filterRepository) GetByIDs(ctx context.Context, ids []models.ULID) ([]*models.Filter, error) {
+	if len(ids) == 0 {
+		return []*models.Filter{}, nil
+	}
+	var filters []*models.Filter
+	if err := r.db.WithContext(ctx).
+		Where("id IN ?", ids).
+		Order("created_at ASC").
+		Find(&filters).Error; err != nil {
+		return nil, err
+	}
+	return filters, nil
+}
+
+// GetByName retrieves a filter by name.
+func (r *filterRepository) GetByName(ctx context.Context, name string) (*models.Filter, error) {
+	var filter models.Filter
+	if err := r.db.WithContext(ctx).First(&filter, "name = ?", name).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &filter, nil
+}
+
 // GetAll retrieves all filters.
 func (r *filterRepository) GetAll(ctx context.Context) ([]*models.Filter, error) {
 	var filters []*models.Filter
@@ -53,6 +80,18 @@ func (r *filterRepository) GetEnabled(ctx context.Context) ([]*models.Filter, er
 	var filters []*models.Filter
 	if err := r.db.WithContext(ctx).
 		Where("is_enabled = ?", true).
+		Order("created_at ASC").
+		Find(&filters).Error; err != nil {
+		return nil, err
+	}
+	return filters, nil
+}
+
+// GetUserCreated retrieves all user-created filters (IsSystem=false).
+func (r *filterRepository) GetUserCreated(ctx context.Context) ([]*models.Filter, error) {
+	var filters []*models.Filter
+	if err := r.db.WithContext(ctx).
+		Where("is_system = ?", false).
 		Order("created_at ASC").
 		Find(&filters).Error; err != nil {
 		return nil, err
