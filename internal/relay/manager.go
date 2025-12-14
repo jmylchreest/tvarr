@@ -344,6 +344,8 @@ func (m *Manager) HTTPClient() *http.Client {
 func (m *Manager) ProbeAndStoreCodecInfo(ctx context.Context, streamURL string) *models.LastKnownCodec {
 	// If no prober available, skip
 	if m.prober == nil {
+		m.logger.Debug("Skipping probe - prober not available (ffprobe not detected)",
+			slog.String("stream_url", streamURL))
 		return nil
 	}
 
@@ -438,6 +440,8 @@ func (m *Manager) GetOrProbeCodecInfo(ctx context.Context, channelID uuid.UUID, 
 				slog.String("audio_codec", session.CachedCodecInfo.AudioCodec))
 			return session.CachedCodecInfo
 		}
+		m.logger.Debug("Active session exists but has no cached codec info",
+			slog.String("channel_id", channelID.String()))
 	}
 
 	// Priority 2: Check if connection pool would allow a probe
@@ -466,6 +470,10 @@ func (m *Manager) GetOrProbeCodecInfo(ctx context.Context, channelID uuid.UUID, 
 	}
 
 	// Priority 3: We have capacity - probe fresh
+	m.logger.Debug("Probing stream for codec info",
+		slog.String("channel_id", channelID.String()),
+		slog.String("stream_url", streamURL),
+		slog.Bool("prober_available", m.prober != nil))
 	return m.ProbeAndStoreCodecInfo(ctx, streamURL)
 }
 
