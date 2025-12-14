@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/google/uuid"
 	"github.com/jmylchreest/tvarr/internal/config"
 	"github.com/jmylchreest/tvarr/internal/ffmpeg"
 	"github.com/jmylchreest/tvarr/internal/models"
@@ -238,9 +237,6 @@ func (s *RelayService) StartRelay(ctx context.Context, channelID models.ULID, pr
 		// profile can be nil if no default is set (use passthrough)
 	}
 
-	// Convert ULID to UUID for relay manager
-	channelUUID := uuid.UUID(channelID)
-
 	// Extract stream source name if available
 	var streamSourceName string
 	if channel.Source != nil {
@@ -248,7 +244,7 @@ func (s *RelayService) StartRelay(ctx context.Context, channelID models.ULID, pr
 	}
 
 	// Start the relay session
-	session, err := s.relayManager.GetOrCreateSession(ctx, channelUUID, channel.ChannelName, streamSourceName, channel.StreamURL, profile)
+	session, err := s.relayManager.GetOrCreateSession(ctx, channelID, channel.ChannelName, streamSourceName, channel.StreamURL, profile)
 	if err != nil {
 		return nil, fmt.Errorf("starting relay session: %w", err)
 	}
@@ -280,9 +276,6 @@ func (s *RelayService) StartRelayWithProfile(ctx context.Context, channelID mode
 		return nil, ErrChannelNotFound
 	}
 
-	// Convert ULID to UUID for relay manager
-	channelUUID := uuid.UUID(channelID)
-
 	// Extract stream source name if available
 	var streamSourceName string
 	if channel.Source != nil {
@@ -290,7 +283,7 @@ func (s *RelayService) StartRelayWithProfile(ctx context.Context, channelID mode
 	}
 
 	// Start the relay session
-	session, err := s.relayManager.GetOrCreateSession(ctx, channelUUID, channel.ChannelName, streamSourceName, channel.StreamURL, profile)
+	session, err := s.relayManager.GetOrCreateSession(ctx, channelID, channel.ChannelName, streamSourceName, channel.StreamURL, profile)
 	if err != nil {
 		return nil, fmt.Errorf("starting relay session: %w", err)
 	}
@@ -311,7 +304,7 @@ func (s *RelayService) StartRelayWithProfile(ctx context.Context, channelID mode
 }
 
 // StopRelay stops a relay session.
-func (s *RelayService) StopRelay(sessionID uuid.UUID) error {
+func (s *RelayService) StopRelay(sessionID models.ULID) error {
 	return s.relayManager.CloseSession(sessionID)
 }
 
@@ -319,11 +312,7 @@ func (s *RelayService) StopRelay(sessionID uuid.UUID) error {
 // Unlike StartRelay, this does not create a new session if none exists.
 // Returns nil if no active session exists for the channel.
 func (s *RelayService) GetSessionForChannel(channelID models.ULID) *relay.RelaySession {
-	channelUUID, err := uuid.Parse(channelID.String())
-	if err != nil {
-		return nil
-	}
-	return s.relayManager.GetSessionForChannel(channelUUID)
+	return s.relayManager.GetSessionForChannel(channelID)
 }
 
 // HasSessionForChannel checks if an active session exists for the given channel.
@@ -408,19 +397,11 @@ func (s *RelayService) GetOrProbeCodecInfo(ctx context.Context, channelID models
 		return nil
 	}
 
-	channelUUID, err := uuid.Parse(channelID.String())
-	if err != nil {
-		s.logger.Debug("GetOrProbeCodecInfo: failed to parse channel ID as UUID",
-			"channel_id", channelID.String(),
-			"error", err)
-		return nil
-	}
-
 	s.logger.Debug("GetOrProbeCodecInfo: delegating to relay manager",
 		"channel_id", channelID.String(),
 		"stream_url", streamURL)
 
-	result := s.relayManager.GetOrProbeCodecInfo(ctx, channelUUID, streamURL)
+	result := s.relayManager.GetOrProbeCodecInfo(ctx, channelID, streamURL)
 	if result == nil {
 		s.logger.Debug("GetOrProbeCodecInfo: relay manager returned nil",
 			"channel_id", channelID.String())

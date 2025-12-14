@@ -6,13 +6,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/jmylchreest/tvarr/internal/models"
 )
 
 // PassthroughConnection represents an active passthrough/direct proxy connection.
 type PassthroughConnection struct {
-	ID           string    `json:"id"`
-	ChannelID    uuid.UUID `json:"channelId"`
+	ID           string      `json:"id"`
+	ChannelID    models.ULID `json:"channelId"`
 	ChannelName  string    `json:"channelName"`
 	StreamURL    string    `json:"streamUrl"`
 	VideoCodec   string    `json:"videoCodec"`
@@ -41,7 +41,7 @@ type PassthroughConnection struct {
 
 // NewPassthroughConnection creates a new passthrough connection tracker.
 func NewPassthroughConnection(
-	channelID uuid.UUID,
+	channelID models.ULID,
 	channelName string,
 	streamURL string,
 	videoCodec string,
@@ -51,7 +51,7 @@ func NewPassthroughConnection(
 	userAgent string,
 ) *PassthroughConnection {
 	return &PassthroughConnection{
-		ID:             uuid.New().String(),
+		ID:             models.NewULID().String(),
 		ChannelID:      channelID,
 		ChannelName:    channelName,
 		StreamURL:      streamURL,

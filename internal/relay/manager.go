@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jmylchreest/tvarr/internal/ffmpeg"
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/repository"
@@ -99,9 +98,9 @@ type Manager struct {
 	logger     *slog.Logger
 
 	mu       sync.RWMutex
-	sessions map[uuid.UUID]*RelaySession
+	sessions map[models.ULID]*RelaySession
 	// channelSessions maps channel IDs to session IDs for reuse
-	channelSessions map[uuid.UUID]uuid.UUID
+	channelSessions map[models.ULID]models.ULID
 
 	circuitBreakers    *CircuitBreakerRegistry
 	connectionPool     *ConnectionPool
@@ -133,8 +132,8 @@ func NewManager(config ManagerConfig) *Manager {
 		prober:             prober,
 		classifier:         NewStreamClassifier(config.HTTPClient),
 		logger:             logger,
-		sessions:           make(map[uuid.UUID]*RelaySession),
-		channelSessions:    make(map[uuid.UUID]uuid.UUID),
+		sessions:           make(map[models.ULID]*RelaySession),
+		channelSessions:    make(map[models.ULID]models.ULID),
 		circuitBreakers:    NewCircuitBreakerRegistry(config.CircuitBreakerConfig),
 		connectionPool:     NewConnectionPool(config.ConnectionPoolConfig),
 		fallbackGenerator:  NewFallbackGenerator(config.FallbackConfig, logger),
@@ -170,7 +169,7 @@ func (m *Manager) PassthroughTracker() *PassthroughTracker {
 // This function is carefully designed to avoid holding the manager lock during slow
 // operations (stream classification, codec probing) to prevent blocking API requests
 // like /api/v1/relay/sessions while a new session is being created.
-func (m *Manager) GetOrCreateSession(ctx context.Context, channelID uuid.UUID, channelName string, streamSourceName string, streamURL string, profile *models.EncodingProfile) (*RelaySession, error) {
+func (m *Manager) GetOrCreateSession(ctx context.Context, channelID models.ULID, channelName string, streamSourceName string, streamURL string, profile *models.EncodingProfile) (*RelaySession, error) {
 	// First, check if session already exists (fast path with read lock)
 	m.mu.RLock()
 	if sessionID, ok := m.channelSessions[channelID]; ok {
@@ -232,7 +231,7 @@ func (m *Manager) GetOrCreateSession(ctx context.Context, channelID uuid.UUID, c
 }
 
 // GetSession returns a session by ID.
-func (m *Manager) GetSession(sessionID uuid.UUID) (*RelaySession, bool) {
+func (m *Manager) GetSession(sessionID models.ULID) (*RelaySession, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	session, ok := m.sessions[sessionID]
@@ -242,7 +241,7 @@ func (m *Manager) GetSession(sessionID uuid.UUID) (*RelaySession, bool) {
 // GetSessionForChannel returns an existing session for the channel if one exists.
 // Unlike GetOrCreateSession, this does not create a new session if none exists.
 // Returns nil if no active session exists for the channel.
-func (m *Manager) GetSessionForChannel(channelID uuid.UUID) *RelaySession {
+func (m *Manager) GetSessionForChannel(channelID models.ULID) *RelaySession {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -264,12 +263,12 @@ func (m *Manager) GetSessionForChannel(channelID uuid.UUID) *RelaySession {
 }
 
 // HasSessionForChannel checks if an active session exists for the given channel.
-func (m *Manager) HasSessionForChannel(channelID uuid.UUID) bool {
+func (m *Manager) HasSessionForChannel(channelID models.ULID) bool {
 	return m.GetSessionForChannel(channelID) != nil
 }
 
 // CloseSession closes a specific session.
-func (m *Manager) CloseSession(sessionID uuid.UUID) error {
+func (m *Manager) CloseSession(sessionID models.ULID) error {
 	m.mu.Lock()
 	session, ok := m.sessions[sessionID]
 	if !ok {
@@ -430,7 +429,7 @@ func (m *Manager) ProbeAndStoreCodecInfo(ctx context.Context, streamURL string) 
 // 4. Otherwise, return cached database info (may be stale or nil)
 //
 // This prevents probing from consuming extra connections when a stream is already active.
-func (m *Manager) GetOrProbeCodecInfo(ctx context.Context, channelID uuid.UUID, streamURL string) *models.LastKnownCodec {
+func (m *Manager) GetOrProbeCodecInfo(ctx context.Context, channelID models.ULID, streamURL string) *models.LastKnownCodec {
 	m.logger.Debug("GetOrProbeCodecInfo called",
 		slog.String("channel_id", channelID.String()),
 		slog.String("stream_url", streamURL))
@@ -528,7 +527,7 @@ func (m *Manager) getCachedCodecInfo(ctx context.Context, streamURL string) *mod
 }
 
 // createSession creates a new relay session.
-func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, channelName string, streamSourceName string, streamURL string, profile *models.EncodingProfile) (*RelaySession, error) {
+func (m *Manager) createSession(ctx context.Context, channelID models.ULID, channelName string, streamSourceName string, streamURL string, profile *models.EncodingProfile) (*RelaySession, error) {
 	// Check circuit breaker
 	cb := m.circuitBreakers.Get(streamURL)
 	if !cb.Allow() {
@@ -552,7 +551,7 @@ func (m *Manager) createSession(ctx context.Context, channelID uuid.UUID, channe
 	sessionCtx, sessionCancel := context.WithCancel(m.ctx)
 
 	session := &RelaySession{
-		ID:               uuid.New(),
+		ID:               models.NewULID(),
 		ChannelID:        channelID,
 		ChannelName:      channelName,
 		StreamSourceName: streamSourceName,
@@ -619,7 +618,7 @@ func (m *Manager) cleanupStaleSessions() {
 	// First, copy session pointers while holding the lock briefly
 	m.mu.RLock()
 	sessionList := make([]*RelaySession, 0, len(m.sessions))
-	sessionIDs := make([]uuid.UUID, 0, len(m.sessions))
+	sessionIDs := make([]models.ULID, 0, len(m.sessions))
 	for id, session := range m.sessions {
 		sessionList = append(sessionList, session)
 		sessionIDs = append(sessionIDs, id)
@@ -630,7 +629,7 @@ func (m *Manager) cleanupStaleSessions() {
 
 	// Evaluate each session WITHOUT holding the manager lock
 	// This allows Stats() and other operations to proceed concurrently
-	var toRemove []uuid.UUID
+	var toRemove []models.ULID
 
 	for i, session := range sessionList {
 		id := sessionIDs[i]

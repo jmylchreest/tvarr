@@ -11,7 +11,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jmylchreest/tvarr/internal/ffmpeg"
 	"github.com/jmylchreest/tvarr/internal/models"
 )
@@ -120,8 +119,8 @@ type ProcessorConfig struct {
 
 // RelaySession represents an active relay session.
 type RelaySession struct {
-	ID               uuid.UUID
-	ChannelID        uuid.UUID
+	ID               models.ULID
+	ChannelID        models.ULID
 	ChannelName      string // Display name of the channel
 	StreamSourceName string // Name of the stream source (e.g., "s8k")
 	StreamURL        string
