@@ -560,6 +560,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 			slog.String("schedule", logoScanSchedule))
 	}
 
+	// Catch up on any missed scheduled runs if enabled
+	if viper.GetBool("scheduler.catchup_missed_runs") {
+		if _, _, err := sched.CatchupMissedRuns(ctx); err != nil {
+			logger.Warn("failed to catch up missed runs", slog.Any("error", err))
+		}
+	}
+
 	// Start server
 	logger.Info("starting tvarr server",
 		slog.String("host", serverConfig.Host),

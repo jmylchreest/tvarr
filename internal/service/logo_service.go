@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jmylchreest/tvarr/internal/storage"
+	"github.com/jmylchreest/tvarr/pkg/duration"
 	"github.com/jmylchreest/tvarr/pkg/httpclient"
 )
 
@@ -679,7 +680,7 @@ func (s *LogoService) ReplaceLogo(ctx context.Context, id, name, description, co
 // Returns the number of logos scanned and pruned.
 func (s *LogoService) RunMaintenance(ctx context.Context) (scanned int, pruned int, err error) {
 	s.logger.Info("starting logo maintenance",
-		"staleness_threshold", s.stalenessThreshold.String())
+		"staleness_threshold", duration.Format(s.stalenessThreshold))
 
 	opts := LogoIndexerOptions{
 		PruneStaleLogos:    s.stalenessThreshold > 0,

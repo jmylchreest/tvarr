@@ -705,3 +705,130 @@ func (s *Scheduler) AddInternalJob(jobType models.JobType, targetName string, cr
 
 	return nil
 }
+
+// CatchupMissedRuns checks all sources with cron schedules and schedules immediate
+// jobs for any that missed their scheduled run while the service was down.
+// This should be called after the scheduler starts to catch up on missed work.
+func (s *Scheduler) CatchupMissedRuns(ctx context.Context) (streamsCaught, epgCaught int, err error) {
+	s.logger.Info("checking for missed scheduled runs")
+
+	// Check stream sources
+	streamsCaught, err = s.catchupStreamSources(ctx)
+	if err != nil {
+		s.logger.Error("failed to catch up stream sources", slog.Any("error", err))
+	}
+
+	// Check EPG sources
+	epgCaught, err = s.catchupEpgSources(ctx)
+	if err != nil {
+		s.logger.Error("failed to catch up EPG sources", slog.Any("error", err))
+	}
+
+	if streamsCaught > 0 || epgCaught > 0 {
+		s.logger.Info("scheduled catch-up jobs for missed runs",
+			slog.Int("stream_sources", streamsCaught),
+			slog.Int("epg_sources", epgCaught))
+	} else {
+		s.logger.Info("no missed scheduled runs detected")
+	}
+
+	return streamsCaught, epgCaught, nil
+}
+
+// catchupStreamSources checks stream sources and schedules jobs for any that missed runs.
+func (s *Scheduler) catchupStreamSources(ctx context.Context) (int, error) {
+	sources, err := s.streamSourceRepo.GetEnabled(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("getting stream sources: %w", err)
+	}
+
+	caught := 0
+	now := time.Now()
+
+	for _, source := range sources {
+		if source.CronSchedule == "" {
+			continue
+		}
+
+		if s.shouldCatchup(source.CronSchedule, source.LastIngestionAt, now) {
+			s.logger.Debug("stream source missed scheduled run",
+				slog.String("source", source.Name),
+				slog.String("cron", source.CronSchedule),
+				slog.Any("last_ingestion", source.LastIngestionAt))
+
+			_, err := s.ScheduleImmediate(ctx, models.JobTypeStreamIngestion, source.ID, source.Name)
+			if err != nil {
+				s.logger.Error("failed to schedule catch-up job",
+					slog.String("source", source.Name),
+					slog.Any("error", err))
+				continue
+			}
+			caught++
+		}
+	}
+
+	return caught, nil
+}
+
+// catchupEpgSources checks EPG sources and schedules jobs for any that missed runs.
+func (s *Scheduler) catchupEpgSources(ctx context.Context) (int, error) {
+	sources, err := s.epgSourceRepo.GetEnabled(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("getting EPG sources: %w", err)
+	}
+
+	caught := 0
+	now := time.Now()
+
+	for _, source := range sources {
+		if source.CronSchedule == "" {
+			continue
+		}
+
+		if s.shouldCatchup(source.CronSchedule, source.LastIngestionAt, now) {
+			s.logger.Debug("EPG source missed scheduled run",
+				slog.String("source", source.Name),
+				slog.String("cron", source.CronSchedule),
+				slog.Any("last_ingestion", source.LastIngestionAt))
+
+			_, err := s.ScheduleImmediate(ctx, models.JobTypeEpgIngestion, source.ID, source.Name)
+			if err != nil {
+				s.logger.Error("failed to schedule catch-up job",
+					slog.String("source", source.Name),
+					slog.Any("error", err))
+				continue
+			}
+			caught++
+		}
+	}
+
+	return caught, nil
+}
+
+// shouldCatchup determines if a source should have a catch-up job scheduled.
+// Returns true if:
+// - The source has never been ingested (lastIngestion is nil), OR
+// - The next scheduled run after the last ingestion is before now (meaning we missed it)
+func (s *Scheduler) shouldCatchup(cronExpr string, lastIngestion *models.Time, now time.Time) bool {
+	// If never ingested, definitely need to catch up
+	if lastIngestion == nil {
+		return true
+	}
+
+	// Parse the cron expression
+	normalized, err := NormalizeCronExpression(cronExpr)
+	if err != nil {
+		return false
+	}
+
+	schedule, err := s.parser.Parse(normalized)
+	if err != nil {
+		return false
+	}
+
+	// Calculate when the next run should have been after the last ingestion
+	nextScheduledAfterLast := schedule.Next(*lastIngestion)
+
+	// If that time is before now, we missed a run
+	return nextScheduledAfterLast.Before(now)
+}

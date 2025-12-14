@@ -229,6 +229,9 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("ingestion.retry_attempts", defaultRetryAttempts)
 	v.SetDefault("ingestion.retry_delay", defaultRetryDelay)
 
+	// Scheduler defaults
+	v.SetDefault("scheduler.catchup_missed_runs", true)
+
 	// Pipeline defaults
 	v.SetDefault("pipeline.stream_batch_size", defaultChannelBatchSize)
 	v.SetDefault("pipeline.enable_gc_hints", true)
