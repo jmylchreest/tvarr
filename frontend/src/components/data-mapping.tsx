@@ -52,6 +52,7 @@ import {
 import { DataMappingRule, DataMappingSourceType, PaginatedResponse } from '@/types/api';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { DEFAULT_PAGE_SIZE, API_CONFIG } from '@/lib/config';
+import { ExportDialog, ImportDialog } from '@/components/config-export';
 
 interface LoadingState {
   rules: boolean;
@@ -738,6 +739,16 @@ export function DataMapping() {
         </div>
         <div className="flex items-center gap-2">
           {!isOnline && <WifiOff className="h-5 w-5 text-destructive" />}
+          <ImportDialog
+            importType="data_mapping_rules"
+            title="Import Data Mapping Rules"
+            onImportComplete={loadRules}
+          />
+          <ExportDialog
+            exportType="data_mapping_rules"
+            items={allRules.map((r) => ({ id: r.id, name: r.name, is_system: r.is_system }))}
+            title="Export Data Mapping Rules"
+          />
           <CreateDataMappingSheet
             onCreateRule={handleCreateRule}
             loading={loading.create}

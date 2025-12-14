@@ -39,6 +39,33 @@ func (r *dataMappingRuleRepository) GetByID(ctx context.Context, id models.ULID)
 	return &rule, nil
 }
 
+// GetByIDs retrieves data mapping rules by multiple IDs.
+func (r *dataMappingRuleRepository) GetByIDs(ctx context.Context, ids []models.ULID) ([]*models.DataMappingRule, error) {
+	if len(ids) == 0 {
+		return []*models.DataMappingRule{}, nil
+	}
+	var rules []*models.DataMappingRule
+	if err := r.db.WithContext(ctx).
+		Where("id IN ?", ids).
+		Order("priority ASC, created_at ASC").
+		Find(&rules).Error; err != nil {
+		return nil, err
+	}
+	return rules, nil
+}
+
+// GetByName retrieves a data mapping rule by name.
+func (r *dataMappingRuleRepository) GetByName(ctx context.Context, name string) (*models.DataMappingRule, error) {
+	var rule models.DataMappingRule
+	if err := r.db.WithContext(ctx).First(&rule, "name = ?", name).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &rule, nil
+}
+
 // GetAll retrieves all data mapping rules.
 func (r *dataMappingRuleRepository) GetAll(ctx context.Context) ([]*models.DataMappingRule, error) {
 	var rules []*models.DataMappingRule
@@ -53,6 +80,18 @@ func (r *dataMappingRuleRepository) GetEnabled(ctx context.Context) ([]*models.D
 	var rules []*models.DataMappingRule
 	if err := r.db.WithContext(ctx).
 		Where("is_enabled = ?", true).
+		Order("priority ASC, created_at ASC").
+		Find(&rules).Error; err != nil {
+		return nil, err
+	}
+	return rules, nil
+}
+
+// GetUserCreated retrieves all user-created data mapping rules (IsSystem=false).
+func (r *dataMappingRuleRepository) GetUserCreated(ctx context.Context) ([]*models.DataMappingRule, error) {
+	var rules []*models.DataMappingRule
+	if err := r.db.WithContext(ctx).
+		Where("is_system = ?", false).
 		Order("priority ASC, created_at ASC").
 		Find(&rules).Error; err != nil {
 		return nil, err

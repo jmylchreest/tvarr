@@ -39,6 +39,21 @@ func (r *encodingProfileRepository) GetByID(ctx context.Context, id models.ULID)
 	return &profile, nil
 }
 
+// GetByIDs retrieves encoding profiles by multiple IDs.
+func (r *encodingProfileRepository) GetByIDs(ctx context.Context, ids []models.ULID) ([]*models.EncodingProfile, error) {
+	if len(ids) == 0 {
+		return []*models.EncodingProfile{}, nil
+	}
+	var profiles []*models.EncodingProfile
+	if err := r.db.WithContext(ctx).
+		Where("id IN ?", ids).
+		Order("is_default DESC, is_system DESC, name ASC").
+		Find(&profiles).Error; err != nil {
+		return nil, err
+	}
+	return profiles, nil
+}
+
 // GetAll retrieves all encoding profiles.
 func (r *encodingProfileRepository) GetAll(ctx context.Context) ([]*models.EncodingProfile, error) {
 	var profiles []*models.EncodingProfile
@@ -54,6 +69,18 @@ func (r *encodingProfileRepository) GetEnabled(ctx context.Context) ([]*models.E
 	if err := r.db.WithContext(ctx).
 		Where("enabled = ?", true).
 		Order("is_default DESC, is_system DESC, name ASC").
+		Find(&profiles).Error; err != nil {
+		return nil, err
+	}
+	return profiles, nil
+}
+
+// GetUserCreated retrieves all user-created encoding profiles (IsSystem=false).
+func (r *encodingProfileRepository) GetUserCreated(ctx context.Context) ([]*models.EncodingProfile, error) {
+	var profiles []*models.EncodingProfile
+	if err := r.db.WithContext(ctx).
+		Where("is_system = ?", false).
+		Order("is_default DESC, name ASC").
 		Find(&profiles).Error; err != nil {
 		return nil, err
 	}

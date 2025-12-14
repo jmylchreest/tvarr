@@ -15,6 +15,7 @@ import {
   Calendar,
   Paintbrush,
   Users,
+  Archive,
   LucideIcon,
 } from 'lucide-react';
 
@@ -101,6 +102,11 @@ export const navigation: NavigationGroup[] = [
         title: 'Client Detection',
         url: '/admin/client-detection',
         icon: Users,
+      },
+      {
+        title: 'Backups',
+        url: '/admin/backups',
+        icon: Archive,
       },
     ],
   },

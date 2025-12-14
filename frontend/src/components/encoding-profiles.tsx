@@ -58,6 +58,7 @@ import {
 } from 'lucide-react';
 import { EncodingProfile, EncodingProfilePreview, QualityPreset } from '@/types/api';
 import { apiClient, ApiError } from '@/lib/api-client';
+import { ExportDialog, ImportDialog } from '@/components/config-export';
 
 interface LoadingState {
   profiles: boolean;
@@ -737,19 +738,31 @@ export function EncodingProfiles() {
         <div>
           <p className="text-muted-foreground">Manage transcoding settings for stream relay output</p>
         </div>
-        <ProfileFormSheet
-          onSave={handleCreate}
-          loading={loading.create}
-          error={error.create}
-          title="Create Encoding Profile"
-          description="Create a new encoding profile for stream transcoding"
-          trigger={
-            <Button className="gap-2">
-              <Plus className="h-4 w-4" />
-              Create Profile
-            </Button>
-          }
-        />
+        <div className="flex items-center gap-2">
+          <ImportDialog
+            importType="encoding_profiles"
+            title="Import Encoding Profiles"
+            onImportComplete={loadProfiles}
+          />
+          <ExportDialog
+            exportType="encoding_profiles"
+            items={allProfiles.map((p) => ({ id: p.id, name: p.name, is_system: p.is_system }))}
+            title="Export Encoding Profiles"
+          />
+          <ProfileFormSheet
+            onSave={handleCreate}
+            loading={loading.create}
+            error={error.create}
+            title="Create Encoding Profile"
+            description="Create a new encoding profile for stream transcoding"
+            trigger={
+              <Button className="gap-2">
+                <Plus className="h-4 w-4" />
+                Create Profile
+              </Button>
+            }
+          />
+        </div>
       </div>
 
       {/* Statistics Cards */}

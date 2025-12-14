@@ -51,6 +51,7 @@ import {
 import { Filter, FilterAction } from '@/types/api';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { DEFAULT_PAGE_SIZE, API_CONFIG } from '@/lib/config';
+import { ExportDialog, ImportDialog } from '@/components/config-export';
 
 interface LoadingState {
   filters: boolean;
@@ -718,6 +719,16 @@ export function Filters() {
         </div>
         <div className="flex items-center gap-2">
           {!isOnline && <WifiOff className="h-5 w-5 text-destructive" />}
+          <ImportDialog
+            importType="filters"
+            title="Import Filters"
+            onImportComplete={loadFilters}
+          />
+          <ExportDialog
+            exportType="filters"
+            items={allFilters.map((f) => ({ id: f.id, name: f.name, is_system: f.is_system }))}
+            title="Export Filters"
+          />
           <CreateFilterSheet
             onCreateFilter={handleCreateFilter}
             loading={loading.create}

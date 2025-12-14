@@ -997,3 +997,163 @@ export interface ClientDetectionResult {
   detection_source: string;
 }
 
+// =============================================================================
+// CONFIG EXPORT/IMPORT TYPES
+// =============================================================================
+
+export type ExportType = 'filters' | 'data_mapping_rules' | 'client_detection_rules' | 'encoding_profiles';
+export type ConflictResolution = 'skip' | 'rename' | 'overwrite';
+
+export interface ExportRequest {
+  ids?: string[];
+  all?: boolean;
+}
+
+export interface ExportMetadata {
+  version: string;
+  tvarr_version: string;
+  export_type: ExportType;
+  exported_at: string;
+  item_count: number;
+}
+
+export interface ConfigExport<T> {
+  metadata: ExportMetadata;
+  items: T[];
+}
+
+export interface FilterExportItem {
+  name: string;
+  description?: string;
+  expression: string;
+  source_type: 'stream' | 'epg';
+  action: 'include' | 'exclude';
+  is_enabled: boolean;
+  source_id?: string | null;
+}
+
+export interface DataMappingRuleExportItem {
+  name: string;
+  description?: string;
+  expression: string;
+  source_type: 'stream' | 'epg';
+  priority: number;
+  stop_on_match?: boolean;
+  is_enabled: boolean;
+  source_id?: string | null;
+}
+
+export interface ClientDetectionRuleExportItem {
+  name: string;
+  description?: string;
+  expression: string;
+  priority: number;
+  is_enabled: boolean;
+  accepted_video_codecs?: string[];
+  accepted_audio_codecs?: string[];
+  preferred_video_codec?: string;
+  preferred_audio_codec?: string;
+  supports_fmp4?: boolean;
+  supports_mpegts?: boolean;
+  preferred_format?: string;
+  encoding_profile_name?: string | null;
+}
+
+export interface EncodingProfileExportItem {
+  name: string;
+  description?: string;
+  target_video_codec: string;
+  target_audio_codec: string;
+  quality_preset: 'low' | 'medium' | 'high' | 'ultra';
+  hw_accel: 'auto' | 'none' | 'cuda' | 'vaapi' | 'qsv' | 'videotoolbox';
+  global_flags?: string | null;
+  input_flags?: string | null;
+  output_flags?: string | null;
+  is_default?: boolean;
+  enabled: boolean;
+}
+
+export interface ConflictItem {
+  import_name: string;
+  existing_id: string;
+  existing_name: string;
+  resolution?: ConflictResolution;
+}
+
+export interface ImportError {
+  item_name: string;
+  error: string;
+}
+
+export interface ImportedItem {
+  original_name: string;
+  final_name: string;
+  id: string;
+  action: 'created' | 'overwritten' | 'renamed';
+}
+
+export interface ImportPreview {
+  total_items: number;
+  new_items: Array<{ name: string }>;
+  conflicts: ConflictItem[];
+  errors: ImportError[];
+  version_warning?: string;
+}
+
+export interface ImportResult {
+  total_items: number;
+  imported: number;
+  skipped: number;
+  overwritten: number;
+  renamed: number;
+  errors: number;
+  error_details: ImportError[];
+  imported_items: ImportedItem[];
+}
+
+// =============================================================================
+// BACKUP TYPES
+// =============================================================================
+
+export interface BackupTableCounts {
+  filters: number;
+  data_mapping_rules: number;
+  client_detection_rules: number;
+  encoding_profiles: number;
+  stream_sources: number;
+  epg_sources: number;
+  stream_proxies: number;
+  channels: number;
+  epg_programs: number;
+}
+
+export interface BackupInfo {
+  filename: string;
+  file_path: string;
+  created_at: string;
+  file_size: number;
+  database_size: number;
+  tvarr_version: string;
+  checksum: string;
+  table_counts: BackupTableCounts;
+}
+
+export interface BackupScheduleInfo {
+  enabled: boolean;
+  cron: string;
+  retention: number;
+  next_run?: string | null;
+}
+
+export interface BackupListResponse {
+  backups: BackupInfo[];
+  backup_directory: string;
+  schedule: BackupScheduleInfo;
+}
+
+export interface RestoreResult {
+  success: boolean;
+  message: string;
+  pre_restore_backup?: string;
+}
+

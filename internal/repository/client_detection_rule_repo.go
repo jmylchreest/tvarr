@@ -41,6 +41,22 @@ func (r *clientDetectionRuleRepository) GetByID(ctx context.Context, id models.U
 	return &rule, nil
 }
 
+// GetByIDs retrieves client detection rules by multiple IDs.
+func (r *clientDetectionRuleRepository) GetByIDs(ctx context.Context, ids []models.ULID) ([]*models.ClientDetectionRule, error) {
+	if len(ids) == 0 {
+		return []*models.ClientDetectionRule{}, nil
+	}
+	var rules []*models.ClientDetectionRule
+	if err := r.db.WithContext(ctx).
+		Where("id IN ?", ids).
+		Preload("EncodingProfile").
+		Order("priority ASC, created_at ASC").
+		Find(&rules).Error; err != nil {
+		return nil, err
+	}
+	return rules, nil
+}
+
 // GetAll retrieves all client detection rules ordered by priority.
 func (r *clientDetectionRuleRepository) GetAll(ctx context.Context) ([]*models.ClientDetectionRule, error) {
 	var rules []*models.ClientDetectionRule
@@ -58,6 +74,19 @@ func (r *clientDetectionRuleRepository) GetEnabled(ctx context.Context) ([]*mode
 	var rules []*models.ClientDetectionRule
 	if err := r.db.WithContext(ctx).
 		Where("is_enabled = ?", true).
+		Preload("EncodingProfile").
+		Order("priority ASC, created_at ASC").
+		Find(&rules).Error; err != nil {
+		return nil, err
+	}
+	return rules, nil
+}
+
+// GetUserCreated retrieves all user-created client detection rules (IsSystem=false).
+func (r *clientDetectionRuleRepository) GetUserCreated(ctx context.Context) ([]*models.ClientDetectionRule, error) {
+	var rules []*models.ClientDetectionRule
+	if err := r.db.WithContext(ctx).
+		Where("is_system = ?", false).
 		Preload("EncodingProfile").
 		Order("priority ASC, created_at ASC").
 		Find(&rules).Error; err != nil {

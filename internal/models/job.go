@@ -18,6 +18,8 @@ const (
 	JobTypeProxyGeneration JobType = "proxy_generation"
 	// JobTypeLogoCleanup represents a logo cache cleanup job.
 	JobTypeLogoCleanup JobType = "logo_cleanup"
+	// JobTypeBackup represents a scheduled database backup job.
+	JobTypeBackup JobType = "backup"
 )
 
 // JobStatus represents the current status of a job.
