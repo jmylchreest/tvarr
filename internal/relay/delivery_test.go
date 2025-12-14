@@ -101,13 +101,15 @@ func TestSelectDelivery(t *testing.T) {
 		profile      *models.EncodingProfile
 		expected     DeliveryDecision
 	}{
-		// Profile requires transcoding - always transcode
+		// Profile requires transcoding but format matches and codecs unknown
+		// With unknown codecs and matching format, we optimistically assume compatibility
+		// to avoid unnecessary transcoding (common case for MPEG-TS streams)
 		{
-			name:         "profile requires video transcode",
+			name:         "profile requires transcode but format matches - repackage (optimistic)",
 			sourceFormat: SourceFormatHLS,
 			clientFormat: ClientFormatHLS,
 			profile:      &models.EncodingProfile{TargetVideoCodec: models.VideoCodecH264, TargetAudioCodec: models.AudioCodecAAC},
-			expected:     DeliveryTranscode,
+			expected:     DeliveryRepackage,
 		},
 
 		// No profile - format matching uses repackage (buffer pipeline for connection sharing)
@@ -324,20 +326,22 @@ func TestSelectDeliveryWithCodecCompatibility(t *testing.T) {
 			sourceAudioCodec: "", // Video-only
 			expected:         DeliveryRepackage,
 		},
-		// No client capabilities provided - falls back to profile check (transcode)
+		// No client capabilities provided but format matches - optimistic repackage
+		// When we don't know what client accepts but format matches, assume compatibility
 		{
-			name:             "no client caps with profile - transcode",
+			name:             "no client caps but format matches - repackage (optimistic)",
 			sourceFormat:     SourceFormatMPEGTS,
 			clientFormat:     ClientFormatMPEGTS,
 			profile:          transcodeProfile,
 			clientCaps:       nil,
 			sourceVideoCodec: "h265",
 			sourceAudioCodec: "eac3",
-			expected:         DeliveryTranscode,
+			expected:         DeliveryRepackage,
 		},
-		// No source video codec known - falls back to profile check (transcode)
+		// No source video codec known but format matches - optimistic repackage
+		// When codecs are unknown but format matches, assume compatibility
 		{
-			name:         "no source codec known with profile - transcode",
+			name:         "no source codec known but format matches - repackage (optimistic)",
 			sourceFormat: SourceFormatMPEGTS,
 			clientFormat: ClientFormatMPEGTS,
 			profile:      transcodeProfile,
@@ -347,6 +351,17 @@ func TestSelectDeliveryWithCodecCompatibility(t *testing.T) {
 			},
 			sourceVideoCodec: "", // Unknown
 			sourceAudioCodec: "eac3",
+			expected:         DeliveryRepackage,
+		},
+		// Format mismatch with profile - transcode required
+		{
+			name:         "format mismatch TS to HLS with unknown codecs - transcode",
+			sourceFormat: SourceFormatMPEGTS,
+			clientFormat: ClientFormatHLS,
+			profile:      transcodeProfile,
+			clientCaps:   nil,
+			sourceVideoCodec: "",
+			sourceAudioCodec: "",
 			expected:         DeliveryTranscode,
 		},
 	}

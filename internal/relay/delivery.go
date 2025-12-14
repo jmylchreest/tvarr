@@ -70,11 +70,11 @@ type SelectDeliveryOptions struct {
 // - Client codec capabilities (if provided)
 //
 // Decision logic:
-// 1. If client capabilities and source codecs are known, check if client accepts source directly
-// 2. If profile requires transcoding AND client doesn't accept source, use DeliveryTranscode
-// 3. If source format matches client format and client accepts codecs, use DeliveryRepackage (buffer sharing)
+// 1. If source format matches client format (or auto), prefer repackage for minimal latency
+// 2. If client capabilities and source codecs are known, check codec compatibility
+// 3. If profile requires transcoding AND we know client doesn't accept source, use DeliveryTranscode
 // 4. If source has segments (HLS/DASH) and client wants different manifest, use DeliveryRepackage
-// 5. Otherwise (e.g., TS source wanting HLS/DASH), use DeliveryTranscode
+// 5. Otherwise (e.g., TS source wanting HLS/DASH output), use DeliveryTranscode
 //
 // NOTE: DeliveryPassthrough (direct HTTP proxy) is currently not used automatically.
 // All streaming goes through the ES buffer pipeline to enable:
@@ -93,40 +93,52 @@ func SelectDelivery(
 		opt = opts[0]
 	}
 
-	// Smart codec compatibility check: if client accepts source codecs, we can avoid transcoding
-	// but still use the buffer pipeline for connection sharing
+	// First check: if source format matches client format (or auto), we can potentially
+	// pass through without transcoding. This is the fast path for most streams.
+	formatMatches := sourceMatchesClient(source, clientFormat) || clientFormat == ClientFormatAuto
+
+	// Check if we know the client can accept the source codecs
+	var clientAcceptsSource bool
+	var codecsKnown bool
 	if opt.ClientCapabilities != nil && opt.SourceVideoCodec != "" {
-		clientAcceptsSource := clientAcceptsSourceCodecs(opt.ClientCapabilities, opt.SourceVideoCodec, opt.SourceAudioCodec)
-		if clientAcceptsSource && (sourceMatchesClient(source, clientFormat) || clientFormat == ClientFormatAuto) {
-			// Client accepts source codecs - use repackage mode (ES buffer without transcoding)
-			// This allows multiple clients to share the same upstream connection
-			// NOTE: In the future, we could add a flag to force DeliveryPassthrough here
-			// for truly direct proxy mode when connection sharing isn't needed
+		codecsKnown = true
+		clientAcceptsSource = clientAcceptsSourceCodecs(opt.ClientCapabilities, opt.SourceVideoCodec, opt.SourceAudioCodec)
+	}
+
+	// Decision logic:
+	// 1. If format matches AND (codecs unknown OR client accepts source) → repackage
+	//    When codecs are unknown but format matches, optimistically assume compatibility.
+	//    This avoids unnecessary transcoding for common cases like MPEG-TS streams.
+	if formatMatches {
+		if !codecsKnown || clientAcceptsSource {
+			// Either we don't know the codecs (assume compatible) or we know client accepts them
+			return DeliveryRepackage
+		}
+		// Format matches but client doesn't accept source codecs - need to transcode
+		// (e.g., source is h265 but client only accepts h264)
+	}
+
+	// 2. If we know client accepts source codecs, use repackage even for format conversion
+	//    This is a safety check - if format doesn't match but codecs are compatible,
+	//    we still might be able to repackage (e.g., HLS↔DASH with same codecs)
+	if codecsKnown && clientAcceptsSource {
+		if canRepackage(source, clientFormat) {
 			return DeliveryRepackage
 		}
 	}
 
-	// 1. Profile requires transcoding?
-	// But only if we couldn't determine client compatibility above
+	// 3. Profile requires transcoding?
 	if profile != nil && profile.NeedsTranscode() {
-		// If we have client capabilities but already checked above, we need to transcode
-		// because client doesn't accept source codecs or format doesn't match
 		return DeliveryTranscode
 	}
 
-	// 2. Source format matches client format?
-	// Use repackage to go through buffer pipeline for connection sharing
-	if sourceMatchesClient(source, clientFormat) {
-		return DeliveryRepackage
-	}
-
-	// 3. Can repackage without transcoding?
+	// 4. Can repackage without transcoding?
 	// Only possible if source has segments (HLS or DASH)
 	if canRepackage(source, clientFormat) {
 		return DeliveryRepackage
 	}
 
-	// 4. Must transcode (e.g., TS source wanting HLS/DASH output)
+	// 5. Must transcode (e.g., TS source wanting HLS/DASH output, or incompatible codecs)
 	return DeliveryTranscode
 }
 

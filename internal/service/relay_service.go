@@ -404,15 +404,33 @@ func (s *RelayService) ProbeAndStoreCodecInfo(ctx context.Context, streamURL str
 // as it avoids consuming extra connections when a stream is already active.
 func (s *RelayService) GetOrProbeCodecInfo(ctx context.Context, channelID models.ULID, streamURL string) *models.LastKnownCodec {
 	if s.relayManager == nil {
+		s.logger.Debug("GetOrProbeCodecInfo: relayManager is nil")
 		return nil
 	}
 
 	channelUUID, err := uuid.Parse(channelID.String())
 	if err != nil {
+		s.logger.Debug("GetOrProbeCodecInfo: failed to parse channel ID as UUID",
+			"channel_id", channelID.String(),
+			"error", err)
 		return nil
 	}
 
-	return s.relayManager.GetOrProbeCodecInfo(ctx, channelUUID, streamURL)
+	s.logger.Debug("GetOrProbeCodecInfo: delegating to relay manager",
+		"channel_id", channelID.String(),
+		"stream_url", streamURL)
+
+	result := s.relayManager.GetOrProbeCodecInfo(ctx, channelUUID, streamURL)
+	if result == nil {
+		s.logger.Debug("GetOrProbeCodecInfo: relay manager returned nil",
+			"channel_id", channelID.String())
+	} else {
+		s.logger.Debug("GetOrProbeCodecInfo: got codec info",
+			"channel_id", channelID.String(),
+			"video_codec", result.VideoCodec,
+			"audio_codec", result.AudioCodec)
+	}
+	return result
 }
 
 // StreamInfo contains the information needed to stream a channel through a proxy.
