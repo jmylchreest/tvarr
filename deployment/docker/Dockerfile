@@ -109,7 +109,9 @@ RUN CI=true task frontend:embed
 
 # Build release binary (uses LDFLAGS from Taskfile)
 # CGO_ENABLED=1 is required for go-sqlite3
-RUN GOOS=linux task build && mv dist/debug/tvarr /tvarr
+# Debug: show env vars being passed to task
+RUN echo "DEBUG: TVARR_BUILD_VERSION=$TVARR_BUILD_VERSION" && \
+    GOOS=linux task build && mv dist/debug/tvarr /tvarr
 
 # Compress with UPX
 RUN task upx:compress:file FILE=/tvarr
