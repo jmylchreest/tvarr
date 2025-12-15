@@ -13,7 +13,7 @@ on:
       node_version:
         description: "Node.js version for frontend build"
         required: false
-        default: "24"
+        default: "lts/*"
         type: string
       go_version:
         description: "Go version for backend build"
@@ -23,7 +23,7 @@ on:
 
 env:
   GO_VERSION: ${{ inputs.go_version || 'stable' }}
-  NODE_VERSION: ${{ inputs.node_version || '24' }}
+  NODE_VERSION: ${{ inputs.node_version || 'lts/*' }}
   PNPM_VERSION: "9"
 
 jobs:
@@ -49,7 +49,7 @@ jobs:
     needs: prepare
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -57,7 +57,7 @@ jobs:
           version: ${{ env.PNPM_VERSION }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: "pnpm"
@@ -107,12 +107,12 @@ jobs:
             goarch: arm64
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -204,7 +204,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -214,7 +214,7 @@ jobs:
           merge-multiple: true
 
       - name: Set up Go for SBOM
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
 
