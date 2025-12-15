@@ -396,7 +396,7 @@ export function ImportDialog({
           </div>
 
           <ScrollArea className="h-[250px] pr-4">
-            {result.imported_items.length > 0 && (
+            {result.imported_items && result.imported_items.length > 0 && (
               <div className="mb-4">
                 <h4 className="text-sm font-medium mb-2">Imported Items</h4>
                 <div className="space-y-1">
@@ -420,7 +420,7 @@ export function ImportDialog({
               </div>
             )}
 
-            {result.error_details.length > 0 && (
+            {result.error_details && result.error_details.length > 0 && (
               <div>
                 <h4 className="text-sm font-medium mb-2 text-destructive">Errors</h4>
                 <div className="space-y-1">
