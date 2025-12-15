@@ -173,6 +173,9 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.full_tag }}-${{ matrix.arch }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Disable provenance to create simple images instead of manifest lists
+          # This allows docker manifest create to work in the manifest job
+          provenance: false
           labels: |
             org.opencontainers.image.title=tvarr-ffmpeg
             org.opencontainers.image.description=FFmpeg with hardware acceleration for tvarr
