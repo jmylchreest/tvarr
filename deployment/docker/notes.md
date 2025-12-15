@@ -141,6 +141,8 @@ The script updates:
 - `ghcr.io/jmylchreest/tvarr-ffmpeg:amd64` / `:arm64` - Architecture-specific
 
 ### tvarr
+- `ghcr.io/jmylchreest/tvarr:release` - Latest stable release (recommended)
 - `ghcr.io/jmylchreest/tvarr:X.Y.Z` - Semantic version (releases)
-- `ghcr.io/jmylchreest/tvarr:latest` - Latest build from main
-- `ghcr.io/jmylchreest/tvarr:amd64` / `:arm64` - Architecture-specific
+- `ghcr.io/jmylchreest/tvarr:latest` - Latest build (release or main)
+- `ghcr.io/jmylchreest/tvarr:preview` - Latest build from main branch
+- `ghcr.io/jmylchreest/tvarr:amd64` - Architecture-specific

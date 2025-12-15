@@ -10,7 +10,7 @@ docker run -d \
   -p 8080:8080 \
   -v tvarr-data:/data \
   -e TVARR_SERVER_BASE_URL=http://your-host:8080 \
-  ghcr.io/jmylchreest/tvarr:latest
+  ghcr.io/jmylchreest/tvarr:release
 
 # With Intel/AMD GPU acceleration (VAAPI)
 docker run -d \
@@ -18,7 +18,7 @@ docker run -d \
   -v tvarr-data:/data \
   --device /dev/dri:/dev/dri \
   -e TVARR_SERVER_BASE_URL=http://your-host:8080 \
-  ghcr.io/jmylchreest/tvarr:latest
+  ghcr.io/jmylchreest/tvarr:release
 
 # With NVIDIA GPU acceleration
 docker run -d \
@@ -26,7 +26,7 @@ docker run -d \
   -v tvarr-data:/data \
   --gpus all \
   -e TVARR_SERVER_BASE_URL=http://your-host:8080 \
-  ghcr.io/jmylchreest/tvarr:latest
+  ghcr.io/jmylchreest/tvarr:release
 ```
 
 Replace `your-host` with the hostname or IP where clients will access tvarr.
@@ -52,7 +52,7 @@ See [docs/README-CONFIGURABLES.md](docs/README-CONFIGURABLES.md) for the complet
 ```yaml
 services:
   tvarr:
-    image: ghcr.io/jmylchreest/tvarr:latest
+    image: ghcr.io/jmylchreest/tvarr:release
     ports:
       - "8080:8080"
     volumes:

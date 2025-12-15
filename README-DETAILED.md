@@ -562,7 +562,7 @@ go build -o tvarr ./cmd/tvarr
 
 ### Docker
 
-Pre-built images are available at `ghcr.io/jmylchreest/tvarr:latest`.
+Pre-built images are available at `ghcr.io/jmylchreest/tvarr:release`.
 
 ```bash
 # Basic usage
@@ -570,7 +570,7 @@ docker run -d \
   -p 8080:8080 \
   -v tvarr-data:/data \
   -e TVARR_SERVER_BASE_URL=http://your-host:8080 \
-  ghcr.io/jmylchreest/tvarr:latest
+  ghcr.io/jmylchreest/tvarr:release
 
 # With GPU acceleration (Intel/AMD)
 docker run -d \
@@ -579,7 +579,7 @@ docker run -d \
   --device /dev/dri:/dev/dri \
   -e PUID=1000 \
   -e PGID=1000 \
-  ghcr.io/jmylchreest/tvarr:latest
+  ghcr.io/jmylchreest/tvarr:release
 ```
 
 ---
