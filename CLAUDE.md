@@ -17,6 +17,8 @@ Auto-generated from all feature plans. Last updated: 2025-12-05
 - Go 1.25.x (latest stable) + Huma v2.34+ (Chi router), GORM v2, FFmpeg (external binary), m-mizutani/masq (new) (015-codebase-cleanup)
 - Go 1.25.x (latest stable) + Huma v2.34+ (Chi router), GORM v2, robfig/cron/v3, compress/gzip (016-config-backup-export)
 - SQLite (primary), PostgreSQL/MySQL (GORM-compatible, backup via API for SQLite only) (016-config-backup-export)
+- Go 1.25.x (backend), TypeScript/Next.js (frontend) + Huma v2.34+ (API), GORM v2 (ORM), React 19, HTML5 Canvas (017-fix-epg-timezone-canvas)
+- SQLite (default), PostgreSQL/MySQL (configurable via GORM) (018-client-detection-ui)
 
 - Go 1.25.x (latest stable) + Huma v2.34+ (API), Chi (router), GORM v2 (ORM), FFmpeg (external binary) (005-ffmpeg-relay-transcoding)
 
@@ -36,9 +38,9 @@ tests/
 Go 1.25.x (latest stable): Follow standard conventions
 
 ## Recent Changes
+- 018-client-detection-ui: Added Go 1.25.x (backend), TypeScript/Next.js 16.x (frontend)
+- 017-fix-epg-timezone-canvas: Added Go 1.25.x (backend), TypeScript/Next.js (frontend) + Huma v2.34+ (API), GORM v2 (ORM), React 19, HTML5 Canvas
 - 016-config-backup-export: Added Go 1.25.x (latest stable) + Huma v2.34+ (Chi router), GORM v2, robfig/cron/v3, compress/gzip
-- 015-codebase-cleanup: Added Go 1.25.x (latest stable) + Huma v2.34+ (Chi router), GORM v2, FFmpeg (external binary), m-mizutani/masq (new)
-- 014-relay-profile-simplify: Added Go 1.25.x (latest stable) + Huma v2.34+ (Chi router), GORM v2, FFmpeg (external binary), gohlslib v2
 
 
 <!-- MANUAL ADDITIONS START -->
