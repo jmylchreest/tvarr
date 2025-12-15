@@ -1237,13 +1237,13 @@ class ApiClient {
   // =============================================================================
 
   async importFiltersPreview(file: File): Promise<ImportPreview> {
-    const formData = new FormData();
-    formData.append('file', file);
+    const content = await file.text();
     return this.request<ImportPreview>(
       '/api/v1/import/filters/preview',
       {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: content,
       }
     );
   }
@@ -1253,29 +1253,30 @@ class ApiClient {
     conflicts: Record<string, ConflictResolution>,
     bulkResolution?: ConflictResolution
   ): Promise<ImportResult> {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('conflicts', JSON.stringify(conflicts));
-    if (bulkResolution) {
-      formData.append('bulk_resolution', bulkResolution);
-    }
+    const content = await file.text();
+    const exportData = JSON.parse(content);
     return this.request<ImportResult>(
       '/api/v1/import/filters',
       {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          export: exportData,
+          resolutions: conflicts,
+          bulk_resolution: bulkResolution,
+        }),
       }
     );
   }
 
   async importDataMappingRulesPreview(file: File): Promise<ImportPreview> {
-    const formData = new FormData();
-    formData.append('file', file);
+    const content = await file.text();
     return this.request<ImportPreview>(
       '/api/v1/import/data-mapping-rules/preview',
       {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: content,
       }
     );
   }
@@ -1285,29 +1286,30 @@ class ApiClient {
     conflicts: Record<string, ConflictResolution>,
     bulkResolution?: ConflictResolution
   ): Promise<ImportResult> {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('conflicts', JSON.stringify(conflicts));
-    if (bulkResolution) {
-      formData.append('bulk_resolution', bulkResolution);
-    }
+    const content = await file.text();
+    const exportData = JSON.parse(content);
     return this.request<ImportResult>(
       '/api/v1/import/data-mapping-rules',
       {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          export: exportData,
+          resolutions: conflicts,
+          bulk_resolution: bulkResolution,
+        }),
       }
     );
   }
 
   async importClientDetectionRulesPreview(file: File): Promise<ImportPreview> {
-    const formData = new FormData();
-    formData.append('file', file);
+    const content = await file.text();
     return this.request<ImportPreview>(
       '/api/v1/import/client-detection-rules/preview',
       {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: content,
       }
     );
   }
@@ -1317,29 +1319,30 @@ class ApiClient {
     conflicts: Record<string, ConflictResolution>,
     bulkResolution?: ConflictResolution
   ): Promise<ImportResult> {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('conflicts', JSON.stringify(conflicts));
-    if (bulkResolution) {
-      formData.append('bulk_resolution', bulkResolution);
-    }
+    const content = await file.text();
+    const exportData = JSON.parse(content);
     return this.request<ImportResult>(
       '/api/v1/import/client-detection-rules',
       {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          export: exportData,
+          resolutions: conflicts,
+          bulk_resolution: bulkResolution,
+        }),
       }
     );
   }
 
   async importEncodingProfilesPreview(file: File): Promise<ImportPreview> {
-    const formData = new FormData();
-    formData.append('file', file);
+    const content = await file.text();
     return this.request<ImportPreview>(
       '/api/v1/import/encoding-profiles/preview',
       {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: content,
       }
     );
   }
@@ -1349,17 +1352,18 @@ class ApiClient {
     conflicts: Record<string, ConflictResolution>,
     bulkResolution?: ConflictResolution
   ): Promise<ImportResult> {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('conflicts', JSON.stringify(conflicts));
-    if (bulkResolution) {
-      formData.append('bulk_resolution', bulkResolution);
-    }
+    const content = await file.text();
+    const exportData = JSON.parse(content);
     return this.request<ImportResult>(
       '/api/v1/import/encoding-profiles',
       {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          export: exportData,
+          resolutions: conflicts,
+          bulk_resolution: bulkResolution,
+        }),
       }
     );
   }
