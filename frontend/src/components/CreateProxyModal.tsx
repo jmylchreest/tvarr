@@ -28,7 +28,7 @@ import { Label } from '@/components/ui/label';
 import { Plus, GripVertical, Trash2, AlertCircle, Loader2, ArrowUp, ArrowDown } from 'lucide-react';
 import { getBackendUrl } from '@/lib/config';
 import { apiClient } from '@/lib/api-client';
-import { StreamProxy, EncodingProfile } from '@/types/api';
+import { StreamProxy, EncodingProfile, NumberingMode } from '@/types/api';
 
 // Types based on your API specification
 interface StreamSourceResponse {
@@ -78,6 +78,8 @@ interface ProxyFormData {
   upstream_timeout: number;
   max_concurrent_streams: number;
   starting_channel_number: number;
+  numbering_mode: NumberingMode;
+  group_numbering_size: number;
   stream_sources: StreamSourceAssignment[];
   epg_sources: EpgSourceAssignment[];
   filters: FilterAssignment[];
@@ -459,6 +461,8 @@ export function ProxySheet({
     upstream_timeout: 30,
     max_concurrent_streams: 0,
     starting_channel_number: 1,
+    numbering_mode: 'preserve',
+    group_numbering_size: 100,
     stream_sources: [],
     epg_sources: [],
     filters: [],
@@ -546,6 +550,8 @@ export function ProxySheet({
               upstream_timeout: sourceProxyData.upstream_timeout || 30,
               max_concurrent_streams: sourceProxyData.max_concurrent_streams ?? 0,
               starting_channel_number: sourceProxyData.starting_channel_number,
+              numbering_mode: sourceProxyData.numbering_mode || 'preserve',
+              group_numbering_size: sourceProxyData.group_numbering_size || 100,
               stream_sources: streamSources,
               epg_sources: epgSources,
               filters: filters,
@@ -608,6 +614,8 @@ export function ProxySheet({
               upstream_timeout: 30,
               max_concurrent_streams: 0,
               starting_channel_number: 1,
+              numbering_mode: 'preserve',
+              group_numbering_size: 100,
               stream_sources: defaultStreamSources,
               epg_sources: defaultEpgSources,
               filters: defaultFilters,
@@ -723,6 +731,8 @@ export function ProxySheet({
             upstream_timeout: 30,
             max_concurrent_streams: 0,
             starting_channel_number: 1,
+            numbering_mode: 'preserve',
+            group_numbering_size: 100,
             stream_sources: [],
             epg_sources: [],
             filters: [],
@@ -980,6 +990,57 @@ export function ProxySheet({
                   placeholder="1"
                 />
               </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="numbering_mode">Numbering Mode</Label>
+                <Select
+                  value={formData.numbering_mode}
+                  onValueChange={(value: NumberingMode) =>
+                    setFormData((prev) => ({ ...prev, numbering_mode: value }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select numbering mode" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="preserve">Preserve (respects data mapping rules)</SelectItem>
+                    <SelectItem value="sequential">Sequential (ignore existing numbers)</SelectItem>
+                    <SelectItem value="group">Group (by category)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {formData.numbering_mode === 'preserve' && 'Keeps channel numbers from data mapping rules, fills gaps sequentially'}
+                  {formData.numbering_mode === 'sequential' && 'Assigns sequential numbers starting from the starting channel number'}
+                  {formData.numbering_mode === 'group' && 'Groups channels by category with configurable range size'}
+                </p>
+              </div>
+
+              {formData.numbering_mode === 'group' && (
+                <div className="space-y-2">
+                  <Label htmlFor="group_numbering_size">Group Size</Label>
+                  <Input
+                    id="group_numbering_size"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={formData.group_numbering_size.toString()}
+                    onChange={(e) => {
+                      const value = e.target.value.replace(/[^0-9]/g, '');
+                      if (value === '' || (parseInt(value) >= 1 && parseInt(value) <= 10000)) {
+                        setFormData((prev) => ({
+                          ...prev,
+                          group_numbering_size: value === '' ? 100 : parseInt(value),
+                        }));
+                      }
+                    }}
+                    onFocus={(e) => e.target.select()}
+                    placeholder="100"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Channels per group (e.g., 100 = groups at 1-99, 100-199, etc.)
+                  </p>
+                </div>
+              )}
 
               <div className="space-y-2">
                 <Label htmlFor="upstream_timeout">Upstream Timeout (seconds)</Label>

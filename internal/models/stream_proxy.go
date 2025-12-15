@@ -81,8 +81,8 @@ type StreamProxy struct {
 	StartingChannelNumber int `gorm:"default:1" json:"starting_channel_number"`
 
 	// NumberingMode determines how channel numbers are assigned.
-	// Options: sequential (default), preserve, group
-	NumberingMode NumberingMode `gorm:"not null;default:'sequential';size:20" json:"numbering_mode"`
+	// Options: preserve (default), sequential, group
+	NumberingMode NumberingMode `gorm:"not null;default:'preserve';size:20" json:"numbering_mode"`
 
 	// GroupNumberingSize is the size of each group range when using group numbering mode.
 	// Default is 100 (groups get numbers 100-199, 200-299, etc.).

@@ -99,12 +99,15 @@ export interface EpgSourceResponse extends EpgSource {
 
 // Proxy Types
 export type ProxyStatus = 'pending' | 'generating' | 'ready' | 'failed';
+export type NumberingMode = 'preserve' | 'sequential' | 'group';
 
 export interface StreamProxy {
   id: string;
   name: string;
   proxy_mode: ProxyMode;
   starting_channel_number: number;
+  numbering_mode: NumberingMode;
+  group_numbering_size: number;
   is_active: boolean;
   auto_regenerate: boolean;
   description?: string;
@@ -671,6 +674,8 @@ export interface CreateStreamProxyRequest {
   name: string;
   proxy_mode: ProxyMode;
   starting_channel_number: number;
+  numbering_mode: NumberingMode;
+  group_numbering_size?: number;
   stream_sources: ProxySourceRequest[];
   epg_sources: ProxyEpgSourceRequest[];
   filters: ProxyFilterRequest[];
@@ -688,6 +693,8 @@ export interface UpdateStreamProxyRequest {
   name: string;
   proxy_mode: ProxyMode;
   starting_channel_number: number;
+  numbering_mode: NumberingMode;
+  group_numbering_size?: number;
   stream_sources: ProxySourceRequest[];
   epg_sources: ProxyEpgSourceRequest[];
   filters: ProxyFilterRequest[];

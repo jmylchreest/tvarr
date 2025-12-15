@@ -49,10 +49,10 @@ config.yml
 *.db-journal
 *.db-shm
 *.db-wal
-data/
-logs/
-temp/
-tmp/
+/data/
+/logs/
+/temp/
+/tmp/
 
 # Environment files
 .env

@@ -54,10 +54,11 @@ type Stage struct {
 }
 
 // New creates a new numbering stage with preserve mode (default).
+// Preserve mode respects channel numbers set via data mapping rules.
 func New() *Stage {
 	return &Stage{
 		BaseStage: shared.NewBaseStage(StageID, StageName),
-		mode:      NumberingModePreserve, // Default to preserve mode
+		mode:      NumberingModePreserve,
 		groupSize: 100,
 		conflicts: make([]ConflictResolution, 0),
 	}
