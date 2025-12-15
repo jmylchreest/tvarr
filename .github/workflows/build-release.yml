@@ -13,7 +13,7 @@ on:
       node_version:
         description: "Node.js version for frontend build"
         required: false
-        default: "lts/*"
+        default: "24"
         type: string
       go_version:
         description: "Go version for backend build"
@@ -23,7 +23,8 @@ on:
 
 env:
   GO_VERSION: ${{ inputs.go_version || 'stable' }}
-  NODE_VERSION: ${{ inputs.node_version || 'lts/*' }}
+  NODE_VERSION: ${{ inputs.node_version || '24' }}
+  PNPM_VERSION: "9"
 
 jobs:
   # Extract version from tag
@@ -48,24 +49,30 @@ jobs:
     needs: prepare
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
+          cache: "pnpm"
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Install dependencies
         working-directory: frontend
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build frontend
         working-directory: frontend
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
-        run: npm run build:embed
+          CI: true
+        run: pnpm run build:embed
 
       - name: Upload frontend assets
         uses: actions/upload-artifact@v4
@@ -100,12 +107,12 @@ jobs:
             goarch: arm64
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -197,16 +204,17 @@ jobs:
       contents: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: tvarr_*
           merge-multiple: true
 
       - name: Set up Go for SBOM
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
 
