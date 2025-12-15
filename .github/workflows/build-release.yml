@@ -90,20 +90,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux builds (primary)
           - goos: linux
             goarch: amd64
           - goos: linux
-            goarch: arm64
-          # macOS builds
-          - goos: darwin
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
-          # Windows builds
-          - goos: windows
-            goarch: amd64
-          - goos: windows
             goarch: arm64
     steps:
       - name: Checkout code
@@ -145,54 +134,34 @@ jobs:
           LDFLAGS="${LDFLAGS} -X github.com/jmylchreest/tvarr/internal/version.Branch=${BRANCH}"
           LDFLAGS="${LDFLAGS} -X github.com/jmylchreest/tvarr/internal/version.TreeState=${TREE_STATE}"
 
-          BINARY_NAME="tvarr"
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            BINARY_NAME="tvarr.exe"
-          fi
-
           OUTPUT_DIR="dist/tvarr_${{ needs.prepare.outputs.version }}_${{ matrix.goos }}_${{ matrix.goarch }}"
           mkdir -p "${OUTPUT_DIR}"
 
-          go build -ldflags="${LDFLAGS}" -o "${OUTPUT_DIR}/${BINARY_NAME}" ./cmd/tvarr
+          go build -ldflags="${LDFLAGS}" -o "${OUTPUT_DIR}/tvarr" ./cmd/tvarr
 
       - name: Install UPX
-        if: matrix.goos != 'darwin'
-        run: |
-          sudo apt-get update && sudo apt-get install -y upx
+        run: sudo apt-get update && sudo apt-get install -y upx
 
       - name: Compress binary with UPX
-        if: matrix.goos != 'darwin'
         run: |
-          BINARY_NAME="tvarr"
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            BINARY_NAME="tvarr.exe"
-          fi
           OUTPUT_DIR="dist/tvarr_${{ needs.prepare.outputs.version }}_${{ matrix.goos }}_${{ matrix.goarch }}"
-
-          echo "Compressing ${OUTPUT_DIR}/${BINARY_NAME} with UPX..."
-          original_size=$(stat -c%s "${OUTPUT_DIR}/${BINARY_NAME}")
-          upx --best --lzma "${OUTPUT_DIR}/${BINARY_NAME}" || upx --best "${OUTPUT_DIR}/${BINARY_NAME}" || echo "UPX compression failed, continuing with uncompressed binary"
-          compressed_size=$(stat -c%s "${OUTPUT_DIR}/${BINARY_NAME}")
+          echo "Compressing ${OUTPUT_DIR}/tvarr with UPX..."
+          original_size=$(stat -c%s "${OUTPUT_DIR}/tvarr")
+          upx --best --lzma "${OUTPUT_DIR}/tvarr" || upx --best "${OUTPUT_DIR}/tvarr" || echo "UPX compression failed, continuing with uncompressed binary"
+          compressed_size=$(stat -c%s "${OUTPUT_DIR}/tvarr")
           echo "Size reduction: $((100 - (compressed_size * 100 / original_size)))%"
 
       - name: Create archive
         run: |
           cd dist
           DIR_NAME="tvarr_${{ needs.prepare.outputs.version }}_${{ matrix.goos }}_${{ matrix.goarch }}"
-
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            zip -r "${DIR_NAME}.zip" "${DIR_NAME}"
-          else
-            tar -czvf "${DIR_NAME}.tar.gz" "${DIR_NAME}"
-          fi
+          tar -czvf "${DIR_NAME}.tar.gz" "${DIR_NAME}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: tvarr_${{ matrix.goos }}_${{ matrix.goarch }}
-          path: |
-            dist/*.tar.gz
-            dist/*.zip
+          path: dist/*.tar.gz
           if-no-files-found: error
 
   # Create GitHub release
@@ -228,7 +197,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum tvarr_*.tar.gz tvarr_*.zip sbom-*.spdx.json > checksums.txt
+          sha256sum tvarr_*.tar.gz sbom-*.spdx.json > checksums.txt
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
@@ -239,6 +208,5 @@ jobs:
           generate_release_notes: true
           files: |
             artifacts/tvarr_*.tar.gz
-            artifacts/tvarr_*.zip
             artifacts/sbom-*.spdx.json
             artifacts/checksums.txt
