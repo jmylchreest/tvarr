@@ -98,6 +98,8 @@ export interface EpgSourceResponse extends EpgSource {
 }
 
 // Proxy Types
+export type ProxyStatus = 'pending' | 'generating' | 'ready' | 'failed';
+
 export interface StreamProxy {
   id: string;
   name: string;
@@ -114,8 +116,10 @@ export interface StreamProxy {
   encoding_profile_id?: string;
   m3u8_url?: string;
   xmltv_url?: string;
+  status: ProxyStatus;
   channel_count: number;
   program_count: number;
+  last_error?: string;
   created_at: string;
   updated_at: string;
   last_generated_at?: string;

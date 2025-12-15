@@ -728,7 +728,22 @@ export function Proxies() {
                               <Badge className={getStatusColor(proxy.is_active)}>
                                 {proxy.is_active ? 'Active' : 'Inactive'}
                               </Badge>
-                              {/* T048: Operation error/warning indicator */}
+                              {/* Show failed badge with error tooltip when generation failed */}
+                              {proxy.status === 'failed' && proxy.last_error && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge variant="destructive" className="cursor-help">
+                                      <AlertCircle className="h-3 w-3 mr-1" />
+                                      Failed
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-[400px]">
+                                    <p className="font-medium">Generation Failed</p>
+                                    <p className="text-xs text-muted-foreground whitespace-pre-wrap">{proxy.last_error}</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
+                              {/* T048: Operation error/warning indicator for in-progress operations */}
                               <OperationStatusIndicator resourceId={proxy.id} />
                             </div>
                           </TableCell>
@@ -901,7 +916,22 @@ export function Proxies() {
                                 <Badge className={getStatusColor(proxy.is_active)}>
                                   {proxy.is_active ? 'Active' : 'Inactive'}
                                 </Badge>
-                                {/* T048: Operation error/warning indicator */}
+                                {/* Show failed badge with error tooltip when generation failed */}
+                                {proxy.status === 'failed' && proxy.last_error && (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Badge variant="destructive" className="cursor-help">
+                                        <AlertCircle className="h-3 w-3 mr-1" />
+                                        Failed
+                                      </Badge>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" className="max-w-[400px]">
+                                      <p className="font-medium">Generation Failed</p>
+                                      <p className="text-xs text-muted-foreground whitespace-pre-wrap">{proxy.last_error}</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                )}
+                                {/* T048: Operation error/warning indicator for in-progress operations */}
                                 <OperationStatusIndicator resourceId={proxy.id} />
                               </CardTitle>
                               {proxy.description && (
@@ -1129,7 +1159,22 @@ export function Proxies() {
                                     <Badge className={getStatusColor(proxy.is_active)}>
                                       {proxy.is_active ? 'Active' : 'Inactive'}
                                     </Badge>
-                                    {/* T048: Operation error/warning indicator */}
+                                    {/* Show failed badge with error tooltip when generation failed */}
+                                    {proxy.status === 'failed' && proxy.last_error && (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <Badge variant="destructive" className="cursor-help">
+                                            <AlertCircle className="h-3 w-3 mr-1" />
+                                            Failed
+                                          </Badge>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top" className="max-w-[400px]">
+                                          <p className="font-medium">Generation Failed</p>
+                                          <p className="text-xs text-muted-foreground whitespace-pre-wrap">{proxy.last_error}</p>
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    )}
+                                    {/* T048: Operation error/warning indicator for in-progress operations */}
                                     <OperationStatusIndicator resourceId={proxy.id} />
                                     <Badge variant="secondary" className="text-xs">
                                       Ch {proxy.starting_channel_number}+
