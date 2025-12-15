@@ -6,8 +6,8 @@
 # Documentation
 *.md
 LICENSE
-docs/
-specs/
+/docs/
+/specs/
 
 # IDE/Editor
 .vscode/
@@ -17,8 +17,8 @@ specs/
 *~
 
 # Build artifacts
-dist/
-build/
+/dist/
+/build/
 *.exe
 *.test
 *.out
@@ -29,13 +29,12 @@ frontend/.next/
 frontend/out/
 
 # Go
-vendor/
+/vendor/
 *.mod.bak
 
 # Test files
 *_test.go
-testdata/
-coverage/
+/coverage/
 *.cover
 *.coverprofile
 
@@ -59,8 +58,8 @@ docker-compose*.yml
 /logs/
 
 # Temporary files
-tmp/
-temp/
+/tmp/
+/temp/
 *.tmp
 
 # OS files

@@ -4,8 +4,8 @@
 *.dll
 *.so
 *.dylib
-bin/
-dist/
+/bin/
+/dist/
 
 # Test binary, built with `go test -c`
 *.test
@@ -21,7 +21,7 @@ go.work
 go.work.sum
 
 # Dependency directories
-vendor/
+/vendor/
 
 # IDE and editor
 .idea/
@@ -66,9 +66,6 @@ config.yml
 
 # Taskfile cache
 .task/
-
-# Air hot reload
-tmp/
 
 # Embedded frontend assets (built assets, not source)
 internal/assets/static/*
