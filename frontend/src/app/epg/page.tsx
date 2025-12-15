@@ -14,7 +14,6 @@ import {
   Grid,
   List,
   Table as TableIcon,
-  Globe,
   Play,
 } from 'lucide-react';
 import { DateTimePicker } from '@/components/ui/date-time-picker';
@@ -151,60 +150,23 @@ export default function EpgPage() {
     '6h' | '12h' | '18h' | '24h' | '30h' | '36h' | '42h' | '48h'
   >('12h');
   const [guideStartTime, setGuideStartTime] = useState<Date | undefined>(undefined);
-  const [selectedTimezone, setSelectedTimezone] = useState<string>(
-    // Detect user's timezone on component mount
-    typeof window !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'UTC'
-  );
-  const [timezoneOpen, setTimezoneOpen] = useState(false);
+  // Use browser's local timezone automatically (T042-T044: removed manual timezone selector)
+  // Times are normalized to UTC in the backend and displayed in local timezone
+  const selectedTimezone = useMemo(() => {
+    return typeof window !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'UTC';
+  }, []);
   const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
   const [currentTimeWindow, setCurrentTimeWindow] = useState(0); // Moved from below
   const loadMoreRef = useRef<HTMLDivElement>(null);
+  // Lazy loading state for EPG guide (T024-T030)
+  const [isLoadingMoreGuide, setIsLoadingMoreGuide] = useState(false);
+  const [hasMoreGuideData, setHasMoreGuideData] = useState(true);
+  const guideLoadedEndTimeRef = useRef<Date | null>(null);
 
-  // Common timezone list with search-friendly labels
-  const timezones = [
-    { value: 'UTC', label: 'UTC (Coordinated Universal Time)', offset: '+00:00' },
-    { value: 'America/New_York', label: 'New York (Eastern Time)', offset: '-05:00/-04:00' },
-    { value: 'America/Chicago', label: 'Chicago (Central Time)', offset: '-06:00/-05:00' },
-    { value: 'America/Denver', label: 'Denver (Mountain Time)', offset: '-07:00/-06:00' },
-    { value: 'America/Los_Angeles', label: 'Los Angeles (Pacific Time)', offset: '-08:00/-07:00' },
-    { value: 'America/Phoenix', label: 'Phoenix (Arizona Time)', offset: '-07:00' },
-    { value: 'America/Anchorage', label: 'Anchorage (Alaska Time)', offset: '-09:00/-08:00' },
-    { value: 'Pacific/Honolulu', label: 'Honolulu (Hawaii Time)', offset: '-10:00' },
-    { value: 'Europe/London', label: 'London (GMT/BST)', offset: '+00:00/+01:00' },
-    { value: 'Europe/Paris', label: 'Paris (CET/CEST)', offset: '+01:00/+02:00' },
-    { value: 'Europe/Berlin', label: 'Berlin (CET/CEST)', offset: '+01:00/+02:00' },
-    { value: 'Europe/Rome', label: 'Rome (CET/CEST)', offset: '+01:00/+02:00' },
-    { value: 'Europe/Madrid', label: 'Madrid (CET/CEST)', offset: '+01:00/+02:00' },
-    { value: 'Europe/Amsterdam', label: 'Amsterdam (CET/CEST)', offset: '+01:00/+02:00' },
-    { value: 'Europe/Zurich', label: 'Zurich (CET/CEST)', offset: '+01:00/+02:00' },
-    { value: 'Europe/Vienna', label: 'Vienna (CET/CEST)', offset: '+01:00/+02:00' },
-    { value: 'Europe/Prague', label: 'Prague (CET/CEST)', offset: '+01:00/+02:00' },
-    { value: 'Europe/Warsaw', label: 'Warsaw (CET/CEST)', offset: '+01:00/+02:00' },
-    { value: 'Europe/Stockholm', label: 'Stockholm (CET/CEST)', offset: '+01:00/+02:00' },
-    { value: 'Europe/Helsinki', label: 'Helsinki (EET/EEST)', offset: '+02:00/+03:00' },
-    { value: 'Europe/Athens', label: 'Athens (EET/EEST)', offset: '+02:00/+03:00' },
-    { value: 'Europe/Istanbul', label: 'Istanbul (Turkey Time)', offset: '+03:00' },
-    { value: 'Europe/Moscow', label: 'Moscow (Moscow Time)', offset: '+03:00' },
-    { value: 'Asia/Dubai', label: 'Dubai (Gulf Time)', offset: '+04:00' },
-    { value: 'Asia/Karachi', label: 'Karachi (Pakistan Time)', offset: '+05:00' },
-    { value: 'Asia/Kolkata', label: 'Mumbai/Delhi (India Time)', offset: '+05:30' },
-    { value: 'Asia/Dhaka', label: 'Dhaka (Bangladesh Time)', offset: '+06:00' },
-    { value: 'Asia/Bangkok', label: 'Bangkok (Indochina Time)', offset: '+07:00' },
-    { value: 'Asia/Singapore', label: 'Singapore (Singapore Time)', offset: '+08:00' },
-    { value: 'Asia/Hong_Kong', label: 'Hong Kong (Hong Kong Time)', offset: '+08:00' },
-    { value: 'Asia/Shanghai', label: 'Shanghai (China Time)', offset: '+08:00' },
-    { value: 'Asia/Taipei', label: 'Taipei (Taiwan Time)', offset: '+08:00' },
-    { value: 'Asia/Tokyo', label: 'Tokyo (Japan Time)', offset: '+09:00' },
-    { value: 'Asia/Seoul', label: 'Seoul (Korea Time)', offset: '+09:00' },
-    { value: 'Australia/Adelaide', label: 'Adelaide (Central Australia)', offset: '+09:30/+10:30' },
-    { value: 'Australia/Sydney', label: 'Sydney (Eastern Australia)', offset: '+10:00/+11:00' },
-    { value: 'Australia/Brisbane', label: 'Brisbane (Eastern Australia)', offset: '+10:00' },
-    { value: 'Australia/Perth', label: 'Perth (Western Australia)', offset: '+08:00' },
-    { value: 'Pacific/Auckland', label: 'Auckland (New Zealand)', offset: '+12:00/+13:00' },
-  ];
-
-  // Helper function to format time in selected timezone
+  // Helper function to format time in browser's local timezone
+  // Note: We intentionally omit the timeZone option to use browser's default timezone
+  // This is more reliable than explicitly passing the detected timezone
   const formatTimeInTimezone = useCallback(
     (timeString: string) => {
       try {
@@ -213,21 +175,21 @@ export default function EpgPage() {
           return '--:--';
         }
 
+        // Use browser's default timezone by not specifying timeZone option
         return date.toLocaleTimeString([], {
           hour: '2-digit',
           minute: '2-digit',
           hour12: false,
-          timeZone: selectedTimezone,
         });
       } catch (error) {
         Debug.warn('Error formatting time in timezone:', error);
         return '--:--';
       }
     },
-    [selectedTimezone]
+    []
   );
 
-  // Helper function to format date in selected timezone
+  // Helper function to format date in browser's local timezone
   const formatDateInTimezone = useCallback(
     (timeString: string) => {
       try {
@@ -236,21 +198,21 @@ export default function EpgPage() {
           return 'Invalid Date';
         }
 
+        // Use browser's default timezone by not specifying timeZone option
         return date.toLocaleDateString([], {
           weekday: 'short',
           month: 'short',
           day: 'numeric',
-          timeZone: selectedTimezone,
         });
       } catch (error) {
         Debug.warn('Error formatting date in timezone:', error);
         return 'Invalid Date';
       }
     },
-    [selectedTimezone]
+    []
   );
 
-  // Helper function to format guide time in selected timezone
+  // Helper function to format guide time in browser's local timezone
   const formatGuideTimeInTimezone = useCallback(
     (timeString: string) => {
       try {
@@ -259,17 +221,17 @@ export default function EpgPage() {
           return '--';
         }
 
+        // Use browser's default timezone by not specifying timeZone option
         return date.toLocaleTimeString([], {
           hour: 'numeric',
           hour12: true,
-          timeZone: selectedTimezone,
         });
       } catch (error) {
         Debug.warn('Error formatting guide time in timezone:', error);
         return '--';
       }
     },
-    [selectedTimezone]
+    []
   );
 
   const getTimeRangeParams = useCallback(() => {
@@ -498,6 +460,9 @@ export default function EpgPage() {
       }
 
       setGuideData(data.data);
+      // Track loaded end time for lazy loading (T028)
+      guideLoadedEndTimeRef.current = endTime;
+      setHasMoreGuideData(true); // Reset on fresh fetch
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
@@ -506,6 +471,92 @@ export default function EpgPage() {
       setLoading(false);
     }
   };
+
+  // Fetch more guide data for lazy loading (T026, T027)
+  const fetchMoreGuideData = useCallback(async (direction: 'forward' | 'backward', currentEndTime: Date) => {
+    if (isLoadingMoreGuide || !hasMoreGuideData) return;
+
+    try {
+      setIsLoadingMoreGuide(true);
+
+      // Fetch the next chunk (same duration as current time range)
+      const hours = parseInt(guideTimeRange.replace('h', ''));
+      const startTime = currentEndTime;
+      const endTime = new Date(currentEndTime.getTime() + hours * 60 * 60 * 1000);
+
+      const params = new URLSearchParams({
+        start_time: startTime.toISOString(),
+        end_time: endTime.toISOString(),
+      });
+
+      if (selectedSources.length > 0) params.append('source_id', selectedSources.join(','));
+
+      Debug.log('Fetching more guide data:', startTime.toISOString(), 'to', endTime.toISOString());
+
+      const response = await fetch(`/api/v1/epg/guide?${params}`);
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch guide data: ${response.statusText}`);
+      }
+
+      const data: { success: boolean; data: EpgGuideResponse } = await response.json();
+
+      if (!data.success) {
+        throw new Error('API returned unsuccessful response');
+      }
+
+      // Merge programs helper (T027)
+      setGuideData((prevData) => {
+        if (!prevData) return data.data;
+
+        // Merge channels (add any new ones)
+        const mergedChannels = { ...prevData.channels };
+        Object.entries(data.data.channels).forEach(([id, channel]) => {
+          if (!mergedChannels[id]) {
+            mergedChannels[id] = channel;
+          }
+        });
+
+        // Merge programs per channel (append new programs)
+        const mergedPrograms = { ...prevData.programs };
+        Object.entries(data.data.programs).forEach(([channelId, programs]) => {
+          const existingPrograms = mergedPrograms[channelId] || [];
+          const existingIds = new Set(existingPrograms.map(p => p.id));
+          const newPrograms = programs.filter(p => !existingIds.has(p.id));
+          mergedPrograms[channelId] = [...existingPrograms, ...newPrograms];
+        });
+
+        // Merge time slots (append new ones)
+        const existingSlots = new Set(prevData.time_slots);
+        const newSlots = data.data.time_slots.filter(slot => !existingSlots.has(slot));
+        const mergedTimeSlots = [...prevData.time_slots, ...newSlots];
+
+        return {
+          channels: mergedChannels,
+          programs: mergedPrograms,
+          time_slots: mergedTimeSlots,
+          start_time: prevData.start_time,
+          end_time: data.data.end_time, // Extend the end time
+        };
+      });
+
+      // Update loaded end time (T028)
+      guideLoadedEndTimeRef.current = endTime;
+
+      // Check if we've reached the end (no programs in the new data)
+      const totalNewPrograms = Object.values(data.data.programs).flat().length;
+      if (totalNewPrograms === 0) {
+        setHasMoreGuideData(false);
+      }
+
+    } catch (err) {
+      Debug.warn('Failed to fetch more guide data:', err);
+      // Don't show error to user for lazy load failures, just stop trying
+      setHasMoreGuideData(false);
+    } finally {
+      setIsLoadingMoreGuide(false);
+    }
+  }, [isLoadingMoreGuide, hasMoreGuideData, guideTimeRange, selectedSources]);
 
   const handleLoadMore = useCallback(() => {
     if (hasMore && !loading && viewMode !== 'guide') {
@@ -1031,56 +1082,7 @@ export default function EpgPage() {
                   </PopoverContent>
                 </Popover>
 
-                {/* Timezone Selector */}
-                <Popover open={timezoneOpen} onOpenChange={setTimezoneOpen}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      role="combobox"
-                      aria-expanded={timezoneOpen}
-                      className="w-64 justify-between"
-                    >
-                      <Globe className="w-4 h-4 mr-2" />
-                      {selectedTimezone
-                        ? timezones.find((tz) => tz.value === selectedTimezone)?.label
-                        : 'Select timezone...'}
-                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-80 p-0">
-                    <Command>
-                      <CommandInput placeholder="Search timezone..." />
-                      <CommandList>
-                        <CommandEmpty>No timezone found.</CommandEmpty>
-                        <CommandGroup>
-                          {timezones.map((timezone) => (
-                            <CommandItem
-                              key={timezone.value}
-                              value={timezone.value}
-                              onSelect={(currentValue) => {
-                                setSelectedTimezone(currentValue);
-                                setTimezoneOpen(false);
-                              }}
-                            >
-                              <Check
-                                className={cn(
-                                  'mr-2 h-4 w-4',
-                                  selectedTimezone === timezone.value ? 'opacity-100' : 'opacity-0'
-                                )}
-                              />
-                              <div className="flex-1">
-                                <div className="font-medium">{timezone.label}</div>
-                                <div className="text-sm text-muted-foreground">
-                                  {timezone.offset}
-                                </div>
-                              </div>
-                            </CommandItem>
-                          ))}
-                        </CommandGroup>
-                      </CommandList>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
+                {/* Timezone selector removed (T042-T044) - times display in browser's local timezone */}
 
                 {/* Category Filter (only for non-guide views) */}
                 {viewMode !== 'guide' && (
@@ -1427,8 +1429,25 @@ export default function EpgPage() {
           {/* TV Guide View */}
           {viewMode === 'guide' && (
             <div className="space-y-6">
+              {/* No Results Message (T037) */}
+              {guideData && getAllChannels.length === 0 && channelFilter && (
+                <Card>
+                  <CardContent className="p-8 text-center">
+                    <Search className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                    <p className="text-muted-foreground mb-4">
+                      No channels or programs match &quot;{channelFilter}&quot;
+                    </p>
+                    <Button
+                      variant="outline"
+                      onClick={() => setChannelFilter('')}
+                    >
+                      Clear Search
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
               {/* TV Guide Grid - Canvas Rendering Only */}
-              {guideData ? (
+              {guideData && getAllChannels.length > 0 ? (
                 <Card className="overflow-hidden flex flex-col h-[600px]">
                   <div className="relative flex-1 min-h-0">
                     {/* Existing guide stays visible; overlay skeleton only while reloading */}
@@ -1507,6 +1526,10 @@ export default function EpgPage() {
                         handlePlayChannel(channel);
                       }}
                       className="border-0"
+                      // Lazy loading props (T024-T030)
+                      onLoadMore={fetchMoreGuideData}
+                      isLoadingMore={isLoadingMoreGuide}
+                      hasMoreData={hasMoreGuideData}
                     />
 
                     {/* Guide Footer */}

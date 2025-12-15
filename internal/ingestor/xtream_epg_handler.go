@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -30,6 +31,13 @@ type XtreamEpgHandler struct {
 
 	// DaysToFetch is the number of days of EPG data to fetch (default: 7).
 	DaysToFetch int
+
+	// logger is the structured logger for timezone detection and normalization events.
+	logger *slog.Logger
+
+	// serverLocation is the detected server timezone for parsing string times.
+	// Set during Ingest() from the server info.
+	serverLocation *time.Location
 }
 
 // NewXtreamEpgHandler creates a new Xtream EPG handler with default settings.
@@ -52,6 +60,12 @@ func (h *XtreamEpgHandler) WithHTTPClientConfig(cfg httpclient.Config) *XtreamEp
 // WithDaysToFetch sets the number of days of EPG data to fetch.
 func (h *XtreamEpgHandler) WithDaysToFetch(days int) *XtreamEpgHandler {
 	h.DaysToFetch = days
+	return h
+}
+
+// WithLogger sets a structured logger for the handler.
+func (h *XtreamEpgHandler) WithLogger(logger *slog.Logger) *XtreamEpgHandler {
+	h.logger = logger
 	return h
 }
 
@@ -100,11 +114,58 @@ func (h *XtreamEpgHandler) Ingest(ctx context.Context, source *models.EpgSource,
 		xtream.WithHTTPClient(h.httpClient.StandardClient()),
 	)
 
+	// Reset server location for this ingestion
+	h.serverLocation = nil
+
 	// Try to detect timezone from server info
 	if authInfo, err := client.GetAuthInfo(ctx); err == nil {
 		if authInfo.ServerInfo.Timezone != "" {
-			source.DetectedTimezone = authInfo.ServerInfo.Timezone
+			detectedTz := authInfo.ServerInfo.Timezone
+			source.DetectedTimezone = FormatTimezoneOffset(detectedTz)
+
+			// Try to load the timezone as an IANA location (e.g., "Europe/Amsterdam")
+			// This is used for parsing string times that don't have timezone info
+			if loc, err := time.LoadLocation(detectedTz); err == nil {
+				h.serverLocation = loc
+				if h.logger != nil {
+					h.logger.Debug("loaded server timezone location",
+						slog.String("timezone", detectedTz),
+						slog.String("source_name", source.Name),
+					)
+				}
+			} else if h.logger != nil {
+				h.logger.Debug("could not load server timezone as location, will use UTC for string parsing",
+					slog.String("timezone", detectedTz),
+					slog.String("error", err.Error()),
+				)
+			}
+
+			// Auto-set EpgShift based on detected timezone (T: auto-shift feature)
+			// Only update if the detected timezone differs from what we last auto-configured for.
+			// This allows user overrides to persist until the source timezone actually changes.
+			if source.AutoShiftTimezone != detectedTz {
+				newShift := CalculateAutoShift(detectedTz)
+				if h.logger != nil {
+					h.logger.Info("auto-adjusting EPG timeshift based on detected timezone",
+						slog.String("source_name", source.Name),
+						slog.String("detected_timezone", detectedTz),
+						slog.String("previous_auto_shift_timezone", source.AutoShiftTimezone),
+						slog.Int("previous_epg_shift", source.EpgShift),
+						slog.Int("new_epg_shift", newShift),
+					)
+				}
+				source.EpgShift = newShift
+				source.AutoShiftTimezone = detectedTz
+			}
+
+			// Log timezone detection
+			LogTimezoneDetection(h.logger, source.Name, source.ID.String(), source.DetectedTimezone, source.ProgramCount)
 		}
+	}
+
+	// Log normalization settings if timeshift is configured
+	if source.EpgShift != 0 {
+		LogTimezoneNormalization(h.logger, source.Name, source.DetectedTimezone, source.EpgShift)
 	}
 
 	// Select API method based on source configuration
@@ -227,9 +288,9 @@ func (h *XtreamEpgHandler) ingestBulkXMLTV(ctx context.Context, client *xtream.C
 
 // convertListing converts an Xtream EPG listing to an EpgProgram model.
 func (h *XtreamEpgHandler) convertListing(listing xtream.EPGListing, source *models.EpgSource, channelID string) *models.EpgProgram {
-	// Apply time offset if configured
-	start := h.applyTimeOffset(listing.StartTime(), source)
-	stop := h.applyTimeOffset(listing.EndTime(), source)
+	// Parse times using server timezone for string-based times (timestamps are always UTC)
+	start := h.applyTimeOffset(listing.StartTimeInLocation(h.serverLocation), source)
+	stop := h.applyTimeOffset(listing.EndTimeInLocation(h.serverLocation), source)
 
 	program := &models.EpgProgram{
 		SourceID:    source.ID,
@@ -311,23 +372,30 @@ func (h *XtreamEpgHandler) convertXMLTVProgramme(p *xmltv.Programme, source *mod
 	return program
 }
 
-// applyTimeOffset applies the source's EpgShift to a time value.
+// applyTimeOffset applies timezone normalization and the source's EpgShift to a time value.
 // The EpgShift is in hours and shifts times forward (positive) or back (negative).
-// Times are first converted to UTC, then the shift is applied.
+// Times are first converted to UTC (using embedded timezone info from parsing), then the shift is applied.
 func (h *XtreamEpgHandler) applyTimeOffset(t time.Time, source *models.EpgSource) time.Time {
 	if source == nil {
 		return t
 	}
 
-	// Convert to UTC first (the time already has timezone info from parsing)
-	t = t.UTC()
-
-	// Apply EpgShift if configured (shift in hours)
-	if source.EpgShift != 0 {
-		t = t.Add(time.Duration(source.EpgShift) * time.Hour)
+	// Parse the detected timezone offset (for logging purposes - the time already has timezone embedded)
+	var detectedOffset time.Duration
+	if source.DetectedTimezone != "" {
+		var err error
+		detectedOffset, err = ParseTimezoneOffset(source.DetectedTimezone)
+		if err != nil && h.logger != nil {
+			h.logger.Debug("failed to parse detected timezone offset",
+				slog.String("offset", source.DetectedTimezone),
+				slog.String("error", err.Error()),
+			)
+		}
 	}
 
-	return t
+	// Normalize to UTC and apply timeshift using the utility function
+	// Note: Go's time.Time already has timezone embedded from parsing, so .UTC() handles normalization
+	return NormalizeProgramTime(t, detectedOffset, source.EpgShift)
 }
 
 // Ensure XtreamEpgHandler implements EpgHandler.

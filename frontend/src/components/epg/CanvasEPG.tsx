@@ -3,6 +3,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { Play } from 'lucide-react';
 import { Debug } from '@/utils/debug';
+import { useCanvasMetrics, CanvasMetrics } from '@/hooks/useCanvasMetrics';
 
 interface Channel {
   id: string;
@@ -45,13 +46,26 @@ interface CanvasEPGProps {
   onProgramClick?: (program: EpgProgram) => void;
   onChannelPlay?: (channel: { id: string; database_id?: string; name: string; logo?: string; stream_url?: string }) => void;
   className?: string;
+  // Lazy loading props (T024-T030)
+  onLoadMore?: (direction: 'forward' | 'backward', currentEndTime: Date) => void;
+  isLoadingMore?: boolean;
+  hasMoreData?: boolean;
 }
 
 // Constants
 const CHANNEL_HEIGHT = 60;
 const CHANNEL_SIDEBAR_WIDTH = 200;
-const PIXELS_PER_HOUR = 200;
 const TIME_HEADER_HEIGHT = 50;
+
+// Minimum thresholds for readability (T017, T018)
+const MIN_PIXELS_PER_HOUR = 50;
+const MIN_PROGRAM_WIDTH = 25;
+const DEFAULT_PIXELS_PER_HOUR = 200; // Fallback when container not measured yet
+const MS_PER_HOUR = 60 * 60 * 1000;
+
+// Lazy loading constants (T025)
+const LAZY_LOAD_THRESHOLD_HOURS = 2; // Trigger load when within 2 hours of boundary
+const LAZY_LOAD_DEBOUNCE_MS = 500; // Debounce fetch requests (T029)
 
 export const CanvasEPG: React.FC<CanvasEPGProps> = ({
   guideData,
@@ -62,6 +76,10 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
   onProgramClick,
   onChannelPlay,
   className = '',
+  // Lazy loading props (T024-T030)
+  onLoadMore,
+  isLoadingMore = false,
+  hasMoreData = true,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -75,9 +93,39 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
   const [themeKey, setThemeKey] = useState(0); // Force theme updates
   const isRenderingRef = useRef(false);
 
+  // Track time for scroll position preservation during resize (T015)
+  const scrollTimeRef = useRef<number>(Date.now());
+  const prevPixelsPerHourRef = useRef<number>(DEFAULT_PIXELS_PER_HOUR);
+
+  // Lazy loading state (T024, T028, T029)
+  const lastLoadRequestRef = useRef<number>(0);
+  const loadingDirectionRef = useRef<'forward' | 'backward' | null>(null);
+
   // Calculate guide parameters
   const GUIDE_HOURS = parseInt(guideTimeRange.replace('h', ''));
-  const TOTAL_GUIDE_WIDTH = GUIDE_HOURS * PIXELS_PER_HOUR;
+
+  // Dynamic pixels-per-hour calculation (T011, T012)
+  // Uses container width minus sidebar, divided by hours to display
+  const pixelsPerHour = useMemo(() => {
+    const availableWidth = canvasDimensions.width - CHANNEL_SIDEBAR_WIDTH;
+    if (availableWidth <= 0) return DEFAULT_PIXELS_PER_HOUR;
+
+    // Calculate based on available width and hours to display
+    const calculated = availableWidth / GUIDE_HOURS;
+
+    // Enforce minimum threshold (T017)
+    return Math.max(MIN_PIXELS_PER_HOUR, calculated);
+  }, [canvasDimensions.width, GUIDE_HOURS]);
+
+  // Track whether horizontal scrolling is needed (T017)
+  const needsHorizontalScroll = useMemo(() => {
+    const availableWidth = canvasDimensions.width - CHANNEL_SIDEBAR_WIDTH;
+    const calculatedPixelsPerHour = availableWidth / GUIDE_HOURS;
+    return calculatedPixelsPerHour < MIN_PIXELS_PER_HOUR;
+  }, [canvasDimensions.width, GUIDE_HOURS]);
+
+  // Calculate total guide width with dynamic pixels per hour
+  const TOTAL_GUIDE_WIDTH = GUIDE_HOURS * pixelsPerHour;
 
   // Extract theme colors from CSS custom properties - memoized for stability
   const theme = useMemo(() => {
@@ -254,6 +302,24 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
     };
   }, []);
 
+  // Auto-refresh "now" indicator every 30 seconds (T019a - FR-009)
+  // This ensures the "now" indicator stays accurate even if parent doesn't update currentTime frequently
+  const [nowRefreshKey, setNowRefreshKey] = useState(0);
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      setNowRefreshKey((prev) => prev + 1);
+    }, 30000); // 30 seconds
+
+    return () => clearInterval(intervalId);
+  }, []);
+
+  // Reset loading direction when loading completes (T028)
+  useEffect(() => {
+    if (!isLoadingMore) {
+      loadingDirectionRef.current = null;
+    }
+  }, [isLoadingMore]);
+
   // Listen for theme changes
   useEffect(() => {
     const observer = new MutationObserver((mutations) => {
@@ -276,24 +342,26 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
     return () => observer.disconnect();
   }, []);
 
-  // Helper function to format time
+  // Helper function to format time in browser's local timezone
+  // Note: We intentionally omit the timeZone option to use browser's default timezone
+  // This is more reliable than explicitly passing the detected timezone
   const formatTimeInTimezone = useCallback(
     (timeString: string) => {
       try {
         const date = new Date(timeString);
         if (isNaN(date.getTime())) return '--:--';
 
+        // Use browser's default timezone by not specifying timeZone option
         return date.toLocaleTimeString([], {
           hour: '2-digit',
           minute: '2-digit',
           hour12: false,
-          timeZone: selectedTimezone,
         });
       } catch {
         return '--:--';
       }
     },
-    [selectedTimezone]
+    [] // No dependency on selectedTimezone - uses browser default
   );
 
   // Calculate program position and dimensions
@@ -312,14 +380,15 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
       const visibleEnd = programEnd > guideEnd ? guideEnd : programEnd;
 
       const startOffset = visibleStart.getTime() - guideStart.getTime();
-      const leftPosition = (startOffset / (1000 * 60 * 60)) * PIXELS_PER_HOUR;
+      const leftPosition = (startOffset / MS_PER_HOUR) * pixelsPerHour;
 
       const visibleDuration = visibleEnd.getTime() - visibleStart.getTime();
-      const width = Math.max(30, (visibleDuration / (1000 * 60 * 60)) * PIXELS_PER_HOUR);
+      // Enforce minimum program width for short programs (T018)
+      const width = Math.max(MIN_PROGRAM_WIDTH, (visibleDuration / MS_PER_HOUR) * pixelsPerHour);
 
       return { left: Math.max(0, leftPosition), width, programStart, programEnd };
     },
-    [GUIDE_HOURS]
+    [GUIDE_HOURS, pixelsPerHour]
   );
 
   // Main render function
@@ -495,13 +564,13 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
     ctx.lineTo(width, TIME_HEADER_HEIGHT);
     ctx.stroke();
 
-    // Render time grid headers (sticky)
+    // Render time grid headers (sticky) - using dynamic pixelsPerHour (T014)
     const headerStartX = CHANNEL_SIDEBAR_WIDTH - scrollPosition.x;
     for (let hour = 0; hour < GUIDE_HOURS; hour++) {
-      const x = headerStartX + hour * PIXELS_PER_HOUR;
+      const x = headerStartX + hour * pixelsPerHour;
 
       // Skip if header is not visible
-      if (x + PIXELS_PER_HOUR < CHANNEL_SIDEBAR_WIDTH || x > width) continue;
+      if (x + pixelsPerHour < CHANNEL_SIDEBAR_WIDTH || x > width) continue;
 
       // Vertical hour lines (extend through content area)
       ctx.strokeStyle = theme.border;
@@ -584,7 +653,7 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
     ctx.lineTo(CHANNEL_SIDEBAR_WIDTH, height);
     ctx.stroke();
 
-    // Current time indicator
+    // Current time indicator ("now" line) - using dynamic pixelsPerHour (T019)
     if (guideData.start_time && guideData.end_time) {
       const now = currentTime;
       const guideStart = new Date(guideData.start_time);
@@ -594,7 +663,7 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
         const currentOffset = now.getTime() - guideStart.getTime();
         const currentX =
           CHANNEL_SIDEBAR_WIDTH +
-          (currentOffset / (1000 * 60 * 60)) * PIXELS_PER_HOUR -
+          (currentOffset / MS_PER_HOUR) * pixelsPerHour -
           scrollPosition.x;
 
         if (currentX >= CHANNEL_SIDEBAR_WIDTH && currentX <= width) {
@@ -626,6 +695,7 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
     calculateProgramMetrics,
     formatTimeInTimezone,
     GUIDE_HOURS,
+    pixelsPerHour, // Dynamic pixels-per-hour (T011)
     themeKey, // Use themeKey instead of theme object
   ]);
 
@@ -657,10 +727,11 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
     currentTime.getTime(), // Use primitive value instead of Date object
     hoveredProgram?.id,
     themeKey,
+    nowRefreshKey, // 30-second auto-refresh for "now" indicator (T019a)
     // Removed renderCanvas to prevent circular dependency
   ]);
 
-  // Handle scroll events
+  // Handle scroll events with lazy loading detection (T025, T029)
   const handleScroll = useCallback((event: Event) => {
     const target = event.target as HTMLDivElement;
     const newScrollPosition = {
@@ -668,7 +739,35 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
       y: target.scrollTop,
     };
     setScrollPosition(newScrollPosition);
-  }, []);
+
+    // Lazy loading: Check if near end of loaded data (T025)
+    if (!onLoadMore || !guideData || isLoadingMore || !hasMoreData) return;
+
+    const now = Date.now();
+    // Debounce: Don't trigger if we recently made a request (T029)
+    if (now - lastLoadRequestRef.current < LAZY_LOAD_DEBOUNCE_MS) return;
+
+    const guideStartTime = new Date(guideData.start_time);
+    const guideEndTime = new Date(guideData.end_time);
+
+    // Calculate scroll position as time offset
+    const scrollTimeOffset = (newScrollPosition.x / pixelsPerHour) * MS_PER_HOUR;
+    const viewportWidthInTime = (canvasDimensions.width / pixelsPerHour) * MS_PER_HOUR;
+
+    // Current visible end time
+    const visibleEndTime = new Date(guideStartTime.getTime() + scrollTimeOffset + viewportWidthInTime);
+
+    // Check if within threshold of end boundary
+    const thresholdMs = LAZY_LOAD_THRESHOLD_HOURS * MS_PER_HOUR;
+    const distanceToEnd = guideEndTime.getTime() - visibleEndTime.getTime();
+
+    if (distanceToEnd < thresholdMs && loadingDirectionRef.current !== 'forward') {
+      Debug.log('Lazy load triggered: near end of loaded range');
+      lastLoadRequestRef.current = now;
+      loadingDirectionRef.current = 'forward';
+      onLoadMore('forward', guideEndTime);
+    }
+  }, [onLoadMore, guideData, isLoadingMore, hasMoreData, pixelsPerHour, canvasDimensions.width]);
 
   // Set up scroll listener
   useEffect(() => {
@@ -692,6 +791,7 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
   }, [handleScroll]);
 
   // Hit testing for mouse events
+  // Fixed: Account for scroll position changes since bounds were stored
   const findProgramAtPoint = useCallback(
     (x: number, y: number): EpgProgram | null => {
       if (!guideData || !guideData.programs) return null;
@@ -700,12 +800,21 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
         const programs = guideData.programs?.[channelId] || [];
         for (const program of programs) {
           const bounds = (program as any)._bounds;
+          if (!bounds) continue;
+
+          // Adjust bounds for scroll position changes since render
+          // bounds.x/y were rendered at bounds.scrollX/scrollY
+          // Current scroll is scrollPosition.x/scrollPosition.y
+          const scrollDeltaX = (bounds.scrollX || 0) - scrollPosition.x;
+          const scrollDeltaY = (bounds.scrollY || 0) - scrollPosition.y;
+          const adjustedX = bounds.x + scrollDeltaX;
+          const adjustedY = bounds.y + scrollDeltaY;
+
           if (
-            bounds &&
-            x >= bounds.x &&
-            x <= bounds.x + bounds.width &&
-            y >= bounds.y &&
-            y <= bounds.y + bounds.height
+            x >= adjustedX &&
+            x <= adjustedX + bounds.width &&
+            y >= adjustedY &&
+            y <= adjustedY + bounds.height
           ) {
             return program;
           }
@@ -713,7 +822,7 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
       }
       return null;
     },
-    [guideData, filteredChannels]
+    [guideData, filteredChannels, scrollPosition.x, scrollPosition.y]
   );
 
   const findChannelAtPoint = useCallback(
@@ -893,6 +1002,13 @@ export const CanvasEPG: React.FC<CanvasEPGProps> = ({
         <ScrollBar orientation="vertical" />
         <ScrollBar orientation="horizontal" />
       </ScrollArea>
+      {/* Lazy loading indicator (T030) */}
+      {isLoadingMore && (
+        <div className="absolute right-4 top-1/2 -translate-y-1/2 z-20 flex items-center gap-2 bg-background/90 backdrop-blur-sm border rounded-lg px-3 py-2 shadow-md">
+          <div className="animate-spin rounded-full h-4 w-4 border-2 border-primary border-t-transparent"></div>
+          <span className="text-sm text-muted-foreground">Loading more...</span>
+        </div>
+      )}
       {/* Themed scrollbar styles (scoped to this component) */}
       <style jsx>{`
         .epg-scroll [data-radix-scroll-area-viewport] {

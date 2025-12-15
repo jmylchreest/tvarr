@@ -215,7 +215,7 @@ type CreateEpgSourceRequest struct {
 	Password      string                 `json:"password,omitempty" doc:"Password for Xtream authentication" maxLength:"255"`
 	ApiMethod     models.XtreamApiMethod `json:"api_method,omitempty" doc:"API method for Xtream sources: stream_id (richer data, ~6 days) or bulk_xmltv (faster, ~2 days)" enum:"stream_id,bulk_xmltv"`
 	UserAgent     string                 `json:"user_agent,omitempty" doc:"Custom User-Agent header" maxLength:"512"`
-	EpgShift      *int                   `json:"epg_shift,omitempty" doc:"Manual time shift in hours to adjust EPG times (default: 0)"`
+	EpgShift      *int                   `json:"epg_shift,omitempty" doc:"Manual time shift in hours to adjust EPG times (default: 0)" minimum:"-12" maximum:"12"`
 	Enabled       *bool                  `json:"enabled,omitempty" doc:"Whether the source is enabled (default: true)"`
 	Priority      *int                   `json:"priority,omitempty" doc:"Priority for program merging (higher = preferred)"`
 	CronSchedule  string                 `json:"cron_schedule,omitempty" doc:"Cron schedule for automatic ingestion" maxLength:"100"`
@@ -263,7 +263,7 @@ type UpdateEpgSourceRequest struct {
 	Password      *string                 `json:"password,omitempty" doc:"Password for Xtream authentication" maxLength:"255"`
 	ApiMethod     *models.XtreamApiMethod `json:"api_method,omitempty" doc:"API method for Xtream sources: stream_id or bulk_xmltv" enum:"stream_id,bulk_xmltv"`
 	UserAgent     *string                 `json:"user_agent,omitempty" doc:"Custom User-Agent header" maxLength:"512"`
-	EpgShift      *int                    `json:"epg_shift,omitempty" doc:"Manual time shift in hours to adjust EPG times"`
+	EpgShift      *int                    `json:"epg_shift,omitempty" doc:"Manual time shift in hours to adjust EPG times" minimum:"-12" maximum:"12"`
 	Enabled       *bool                   `json:"enabled,omitempty" doc:"Whether the source is enabled"`
 	Priority      *int                    `json:"priority,omitempty" doc:"Priority for program merging"`
 	CronSchedule  *string                 `json:"cron_schedule,omitempty" doc:"Cron schedule for automatic ingestion" maxLength:"100"`

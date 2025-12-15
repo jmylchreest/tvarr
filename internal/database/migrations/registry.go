@@ -20,6 +20,7 @@ import (
 // - 009: Add dynamic codec header fields to client detection rules
 // - 010: Update client detection rules to use @dynamic() syntax for user-agent
 // - 011: Add is_active column to proxy_filters
+// - 012: Add auto_shift_timezone column to epg_sources for timezone auto-shift tracking
 func AllMigrations() []Migration {
 	return []Migration{
 		migration001Schema(),
@@ -33,6 +34,7 @@ func AllMigrations() []Migration {
 		migration009DynamicCodecHeaders(),
 		migration010DynamicUserAgent(),
 		migration011ProxyFilterIsActive(),
+		migration012EpgAutoShiftTimezone(),
 	}
 }
 
