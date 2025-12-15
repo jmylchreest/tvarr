@@ -96,11 +96,12 @@ ARG BRANCH=unknown
 ARG TREE_STATE=clean
 
 # Set version info as environment variables for Task
-ENV VERSION=${VERSION} \
-    COMMIT=${COMMIT} \
-    BUILD_DATE=${BUILD_DATE} \
-    BRANCH=${BRANCH} \
-    TREE_STATE=${TREE_STATE}
+# Use TVARR_BUILD_* prefix to avoid conflicts with Taskfile variable names
+ENV TVARR_BUILD_VERSION=${VERSION} \
+    TVARR_BUILD_COMMIT=${COMMIT} \
+    TVARR_BUILD_DATE=${BUILD_DATE} \
+    TVARR_BUILD_BRANCH=${BRANCH} \
+    TVARR_BUILD_TREE_STATE=${TREE_STATE}
 
 # Build frontend and embed into assets
 # CI=true is required for pnpm to run without TTY
