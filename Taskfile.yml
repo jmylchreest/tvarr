@@ -68,9 +68,11 @@ vars:
   COVERAGE_FILE: coverage.out
 
   # Container runtime detection (docker, podman, nerdctl)
+  # Override with CONTAINER_RUNTIME env var or task variable
   CONTAINER_RUNTIME:
     sh: |
-      if command -v podman >/dev/null 2>&1; then echo "podman"
+      if [ -n "${CONTAINER_RUNTIME:-}" ]; then echo "$CONTAINER_RUNTIME"
+      elif command -v podman >/dev/null 2>&1; then echo "podman"
       elif command -v docker >/dev/null 2>&1; then echo "docker"
       elif command -v nerdctl >/dev/null 2>&1; then echo "nerdctl"
       else echo "docker"
