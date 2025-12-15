@@ -34,7 +34,7 @@ concurrency:
 env:
   GO_VERSION: ${{ inputs.go_version || 'stable' }}
   NODE_VERSION: ${{ inputs.node_version || 'lts/*' }}
-  PNPM_VERSION: "9"
+  PNPM_VERSION: "10"
   SNAPSHOT_RETENTION: ${{ inputs.snapshot_retention || '3' }}
 
 jobs:
