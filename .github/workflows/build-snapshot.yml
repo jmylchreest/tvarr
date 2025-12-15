@@ -20,6 +20,11 @@ on:
         required: false
         default: "lts/*"
         type: string
+      pnpm_version:
+        description: "pnpm version for frontend build"
+        required: false
+        default: "latest"
+        type: string
       go_version:
         description: "Go version for backend build"
         required: false
@@ -34,7 +39,7 @@ concurrency:
 env:
   GO_VERSION: ${{ inputs.go_version || 'stable' }}
   NODE_VERSION: ${{ inputs.node_version || 'lts/*' }}
-  PNPM_VERSION: "10"
+  PNPM_VERSION: ${{ inputs.pnpm_version || 'latest' }}
   SNAPSHOT_RETENTION: ${{ inputs.snapshot_retention || '3' }}
 
 jobs:
