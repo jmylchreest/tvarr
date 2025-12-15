@@ -16,15 +16,18 @@ vars:
   ASSETS_DIR: internal/assets/static
 
   # Version detection aligned with GitHub Actions
-  # Release: X.Y.Z (from exact git tag)
-  # Snapshot: X.Y.Z-dev.{commits}+{hash} (SemVer pre-release with build metadata)
+  # Priority: 1) Environment variable, 2) Git tag, 3) Git describe, 4) Fallback
+  # This allows Docker builds to pass version via ENV from build args
   GIT_TAG:
     sh: git describe --tags --exact-match 2>/dev/null || echo ""
   GIT_DESCRIBE:
     sh: git describe --tags --always --long 2>/dev/null || echo ""
   VERSION:
     sh: |
-      if [ -n "{{.GIT_TAG}}" ]; then
+      # Check for environment variable first (set by Docker build args)
+      if [ -n "${VERSION:-}" ]; then
+        echo "$VERSION"
+      elif [ -n "{{.GIT_TAG}}" ]; then
         echo "{{.GIT_TAG}}" | sed 's/^v//'
       elif echo "{{.GIT_DESCRIBE}}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+-[0-9]+-g[a-f0-9]+$'; then
         # Parse: vMAJOR.MINOR.PATCH-COMMITS-gHASH
@@ -40,17 +43,17 @@ vars:
         echo "0.0.1-dev.0+${SHORT_SHA}"
       fi
 
-  # Build metadata
+  # Build metadata - check environment variables first (for Docker builds)
   COMMIT:
-    sh: git rev-parse HEAD 2>/dev/null || echo "unknown"
+    sh: echo "${COMMIT:-$(git rev-parse HEAD 2>/dev/null || echo "unknown")}"
   SHORT_SHA:
     sh: git rev-parse --short=7 HEAD 2>/dev/null || echo "unknown"
   BUILD_DATE:
-    sh: date -u '+%Y-%m-%dT%H:%M:%SZ'
+    sh: echo "${BUILD_DATE:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
   BRANCH:
-    sh: git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"
+    sh: echo "${BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")}"
   TREE_STATE:
-    sh: if git diff --quiet 2>/dev/null; then echo "clean"; else echo "dirty"; fi
+    sh: echo "${TREE_STATE:-$(if git diff --quiet 2>/dev/null; then echo "clean"; else echo "dirty"; fi)}"
 
   # Docker/OCI tag-safe version (replaces + with - since + is invalid in tags)
   VERSION_TAG:
