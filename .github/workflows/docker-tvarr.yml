@@ -39,14 +39,14 @@ env:
 
 jobs:
   build:
+    # Note: ARM64 not supported - FFmpeg base image (Arch Linux) is amd64 only
+    # TODO: Add ARM64 support when FFmpeg base supports it
     strategy:
       fail-fast: false
       matrix:
         include:
           - runner: ubuntu-latest
             arch: amd64
-          - runner: ubuntu-24.04-arm
-            arch: arm64
 
     runs-on: ${{ matrix.runner }}
     permissions:
@@ -110,36 +110,34 @@ jobs:
             echo "is_release=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Create and push multi-arch manifest (latest)
+      # Note: Currently amd64 only - ARM64 support pending FFmpeg base image
+
+      - name: Create and push manifest (latest)
         if: github.ref == 'refs/heads/main'
         run: |
           docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:arm64
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64
           docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
       - name: Create and push preview manifest (main branch)
         if: github.ref == 'refs/heads/main'
         run: |
           docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:preview \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:arm64
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64
           docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:preview
 
-      - name: Create and push multi-arch manifest (version)
+      - name: Create and push version manifest
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION} \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:arm64
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64
           docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}
 
       - name: Create and push release manifest (releases only)
         if: steps.version.outputs.is_release == 'true'
         run: |
           docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:release \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:arm64
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64
           docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:release
 
       - name: Create and push semver manifests (releases only)
@@ -151,14 +149,12 @@ jobs:
 
           # Major version tag (e.g., 1)
           docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MAJOR} \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:arm64
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64
           docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MAJOR}
 
           # Minor version tag (e.g., 1.2)
           docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MINOR} \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:arm64
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64
           docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MINOR}
 
       - name: Inspect manifest

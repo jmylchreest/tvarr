@@ -41,6 +41,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  packages: write
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/tvarr-ffmpeg
@@ -105,6 +109,8 @@ jobs:
 
   build:
     needs: prepare
+    # Note: ARM64 not supported - Arch Linux base image is amd64 only
+    # TODO: Consider Alpine/Debian base for ARM64 FFmpeg support
     strategy:
       fail-fast: false
       matrix:
@@ -113,17 +119,12 @@ jobs:
             arch: amd64
             platform: linux/amd64
             exists: ${{ needs.prepare.outputs.amd64_exists }}
-          - runner: ubuntu-24.04-arm
-            arch: arm64
-            platform: linux/arm64
-            exists: ${{ needs.prepare.outputs.arm64_exists }}
 
     # Skip if image exists for today (unless force rebuild or scheduled)
     if: |
       github.event_name == 'schedule' ||
       github.event.inputs.force_rebuild == 'true' ||
-      needs.prepare.outputs.amd64_exists == 'false' ||
-      needs.prepare.outputs.arm64_exists == 'false'
+      needs.prepare.outputs.amd64_exists == 'false'
 
     runs-on: ${{ matrix.runner }}
     permissions:
@@ -195,37 +196,32 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create and push multi-arch manifests
+      - name: Create and push manifests
         env:
           FULL_TAG: ${{ needs.prepare.outputs.full_tag }}
           DATE_TAG: ${{ needs.prepare.outputs.date_tag }}
         run: |
-          # Create manifest for full date+build tag
+          # Note: Currently amd64 only - Arch Linux base doesn't support ARM64
+
+          # Create manifest for full date+build tag (amd64 only)
           docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG} \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG}-amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG}-arm64
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG}-amd64
           docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG}
 
-          # Create/update :latest manifest
+          # Create/update :latest manifest (amd64 only)
           docker manifest create --amend ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG}-amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG}-arm64
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG}-amd64
           docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
           # Create date-only tag (points to latest build of that day)
           docker manifest create --amend ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${DATE_TAG} \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG}-amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG}-arm64
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG}-amd64
           docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${DATE_TAG}
 
-          # Arch-specific :latest aliases for tvarr build
+          # Arch-specific alias for tvarr build
           docker manifest create --amend ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64 \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG}-amd64
           docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64
-
-          docker manifest create --amend ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:arm64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${FULL_TAG}-arm64
-          docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:arm64
 
       - name: Inspect manifests
         env:
