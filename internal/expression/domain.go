@@ -16,6 +16,9 @@ const (
 
 	// DomainEPGMapping is for EPG data mapping expressions.
 	DomainEPGMapping ExpressionDomain = "epg_mapping"
+
+	// DomainClientDetection is for client detection rule expressions.
+	DomainClientDetection ExpressionDomain = "client_detection"
 )
 
 // ParseExpressionDomain parses a domain string into an ExpressionDomain.
@@ -30,6 +33,8 @@ func ParseExpressionDomain(s string) (ExpressionDomain, bool) {
 		return DomainStreamMapping, true
 	case "epg_mapping", "epg_data_mapping", "epg_datamapping":
 		return DomainEPGMapping, true
+	case "client_detection", "client":
+		return DomainClientDetection, true
 	default:
 		return "", false
 	}
@@ -53,6 +58,11 @@ func (d ExpressionDomain) IsStreamDomain() bool {
 // IsEPGDomain returns true if the domain is for EPG data.
 func (d ExpressionDomain) IsEPGDomain() bool {
 	return d == DomainEPGFilter || d == DomainEPGMapping
+}
+
+// IsClientDetectionDomain returns true if the domain is for client detection.
+func (d ExpressionDomain) IsClientDetectionDomain() bool {
+	return d == DomainClientDetection
 }
 
 // String returns the string representation of the domain.

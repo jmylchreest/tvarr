@@ -1194,7 +1194,7 @@ class ApiClient {
 
   async exportFilters(request: ExportRequest): Promise<ConfigExport<FilterExportItem>> {
     return this.request<ConfigExport<FilterExportItem>>(
-      `${API_CONFIG.endpoints.filters}/export`,
+      '/api/v1/export/filters',
       {
         method: 'POST',
         body: JSON.stringify(request),
@@ -1204,7 +1204,7 @@ class ApiClient {
 
   async exportDataMappingRules(request: ExportRequest): Promise<ConfigExport<DataMappingRuleExportItem>> {
     return this.request<ConfigExport<DataMappingRuleExportItem>>(
-      `${API_CONFIG.endpoints.dataMapping}/export`,
+      '/api/v1/export/data-mapping-rules',
       {
         method: 'POST',
         body: JSON.stringify(request),
@@ -1214,7 +1214,7 @@ class ApiClient {
 
   async exportClientDetectionRules(request: ExportRequest): Promise<ConfigExport<ClientDetectionRuleExportItem>> {
     return this.request<ConfigExport<ClientDetectionRuleExportItem>>(
-      `${API_CONFIG.endpoints.clientDetectionRules}/export`,
+      '/api/v1/export/client-detection-rules',
       {
         method: 'POST',
         body: JSON.stringify(request),
@@ -1224,7 +1224,7 @@ class ApiClient {
 
   async exportEncodingProfiles(request: ExportRequest): Promise<ConfigExport<EncodingProfileExportItem>> {
     return this.request<ConfigExport<EncodingProfileExportItem>>(
-      `${API_CONFIG.endpoints.encodingProfiles}/export`,
+      '/api/v1/export/encoding-profiles',
       {
         method: 'POST',
         body: JSON.stringify(request),
@@ -1240,7 +1240,7 @@ class ApiClient {
     const formData = new FormData();
     formData.append('file', file);
     return this.request<ImportPreview>(
-      `${API_CONFIG.endpoints.filters}/import?preview=true`,
+      '/api/v1/import/filters/preview',
       {
         method: 'POST',
         body: formData,
@@ -1260,7 +1260,7 @@ class ApiClient {
       formData.append('bulk_resolution', bulkResolution);
     }
     return this.request<ImportResult>(
-      `${API_CONFIG.endpoints.filters}/import`,
+      '/api/v1/import/filters',
       {
         method: 'POST',
         body: formData,
@@ -1272,7 +1272,7 @@ class ApiClient {
     const formData = new FormData();
     formData.append('file', file);
     return this.request<ImportPreview>(
-      `${API_CONFIG.endpoints.dataMapping}/import?preview=true`,
+      '/api/v1/import/data-mapping-rules/preview',
       {
         method: 'POST',
         body: formData,
@@ -1292,7 +1292,7 @@ class ApiClient {
       formData.append('bulk_resolution', bulkResolution);
     }
     return this.request<ImportResult>(
-      `${API_CONFIG.endpoints.dataMapping}/import`,
+      '/api/v1/import/data-mapping-rules',
       {
         method: 'POST',
         body: formData,
@@ -1304,7 +1304,7 @@ class ApiClient {
     const formData = new FormData();
     formData.append('file', file);
     return this.request<ImportPreview>(
-      `${API_CONFIG.endpoints.clientDetectionRules}/import?preview=true`,
+      '/api/v1/import/client-detection-rules/preview',
       {
         method: 'POST',
         body: formData,
@@ -1324,7 +1324,7 @@ class ApiClient {
       formData.append('bulk_resolution', bulkResolution);
     }
     return this.request<ImportResult>(
-      `${API_CONFIG.endpoints.clientDetectionRules}/import`,
+      '/api/v1/import/client-detection-rules',
       {
         method: 'POST',
         body: formData,
@@ -1336,7 +1336,7 @@ class ApiClient {
     const formData = new FormData();
     formData.append('file', file);
     return this.request<ImportPreview>(
-      `${API_CONFIG.endpoints.encodingProfiles}/import?preview=true`,
+      '/api/v1/import/encoding-profiles/preview',
       {
         method: 'POST',
         body: formData,
@@ -1356,7 +1356,7 @@ class ApiClient {
       formData.append('bulk_resolution', bulkResolution);
     }
     return this.request<ImportResult>(
-      `${API_CONFIG.endpoints.encodingProfiles}/import`,
+      '/api/v1/import/encoding-profiles',
       {
         method: 'POST',
         body: formData,

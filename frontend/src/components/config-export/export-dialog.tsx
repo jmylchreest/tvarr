@@ -91,7 +91,7 @@ export function ExportDialog({
     try {
       const request: ExportRequest = {
         ids: Array.from(selectedIds),
-        all: selectedIds.size === exportableItems.length,
+        export_all: selectedIds.size === exportableItems.length,
       };
 
       let exportData;

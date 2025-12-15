@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import Fuse from 'fuse.js';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -15,7 +16,13 @@ import {
   List,
   Table as TableIcon,
   Play,
+  Sparkles,
 } from 'lucide-react';
+import {
+  getPrimaryMatchField,
+  formatMatchFieldName,
+  type FuzzyMatch,
+} from '@/lib/fuzzy-search';
 import { DateTimePicker } from '@/components/ui/date-time-picker';
 import {
   Select,
@@ -163,6 +170,8 @@ export default function EpgPage() {
   const [isLoadingMoreGuide, setIsLoadingMoreGuide] = useState(false);
   const [hasMoreGuideData, setHasMoreGuideData] = useState(true);
   const guideLoadedEndTimeRef = useRef<Date | null>(null);
+  const [fuzzyEnabled, setFuzzyEnabled] = useState(true);
+  const [fuzzyResults, setFuzzyResults] = useState<Map<string, FuzzyMatch[]>>(new Map());
 
   // Helper function to format time in browser's local timezone
   // Note: We intentionally omit the timeZone option to use browser's default timezone
@@ -648,6 +657,61 @@ export default function EpgPage() {
     setSearch(value);
   };
 
+  // Create Fuse.js instance for fuzzy search on loaded programs
+  const programFuse = useMemo(() => {
+    if (programs.length === 0) return null;
+    return new Fuse(programs, {
+      keys: [
+        { name: 'title', weight: 0.4 },
+        { name: 'description', weight: 0.2 },
+        { name: 'channel_name', weight: 0.2 },
+        { name: 'category', weight: 0.1 },
+        { name: 'channel_id', weight: 0.1 },
+      ],
+      threshold: 0.4,
+      distance: 100,
+      includeScore: true,
+      includeMatches: true,
+      ignoreLocation: true,
+      minMatchCharLength: 2,
+    });
+  }, [programs]);
+
+  // Apply fuzzy filtering when fuzzy search is enabled and there's a search term
+  const displayPrograms = useMemo((): EpgProgram[] => {
+    // Only apply fuzzy search in non-guide view modes
+    if (viewMode === 'guide' || !fuzzyEnabled || !debouncedSearch || debouncedSearch.length < 2 || !programFuse) {
+      setFuzzyResults(new Map());
+      return programs;
+    }
+
+    // Perform fuzzy search on currently loaded programs
+    const results = programFuse.search(debouncedSearch);
+
+    // Store match info for display
+    const matchMap = new Map<string, FuzzyMatch[]>();
+    results.forEach((result) => {
+      const matches: FuzzyMatch[] = (result.matches ?? []).map((match) => ({
+        key: match.key ?? '',
+        value: match.value ?? '',
+        indices: (match.indices ?? []) as [number, number][],
+      }));
+      matchMap.set(result.item.id, matches);
+    });
+    setFuzzyResults(matchMap);
+
+    // Return matched programs sorted by score
+    return results.map((r) => r.item);
+  }, [programs, debouncedSearch, fuzzyEnabled, programFuse, viewMode]);
+
+  // Get match indicator for a program
+  const getMatchIndicator = useCallback((programId: string): string | null => {
+    const matches = fuzzyResults.get(programId);
+    if (!matches || matches.length === 0) return null;
+    const primaryField = getPrimaryMatchField(matches);
+    return primaryField ? formatMatchFieldName(primaryField) : null;
+  }, [fuzzyResults]);
+
   // Legacy single-source handler removed in favor of multi-select (handleSourceToggle / handleAllSourcesToggle)
 
   const handleCategoryFilter = (value: string) => {
@@ -730,8 +794,9 @@ export default function EpgPage() {
   }, [guideData, channelFilter]);
 
   // Filter programs based on hide past programs toggle and live only toggle
+  // Uses displayPrograms which may be fuzzy-filtered
   const filteredPrograms = useMemo(() => {
-    let filtered = programs;
+    let filtered = displayPrograms;
 
     // Filter by past programs
     if (hidePastPrograms) {
@@ -744,7 +809,7 @@ export default function EpgPage() {
     }
 
     return filtered;
-  }, [programs, hidePastPrograms]);
+  }, [displayPrograms, hidePastPrograms]);
 
   const ProgramCard = ({ program }: { program: EpgProgram }) => {
     const now = new Date();
@@ -963,7 +1028,9 @@ export default function EpgPage() {
                     placeholder={
                       viewMode === 'guide'
                         ? 'Search channels, programs...'
-                        : 'Search programs, channels, descriptions...'
+                        : fuzzyEnabled
+                          ? 'Search programs (fuzzy)...'
+                          : 'Search programs, channels, descriptions...'
                     }
                     value={viewMode === 'guide' ? channelFilter : search}
                     onChange={(e) =>
@@ -971,8 +1038,25 @@ export default function EpgPage() {
                         ? setChannelFilter(e.target.value)
                         : handleSearch(e.target.value)
                     }
-                    className="pl-10"
+                    className="pl-10 pr-10"
                   />
+                  {viewMode !== 'guide' && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant={fuzzyEnabled ? 'default' : 'ghost'}
+                          size="sm"
+                          onClick={() => setFuzzyEnabled(!fuzzyEnabled)}
+                          className="absolute right-1 top-1/2 transform -translate-y-1/2 h-7 w-7 p-0"
+                        >
+                          <Sparkles className={`w-4 h-4 ${fuzzyEnabled ? '' : 'text-muted-foreground'}`} />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>{fuzzyEnabled ? 'Fuzzy search enabled (typo tolerant)' : 'Click to enable fuzzy search'}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
                 </div>
 
                 {/* Date/Time Picker */}

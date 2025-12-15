@@ -4,7 +4,6 @@ package relay
 import (
 	"io"
 	"log/slog"
-	"strings"
 
 	"github.com/jmylchreest/tvarr/internal/models"
 )
@@ -188,37 +187,15 @@ func (d *DefaultRoutingDecider) isRepackageCompatible(sourceFormat SourceFormat,
 		return false
 	}
 
-	// Check codec compatibility with target container
-	// fMP4 containers support all codecs
-	// MPEG-TS containers only support H.264/H.265/AAC/AC3/EAC3/MP3
-	if clientFormat == FormatValueMPEGTS || clientFormat == FormatValueHLSTS {
-		return d.codecsCompatibleWithMPEGTS(codecs)
-	}
-
-	// fMP4/HLS-fMP4/DASH support all codecs
-	return true
+	// Use the codec compatibility module to check container compatibility
+	containerFormat := ParseContainerFormat(clientFormat)
+	return AreCodecsCompatible(containerFormat, codecs)
 }
 
 // codecsCompatibleWithMPEGTS checks if codecs can be muxed into MPEG-TS container.
+// Delegates to the codec_compatibility module for consistent behavior.
 func (d *DefaultRoutingDecider) codecsCompatibleWithMPEGTS(codecs []string) bool {
-	mpegTSCompatible := map[string]bool{
-		"h264": true, "avc": true, "avc1": true,
-		"h265": true, "hevc": true, "hvc1": true, "hev1": true,
-		"aac": true, "mp4a": true,
-		"mp3": true,
-		"ac3": true, "ec3": true, "eac3": true,
-	}
-
-	for _, codec := range codecs {
-		codecLower := strings.ToLower(codec)
-		// Extract base codec from full codec string (e.g., "avc1.64001f" -> "avc1")
-		parts := strings.Split(codecLower, ".")
-		baseCodec := parts[0]
-		if !mpegTSCompatible[baseCodec] {
-			return false
-		}
-	}
-	return true
+	return CodecsCompatibleWithMPEGTS(codecs)
 }
 
 // logRoutingDecision logs the routing decision with all relevant context per FR-009.

@@ -141,6 +141,8 @@ func (v *Validator) getValidFieldsForDomains(domains []ExpressionDomain) map[str
 			fieldDomains = []FieldDomain{DomainStream, DomainFilter, DomainRule}
 		case DomainEPGFilter, DomainEPGMapping:
 			fieldDomains = []FieldDomain{DomainEPG, DomainFilter, DomainRule}
+		case DomainClientDetection:
+			fieldDomains = []FieldDomain{DomainRequest}
 		default:
 			fieldDomains = []FieldDomain{DomainStream, DomainEPG, DomainFilter, DomainRule}
 		}
@@ -185,6 +187,12 @@ func (v *Validator) validateFields(parsed *ParsedExpression, validFields map[str
 
 	// Check each field
 	for _, field := range fields {
+		// Skip validation for @dynamic() fields - these are resolved at runtime
+		// Format: @dynamic(path):key where path can be request.headers, request.query, etc.
+		if strings.HasPrefix(field, "@dynamic(") {
+			continue
+		}
+
 		if !validFields[field] {
 			result.IsValid = false
 

@@ -33,7 +33,7 @@ export interface ExpressionEditorProps {
   onValidationComplete?: () => void;
   validationEndpoint?: string;
   fieldsEndpoint: string;
-  sourceType: 'stream' | 'epg' | 'client';
+  sourceType: 'stream' | 'epg' | 'client' | 'client_detection';
   placeholder?: string;
   className?: string;
   debounceMs?: number;
