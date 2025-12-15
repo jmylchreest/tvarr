@@ -678,6 +678,8 @@ export function Proxies() {
                         <TableHead>Name</TableHead>
                         <TableHead>Mode</TableHead>
                         <TableHead>Status</TableHead>
+                        <TableHead>Channels</TableHead>
+                        <TableHead>Programs</TableHead>
                         <TableHead>Channel Range</TableHead>
                         <TableHead>Settings</TableHead>
                         <TableHead>Last Updated</TableHead>
@@ -728,6 +730,16 @@ export function Proxies() {
                               </Badge>
                               {/* T048: Operation error/warning indicator */}
                               <OperationStatusIndicator resourceId={proxy.id} />
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="text-sm text-muted-foreground">
+                              {proxy.channel_count.toLocaleString()}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="text-sm text-muted-foreground">
+                              {proxy.program_count.toLocaleString()}
                             </div>
                           </TableCell>
                           <TableCell>

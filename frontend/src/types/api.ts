@@ -114,6 +114,8 @@ export interface StreamProxy {
   encoding_profile_id?: string;
   m3u8_url?: string;
   xmltv_url?: string;
+  channel_count: number;
+  program_count: number;
   created_at: string;
   updated_at: string;
   last_generated_at?: string;
