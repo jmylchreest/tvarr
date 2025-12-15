@@ -74,10 +74,18 @@ type EpgSource struct {
 	// This is auto-detected during ingestion and updated on each ingest. Read-only for users.
 	DetectedTimezone string `gorm:"size:50" json:"detected_timezone,omitempty"`
 
-	// EpgShift is a manual time shift in hours to adjust EPG times (e.g., -2, +1).
-	// Use this when the detected timezone is incorrect or you want to shift all times.
+	// EpgShift is a time shift in hours to adjust EPG times (e.g., -2, +1).
+	// This is auto-set based on detected timezone to compensate for providers
+	// that send timestamps in local time instead of UTC.
 	// Positive values shift times forward, negative values shift times back.
+	// Users can override this value; it will only be auto-updated when
+	// the detected timezone changes.
 	EpgShift int `gorm:"default:0" json:"epg_shift"`
+
+	// AutoShiftTimezone tracks the timezone that EpgShift was auto-configured for.
+	// When detected timezone differs from this value, EpgShift is recalculated.
+	// This allows user overrides to persist until the source timezone actually changes.
+	AutoShiftTimezone string `gorm:"size:50" json:"auto_shift_timezone,omitempty"`
 
 	// Enabled indicates whether this source should be included in ingestion.
 	// Using pointer to distinguish between "not set" (nil->default true) and "explicitly false".

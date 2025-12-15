@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jmylchreest/tvarr/internal/models"
@@ -31,6 +32,9 @@ type XMLTVHandler struct {
 	detectedTimezone string
 	// timezoneDetected tracks whether we've already detected the timezone.
 	timezoneDetected bool
+
+	// logger is the structured logger for timezone detection and normalization events.
+	logger *slog.Logger
 }
 
 // NewXMLTVHandler creates a new XMLTV handler with default settings.
@@ -47,6 +51,12 @@ func NewXMLTVHandler() *XMLTVHandler {
 // WithHTTPClientConfig sets a custom HTTP client configuration.
 func (h *XMLTVHandler) WithHTTPClientConfig(cfg httpclient.Config) *XMLTVHandler {
 	h.fetcher = urlutil.NewResourceFetcher(cfg)
+	return h
+}
+
+// WithLogger sets a structured logger for the handler.
+func (h *XMLTVHandler) WithLogger(logger *slog.Logger) *XMLTVHandler {
+	h.logger = logger
 	return h
 }
 
@@ -134,7 +144,35 @@ func (h *XMLTVHandler) Ingest(ctx context.Context, source *models.EpgSource, cal
 
 	// Update source's detected timezone (will be saved by the caller)
 	if h.timezoneDetected {
-		source.DetectedTimezone = formatTimezoneOffset(h.detectedTimezone)
+		detectedTz := h.detectedTimezone
+		source.DetectedTimezone = formatTimezoneOffset(detectedTz)
+
+		// Auto-set EpgShift based on detected timezone (auto-shift feature)
+		// Only update if the detected timezone differs from what we last auto-configured for.
+		// This allows user overrides to persist until the source timezone actually changes.
+		// Note: For XMLTV, times typically have timezone embedded, so auto-shift may be 0.
+		if source.AutoShiftTimezone != detectedTz {
+			newShift := CalculateAutoShift(detectedTz)
+			if h.logger != nil {
+				h.logger.Info("auto-adjusting EPG timeshift based on detected timezone",
+					slog.String("source_name", source.Name),
+					slog.String("detected_timezone", detectedTz),
+					slog.String("previous_auto_shift_timezone", source.AutoShiftTimezone),
+					slog.Int("previous_epg_shift", source.EpgShift),
+					slog.Int("new_epg_shift", newShift),
+				)
+			}
+			source.EpgShift = newShift
+			source.AutoShiftTimezone = detectedTz
+		}
+
+		// Log timezone detection using structured logging
+		LogTimezoneDetection(h.logger, source.Name, source.ID.String(), source.DetectedTimezone, source.ProgramCount)
+	}
+
+	// Log normalization settings if timeshift is configured
+	if source.EpgShift != 0 {
+		LogTimezoneNormalization(h.logger, source.Name, source.DetectedTimezone, source.EpgShift)
 	}
 
 	return nil
@@ -191,43 +229,40 @@ func (h *XMLTVHandler) convertProgramme(p *xmltv.Programme, source *models.EpgSo
 	return program
 }
 
-// applyTimeOffset applies the source's EpgShift to a time value.
+// applyTimeOffset applies timezone normalization and the source's EpgShift to a time value.
 // The EpgShift is in hours and shifts times forward (positive) or back (negative).
-// Times are first converted to UTC, then the shift is applied.
+// Times are first converted to UTC (using embedded timezone info from parsing), then the shift is applied.
 func (h *XMLTVHandler) applyTimeOffset(t time.Time, source *models.EpgSource) time.Time {
 	if source == nil {
 		return t
 	}
 
-	// Convert to UTC first (the time already has timezone info from parsing)
-	t = t.UTC()
-
-	// Apply EpgShift if configured (shift in hours)
-	if source.EpgShift != 0 {
-		t = t.Add(time.Duration(source.EpgShift) * time.Hour)
+	// Parse the detected timezone offset (for logging purposes - the time already has timezone embedded)
+	var detectedOffset time.Duration
+	if h.detectedTimezone != "" {
+		var err error
+		detectedOffset, err = ParseTimezoneOffset(h.detectedTimezone)
+		if err != nil && h.logger != nil {
+			h.logger.Debug("failed to parse detected timezone offset",
+				slog.String("offset", h.detectedTimezone),
+				slog.String("error", err.Error()),
+			)
+		}
 	}
 
-	return t
+	// Normalize to UTC and apply timeshift using the utility function
+	// Note: Go's time.Time already has timezone embedded from parsing, so .UTC() handles normalization
+	return NormalizeProgramTime(t, detectedOffset, source.EpgShift)
 }
 
 // formatTimezoneOffset converts a timezone offset like "+0000" or "-0500" to a
 // more readable format like "+00:00" or "-05:00".
+// This is a convenience wrapper around FormatTimezoneOffset.
 func formatTimezoneOffset(offset string) string {
 	if offset == "" {
 		return ""
 	}
-
-	// Already in colon format
-	if len(offset) == 6 && offset[3] == ':' {
-		return offset
-	}
-
-	// Convert "+0000" to "+00:00"
-	if len(offset) == 5 {
-		return offset[:3] + ":" + offset[3:]
-	}
-
-	return offset
+	return FormatTimezoneOffset(offset)
 }
 
 // Ensure XMLTVHandler implements EpgHandler.

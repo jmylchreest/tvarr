@@ -261,25 +261,53 @@ type EPGListing struct {
 }
 
 // StartTime returns the program start time.
+// Deprecated: Use StartTimeInLocation for timezone-aware parsing.
 func (e *EPGListing) StartTime() time.Time {
+	return e.StartTimeInLocation(nil)
+}
+
+// StartTimeInLocation returns the program start time, interpreting string times
+// in the given location. If loc is nil, UTC is assumed for string parsing.
+// Unix timestamps are always interpreted as UTC (correct behavior).
+func (e *EPGListing) StartTimeInLocation(loc *time.Location) time.Time {
 	if e.StartTimestamp.Int() > 0 {
 		return time.Unix(e.StartTimestamp.Int(), 0)
 	}
-	// Try parsing the start string
-	if t, err := time.Parse("2006-01-02 15:04:05", e.Start); err == nil {
-		return t
+	// Try parsing the start string in the given location
+	if loc != nil {
+		if t, err := time.ParseInLocation("2006-01-02 15:04:05", e.Start, loc); err == nil {
+			return t
+		}
+	} else {
+		if t, err := time.Parse("2006-01-02 15:04:05", e.Start); err == nil {
+			return t
+		}
 	}
 	return time.Time{}
 }
 
 // EndTime returns the program end time.
+// Deprecated: Use EndTimeInLocation for timezone-aware parsing.
 func (e *EPGListing) EndTime() time.Time {
+	return e.EndTimeInLocation(nil)
+}
+
+// EndTimeInLocation returns the program end time, interpreting string times
+// in the given location. If loc is nil, UTC is assumed for string parsing.
+// Unix timestamps are always interpreted as UTC (correct behavior).
+func (e *EPGListing) EndTimeInLocation(loc *time.Location) time.Time {
 	if e.StopTimestamp.Int() > 0 {
 		return time.Unix(e.StopTimestamp.Int(), 0)
 	}
-	// Try parsing the end string
-	if t, err := time.Parse("2006-01-02 15:04:05", e.End); err == nil {
-		return t
+	// Try parsing the end string in the given location
+	if loc != nil {
+		if t, err := time.ParseInLocation("2006-01-02 15:04:05", e.End, loc); err == nil {
+			return t
+		}
+	} else {
+		if t, err := time.Parse("2006-01-02 15:04:05", e.End); err == nil {
+			return t
+		}
 	}
 	return time.Time{}
 }

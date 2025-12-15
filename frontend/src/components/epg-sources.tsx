@@ -363,10 +363,12 @@ function CreateEpgSourceSheet({
                     ?
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent className="max-w-xs">
+                <TooltipContent className="max-w-sm">
                   <p className="text-sm">
-                    EPG times are normalised to UTC in the database. This shift is applied after
-                    conversion to UTC. Use positive values to shift forward, negative to shift back.
+                    This value is auto-set based on the detected server timezone to compensate for
+                    providers that send timestamps in local time instead of UTC. You can override
+                    this value manually; it will only be auto-updated when the detected timezone changes.
+                    Use positive values to shift forward, negative to shift back (-12 to +12 hours).
                   </p>
                 </TooltipContent>
               </Tooltip>
@@ -374,14 +376,19 @@ function CreateEpgSourceSheet({
             <Input
               id="epg_shift"
               type="number"
+              min={-12}
+              max={12}
               value={formData.epg_shift ?? 0}
-              onChange={(e) => setFormData({ ...formData, epg_shift: parseInt(e.target.value) || 0 })}
+              onChange={(e) => {
+                const value = parseInt(e.target.value) || 0;
+                setFormData({ ...formData, epg_shift: Math.max(-12, Math.min(12, value)) });
+              }}
               placeholder="0"
               disabled={loading}
               autoComplete="off"
             />
             <p className="text-xs text-muted-foreground">
-              Adjust normalised UTC times (e.g., +2 shifts times 2 hours forward)
+              Adjust normalised UTC times (-12 to +12 hours)
             </p>
           </div>
 
@@ -672,10 +679,12 @@ function EditEpgSourceSheet({
                       ?
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent className="max-w-xs">
+                  <TooltipContent className="max-w-sm">
                     <p className="text-sm">
-                      EPG times are normalised to UTC in the database. This shift is applied after
-                      conversion to UTC. Use positive values to shift forward, negative to shift back.
+                      This value is auto-set based on the detected server timezone to compensate for
+                      providers that send timestamps in local time instead of UTC. You can override
+                      this value manually; it will only be auto-updated when the detected timezone changes.
+                      Use positive values to shift forward, negative to shift back (-12 to +12 hours).
                     </p>
                   </TooltipContent>
                 </Tooltip>
@@ -683,14 +692,19 @@ function EditEpgSourceSheet({
               <Input
                 id="edit-epg_shift"
                 type="number"
+                min={-12}
+                max={12}
                 value={formData.epg_shift ?? 0}
-                onChange={(e) => setFormData({ ...formData, epg_shift: parseInt(e.target.value) || 0 })}
+                onChange={(e) => {
+                  const value = parseInt(e.target.value) || 0;
+                  setFormData({ ...formData, epg_shift: Math.max(-12, Math.min(12, value)) });
+                }}
                 placeholder="0"
                 disabled={loading}
                 autoComplete="off"
               />
               <p className="text-xs text-muted-foreground">
-                Adjust normalised UTC times (e.g., +2 shifts times 2 hours forward)
+                Adjust normalised UTC times (-12 to +12 hours)
               </p>
             </div>
           </div>
