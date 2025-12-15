@@ -117,7 +117,6 @@ jobs:
       # Note: Currently amd64 only - ARM64 support pending FFmpeg base image
 
       - name: Create and push manifest (latest)
-        if: github.ref == 'refs/heads/main'
         run: |
           docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64
