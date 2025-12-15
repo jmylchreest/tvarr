@@ -63,6 +63,8 @@ import {
   CheckCircle,
   XCircle,
   AlertCircle,
+  Copy,
+  Check,
 } from 'lucide-react';
 import {
   ClientDetectionRule,
@@ -71,6 +73,7 @@ import {
 } from '@/types/api';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { ExportDialog, ImportDialog } from '@/components/config-export';
+import { ClientDetectionExpressionEditor } from '@/components/client-detection-expression-editor';
 
 interface LoadingState {
   rules: boolean;
@@ -117,6 +120,52 @@ const FORMAT_OPTIONS = [
 const formatCodec = (codec: string): string => {
   return codec ? codec.toUpperCase() : '{dynamic}';
 };
+
+// CopyableExpression component for click-to-copy expressions
+function CopyableExpression({
+  expression,
+  className,
+  maxWidth,
+}: {
+  expression: string;
+  className?: string;
+  maxWidth?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(expression);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy expression:', err);
+    }
+  };
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <code
+          className={`cursor-pointer hover:bg-muted px-2 py-1 rounded text-xs font-mono group inline-flex items-center gap-1 ${className || ''}`}
+          onClick={handleCopy}
+          style={maxWidth ? { maxWidth } : undefined}
+        >
+          <span className={maxWidth ? 'truncate' : ''}>{expression}</span>
+          {copied ? (
+            <Check className="h-3 w-3 text-green-500 flex-shrink-0" />
+          ) : (
+            <Copy className="h-3 w-3 opacity-0 group-hover:opacity-50 flex-shrink-0" />
+          )}
+        </code>
+      </TooltipTrigger>
+      <TooltipContent>
+        {copied ? 'Copied!' : 'Click to copy'}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 const defaultFormData: RuleFormData = {
   name: '',
@@ -270,19 +319,13 @@ function RuleFormSheet({
 
             <div className="space-y-2">
               <Label htmlFor="expression">Match Expression *</Label>
-              <Textarea
-                id="expression"
+              <ClientDetectionExpressionEditor
                 value={formData.expression}
-                onChange={(e) => setFormData({ ...formData, expression: e.target.value })}
+                onChange={(value) => setFormData({ ...formData, expression: value })}
                 placeholder='user_agent contains "Chrome" AND NOT user_agent contains "Edge"'
-                rows={3}
                 disabled={loading}
-                required
-                className="font-mono text-sm"
+                showValidationBadges={true}
               />
-              <p className="text-xs text-muted-foreground">
-                Expression to match against HTTP requests. Supports: contains, starts_with, ends_with, matches, AND, OR, NOT
-              </p>
             </div>
 
             {/* Test Expression */}
@@ -939,9 +982,10 @@ export function ClientDetectionRules() {
                             </Badge>
                           )}
                         </div>
-                        <code className="text-xs text-muted-foreground font-mono">
-                          {rule.expression}
-                        </code>
+                        <CopyableExpression
+                          expression={rule.expression}
+                          className="text-muted-foreground"
+                        />
                       </div>
 
                       {/* Status */}
@@ -1048,9 +1092,10 @@ export function ClientDetectionRules() {
                     )}
                   </CardHeader>
                   <CardContent className="space-y-3">
-                    <code className="text-xs text-muted-foreground font-mono">
-                      {rule.expression}
-                    </code>
+                    <CopyableExpression
+                      expression={rule.expression}
+                      className="text-muted-foreground"
+                    />
                     <div className="flex justify-end gap-1 pt-2 border-t">
                       <Button
                         variant="ghost"
@@ -1131,9 +1176,13 @@ export function ClientDetectionRules() {
                             System
                           </Badge>
                         )}
-                        <code className="text-xs text-muted-foreground font-mono truncate max-w-[200px] hidden md:block">
-                          {rule.expression}
-                        </code>
+                        <span className="hidden md:inline-flex">
+                          <CopyableExpression
+                            expression={rule.expression}
+                            className="text-muted-foreground"
+                            maxWidth="200px"
+                          />
+                        </span>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <Switch

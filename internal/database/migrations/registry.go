@@ -21,6 +21,7 @@ import (
 // - 010: Update client detection rules to use @dynamic() syntax for user-agent
 // - 011: Add is_active column to proxy_filters
 // - 012: Add auto_shift_timezone column to epg_sources for timezone auto-shift tracking
+// - 013: Add system client detection rules for popular media players (VLC, MPV, Kodi, Plex, Jellyfin, Emby)
 func AllMigrations() []Migration {
 	return []Migration{
 		migration001Schema(),
@@ -35,6 +36,7 @@ func AllMigrations() []Migration {
 		migration010DynamicUserAgent(),
 		migration011ProxyFilterIsActive(),
 		migration012EpgAutoShiftTimezone(),
+		migration013SystemClientDetectionRules(),
 	}
 }
 

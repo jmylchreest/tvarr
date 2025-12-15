@@ -1006,7 +1006,7 @@ export type ConflictResolution = 'skip' | 'rename' | 'overwrite';
 
 export interface ExportRequest {
   ids?: string[];
-  all?: boolean;
+  export_all?: boolean;
 }
 
 export interface ExportMetadata {
