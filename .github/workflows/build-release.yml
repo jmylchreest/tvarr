@@ -20,11 +20,22 @@ on:
         required: false
         default: "stable"
         type: string
+      release_retention:
+        description: "Number of releases to keep"
+        required: false
+        default: "10"
+        type: string
+
+# Cancel in-progress runs for the same tag
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   GO_VERSION: ${{ inputs.go_version || 'stable' }}
   NODE_VERSION: ${{ inputs.node_version || 'lts/*' }}
   PNPM_VERSION: "9"
+  RELEASE_RETENTION: ${{ inputs.release_retention || '10' }}
 
 jobs:
   # Extract version from tag
@@ -200,13 +211,34 @@ jobs:
           sha256sum tvarr_*.tar.gz sbom-*.spdx.json > checksums.txt
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: v${{ needs.prepare.outputs.version }}
-          draft: false
-          prerelease: false
-          generate_release_notes: true
-          files: |
-            artifacts/tvarr_*.tar.gz
-            artifacts/sbom-*.spdx.json
+        run: |
+          gh release create "v${{ needs.prepare.outputs.version }}" \
+            --title "v${{ needs.prepare.outputs.version }}" \
+            --generate-notes \
+            artifacts/tvarr_*.tar.gz \
+            artifacts/sbom-*.spdx.json \
             artifacts/checksums.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cleanup old releases
+        run: |
+          RETENTION=${{ env.RELEASE_RETENTION }}
+          echo "Keeping ${RETENTION} most recent releases"
+
+          # List non-prerelease releases, newest first
+          RELEASES=$(gh release list --limit 50 --json tagName,isPrerelease \
+            --jq '.[] | select(.isPrerelease | not) | select(.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) | .tagName')
+
+          COUNT=0
+          for TAG in $RELEASES; do
+            COUNT=$((COUNT + 1))
+            if [ $COUNT -gt $RETENTION ]; then
+              echo "Deleting old release: ${TAG}"
+              gh release delete "${TAG}" --yes --cleanup-tag || true
+            fi
+          done
+
+          echo "Cleanup complete. Kept ${RETENTION} most recent releases."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -13,7 +13,7 @@ on:
       snapshot_retention:
         description: "Number of snapshot releases to keep"
         required: false
-        default: "5"
+        default: "3"
         type: string
       node_version:
         description: "Node.js version for frontend build"
@@ -34,7 +34,8 @@ concurrency:
 env:
   GO_VERSION: ${{ inputs.go_version || 'stable' }}
   NODE_VERSION: ${{ inputs.node_version || 'lts/*' }}
-  SNAPSHOT_RETENTION: ${{ inputs.snapshot_retention || '5' }}
+  PNPM_VERSION: "9"
+  SNAPSHOT_RETENTION: ${{ inputs.snapshot_retention || '3' }}
 
 jobs:
   # Determine version using git describe
@@ -98,22 +99,28 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
+          cache: "pnpm"
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Install dependencies
         working-directory: frontend
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build frontend
         working-directory: frontend
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
-        run: npm run build:embed
+          CI: true
+        run: pnpm run build:embed
 
       - name: Upload frontend assets
         uses: actions/upload-artifact@v4
@@ -122,7 +129,7 @@ jobs:
           path: internal/assets/static/
           if-no-files-found: error
 
-  # Build binaries for all platforms
+  # Build binaries for Linux platforms
   build:
     name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
     runs-on: ubuntu-latest
@@ -131,20 +138,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux builds (primary)
           - goos: linux
             goarch: amd64
           - goos: linux
-            goarch: arm64
-          # macOS builds
-          - goos: darwin
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
-          # Windows builds
-          - goos: windows
-            goarch: amd64
-          - goos: windows
             goarch: arm64
     steps:
       - name: Checkout code
@@ -186,54 +182,34 @@ jobs:
           LDFLAGS="${LDFLAGS} -X github.com/jmylchreest/tvarr/internal/version.Branch=${BRANCH}"
           LDFLAGS="${LDFLAGS} -X github.com/jmylchreest/tvarr/internal/version.TreeState=${TREE_STATE}"
 
-          BINARY_NAME="tvarr"
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            BINARY_NAME="tvarr.exe"
-          fi
-
           OUTPUT_DIR="dist/tvarr_${{ needs.prepare.outputs.version }}_${{ matrix.goos }}_${{ matrix.goarch }}"
           mkdir -p "${OUTPUT_DIR}"
 
-          go build -ldflags="${LDFLAGS}" -o "${OUTPUT_DIR}/${BINARY_NAME}" ./cmd/tvarr
+          go build -ldflags="${LDFLAGS}" -o "${OUTPUT_DIR}/tvarr" ./cmd/tvarr
 
       - name: Install UPX
-        if: matrix.goos != 'darwin'
-        run: |
-          sudo apt-get update && sudo apt-get install -y upx
+        run: sudo apt-get update && sudo apt-get install -y upx
 
       - name: Compress binary with UPX
-        if: matrix.goos != 'darwin'
         run: |
-          BINARY_NAME="tvarr"
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            BINARY_NAME="tvarr.exe"
-          fi
           OUTPUT_DIR="dist/tvarr_${{ needs.prepare.outputs.version }}_${{ matrix.goos }}_${{ matrix.goarch }}"
-
-          echo "Compressing ${OUTPUT_DIR}/${BINARY_NAME} with UPX..."
-          original_size=$(stat -c%s "${OUTPUT_DIR}/${BINARY_NAME}")
-          upx --best --lzma "${OUTPUT_DIR}/${BINARY_NAME}" || upx --best "${OUTPUT_DIR}/${BINARY_NAME}" || echo "UPX compression failed, continuing with uncompressed binary"
-          compressed_size=$(stat -c%s "${OUTPUT_DIR}/${BINARY_NAME}")
+          echo "Compressing ${OUTPUT_DIR}/tvarr with UPX..."
+          original_size=$(stat -c%s "${OUTPUT_DIR}/tvarr")
+          upx --best --lzma "${OUTPUT_DIR}/tvarr" || upx --best "${OUTPUT_DIR}/tvarr" || echo "UPX compression failed, continuing with uncompressed binary"
+          compressed_size=$(stat -c%s "${OUTPUT_DIR}/tvarr")
           echo "Size reduction: $((100 - (compressed_size * 100 / original_size)))%"
 
       - name: Create archive
         run: |
           cd dist
           DIR_NAME="tvarr_${{ needs.prepare.outputs.version }}_${{ matrix.goos }}_${{ matrix.goarch }}"
-
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            zip -r "${DIR_NAME}.zip" "${DIR_NAME}"
-          else
-            tar -czvf "${DIR_NAME}.tar.gz" "${DIR_NAME}"
-          fi
+          tar -czvf "${DIR_NAME}.tar.gz" "${DIR_NAME}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: tvarr_${{ matrix.goos }}_${{ matrix.goarch }}
-          path: |
-            dist/*.tar.gz
-            dist/*.zip
+          path: dist/*.tar.gz
           if-no-files-found: error
 
   # Create snapshot release
@@ -251,6 +227,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: tvarr_*
           merge-multiple: true
 
       - name: Set up Go for SBOM
@@ -268,43 +245,40 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum tvarr_*.tar.gz tvarr_*.zip sbom-*.spdx.json 2>/dev/null > checksums.txt || true
+          sha256sum tvarr_*.tar.gz sbom-*.spdx.json > checksums.txt
 
       - name: Create snapshot release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.prepare.outputs.version_tag }}
-          name: Snapshot ${{ needs.prepare.outputs.version }}
-          draft: false
-          prerelease: true
-          body: |
-            **Automated snapshot build from main branch**
+        run: |
+          gh release create "${{ needs.prepare.outputs.version_tag }}" \
+            --title "Snapshot ${{ needs.prepare.outputs.version }}" \
+            --prerelease \
+            --notes "**Automated snapshot build from main branch**
 
-            Version: `${{ needs.prepare.outputs.version }}`
-            Commit: `${{ github.sha }}`
+          Version: \`${{ needs.prepare.outputs.version }}\`
+          Commit: \`${{ github.sha }}\`
 
-            This is an unstable development build. Use at your own risk.
-          files: |
-            artifacts/tvarr_*.tar.gz
-            artifacts/tvarr_*.zip
-            artifacts/sbom-*.spdx.json
+          This is an unstable development build. Use at your own risk." \
+            artifacts/tvarr_*.tar.gz \
+            artifacts/sbom-*.spdx.json \
             artifacts/checksums.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Cleanup old snapshot releases
         run: |
           RETENTION=${{ env.SNAPSHOT_RETENTION }}
           echo "Keeping ${RETENTION} most recent snapshot releases"
 
-          # List all prerelease tags matching our pattern, sorted by creation date (newest first)
-          # Filter for tags that look like: v0.0.1-dev.0-abc1234 or v1.2.3-dev.5
-          SNAPSHOTS=$(gh release list --limit 100 | grep -E "v[0-9]+\.[0-9]+\.[0-9]+-dev\." | grep "Pre-release" | awk '{print $1}' | head -n 100)
+          # List snapshot prereleases, newest first
+          SNAPSHOTS=$(gh release list --limit 50 --json tagName,isPrerelease \
+            --jq '.[] | select(.isPrerelease) | select(.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-dev\\.")) | .tagName')
 
           COUNT=0
           for TAG in $SNAPSHOTS; do
             COUNT=$((COUNT + 1))
             if [ $COUNT -gt $RETENTION ]; then
               echo "Deleting old snapshot release: ${TAG}"
-              gh release delete "${TAG}" --yes --cleanup-tag 2>/dev/null || true
+              gh release delete "${TAG}" --yes --cleanup-tag || true
             fi
           done
 

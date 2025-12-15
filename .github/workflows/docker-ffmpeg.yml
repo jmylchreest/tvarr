@@ -36,6 +36,11 @@ on:
           - runtime
           - full-build
 
+# Cancel in-progress runs for the same ref
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/tvarr-ffmpeg
@@ -52,7 +57,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Generate date-based tags
         id: tags
@@ -140,7 +145,7 @@ jobs:
 
       - name: Checkout repository
         if: steps.should_build.outputs.build == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
         if: steps.should_build.outputs.build == 'true'

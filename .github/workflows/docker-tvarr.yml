@@ -27,6 +27,11 @@ on:
       - 'specs/**'
   workflow_dispatch:
 
+# Cancel in-progress runs for the same branch/tag
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -50,7 +55,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0  # Full history for version detection
 
@@ -82,7 +87,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -111,18 +116,31 @@ jobs:
           docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64 \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:arm64
-
           docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Create and push preview manifest (main branch)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:preview \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:arm64
+          docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:preview
 
       - name: Create and push multi-arch manifest (version)
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-
           docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION} \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64 \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:arm64
-
           docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}
+
+      - name: Create and push release manifest (releases only)
+        if: steps.version.outputs.is_release == 'true'
+        run: |
+          docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:release \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:arm64
+          docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:release
 
       - name: Create and push semver manifests (releases only)
         if: steps.version.outputs.is_release == 'true'
