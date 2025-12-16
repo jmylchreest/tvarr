@@ -21,8 +21,8 @@ vars:
     sh: |
       if [ -n "${TVARR_BUILD_VERSION:-}" ]; then
         echo "$TVARR_BUILD_VERSION"
-      elif git describe --tags --exact-match 2>/dev/null; then
-        git describe --tags --exact-match | sed 's/^v//'
+      elif TAG=$(git describe --tags --exact-match 2>/dev/null); then
+        echo "$TAG" | sed 's/^v//'
       elif DESC=$(git describe --tags --always --long 2>/dev/null) && echo "$DESC" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+-[0-9]+-g[a-f0-9]+$'; then
         MAJOR=$(echo "$DESC" | sed -E 's/^v([0-9]+)\..*$/\1/')
         MINOR=$(echo "$DESC" | sed -E 's/^v[0-9]+\.([0-9]+)\..*$/\1/')
