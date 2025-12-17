@@ -391,12 +391,30 @@ func (c *HLSCollapser) isRandomAccess(data []byte) bool {
 }
 
 // watchClient monitors the gohlslib client and handles errors.
+// It watches both the client completion and context cancellation.
 func (c *HLSCollapser) watchClient(ctx context.Context) {
-	err := c.client.Wait2()
-	if err != nil && !errors.Is(err, gohlslib.ErrClientEOS) && !errors.Is(err, context.Canceled) {
-		c.closeWithError(err)
-	} else {
-		c.closeWithError(io.EOF)
+	// Use a channel to get Wait2() result without blocking on context
+	waitCh := make(chan error, 1)
+	go func() {
+		waitCh <- c.client.Wait2()
+	}()
+
+	// Wait for either client completion or context cancellation
+	select {
+	case err := <-waitCh:
+		if err != nil && !errors.Is(err, gohlslib.ErrClientEOS) && !errors.Is(err, context.Canceled) {
+			c.closeWithError(err)
+		} else {
+			c.closeWithError(io.EOF)
+		}
+	case <-ctx.Done():
+		// Context cancelled - close the client which will cause Wait2() to return
+		if c.client != nil {
+			c.client.Close()
+		}
+		// Drain the waitCh to prevent goroutine leak
+		<-waitCh
+		c.closeWithError(ctx.Err())
 	}
 }
 

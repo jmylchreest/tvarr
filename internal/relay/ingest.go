@@ -322,7 +322,12 @@ func (i *Ingest) calculateBitrate() {
 		}
 	}
 	if validStart > 0 {
-		i.bitrateWindow = i.bitrateWindow[validStart:]
+		// Copy to new slice to release capacity from trimmed elements
+		// This prevents unbounded capacity growth from repeated append+reslice
+		remaining := len(i.bitrateWindow) - validStart
+		newWindow := make([]bitratePoint, remaining, max(remaining*2, 60))
+		copy(newWindow, i.bitrateWindow[validStart:])
+		i.bitrateWindow = newWindow
 	}
 
 	// Calculate bitrate from window

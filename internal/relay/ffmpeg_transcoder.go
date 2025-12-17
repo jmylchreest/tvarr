@@ -339,13 +339,16 @@ func (t *FFmpegTranscoder) waitWithTimeout(timeout time.Duration) {
 		_ = t.cmd.Process.Kill()
 	}
 
-	// Final wait with short timeout - if still stuck, just move on
+	// Final wait with short timeout - if still stuck, log and drain in background
 	select {
 	case <-done:
 	case <-time.After(500 * time.Millisecond):
-		t.config.Logger.Error("FFmpeg process could not be killed, abandoning",
+		t.config.Logger.Error("FFmpeg process could not be killed, draining in background",
 			slog.String("id", t.id),
 			slog.Int("pid", t.cmd.Process.Pid))
+		// Drain the channel in background to prevent goroutine leak
+		// The process was killed, so Wait() will eventually return
+		go func() { <-done }()
 	}
 }
 
@@ -583,8 +586,24 @@ func (t *FFmpegTranscoder) startFFmpeg() error {
 	// Create command with context
 	t.cmd = exec.CommandContext(t.ctx, ffmpegCmd.Binary, ffmpegCmd.Args...)
 
-	// Set up pipes
+	// Set up pipes with cleanup on failure
 	var err error
+
+	// Helper to close pipes on error - only closes non-nil pipes
+	closePipes := func() {
+		if t.stdin != nil {
+			t.stdin.Close()
+			t.stdin = nil
+		}
+		if t.stdout != nil {
+			t.stdout.Close()
+			t.stdout = nil
+		}
+		if t.stderr != nil {
+			t.stderr.Close()
+			t.stderr = nil
+		}
+	}
 
 	// Only create stdin pipe when not using direct input
 	if !t.config.UseDirectInput {
@@ -596,16 +615,19 @@ func (t *FFmpegTranscoder) startFFmpeg() error {
 
 	t.stdout, err = t.cmd.StdoutPipe()
 	if err != nil {
+		closePipes()
 		return fmt.Errorf("creating stdout pipe: %w", err)
 	}
 
 	t.stderr, err = t.cmd.StderrPipe()
 	if err != nil {
+		closePipes()
 		return fmt.Errorf("creating stderr pipe: %w", err)
 	}
 
 	// Start process
 	if err := t.cmd.Start(); err != nil {
+		closePipes()
 		return fmt.Errorf("starting ffmpeg: %w", err)
 	}
 

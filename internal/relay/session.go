@@ -925,6 +925,13 @@ func (s *RelaySession) runESPipeline() error {
 		sourceReadyCh <- s.esBuffer.WaitSourceVariant(sourceReadyCtx)
 	}()
 
+	// Helper to drain channels in background to prevent goroutine leaks
+	// The writing goroutines will eventually complete and need somewhere to send
+	drainChannels := func() {
+		go func() { <-ingestErrCh }()
+		go func() { <-sourceReadyCh }()
+	}
+
 	// Wait for either source ready or ingest error
 	select {
 	case err := <-sourceReadyCh:
@@ -936,18 +943,23 @@ func (s *RelaySession) runESPipeline() error {
 					return fmt.Errorf("ingest failed before source detection: %w", ingestErr)
 				}
 			default:
+				// Drain ingestErrCh in background since we're returning
+				go func() { <-ingestErrCh }()
 			}
 			return fmt.Errorf("waiting for source variant: %w", err)
 		}
-		// Source is ready, continue
+		// Source is ready, continue (ingestErrCh will be read at end of pipeline)
 	case ingestErr := <-ingestErrCh:
 		// Ingest failed before source was detected
+		// sourceReadyCh will complete soon due to deferred sourceReadyCancel()
+		go func() { <-sourceReadyCh }()
 		if ingestErr != nil {
 			return fmt.Errorf("ingest failed: %w", ingestErr)
 		}
 		// Ingest completed without error but source not ready - shouldn't happen
 		return fmt.Errorf("ingest completed without detecting source codecs")
 	case <-s.ctx.Done():
+		drainChannels()
 		return s.ctx.Err()
 	}
 
