@@ -75,7 +75,9 @@ func New(cfg config.DatabaseConfig, log *slog.Logger, opts *Options) (*DB, error
 		if err := db.Exec("PRAGMA journal_mode=WAL").Error; err != nil {
 			log.Warn("failed to enable WAL mode", slog.String("error", err.Error()))
 		}
-		if err := db.Exec("PRAGMA busy_timeout=5000").Error; err != nil {
+		// Set busy_timeout to 30 seconds to handle long-running transactions during
+		// ingestion/generation without failing API requests
+		if err := db.Exec("PRAGMA busy_timeout=30000").Error; err != nil {
 			log.Warn("failed to set busy timeout", slog.String("error", err.Error()))
 		}
 		if err := db.Exec("PRAGMA synchronous=NORMAL").Error; err != nil {
