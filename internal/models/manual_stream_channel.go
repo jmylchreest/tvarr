@@ -105,3 +105,40 @@ func (c *ManualStreamChannel) ToChannel() *Channel {
 		Extra:         c.Extra,
 	}
 }
+
+// ChannelData interface implementation for M3U export (pkg/m3u.ChannelData)
+
+// GetTvgID returns the EPG channel identifier.
+func (c *ManualStreamChannel) GetTvgID() string {
+	return c.TvgID
+}
+
+// GetTvgName returns the display name.
+func (c *ManualStreamChannel) GetTvgName() string {
+	return c.TvgName
+}
+
+// GetTvgLogo returns the logo URL.
+func (c *ManualStreamChannel) GetTvgLogo() string {
+	return c.TvgLogo
+}
+
+// GetGroupTitle returns the category/group.
+func (c *ManualStreamChannel) GetGroupTitle() string {
+	return c.GroupTitle
+}
+
+// GetChannelName returns the display name.
+func (c *ManualStreamChannel) GetChannelName() string {
+	return c.ChannelName
+}
+
+// GetChannelNumber returns the channel number.
+func (c *ManualStreamChannel) GetChannelNumber() int {
+	return c.ChannelNumber
+}
+
+// GetStreamURL returns the stream URL.
+func (c *ManualStreamChannel) GetStreamURL() string {
+	return c.StreamURL
+}

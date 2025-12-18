@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { StatCard } from '@/components/shared/feedback/StatCard';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -16,39 +17,15 @@ import {
 } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from '@/components/ui/sheet';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import {
   Plus,
   Server,
-  Edit,
   Trash2,
-  RefreshCw,
-  Clock,
   Archive,
   Search,
-  Filter,
-  Grid,
-  List,
-  Table as TableIcon,
   AlertCircle,
-  CheckCircle,
   Loader2,
   WifiOff,
+  Clock,
 } from 'lucide-react';
 import {
   EpgSourceResponse,
@@ -69,6 +46,15 @@ import {
   describeCronExpression,
   COMMON_CRON_TEMPLATES,
 } from '@/lib/cron-validation';
+import {
+  MasterDetailLayout,
+  DetailPanel,
+  DetailEmpty,
+  MasterItem,
+} from '@/components/shared';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { OperationStatusIndicator } from '@/components/OperationStatusIndicator';
+import { AnimatedBadgeGroup } from '@/components/shared/AnimatedBadgeGroup';
 
 // Helper to get UTC offset for a timezone string
 function getTimezoneOffset(timezone: string): string | null {
@@ -184,16 +170,57 @@ function getStatusLabel(status: string): string {
   }
 }
 
-function CreateEpgSourceSheet({
-  onCreateSource,
+// Convert EpgSourceResponse to MasterItem format for MasterDetailLayout
+interface EpgSourceMasterItem extends MasterItem {
+  source: EpgSourceResponse;
+}
+
+function epgSourceToMasterItem(source: EpgSourceResponse): EpgSourceMasterItem {
+  // Map status to badge priority
+  const getStatusPriority = (status: string) => {
+    switch (status) {
+      case 'failed':
+        return 'error' as const;
+      case 'pending':
+      case 'ingesting':
+        return 'outline' as const;
+      default:
+        return 'secondary' as const;
+    }
+  };
+
+  return {
+    id: source.id,
+    title: source.name,
+    badge: (
+      <div className="flex items-center gap-1">
+        <AnimatedBadgeGroup
+          resourceId={source.id}
+          badges={[
+            { label: source.source_type, priority: 'info' },
+            { label: getStatusLabel(source.status), priority: getStatusPriority(source.status) },
+          ]}
+        />
+        <OperationStatusIndicator resourceId={source.id} />
+      </div>
+    ),
+    source,
+  };
+}
+
+
+// Create panel for creating a new EPG source inline in detail area
+function EpgSourceCreatePanel({
+  onCreate,
+  onCancel,
   loading,
   error,
 }: {
-  onCreateSource: (source: CreateEpgSourceRequest) => Promise<void>;
+  onCreate: (source: CreateEpgSourceRequest) => Promise<void>;
+  onCancel: () => void;
   loading: boolean;
   error: string | null;
 }) {
-  const [open, setOpen] = useState(false);
   const [formData, setFormData] = useState<CreateEpgSourceRequest>({
     name: '',
     source_type: 'xtream',
@@ -208,38 +235,31 @@ function CreateEpgSourceSheet({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await onCreateSource(formData);
-    if (!error) {
-      setOpen(false);
-      setFormData({
-        name: '',
-        source_type: 'xtream',
-        url: '',
-        update_cron: '0 0 */6 * * *',
-        epg_shift: 0,
-        username: '',
-        password: '',
-        api_method: 'stream_id',
-      });
+    try {
+      await onCreate(formData);
+    } catch {
+      // Error handled by parent
     }
   };
 
-  return (
-    <Sheet open={open} onOpenChange={setOpen}>
-      <SheetTrigger asChild>
-        <Button className="gap-2">
-          <Plus className="h-4 w-4" />
-          Add EPG Source
-        </Button>
-      </SheetTrigger>
-      <SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto">
-        <SheetHeader>
-          <SheetTitle>Add EPG Source</SheetTitle>
-          <SheetDescription>
-            Create a new EPG source from XMLTV data or Xtream Codes API
-          </SheetDescription>
-        </SheetHeader>
+  const isValid = formData.name.trim().length > 0 && formData.url.trim().length > 0 && cronValidation.isValid;
 
+  return (
+    <DetailPanel
+      title="Add EPG Source"
+      actions={
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={onCancel} disabled={loading}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={handleSubmit} disabled={loading || !isValid}>
+            {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Create
+          </Button>
+        </div>
+      }
+    >
+      <div className="space-y-6">
         {error && (
           <Alert variant="destructive">
             <AlertCircle className="h-4 w-4" />
@@ -248,49 +268,44 @@ function CreateEpgSourceSheet({
           </Alert>
         )}
 
-        <form
-          id="create-epg-form"
-          onSubmit={handleSubmit}
-          className="space-y-4 px-4"
-          autoComplete="off"
-        >
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="name">Name</Label>
-              <Input
-                id="name"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="Premium EPG Data"
-                required
-                disabled={loading}
-                autoComplete="off"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="source_type">Source Type</Label>
-              <Select
-                value={formData.source_type}
-                onValueChange={(value) =>
-                  setFormData({ ...formData, source_type: value as EpgSourceType })
-                }
-                disabled={loading}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select source type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="xmltv">XMLTV</SelectItem>
-                  <SelectItem value="xtream">Xtream Codes</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="create-name">Name</Label>
+            <Input
+              id="create-name"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              placeholder="Premium EPG Data"
+              required
+              disabled={loading}
+              autoFocus
+              autoComplete="off"
+            />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="url">URL</Label>
+            <Label htmlFor="create-source_type">Source Type</Label>
+            <Select
+              value={formData.source_type}
+              onValueChange={(value) =>
+                setFormData({ ...formData, source_type: value as EpgSourceType })
+              }
+              disabled={loading}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select source type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="xmltv">XMLTV</SelectItem>
+                <SelectItem value="xtream">Xtream Codes</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="create-url">URL</Label>
             <Input
-              id="url"
+              id="create-url"
               value={formData.url}
               onChange={(e) => setFormData({ ...formData, url: e.target.value })}
               placeholder={
@@ -306,7 +321,7 @@ function CreateEpgSourceSheet({
 
           {formData.source_type === 'xtream' && (
             <div className="space-y-2">
-              <Label htmlFor="api_method">API Method</Label>
+              <Label htmlFor="create-api_method">API Method</Label>
               <Select
                 value={formData.api_method || 'stream_id'}
                 onValueChange={(value) =>
@@ -322,17 +337,14 @@ function CreateEpgSourceSheet({
                   <SelectItem value="bulk_xmltv">Bulk XMLTV (faster)</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">
-                StreamID provides richer data. Bulk XMLTV is faster but has fewer fields.
-              </p>
             </div>
           )}
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="username">Username</Label>
+              <Label htmlFor="create-username">Username</Label>
               <Input
-                id="username"
+                id="create-username"
                 value={formData.username || ''}
                 onChange={(e) => setFormData({ ...formData, username: e.target.value })}
                 placeholder="Optional"
@@ -341,9 +353,9 @@ function CreateEpgSourceSheet({
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <Label htmlFor="create-password">Password</Label>
               <Input
-                id="password"
+                id="create-password"
                 type="password"
                 value={formData.password || ''}
                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
@@ -355,26 +367,9 @@ function CreateEpgSourceSheet({
           </div>
 
           <div className="space-y-2">
-            <div className="flex items-center gap-1">
-              <Label htmlFor="epg_shift">EPG Time Shift (hours)</Label>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-5 w-5 p-0 text-muted-foreground">
-                    ?
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-sm">
-                  <p className="text-sm">
-                    This value is auto-set based on the detected server timezone to compensate for
-                    providers that send timestamps in local time instead of UTC. You can override
-                    this value manually; it will only be auto-updated when the detected timezone changes.
-                    Use positive values to shift forward, negative to shift back (-12 to +12 hours).
-                  </p>
-                </TooltipContent>
-              </Tooltip>
-            </div>
+            <Label htmlFor="create-epg_shift">EPG Time Shift (hours)</Label>
             <Input
-              id="epg_shift"
+              id="create-epg_shift"
               type="number"
               min={-12}
               max={12}
@@ -387,43 +382,12 @@ function CreateEpgSourceSheet({
               disabled={loading}
               autoComplete="off"
             />
-            <p className="text-xs text-muted-foreground">
-              Adjust normalised UTC times (-12 to +12 hours)
-            </p>
           </div>
 
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="update_cron">Update Schedule (Cron)</Label>
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="ghost" size="sm" className="h-6 px-2 text-xs">
-                      ?
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-sm">
-                    <div className="space-y-2">
-                      <p className="font-medium">6-field cron format:</p>
-                      <p className="text-xs">sec min hour day-of-month month day-of-week</p>
-                      <div className="space-y-1 text-xs">
-                        <p>
-                          <code>"0 0 */6 * * *"</code> - Every 6 hours
-                        </p>
-                        <p>
-                          <code>"0 0 2 * * *"</code> - Daily at 2:00 AM
-                        </p>
-                        <p>
-                          <code>"0 */30 * * * *"</code> - Every 30 minutes
-                        </p>
-                      </div>
-                    </div>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
+            <Label htmlFor="create-update_cron">Update Schedule (Cron)</Label>
             <Input
-              id="update_cron"
+              id="create-update_cron"
               value={formData.update_cron}
               onChange={(e) => {
                 const newValue = e.target.value;
@@ -434,19 +398,12 @@ function CreateEpgSourceSheet({
               required
               disabled={loading}
               autoComplete="off"
-              className={
-                cronValidation.isValid ? '' : 'border-destructive focus:border-destructive'
-              }
+              className={cronValidation.isValid ? '' : 'border-destructive'}
             />
             {!cronValidation.isValid && cronValidation.error && (
-              <div className="text-sm text-destructive space-y-1">
-                <p>{cronValidation.error}</p>
-                {cronValidation.suggestion && (
-                  <p className="text-xs text-muted-foreground">💡 {cronValidation.suggestion}</p>
-                )}
-              </div>
+              <p className="text-sm text-destructive">{cronValidation.error}</p>
             )}
-            <div className="flex flex-wrap gap-1 text-xs">
+            <div className="flex flex-wrap gap-1">
               {COMMON_CRON_TEMPLATES.slice(0, 3).map((template) => (
                 <Button
                   key={template.expression}
@@ -466,93 +423,106 @@ function CreateEpgSourceSheet({
             </div>
           </div>
         </form>
-
-        <SheetFooter className="gap-2">
-          <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={loading}>
-            Cancel
-          </Button>
-          <Button form="create-epg-form" type="submit" disabled={loading}>
-            {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Create EPG Source
-          </Button>
-        </SheetFooter>
-      </SheetContent>
-    </Sheet>
+      </div>
+    </DetailPanel>
   );
 }
 
-function EditEpgSourceSheet({
+// Detail panel for viewing/editing a selected EPG source
+function EpgSourceDetailPanel({
   source,
-  onUpdateSource,
+  onUpdate,
+  onRefresh,
+  onDelete,
   loading,
   error,
-  open,
-  onOpenChange,
+  isOnline,
 }: {
-  source: EpgSourceResponse | null;
-  onUpdateSource: (id: string, source: CreateEpgSourceRequest) => Promise<void>;
-  loading: boolean;
+  source: EpgSourceResponse;
+  onUpdate: (id: string, data: CreateEpgSourceRequest) => Promise<void>;
+  onRefresh: (id: string) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+  loading: { edit: boolean; delete: string | null };
   error: string | null;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  isOnline: boolean;
 }) {
   const [formData, setFormData] = useState<CreateEpgSourceRequest>({
-    name: '',
-    source_type: 'xtream',
-    url: '',
-    update_cron: '0 0 */6 * * *',
-    epg_shift: 0,
-    username: '',
+    name: source.name,
+    source_type: source.source_type,
+    url: source.url,
+    update_cron: source.update_cron || '0 0 */6 * * *',
+    epg_shift: source.epg_shift ?? 0,
+    username: source.username || '',
     password: '',
-    api_method: 'stream_id',
+    api_method: source.api_method || 'stream_id',
   });
-  const [cronValidation, setCronValidation] = useState(validateCronExpression('0 0 */6 * * *'));
+  const [cronValidation, setCronValidation] = useState(
+    validateCronExpression(source.update_cron || '0 0 */6 * * *')
+  );
+  const [hasChanges, setHasChanges] = useState(false);
 
-  // Update form data when source changes
+  // Reset form when source changes
   useEffect(() => {
-    if (source) {
-      const defaultCron = '0 0 */6 * * *'; // Every 6 hours
-      const newFormData = {
-        name: source.name,
-        source_type: source.source_type,
-        url: source.url,
-        update_cron: source.update_cron || defaultCron,
-        epg_shift: source.epg_shift ?? 0,
-        username: source.username || '',
-        password: source.password || '',
-        api_method: source.api_method || 'stream_id',
-      };
-      setFormData(newFormData);
-      setCronValidation(validateCronExpression(newFormData.update_cron));
+    const newFormData = {
+      name: source.name,
+      source_type: source.source_type,
+      url: source.url,
+      update_cron: source.update_cron || '0 0 */6 * * *',
+      epg_shift: source.epg_shift ?? 0,
+      username: source.username || '',
+      password: '',
+      api_method: source.api_method || 'stream_id',
+    };
+    setFormData(newFormData);
+    setCronValidation(validateCronExpression(newFormData.update_cron));
+    setHasChanges(false);
+  }, [source.id]);
+
+  const handleFieldChange = (field: keyof CreateEpgSourceRequest, value: any) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+    setHasChanges(true);
+    if (field === 'update_cron') {
+      setCronValidation(validateCronExpression(value));
     }
-  }, [source]);
+  };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!source) return;
-
-    // Filter out empty password to preserve existing password
+  const handleSave = async () => {
     const updateData = { ...formData };
     if (!updateData.password || updateData.password.trim() === '') {
       delete updateData.password;
     }
-
-    await onUpdateSource(source.id, updateData);
-    if (!error) {
-      onOpenChange(false);
-    }
+    await onUpdate(source.id, updateData);
+    setHasChanges(false);
   };
 
-  if (!source) return null;
-
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto">
-        <SheetHeader>
-          <SheetTitle>Edit EPG Source</SheetTitle>
-          <SheetDescription>Update the EPG source configuration</SheetDescription>
-        </SheetHeader>
-
+    <DetailPanel
+      title={source.name}
+      actions={
+        <div className="flex items-center gap-2">
+          <RefreshButton
+            resourceId={source.id}
+            onRefresh={() => onRefresh(source.id)}
+            disabled={!isOnline}
+            size="sm"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onDelete(source.id)}
+            disabled={loading.delete === source.id || !isOnline}
+            className="text-destructive hover:text-destructive"
+          >
+            {loading.delete === source.id ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Trash2 className="h-4 w-4" />
+            )}
+          </Button>
+        </div>
+      }
+    >
+      <div className="space-y-6">
         {error && (
           <Alert variant="destructive">
             <AlertCircle className="h-4 w-4" />
@@ -561,64 +531,68 @@ function EditEpgSourceSheet({
           </Alert>
         )}
 
-        <form
-          id="edit-epg-form"
-          onSubmit={handleSubmit}
-          className="space-y-4 px-4"
-          autoComplete="off"
-        >
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-name">Name</Label>
-              <Input
-                id="edit-name"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="Premium EPG Data"
-                required
-                disabled={loading}
-                autoComplete="off"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-source_type">Source Type</Label>
-              <div className="flex h-9 items-center px-3 py-2 text-sm border border-input bg-muted rounded-md">
-                <Badge variant="outline" className="capitalize">
-                  {formData.source_type.toUpperCase()}
-                </Badge>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Source type cannot be changed after creation
-              </p>
-            </div>
+        {/* Source Info Banner */}
+        <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary">
+              {source.source_type.toUpperCase()}
+            </Badge>
+            <Badge variant={source.status === 'success' ? 'secondary' : source.status === 'failed' ? 'destructive' : 'outline'}>
+              {getStatusLabel(source.status)}
+            </Badge>
+            <OperationStatusIndicator resourceId={source.id} />
           </div>
+          <div className="flex-1" />
+          <div className="text-sm text-muted-foreground">
+            <Archive className="h-4 w-4 inline mr-1" />
+            {source.program_count} programs
+          </div>
+          {source.last_ingestion_at && (
+            <div className="text-sm text-muted-foreground">
+              <Clock className="h-4 w-4 inline mr-1" />
+              {formatRelativeTime(source.last_ingestion_at)}
+            </div>
+          )}
+          {source.detected_timezone && (
+            <div className="text-sm text-muted-foreground">
+              TZ: {formatDetectedTimezone(source.detected_timezone).display}
+            </div>
+          )}
+        </div>
+
+        {/* Edit Form */}
+        <div className="border-t pt-4 space-y-4">
+          <h3 className="text-sm font-medium">Configuration</h3>
 
           <div className="space-y-2">
-            <Label htmlFor="edit-url">URL</Label>
+            <Label htmlFor="detail-name">Name</Label>
             <Input
-              id="edit-url"
-              value={formData.url}
-              onChange={(e) => setFormData({ ...formData, url: e.target.value })}
-              placeholder={
-                formData.source_type === 'xmltv'
-                  ? 'https://example.com/epg.xml'
-                  : 'http://xtream.example.com:8080'
-              }
-              required
-              disabled={loading}
+              id="detail-name"
+              value={formData.name}
+              onChange={(e) => handleFieldChange('name', e.target.value)}
+              disabled={loading.edit || !isOnline}
               autoComplete="off"
             />
           </div>
 
-          {formData.source_type === 'xtream' && (
+          <div className="space-y-2">
+            <Label htmlFor="detail-url">URL</Label>
+            <Input
+              id="detail-url"
+              value={formData.url}
+              onChange={(e) => handleFieldChange('url', e.target.value)}
+              disabled={loading.edit || !isOnline}
+              autoComplete="off"
+            />
+          </div>
+
+          {source.source_type === 'xtream' && (
             <div className="space-y-2">
-              <Label htmlFor="edit-api_method">API Method</Label>
+              <Label htmlFor="detail-api_method">API Method</Label>
               <Select
                 value={formData.api_method || 'stream_id'}
-                onValueChange={(value) =>
-                  setFormData({ ...formData, api_method: value as XtreamApiMethod })
-                }
-                disabled={loading}
+                onValueChange={(value) => handleFieldChange('api_method', value as XtreamApiMethod)}
+                disabled={loading.edit || !isOnline}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select API method" />
@@ -628,153 +602,88 @@ function EditEpgSourceSheet({
                   <SelectItem value="bulk_xmltv">Bulk XMLTV (faster)</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">
-                StreamID provides richer data. Bulk XMLTV is faster but has fewer fields.
-              </p>
             </div>
           )}
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="edit-username">Username</Label>
+              <Label htmlFor="detail-username">Username</Label>
               <Input
-                id="edit-username"
+                id="detail-username"
                 value={formData.username || ''}
-                onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                onChange={(e) => handleFieldChange('username', e.target.value)}
                 placeholder="Optional"
-                disabled={loading}
+                disabled={loading.edit || !isOnline}
                 autoComplete="off"
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-password">Password</Label>
+              <Label htmlFor="detail-password">Password</Label>
               <Input
-                id="edit-password"
+                id="detail-password"
                 type="password"
                 value={formData.password || ''}
-                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                placeholder="Optional"
-                disabled={loading}
+                onChange={(e) => handleFieldChange('password', e.target.value)}
+                placeholder="Leave empty to keep current"
+                disabled={loading.edit || !isOnline}
                 autoComplete="off"
               />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-detected_timezone">Detected Timezone</Label>
-              <div className="flex h-9 items-center px-3 py-2 text-sm border border-input bg-muted rounded-md">
-                {formatDetectedTimezone(source?.detected_timezone).display}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Auto-detected from EPG data during ingestion
-              </p>
-            </div>
-            <div className="space-y-2">
-              <div className="flex items-center gap-1">
-                <Label htmlFor="edit-epg_shift">EPG Time Shift (hours)</Label>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="ghost" size="sm" className="h-5 w-5 p-0 text-muted-foreground">
-                      ?
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-sm">
-                    <p className="text-sm">
-                      This value is auto-set based on the detected server timezone to compensate for
-                      providers that send timestamps in local time instead of UTC. You can override
-                      this value manually; it will only be auto-updated when the detected timezone changes.
-                      Use positive values to shift forward, negative to shift back (-12 to +12 hours).
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-              <Input
-                id="edit-epg_shift"
-                type="number"
-                min={-12}
-                max={12}
-                value={formData.epg_shift ?? 0}
-                onChange={(e) => {
-                  const value = parseInt(e.target.value) || 0;
-                  setFormData({ ...formData, epg_shift: Math.max(-12, Math.min(12, value)) });
-                }}
-                placeholder="0"
-                disabled={loading}
-                autoComplete="off"
-              />
-              <p className="text-xs text-muted-foreground">
-                Adjust normalised UTC times (-12 to +12 hours)
-              </p>
             </div>
           </div>
 
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="edit-update_cron">Update Schedule (Cron)</Label>
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="ghost" size="sm" className="h-6 px-2 text-xs">
-                      ?
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-sm">
-                    <div className="space-y-2">
-                      <p className="font-medium">6-field cron format:</p>
-                      <p className="text-xs">sec min hour day-of-month month day-of-week</p>
-                      <div className="space-y-1 text-xs">
-                        <p>
-                          <code>"0 0 */6 * * *"</code> - Every 6 hours
-                        </p>
-                        <p>
-                          <code>"0 0 2 * * *"</code> - Daily at 2:00 AM
-                        </p>
-                        <p>
-                          <code>"0 */30 * * * *"</code> - Every 30 minutes
-                        </p>
-                      </div>
-                    </div>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
+            <div className="flex items-center gap-1">
+              <Label htmlFor="detail-epg_shift">EPG Time Shift (hours)</Label>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="sm" className="h-5 w-5 p-0 text-muted-foreground">
+                    ?
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-sm">
+                  <p className="text-sm">
+                    Adjust normalised UTC times (-12 to +12 hours). Auto-set based on detected timezone.
+                  </p>
+                </TooltipContent>
+              </Tooltip>
             </div>
             <Input
-              id="edit-update_cron"
-              value={formData.update_cron}
+              id="detail-epg_shift"
+              type="number"
+              min={-12}
+              max={12}
+              value={formData.epg_shift ?? 0}
               onChange={(e) => {
-                const newValue = e.target.value;
-                setFormData({ ...formData, update_cron: newValue });
-                setCronValidation(validateCronExpression(newValue));
+                const value = parseInt(e.target.value) || 0;
+                handleFieldChange('epg_shift', Math.max(-12, Math.min(12, value)));
               }}
-              placeholder="0 0 */6 * * *"
-              required
-              disabled={loading}
+              disabled={loading.edit || !isOnline}
               autoComplete="off"
-              className={
-                cronValidation.isValid ? '' : 'border-destructive focus:border-destructive'
-              }
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="detail-update_cron">Update Schedule (Cron)</Label>
+            <Input
+              id="detail-update_cron"
+              value={formData.update_cron}
+              onChange={(e) => handleFieldChange('update_cron', e.target.value)}
+              disabled={loading.edit || !isOnline}
+              autoComplete="off"
+              className={cronValidation.isValid ? '' : 'border-destructive'}
             />
             {!cronValidation.isValid && cronValidation.error && (
-              <div className="text-sm text-destructive space-y-1">
-                <p>{cronValidation.error}</p>
-                {cronValidation.suggestion && (
-                  <p className="text-xs text-muted-foreground">💡 {cronValidation.suggestion}</p>
-                )}
-              </div>
+              <p className="text-sm text-destructive">{cronValidation.error}</p>
             )}
-            <div className="flex flex-wrap gap-1 text-xs">
+            <div className="flex flex-wrap gap-1">
               {COMMON_CRON_TEMPLATES.slice(0, 3).map((template) => (
                 <Button
                   key={template.expression}
                   variant="ghost"
                   size="sm"
                   className="h-6 px-2 text-xs"
-                  onClick={() => {
-                    setFormData({ ...formData, update_cron: template.expression });
-                    setCronValidation(validateCronExpression(template.expression));
-                  }}
-                  disabled={loading}
+                  onClick={() => handleFieldChange('update_cron', template.expression)}
+                  disabled={loading.edit || !isOnline}
                   type="button"
                 >
                   {template.description}
@@ -782,24 +691,22 @@ function EditEpgSourceSheet({
               ))}
             </div>
           </div>
-        </form>
 
-        <SheetFooter className="gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-            disabled={loading}
-          >
-            Cancel
-          </Button>
-          <Button form="edit-epg-form" type="submit" disabled={loading}>
-            {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Update EPG Source
-          </Button>
-        </SheetFooter>
-      </SheetContent>
-    </Sheet>
+          {/* Save Button */}
+          {hasChanges && (
+            <div className="flex justify-end pt-4 border-t">
+              <Button
+                onClick={handleSave}
+                disabled={loading.edit || !isOnline || !cronValidation.isValid}
+              >
+                {loading.edit && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Save Changes
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+    </DetailPanel>
   );
 }
 
@@ -810,10 +717,6 @@ export function EpgSources() {
     PaginatedResponse<EpgSourceResponse>,
     'items'
   > | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filterType, setFilterType] = useState<EpgSourceType | 'all'>('all');
-  const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'ingesting' | 'success' | 'failed'>('all');
-  const [currentPage, setCurrentPage] = useState(1);
 
   const [loading, setLoading] = useState<LoadingState>({
     sources: false,
@@ -829,60 +732,22 @@ export function EpgSources() {
     action: null,
   });
 
-  const [editingSource, setEditingSource] = useState<EpgSourceResponse | null>(null);
-  const [viewMode, setViewMode] = useState<'grid' | 'list' | 'table'>('table');
-  const [editSheetOpen, setEditSheetOpen] = useState(false);
+  const [selectedSource, setSelectedSource] = useState<EpgSourceMasterItem | null>(null);
   const { handleApiError, dismissConflict, getConflictState } = useConflictHandler();
   const [refreshingSources, setRefreshingSources] = useState<Set<string>>(new Set());
   const [isOnline, setIsOnline] = useState(true);
+  const [isCreating, setIsCreating] = useState(false);
 
-  // Compute filtered results locally
-  const filteredSources = useMemo(() => {
-    let filtered = allSources;
+  // Sort sources alphabetically by name
+  const sortedSources = useMemo(() => {
+    return [...allSources].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  }, [allSources]);
 
-    // Filter by source type
-    if (filterType !== 'all') {
-      filtered = filtered.filter((source) => source.source_type === filterType);
-    }
-
-    // Filter by status
-    if (filterStatus !== 'all') {
-      filtered = filtered.filter((source) => source.status === filterStatus);
-    }
-
-    // Filter by search term
-    if (searchTerm.trim()) {
-      const searchLower = searchTerm.toLowerCase();
-      filtered = filtered.filter((source) => {
-        const searchableText = [
-          source.name.toLowerCase(),
-          source.url.toLowerCase(),
-          source.source_type.toLowerCase(),
-          source.update_cron.toLowerCase(),
-          // Status labels
-          source.status,
-          source.enabled ? 'enabled' : 'disabled',
-          // Relative time and formatted dates
-          formatRelativeTime(source.created_at).toLowerCase(),
-          formatRelativeTime(source.updated_at).toLowerCase(),
-          formatDate(source.created_at).toLowerCase(),
-          formatDate(source.updated_at).toLowerCase(),
-          // Type labels
-          source.source_type === 'xmltv' ? 'xmltv xml tv guide' : 'xtream codes api',
-          // Additional searchable terms
-          'epg source',
-          'electronic program guide',
-          source.created_at.includes('T') ? 'created' : '',
-          source.updated_at.includes('T') ? 'updated' : '',
-        ];
-
-        return searchableText.some((text) => text.toLowerCase().includes(searchLower));
-      });
-    }
-
-    // Sort alphabetically by name
-    return filtered.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-  }, [allSources, searchTerm, filterType, filterStatus]);
+  // Convert sources to master items for the layout
+  const masterItems = useMemo(
+    () => sortedSources.map(epgSourceToMasterItem),
+    [sortedSources]
+  );
 
   // Health check is handled by parent component, no need for redundant calls
 
@@ -985,8 +850,14 @@ export function EpgSources() {
     setErrors((prev) => ({ ...prev, create: null }));
 
     try {
-      await apiClient.createEpgSource(newSource);
+      const created = await apiClient.createEpgSource(newSource);
       await loadSources(); // Reload sources after creation
+      setIsCreating(false);
+      // Select the newly created source
+      if (created?.id) {
+        const newMasterItem = epgSourceToMasterItem(created);
+        setSelectedSource(newMasterItem);
+      }
     } catch (error) {
       const apiError = error as ApiError;
       setErrors((prev) => ({
@@ -1016,11 +887,6 @@ export function EpgSources() {
     } finally {
       setLoading((prev) => ({ ...prev, edit: false }));
     }
-  };
-
-  const handleEditSource = (source: EpgSourceResponse) => {
-    setEditingSource(source);
-    setEditSheetOpen(true);
   };
 
   const handleRefreshSource = async (sourceId: string) => {
@@ -1106,30 +972,11 @@ export function EpgSources() {
       <div className="space-y-6">
         {/* Header Section */}
         <div className="flex items-center justify-between">
-          <div>
-            <p className="text-muted-foreground">
-              Manage EPG sources, such as XMLTV and Xtream Code providers
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            {!isOnline && <WifiOff className="h-5 w-5 text-destructive" />}
-            <CreateEpgSourceSheet
-              onCreateSource={handleCreateSource}
-              loading={loading.create}
-              error={errors.create}
-            />
-          </div>
+          <p className="text-muted-foreground">
+            Manage EPG sources, such as XMLTV and Xtream Code providers
+          </p>
+          {!isOnline && <WifiOff className="h-5 w-5 text-destructive" />}
         </div>
-
-        {/* Edit Sheet */}
-        <EditEpgSourceSheet
-          source={editingSource}
-          onUpdateSource={handleUpdateSource}
-          loading={loading.edit}
-          error={errors.edit}
-          open={editSheetOpen}
-          onOpenChange={setEditSheetOpen}
-        />
 
         {/* Connection Status Alert */}
         {!isOnline && (
@@ -1171,517 +1018,120 @@ export function EpgSources() {
         )}
 
         {/* Statistics Cards */}
-        <div className="grid gap-4 md:grid-cols-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Sources</CardTitle>
-              <Server className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{pagination?.total || 0}</div>
-              <p className="text-xs text-muted-foreground">{successfulSources} successful</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Programs</CardTitle>
-              <Archive className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{totalPrograms}</div>
-              <p className="text-xs text-muted-foreground">Available</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">XMLTV Sources</CardTitle>
-              <Server className="h-4 w-4 text-purple-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{xmltvSources}</div>
-              <p className="text-xs text-muted-foreground">XMLTV files</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Xtream Sources</CardTitle>
-              <Server className="h-4 w-4 text-green-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{xtreamSources}</div>
-              <p className="text-xs text-muted-foreground">Xtream Codes APIs</p>
-            </CardContent>
-          </Card>
+        <div className="grid gap-2 md:grid-cols-4">
+          <StatCard title="Total Sources" value={pagination?.total || 0} icon={<Server className="h-4 w-4" />} />
+          <StatCard title="Total Programs" value={totalPrograms} icon={<Archive className="h-4 w-4" />} />
+          <StatCard title="XMLTV Sources" value={xmltvSources} icon={<Server className="h-4 w-4 text-purple-600" />} />
+          <StatCard title="Xtream Sources" value={xtreamSources} icon={<Server className="h-4 w-4 text-green-600" />} />
         </div>
 
-        {/* Filters Section */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Search className="h-5 w-5" />
-              Search & Filters
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col sm:flex-row gap-4">
-              <div className="flex-1">
-                <div className="relative">
-                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search EPG sources, types, URLs, schedules..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-8"
-                    disabled={loading.sources}
-                    autoComplete="off"
+        {/* Error Loading Sources */}
+        {errors.sources && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Failed to Load EPG Sources</AlertTitle>
+            <AlertDescription>
+              {errors.sources}
+              <ConflictNotification
+                show={getConflictState('epg-sources-retry').show}
+                message={getConflictState('epg-sources-retry').message}
+                onDismiss={() => dismissConflict('epg-sources-retry')}
+              >
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="ml-2"
+                  onClick={async () => {
+                    try {
+                      await loadSources();
+                    } catch (error) {
+                      handleApiError(error, 'epg-sources-retry', 'Load EPG sources');
+                    }
+                  }}
+                  disabled={loading.sources}
+                >
+                  {loading.sources && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Retry
+                </Button>
+              </ConflictNotification>
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Master-Detail Layout */}
+        <Card className="flex-1 overflow-hidden">
+          <CardContent className="p-0 min-h-[500px] h-[calc(100vh-320px)]">
+            <MasterDetailLayout
+              items={masterItems}
+              selectedId={selectedSource?.id}
+              onSelect={(item) => {
+                setSelectedSource(item);
+                if (item) setIsCreating(false);
+              }}
+              isLoading={loading.sources}
+              title={`EPG Sources (${sortedSources.length})`}
+              searchPlaceholder="Search by name, type, status..."
+              headerAction={
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-8 w-8 p-0"
+                  onClick={() => {
+                    setIsCreating(true);
+                    setSelectedSource(null);
+                    setErrors((prev) => ({ ...prev, create: null }));
+                  }}
+                  disabled={isCreating}
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              }
+              emptyState={{
+                title: 'No EPG sources configured',
+                description: 'Get started by creating your first EPG source.',
+              }}
+              filterFn={(item, term) => {
+                const source = item.source;
+                const lower = term.toLowerCase();
+                // Search across name, url, source_type, status, program count
+                const searchableFields = [
+                  source.name,
+                  source.url || '',
+                  source.source_type,
+                  source.status,
+                  `${source.program_count} programs`,
+                  source.enabled ? 'enabled' : 'disabled',
+                ];
+                return searchableFields.some(field => field.toLowerCase().includes(lower));
+              }}
+            >
+              {(selected) =>
+                isCreating ? (
+                  <EpgSourceCreatePanel
+                    onCreate={handleCreateSource}
+                    onCancel={() => setIsCreating(false)}
+                    loading={loading.create}
+                    error={errors.create}
                   />
-                </div>
-              </div>
-              <Select
-                value={filterType}
-                onValueChange={(value) => setFilterType(value as EpgSourceType | 'all')}
-                disabled={loading.sources}
-              >
-                <SelectTrigger className="w-full sm:w-[180px]">
-                  <SelectValue placeholder="All Types" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Types</SelectItem>
-                  <SelectItem value="xmltv">XMLTV Only</SelectItem>
-                  <SelectItem value="xtream">Xtream Only</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select
-                value={filterStatus}
-                onValueChange={(value) => setFilterStatus(value as 'all' | 'pending' | 'ingesting' | 'success' | 'failed')}
-                disabled={loading.sources}
-              >
-                <SelectTrigger className="w-full sm:w-[180px]">
-                  <SelectValue placeholder="All Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Status</SelectItem>
-                  <SelectItem value="success">Success</SelectItem>
-                  <SelectItem value="pending">Pending</SelectItem>
-                  <SelectItem value="ingesting">Ingesting</SelectItem>
-                  <SelectItem value="failed">Failed</SelectItem>
-                </SelectContent>
-              </Select>
-
-              {/* Layout Chooser */}
-              <div className="flex rounded-md border">
-                <Button
-                  size="sm"
-                  variant={viewMode === 'table' ? 'default' : 'ghost'}
-                  className="rounded-r-none border-r"
-                  onClick={() => setViewMode('table')}
-                >
-                  <TableIcon className="w-4 h-4" />
-                </Button>
-                <Button
-                  size="sm"
-                  variant={viewMode === 'grid' ? 'default' : 'ghost'}
-                  className="rounded-none border-r"
-                  onClick={() => setViewMode('grid')}
-                >
-                  <Grid className="w-4 h-4" />
-                </Button>
-                <Button
-                  size="sm"
-                  variant={viewMode === 'list' ? 'default' : 'ghost'}
-                  className="rounded-l-none"
-                  onClick={() => setViewMode('list')}
-                >
-                  <List className="w-4 h-4" />
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Sources Table */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              <span>
-                EPG Sources ({filteredSources?.length || 0}
-                {searchTerm || filterType !== 'all' || filterStatus !== 'all'
-                  ? ` of ${allSources?.length || 0}`
-                  : ''}
-                )
-              </span>
-              {loading.sources && <Loader2 className="h-4 w-4 animate-spin" />}
-            </CardTitle>
-            <CardDescription>Configure and manage your EPG data sources</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {errors.sources ? (
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertTitle>Failed to Load EPG Sources</AlertTitle>
-                <AlertDescription>
-                  {errors.sources}
-                  <ConflictNotification
-                    show={getConflictState('epg-sources-retry').show}
-                    message={getConflictState('epg-sources-retry').message}
-                    onDismiss={() => dismissConflict('epg-sources-retry')}
-                  >
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="ml-2"
-                      onClick={async () => {
-                        try {
-                          await loadSources();
-                        } catch (error) {
-                          handleApiError(error, 'epg-sources-retry', 'Load EPG sources');
-                        }
-                      }}
-                      disabled={loading.sources}
-                    >
-                      {loading.sources && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      Retry
-                    </Button>
-                  </ConflictNotification>
-                </AlertDescription>
-              </Alert>
-            ) : (
-              <>
-                {viewMode === 'table' ? (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Type</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Programs</TableHead>
-                        <TableHead>Last Updated</TableHead>
-                        <TableHead>Next Update</TableHead>
-                        <TableHead>Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredSources?.map((source) => (
-                        <TableRow key={source.id}>
-                          <TableCell>
-                            <div>
-                              <div className="font-medium">{source.name}</div>
-                              <div className="text-sm text-muted-foreground truncate max-w-xs sm:max-w-sm md:max-w-md lg:max-w-lg">
-                                {source.url}
-                              </div>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge className={getSourceTypeColor(source.source_type)}>
-                              {source.source_type.toUpperCase()}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Badge className={getStatusColor(source.status)}>
-                              {getStatusLabel(source.status)}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-1">
-                              <Archive className="h-4 w-4 text-muted-foreground" />
-                              {source.program_count}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            {source.last_ingestion_at ? (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <div className="text-sm cursor-help">
-                                    {formatRelativeTime(source.last_ingestion_at)}
-                                  </div>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p className="text-sm">{formatDate(source.last_ingestion_at)}</p>
-                                </TooltipContent>
-                              </Tooltip>
-                            ) : (
-                              <span className="text-muted-foreground text-sm">Never</span>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {source.next_scheduled_update ? (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <div className="text-sm cursor-help flex items-center gap-1">
-                                    <Clock className="h-3 w-3 text-muted-foreground" />
-                                    {formatRelativeTime(source.next_scheduled_update)}
-                                  </div>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p className="text-sm">
-                                    {formatDate(source.next_scheduled_update)}
-                                  </p>
-                                </TooltipContent>
-                              </Tooltip>
-                            ) : (
-                              <span className="text-muted-foreground text-sm">-</span>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-2">
-                              <RefreshButton
-                                resourceId={source.id}
-                                onRefresh={() => handleRefreshSource(source.id)}
-                                disabled={!isOnline}
-                                size="sm"
-                                className="h-8 w-8 p-0"
-                              />
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => handleEditSource(source)}
-                                    className="h-8 w-8 p-0"
-                                    disabled={!isOnline}
-                                  >
-                                    <Edit className="h-4 w-4" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p className="text-sm">Edit</p>
-                                </TooltipContent>
-                              </Tooltip>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => handleDeleteSource(source.id)}
-                                    className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                    disabled={loading.delete === source.id || !isOnline}
-                                  >
-                                    {loading.delete === source.id ? (
-                                      <Loader2 className="h-4 w-4 animate-spin" />
-                                    ) : (
-                                      <Trash2 className="h-4 w-4" />
-                                    )}
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p className="text-sm">Delete</p>
-                                </TooltipContent>
-                              </Tooltip>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                ) : viewMode === 'grid' ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    {filteredSources?.map((source) => (
-                      <Card key={source.id}>
-                        <CardHeader className="pb-3">
-                          <div className="flex items-start justify-between">
-                            <div className="space-y-1">
-                              <CardTitle className="text-base">{source.name}</CardTitle>
-                              <Badge variant="outline">{source.source_type?.toUpperCase()}</Badge>
-                            </div>
-                            <Badge className={getStatusColor(source.status)}>
-                              {getStatusLabel(source.status)}
-                            </Badge>
-                          </div>
-                        </CardHeader>
-                        <CardContent className="pt-0">
-                          <div className="space-y-2 text-sm">
-                            <p className="text-muted-foreground truncate">{source.url}</p>
-                            <div className="flex justify-between">
-                              <span>Programs:</span>
-                              <span>{source.program_count || 0}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>Last Updated:</span>
-                              <span>
-                                {source.last_ingestion_at
-                                  ? new Date(source.last_ingestion_at).toLocaleDateString()
-                                  : 'Never'}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="flex justify-end gap-2 mt-3 pt-3 border-t">
-                            <RefreshButton
-                              resourceId={source.id}
-                              onRefresh={() => handleRefreshSource(source.id)}
-                              disabled={!isOnline}
-                              size="sm"
-                              className="h-8 w-8 p-0"
-                            />
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleEditSource(source)}
-                                  className="h-8 w-8 p-0"
-                                  disabled={!isOnline}
-                                >
-                                  <Edit className="h-4 w-4" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p className="text-sm">Edit</p>
-                              </TooltipContent>
-                            </Tooltip>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleDeleteSource(source.id)}
-                                  className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                  disabled={loading.delete === source.id || !isOnline}
-                                >
-                                  {loading.delete === source.id ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <Trash2 className="h-4 w-4" />
-                                  )}
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p className="text-sm">Delete</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
+                ) : selected ? (
+                  <EpgSourceDetailPanel
+                    source={selected.source}
+                    onUpdate={handleUpdateSource}
+                    onRefresh={handleRefreshSource}
+                    onDelete={handleDeleteSource}
+                    loading={{ edit: loading.edit, delete: loading.delete }}
+                    error={errors.edit}
+                    isOnline={isOnline}
+                  />
                 ) : (
-                  <div className="space-y-3">
-                    {filteredSources?.map((source) => (
-                      <Card key={source.id}>
-                        <CardContent className="p-4">
-                          <div className="flex items-center justify-between">
-                            <div className="flex-1 space-y-1">
-                              <div className="flex items-center gap-2">
-                                <h3 className="font-medium">{source.name}</h3>
-                                <Badge variant="outline">{source.source_type?.toUpperCase()}</Badge>
-                                <Badge className={getStatusColor(source.status)}>
-                                  {getStatusLabel(source.status)}
-                                </Badge>
-                              </div>
-                              <p className="text-sm text-muted-foreground truncate">{source.url}</p>
-                              <div className="flex gap-4 text-xs text-muted-foreground">
-                                <span>Programs: {source.program_count || 0}</span>
-                                <span>
-                                  Last Updated:{' '}
-                                  {source.last_ingestion_at
-                                    ? new Date(source.last_ingestion_at).toLocaleDateString()
-                                    : 'Never'}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2 ml-4">
-                              <RefreshButton
-                                resourceId={source.id}
-                                onRefresh={() => handleRefreshSource(source.id)}
-                                disabled={!isOnline}
-                                size="sm"
-                                className="h-8 w-8 p-0"
-                              />
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => handleEditSource(source)}
-                                    className="h-8 w-8 p-0"
-                                    disabled={!isOnline}
-                                  >
-                                    <Edit className="h-4 w-4" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p className="text-sm">Edit</p>
-                                </TooltipContent>
-                              </Tooltip>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => handleDeleteSource(source.id)}
-                                    className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                    disabled={loading.delete === source.id || !isOnline}
-                                  >
-                                    {loading.delete === source.id ? (
-                                      <Loader2 className="h-4 w-4 animate-spin" />
-                                    ) : (
-                                      <Trash2 className="h-4 w-4" />
-                                    )}
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p className="text-sm">Delete</p>
-                                </TooltipContent>
-                              </Tooltip>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                )}
-
-                {filteredSources?.length === 0 && !loading.sources && (
-                  <div className="text-center py-8">
-                    <Server className="mx-auto h-12 w-12 text-muted-foreground" />
-                    <h3 className="mt-4 text-lg font-semibold">
-                      {searchTerm || filterType !== 'all' || filterStatus !== 'all'
-                        ? 'No matching EPG sources'
-                        : 'No EPG sources found'}
-                    </h3>
-                    <p className="text-muted-foreground">
-                      {searchTerm || filterType !== 'all' || filterStatus !== 'all'
-                        ? 'Try adjusting your search or filter criteria.'
-                        : 'Get started by adding your first EPG source.'}
-                    </p>
-                  </div>
-                )}
-
-                {/* Pagination */}
-                {pagination && pagination.total_pages > 1 && (
-                  <div className="flex items-center justify-between pt-4">
-                    <div className="text-sm text-muted-foreground">
-                      Showing {(pagination.page - 1) * pagination.per_page + 1} to{' '}
-                      {Math.min(pagination.page * pagination.per_page, pagination.total)} of{' '}
-                      {pagination.total} sources
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-                        disabled={!pagination.has_previous || loading.sources}
-                      >
-                        Previous
-                      </Button>
-                      <span className="text-sm">
-                        Page {pagination.page} of {pagination.total_pages}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setCurrentPage((prev) => prev + 1)}
-                        disabled={!pagination.has_next || loading.sources}
-                      >
-                        Next
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
+                  <DetailEmpty
+                    title="Select an EPG source"
+                    description="Choose an EPG source from the list to view details and edit configuration"
+                    icon={<Server className="h-12 w-12 text-muted-foreground" />}
+                  />
+                )
+              }
+            </MasterDetailLayout>
           </CardContent>
         </Card>
       </div>

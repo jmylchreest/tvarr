@@ -46,6 +46,7 @@ import {
   formatMemorySize,
 } from '@/lib/format';
 import { RelayFlowDiagram } from '@/components/relay';
+import { SetupWizard } from '@/components/SetupWizard';
 
 // Mock data - in real app, this would come from API
 const mockDashboardMetrics: DashboardMetrics = {
@@ -129,6 +130,19 @@ export function Dashboard() {
   const [systemHealth, setSystemHealth] = useState<HealthData | null>(null);
   const [relayHealth, setRelayHealth] = useState<RelayHealthApiResponse | null>(null);
 
+  // Setup wizard state
+  const [setupStatus, setSetupStatus] = useState<{
+    hasStreamSources: boolean;
+    hasEpgSources: boolean;
+    hasProxies: boolean;
+    isLoaded: boolean;
+  }>({
+    hasStreamSources: true, // Default to true to avoid flash
+    hasEpgSources: true,
+    hasProxies: true,
+    isLoaded: false,
+  });
+
   // Update interval management - same as debug page
   const stepValues = [1, 5, 10, 15, 30, 45, 60, 90, 120]; // Update intervals in seconds
   const [refreshInterval, setRefreshInterval] = useState(stepValues[3]); // Default 15 seconds (index 3)
@@ -140,9 +154,23 @@ export function Dashboard() {
     setIsLoading(true);
 
     try {
-      // Fetch system health data
-      const sysHealth = await apiClient.healthCheck();
+      // Fetch system health and setup status in parallel
+      const [sysHealth, streamSources, epgSources, proxies] = await Promise.all([
+        apiClient.healthCheck(),
+        apiClient.getStreamSources().catch(() => ({ items: [] })),
+        apiClient.getEpgSources().catch(() => ({ items: [] })),
+        apiClient.getProxies().catch(() => ({ items: [] })),
+      ]);
+
       setSystemHealth(sysHealth);
+
+      // Update setup status
+      setSetupStatus({
+        hasStreamSources: (streamSources.items?.length ?? 0) > 0,
+        hasEpgSources: (epgSources.items?.length ?? 0) > 0,
+        hasProxies: (proxies.items?.length ?? 0) > 0,
+        isLoaded: true,
+      });
 
       // TODO: Add relay health endpoint when implemented
       // The /api/v1/relay/health endpoint doesn't exist yet
@@ -219,8 +247,22 @@ export function Dashboard() {
     }
   }, [refreshInterval, isAutoRefresh, startAutoRefresh, stopAutoRefresh]);
 
+  // Show setup wizard if any step is incomplete
+  const showSetupWizard =
+    setupStatus.isLoaded &&
+    (!setupStatus.hasStreamSources || !setupStatus.hasEpgSources || !setupStatus.hasProxies);
+
   return (
     <div className="space-y-6">
+      {/* Setup Wizard for first-time users */}
+      {showSetupWizard && (
+        <SetupWizard
+          hasStreamSources={setupStatus.hasStreamSources}
+          hasEpgSources={setupStatus.hasEpgSources}
+          hasProxies={setupStatus.hasProxies}
+        />
+      )}
+
       {/* Header with description and refresh controls */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>

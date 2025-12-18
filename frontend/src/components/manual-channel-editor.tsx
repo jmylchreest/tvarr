@@ -1,23 +1,17 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
+import React, { useCallback, useMemo } from 'react';
+import { InlineEditTable, ColumnDef } from '@/components/shared';
 
 /**
  * ManualChannelEditor
  *
- * A responsive, validation-aware editor for defining manual stream channels
- * for a stream source with source_type === 'manual'.
+ * A tabular editor for defining manual stream channels using InlineEditTable.
+ * Replaces the previous card-based editor with a more compact table view.
  *
- * Design goals:
- * - All rows are always active (per current product decision).
- * - Require at least one valid row before allowing parent form submission.
- * - Minimize horizontal sprawl: primary fields always visible, advanced fields behind an expand toggle.
- * - Immediate validation feedback (no debounce needed at current scale).
- * - Duplicate channel_number detection.
- *
- * Validation rules (active rows only — all rows are active in this iteration):
- * - name: non-empty (trimmed)
- * - stream_url: must start with http:// or https://
+ * Validation rules:
+ * - channel_name: non-empty (trimmed)
+ * - stream_url: must start with http://, https://, or rtsp://
  * - tvg_logo: empty OR starts with @logo: OR http(s)://
  * - channel_number: optional; if present must be unique among non-empty
  *
@@ -27,33 +21,17 @@ import React, { useCallback, useEffect, useMemo, useRef, useState, memo } from '
  *     onChange={setManualChannels}
  *     onValidityChange={setManualChannelsValid}
  *  />
- *
- * Parent should disable submit when !manualChannelsValid.
  */
-
-/* duplicate React import removed */
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { cn } from '@/lib/utils';
 
 export interface ManualChannelInput {
   channel_number?: number;
-  name: string;
+  channel_name: string;
   stream_url: string;
   group_title?: string;
   tvg_id?: string;
   tvg_name?: string;
   tvg_logo?: string;
   epg_id?: string;
-  // is_active intentionally omitted/ignored (all rows active by policy)
-}
-
-interface RowUI extends ManualChannelInput {
-  id: string; // stable identity for React key & focus retention
-  _expanded?: boolean;
-  _errors?: Partial<Record<'name' | 'stream_url' | 'tvg_logo' | 'channel_number', string>>;
-  _focusVersion?: number; // increment when forcing re-focus
 }
 
 export interface ManualChannelEditorProps {
@@ -61,9 +39,76 @@ export interface ManualChannelEditorProps {
   onChange: (rows: ManualChannelInput[]) => void;
   onValidityChange?: (valid: boolean) => void;
   disabled?: boolean;
-  minRequired?: number; // default 1
+  minRequired?: number;
   className?: string;
 }
+
+// Internal type with id for InlineEditTable
+interface ManualChannelRow extends ManualChannelInput {
+  _id: string;
+}
+
+// Validation functions
+const validateChannelName = (value: string | undefined): string | undefined => {
+  if (!value || !value.trim()) {
+    return 'Name is required';
+  }
+  return undefined;
+};
+
+const validateStreamUrl = (value: string | undefined): string | undefined => {
+  if (!value || !/^(https?|rtsp):\/\//.test(value)) {
+    return 'Must start with http://, https://, or rtsp://';
+  }
+  return undefined;
+};
+
+const validateTvgLogo = (value: string | undefined): string | undefined => {
+  if (!value || value.trim() === '') {
+    return undefined; // Empty is valid
+  }
+  if (value.startsWith('@logo:') || /^https?:\/\//.test(value)) {
+    return undefined;
+  }
+  return 'Invalid format: use @logo:token or URL';
+};
+
+// Resolve @logo:token or URL to a displayable image URL
+const resolveLogoUrl = (value: string): string | undefined => {
+  if (!value || value.trim() === '') {
+    return undefined;
+  }
+  // @logo:ULID format - resolve to /logos/{ULID}.png endpoint
+  if (value.startsWith('@logo:')) {
+    const ulid = value.substring(6); // Remove '@logo:' prefix
+    if (ulid) {
+      return `/logos/${ulid}.png`;
+    }
+    return undefined;
+  }
+  // HTTP(S) URL - use directly
+  if (/^https?:\/\//.test(value)) {
+    return value;
+  }
+  return undefined;
+};
+
+// Create validator for channel_number that checks for duplicates
+const createChannelNumberValidator = (allRows: ManualChannelRow[]) => {
+  return (value: number | undefined, row: ManualChannelRow): string | undefined => {
+    if (value === undefined || value === null) {
+      return undefined; // Optional field
+    }
+    // Count occurrences of this channel number
+    const count = allRows.filter(
+      (r) => r.channel_number === value && r._id !== row._id
+    ).length;
+    if (count > 0) {
+      return 'Duplicate channel number';
+    }
+    return undefined;
+  };
+};
 
 export const ManualChannelEditor: React.FC<ManualChannelEditorProps> = ({
   value,
@@ -73,420 +118,149 @@ export const ManualChannelEditor: React.FC<ManualChannelEditorProps> = ({
   minRequired = 1,
   className,
 }) => {
-  const [rows, setRows] = useState<RowUI[]>(
-    value.length
-      ? value.map((r) => ({
-          ...r,
-          id: crypto.randomUUID(),
-          _expanded: false,
-          _errors: {},
-        }))
-      : [
-          {
-            id: crypto.randomUUID(),
-            name: '',
-            stream_url: '',
-            _expanded: true,
-            _errors: {},
-          },
-        ]
-  );
+  // Convert input to internal format with stable IDs
+  const internalRows = useMemo((): ManualChannelRow[] => {
+    return value.map((row, index) => ({
+      ...row,
+      _id: `channel-${index}-${row.channel_name || 'new'}-${Date.now()}`,
+    }));
+  }, [value]);
 
-  // Keep internal rows synced if parent replaces the value wholesale
-  useEffect(() => {
-    // Basic shallow comparison to avoid resetting user expansion states unnecessarily
-    if (value.length === 0 && rows.length === 1 && !rows[0].name && !rows[0].stream_url) return;
-    if (value.length !== rows.length) {
-      setRows(
-        value.map((r, i) => ({
-          ...r,
-          id: (r as any).id ?? crypto.randomUUID(),
-          _expanded: rows[i]?._expanded ?? false,
-          _errors: rows[i]?._errors ?? {},
-        }))
-      );
-    }
-  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Column definitions with validation
+  const columns = useMemo((): ColumnDef<ManualChannelRow>[] => {
+    const channelNumberValidator = createChannelNumberValidator(internalRows);
 
-  // Detect duplicates for channel_number
-  const duplicateMap = useMemo(() => {
-    const counts = new Map<number, number>();
-    rows.forEach((r) => {
-      if (r.channel_number != null) {
-        counts.set(r.channel_number, (counts.get(r.channel_number) ?? 0) + 1);
-      }
-    });
-    return counts;
-  }, [rows]);
+    return [
+      {
+        id: 'channel_number',
+        header: '#',
+        accessorKey: 'channel_number',
+        width: '70px',
+        minWidth: '70px',
+        type: 'number',
+        placeholder: '#',
+        defaultVisible: true,
+        validate: channelNumberValidator,
+      },
+      {
+        id: 'channel_name',
+        header: 'Name',
+        accessorKey: 'channel_name',
+        minWidth: '150px',
+        required: true,
+        type: 'text',
+        placeholder: 'Channel name',
+        validate: validateChannelName,
+      },
+      {
+        id: 'stream_url',
+        header: 'Stream URL',
+        accessorKey: 'stream_url',
+        minWidth: '250px',
+        required: true,
+        type: 'url',
+        placeholder: 'http://example.com/live.m3u8',
+        validate: validateStreamUrl,
+      },
+      {
+        id: 'tvg_logo',
+        header: 'Logo',
+        accessorKey: 'tvg_logo',
+        minWidth: '220px',
+        type: 'image',
+        placeholder: '@logo:token or URL',
+        validate: validateTvgLogo,
+        resolveImageUrl: resolveLogoUrl,
+      },
+      {
+        id: 'group_title',
+        header: 'Group',
+        accessorKey: 'group_title',
+        minWidth: '120px',
+        type: 'text',
+        placeholder: 'Group',
+        defaultVisible: false,
+      },
+      {
+        id: 'tvg_id',
+        header: 'TVG ID',
+        accessorKey: 'tvg_id',
+        minWidth: '100px',
+        type: 'text',
+        placeholder: 'TVG ID',
+        defaultVisible: false,
+      },
+      {
+        id: 'tvg_name',
+        header: 'TVG Name',
+        accessorKey: 'tvg_name',
+        minWidth: '120px',
+        type: 'text',
+        placeholder: 'TVG Name',
+        defaultVisible: false,
+      },
+      {
+        id: 'epg_id',
+        header: 'EPG ID',
+        accessorKey: 'epg_id',
+        minWidth: '100px',
+        type: 'text',
+        placeholder: 'EPG ID',
+        defaultVisible: false,
+      },
+    ];
+  }, [internalRows]);
 
-  // Lightweight validators to avoid reconstructing every row object each keystroke.
-  // We validate only the changed row inline; global validity recalculated from current state.
-  const validateSingle = (row: RowUI, duplicateMapLocal: Map<number, number>): RowUI => {
-    const errors: RowUI['_errors'] = {};
-
-    if (!row.name.trim()) {
-      errors.name = 'Name required';
-    }
-    if (!/^https?:\/\//.test(row.stream_url)) {
-      errors.stream_url = 'Must start http(s)://';
-    }
-    if (
-      row.tvg_logo &&
-      !(
-        row.tvg_logo.startsWith('@logo:') ||
-        /^https?:\/\//.test(row.tvg_logo) ||
-        row.tvg_logo.trim() === ''
-      )
-    ) {
-      errors.tvg_logo = 'Invalid (@logo:token or URL)';
-    }
-    if (
-      row.channel_number != null &&
-      duplicateMapLocal.get(row.channel_number) !== undefined &&
-      duplicateMapLocal.get(row.channel_number)! > 1
-    ) {
-      errors.channel_number = 'Duplicate number';
-    }
-    // Mutate errors only; preserve object reference to keep cursor position stable.
-    row._errors = errors;
-    return row;
-  };
-
-  const recomputeAllValidity = useCallback(
-    (next: RowUI[]) => {
-      // Rebuild duplicate map once
-      const dup = new Map<number, number>();
-      next.forEach((r) => {
-        if (r.channel_number != null) {
-          dup.set(r.channel_number, (dup.get(r.channel_number) ?? 0) + 1);
-        }
-      });
-      // Validate each row in place (no new objects)
-      next.forEach((r) => validateSingle(r, dup));
-      const allValid = next.every((r) => !r._errors || Object.keys(r._errors!).length === 0);
-      const nonEmpty = next.length >= minRequired;
-      onValidityChange?.(allValid && nonEmpty);
-    },
-    [minRequired, onValidityChange]
-  );
-
-  // Initial validity computation
-  useEffect(() => {
-    recomputeAllValidity(rows);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Create empty row
+  const createEmpty = useCallback((): ManualChannelRow => {
+    return {
+      _id: `channel-new-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+      channel_name: '',
+      stream_url: '',
+    };
   }, []);
 
-  // Parent updates deferred until explicit Apply Click to prevent focus loss.
-  // We only recompute validity locally on each keystroke.
-  const emitImmediateToParent = (nextRows: RowUI[]) => {
-    onChange(nextRows.map(({ _expanded, _errors, id, ...rest }) => rest));
-  };
+  // Get row ID
+  const getRowId = useCallback((row: ManualChannelRow): string => {
+    return row._id;
+  }, []);
 
-  const updateRow = (index: number, patch: Partial<RowUI>) => {
-    setRows((prev) => {
-      const next = [...prev];
-      Object.assign(next[index], patch); // preserve ref for focus
-      // Revalidate only this row & global validity (no parent emit here)
-      const dup = new Map<number, number>();
-      next.forEach((r) => {
-        if (r.channel_number != null) {
-          dup.set(r.channel_number, (dup.get(r.channel_number) ?? 0) + 1);
-        }
-      });
-      validateSingle(next[index], dup);
-      recomputeAllValidity(next);
-      return next;
-    });
-  };
+  // Handle data changes - strip internal _id before passing to parent
+  const handleChange = useCallback(
+    (data: ManualChannelRow[]) => {
+      const cleaned: ManualChannelInput[] = data.map(({ _id, ...rest }) => rest);
+      onChange(cleaned);
+    },
+    [onChange]
+  );
 
-  const addRow = () => {
-    setRows((prev) => {
-      const next = [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          name: '',
-          stream_url: '',
-          _expanded: true,
-          _errors: {},
-        },
-      ];
-      recomputeAllValidity(next);
-      return next;
-    });
-  };
-
-  const removeRow = (index: number) => {
-    setRows((prev) => {
-      if (prev.length === 1) {
-        const single = [
-          {
-            id: crypto.randomUUID(),
-            name: '',
-            stream_url: '',
-            _expanded: true,
-            _errors: {},
-          },
-        ];
-        recomputeAllValidity(single);
-        return single;
-      }
-      const next = prev.filter((_, i) => i !== index);
-      recomputeAllValidity(next);
-      return next;
-    });
-  };
-
-  const toggleExpandAll = (expand: boolean) => {
-    setRows((prev) => {
-      prev.forEach((r) => {
-        r._expanded = expand;
-      });
-      // No need to recompute validity (expansion does not affect validation)
-      return [...prev];
-    });
-  };
-
-  // --- Row Render ---
-  // Extracted row component with memoization and explicit input refs for stable focus
-  const RowBase: React.FC<{
-    row: RowUI;
-    index: number;
-    disabled?: boolean;
-    onChange: (index: number, patch: Partial<RowUI>) => void;
-    onRemove: (index: number) => void;
-  }> = ({ row, index, disabled, onChange, onRemove }) => {
-    const hasErrors = row._errors && Object.keys(row._errors).length > 0;
-
-    // Individual refs for focus retention
-    const nameRef = useRef<HTMLInputElement | null>(null);
-    const urlRef = useRef<HTMLInputElement | null>(null);
-    const logoRef = useRef<HTMLInputElement | null>(null);
-
-    // When _focusVersion changes, try to restore focus to last active element
-    // Removed automatic refocus on each render to prevent focus loss loops
-
-    const handleFieldChange = (
-      patch: Partial<RowUI>,
-      fieldRef: React.RefObject<HTMLInputElement | HTMLInputElement | null>
-    ) => {
-      // Mark a focus version so we can attempt re-focus after parent state updates
-      onChange(index, { ...patch, _focusVersion: (row._focusVersion || 0) + 1 });
-      // Defer focus restoration very slightly
-      // Simple defer without forcing focus when element not mounted
-      if (fieldRef.current) {
-        requestAnimationFrame(() => {
-          if (fieldRef.current) {
-            fieldRef.current.focus();
-          }
-        });
-      }
-    };
-
-    return (
-      <div
-        className={cn(
-          'border rounded-md p-3 space-y-2 bg-background transition-colors',
-          hasErrors && 'border-destructive/70'
-        )}
-      >
-        <div className="flex flex-wrap items-center gap-2">
-          <Input
-            type="number"
-            placeholder="#"
-            className={cn('w-20', row._errors?.channel_number && 'border-destructive')}
-            value={row.channel_number ?? ''}
-            onChange={(e) =>
-              handleFieldChange(
-                {
-                  channel_number: e.target.value ? parseInt(e.target.value, 10) : undefined,
-                },
-                urlRef // keep current active; numeric rarely needs refocus
-              )
-            }
-            disabled={disabled}
-          />
-
-          <Input
-            ref={nameRef}
-            placeholder="Name"
-            className={cn('min-w-[10rem] flex-1', row._errors?.name && 'border-destructive')}
-            value={row.name}
-            onChange={(e) => handleFieldChange({ name: e.target.value }, nameRef)}
-            disabled={disabled}
-          />
-
-          <Input
-            ref={urlRef}
-            placeholder="Stream URL (e.g. http://example.com/live.m3u8)"
-            className={cn(
-              'min-w-[16rem] flex-[2]',
-              row._errors?.stream_url && 'border-destructive'
-            )}
-            value={row.stream_url}
-            onChange={(e) => handleFieldChange({ stream_url: e.target.value }, urlRef)}
-            disabled={disabled}
-          />
-
-          <Input
-            ref={logoRef}
-            placeholder="Logo (e.g. @logo:token or https://example.com/logo.png)"
-            className={cn('min-w-[14rem]', row._errors?.tvg_logo && 'border-destructive')}
-            value={row.tvg_logo || ''}
-            onChange={(e) => handleFieldChange({ tvg_logo: e.target.value || undefined }, logoRef)}
-            disabled={disabled}
-          />
-
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            onClick={() => onChange(index, { _expanded: !row._expanded })}
-            disabled={disabled}
-            className="text-xs"
-          >
-            {row._expanded ? 'Hide' : 'Advanced'}
-          </Button>
-
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            onClick={() => onRemove(index)}
-            disabled={disabled}
-            className="text-destructive"
-          >
-            Remove
-          </Button>
-
-          <Badge
-            variant={hasErrors ? 'destructive' : 'outline'}
-            className="ml-auto px-2 py-0.5 text-[10px] font-medium"
-          >
-            {hasErrors ? 'Invalid' : 'OK'}
-          </Badge>
-        </div>
-
-        {row._expanded && (
-          <div className="grid md:grid-cols-3 gap-2 pt-1">
-            <Input
-              placeholder="Group"
-              value={row.group_title || ''}
-              onChange={(e) =>
-                handleFieldChange({ group_title: e.target.value || undefined }, nameRef)
-              }
-              disabled={disabled}
-            />
-            <Input
-              placeholder="TVG ID"
-              value={row.tvg_id || ''}
-              onChange={(e) => handleFieldChange({ tvg_id: e.target.value || undefined }, nameRef)}
-              disabled={disabled}
-            />
-            <Input
-              placeholder="TVG Name"
-              value={row.tvg_name || ''}
-              onChange={(e) =>
-                handleFieldChange({ tvg_name: e.target.value || undefined }, nameRef)
-              }
-              disabled={disabled}
-            />
-            <Input
-              placeholder="EPG ID"
-              value={row.epg_id || ''}
-              onChange={(e) => handleFieldChange({ epg_id: e.target.value || undefined }, nameRef)}
-              disabled={disabled}
-              className="md:col-span-3"
-            />
-
-            {row._errors && Object.values(row._errors).length > 0 && (
-              <div className="text-xs text-destructive md:col-span-3 flex flex-wrap gap-2">
-                {Object.entries(row._errors).map(([k, v]) => (
-                  <span key={k}>{v}</span>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  };
-  const MemoRow = memo(RowBase);
+  // Handle validity changes
+  const handleValidityChange = useCallback(
+    (isValid: boolean) => {
+      onValidityChange?.(isValid);
+    },
+    [onValidityChange]
+  );
 
   return (
-    <div className={cn('space-y-4', className)}>
-      {/* Header / Controls */}
-      <div className="flex flex-wrap items-center gap-3">
-        <h4 className="font-medium">Manual Channels</h4>
-        {(() => {
-          const totalRows = rows.length;
-          const validRowsCount = rows.filter(
-            (r) => !r._errors || Object.keys(r._errors!).length === 0
-          ).length;
-          const allRowsValid = validRowsCount === totalRows && totalRows >= minRequired;
-          return (
-            <Badge
-              variant={allRowsValid ? 'default' : 'destructive'}
-              className="text-xs"
-              title={
-                allRowsValid ? 'All rows valid' : 'All rows must be valid & need at least one row'
-              }
-            >
-              {validRowsCount} / {totalRows} valid (need ≥ {minRequired})
-            </Badge>
-          );
-        })()}
-        <Button
-          type="button"
-          size="sm"
-          variant="default"
-          disabled={
-            rows.length === 0 || rows.some((r) => r._errors && Object.keys(r._errors!).length > 0)
-          }
-          onClick={() => emitImmediateToParent(rows)}
-        >
-          Apply Changes
-        </Button>
-
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={() => toggleExpandAll(true)}
-          disabled={disabled}
-        >
-          Expand All
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={() => toggleExpandAll(false)}
-          disabled={disabled}
-        >
-          Collapse All
-        </Button>
-        <Button type="button" size="sm" onClick={addRow} disabled={disabled}>
-          Add Channel
-        </Button>
-      </div>
-
-      {/* Rows */}
-      <div className="space-y-3">
-        {rows.map((row, i) => (
-          <MemoRow
-            key={row.id}
-            row={row}
-            index={i}
-            disabled={disabled}
-            onChange={updateRow}
-            onRemove={removeRow}
-          />
-        ))}
-      </div>
-
-      {/* Future enhancement hooks (import/export/paste) could be placed here */}
-    </div>
+    <InlineEditTable
+      columns={columns}
+      data={internalRows}
+      onChange={handleChange}
+      createEmpty={createEmpty}
+      getRowId={getRowId}
+      onValidityChange={handleValidityChange}
+      isLoading={false}
+      canAdd={!disabled}
+      canRemove={!disabled}
+      canReorder={false}
+      minRows={minRequired}
+      className={className}
+      emptyState={{
+        title: 'No channels defined',
+        description: 'Add channels to this manual source',
+      }}
+    />
   );
 };
 

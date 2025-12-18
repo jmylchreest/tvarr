@@ -15,44 +15,24 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from '@/components/ui/sheet';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Plus,
   Database,
-  Edit,
   Trash2,
   RefreshCw,
   Clock,
   Monitor,
   Activity,
-  Search,
-  Filter,
   AlertCircle,
-  CheckCircle,
   Loader2,
   WifiOff,
-  Grid,
-  List,
-  Table as TableIcon,
+  Save,
+  CheckCircle,
 } from 'lucide-react';
 import { RefreshButton } from '@/components/RefreshButton';
 import { OperationStatusIndicator } from '@/components/OperationStatusIndicator';
+import { AnimatedBadgeGroup } from '@/components/shared/AnimatedBadgeGroup';
 import { useConflictHandler } from '@/hooks/useConflictHandler';
 import { ConflictNotification } from '@/components/ConflictNotification';
 import { useProgressContext } from '@/providers/ProgressProvider';
@@ -64,15 +44,21 @@ import {
   PaginatedResponse,
 } from '@/types/api';
 import { apiClient, ApiError } from '@/lib/api-client';
-import { DEFAULT_PAGE_SIZE, API_CONFIG } from '@/lib/config';
+import { API_CONFIG } from '@/lib/config';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
 import {
   validateCronExpression,
-  describeCronExpression,
   COMMON_CRON_TEMPLATES,
 } from '@/lib/cron-validation';
 import { ManualChannelEditor, ManualChannelInput } from '@/components/manual-channel-editor';
 import { ManualM3UImportExport } from '@/components/manual-m3u-import-export';
+import {
+  MasterDetailLayout,
+  DetailPanel,
+  DetailEmpty,
+  MasterItem,
+} from '@/components/shared';
+import { StatCard } from '@/components/shared/feedback/StatCard';
 
 interface LoadingState {
   sources: boolean;
@@ -129,16 +115,58 @@ function getStatusLabel(status: string): string {
   }
 }
 
-function CreateSourceSheet({
-  onCreateSource,
+// Convert StreamSourceResponse to MasterItem format for MasterDetailLayout
+interface SourceMasterItem extends MasterItem {
+  source: StreamSourceResponse;
+}
+
+function sourceToMasterItem(source: StreamSourceResponse): SourceMasterItem {
+  // Map status to badge priority
+  const getStatusPriority = (status: string) => {
+    switch (status) {
+      case 'failed':
+        return 'error' as const;
+      case 'pending':
+      case 'ingesting':
+        return 'outline' as const;
+      default:
+        return 'secondary' as const;
+    }
+  };
+
+  return {
+    id: source.id,
+    title: source.name,
+    badge: (
+      <div className="flex items-center gap-1">
+        <AnimatedBadgeGroup
+          resourceId={source.id}
+          badges={[
+            { label: source.source_type, priority: 'info' },
+            { label: getStatusLabel(source.status), priority: getStatusPriority(source.status) },
+          ]}
+        />
+        <OperationStatusIndicator resourceId={source.id} />
+      </div>
+    ),
+    source,
+  };
+}
+
+/**
+ * SourceCreatePanel - Inline panel for creating a new stream source
+ */
+function SourceCreatePanel({
+  onCreate,
+  onCancel,
   loading,
   error,
 }: {
-  onCreateSource: (source: CreateStreamSourceRequest) => Promise<void>;
+  onCreate: (source: CreateStreamSourceRequest) => Promise<void>;
+  onCancel: () => void;
   loading: boolean;
   error: string | null;
 }) {
-  const [open, setOpen] = useState(false);
   const [formData, setFormData] = useState<CreateStreamSourceRequest>({
     name: '',
     source_type: 'xtream',
@@ -148,7 +176,6 @@ function CreateSourceSheet({
     username: '',
     password: '',
   });
-  // Manual channels state (only used when source_type === 'manual')
   const [manualChannels, setManualChannels] = useState<ManualChannelInput[]>([]);
   const [manualValid, setManualValid] = useState(false);
   const [cronValidation, setCronValidation] = useState(validateCronExpression('0 0 */6 * * *'));
@@ -159,286 +186,265 @@ function CreateSourceSheet({
       ...formData,
       ...(formData.source_type === 'manual' ? { manual_channels: manualChannels } : {}),
     };
-    await onCreateSource(payload);
-    if (!error) {
-      setOpen(false);
-      setFormData({
-        name: '',
-        source_type: 'xtream',
-        url: '',
-        max_concurrent_streams: 0,
-        update_cron: '0 0 */6 * * *',
-        username: '',
-        password: '',
-      });
-      setManualChannels([]);
-      setManualValid(false);
-      setCronValidation(validateCronExpression('0 0 */6 * * *'));
-    }
+    await onCreate(payload);
   };
 
+  const isSubmitDisabled =
+    loading ||
+    !formData.name.trim() ||
+    (formData.source_type !== 'manual' && !formData.url?.trim()) ||
+    (formData.source_type === 'manual' && (!manualValid || manualChannels.length === 0)) ||
+    !cronValidation.isValid;
+
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
-      <SheetTrigger asChild>
-        <Button className="gap-2">
-          <Plus className="h-4 w-4" />
-          Add Source
-        </Button>
-      </SheetTrigger>
-      <SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto">
-        <SheetHeader>
-          <SheetTitle>Add Stream Source</SheetTitle>
-          <SheetDescription>
-            Create a new stream source from M3U playlist or Xtream Codes API
-          </SheetDescription>
-        </SheetHeader>
-
-        {error && (
-          <Alert variant="destructive">
-            <AlertCircle className="h-4 w-4" />
-            <AlertTitle>Error</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
-
-        <form
-          id="create-source-form"
-          onSubmit={handleSubmit}
-          className="space-y-4 px-4"
-          autoComplete="off"
-        >
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="name">Name</Label>
-              <Input
-                id="name"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="Premium Sports Channel"
-                required
-                disabled={loading}
-                autoComplete="off"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="source_type">Source Type</Label>
-              <Select
-                value={formData.source_type}
-                onValueChange={(value) =>
-                  setFormData({ ...formData, source_type: value as StreamSourceType })
-                }
-                disabled={loading}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select source type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="m3u">M3U Playlist</SelectItem>
-                  <SelectItem value="xtream">Xtream Codes</SelectItem>
-                  <SelectItem value="manual">Manual (Static)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          {(formData.source_type as string) !== 'manual' && (
-            <div className="space-y-2">
-              <Label htmlFor="url">URL</Label>
-              <Input
-                id="url"
-                value={formData.url}
-                onChange={(e) => setFormData({ ...formData, url: e.target.value })}
-                placeholder={
-                  formData.source_type === 'm3u'
-                    ? 'https://example.com/playlist.m3u'
-                    : 'http://xtream.example.com:8080'
-                }
-                required={formData.source_type !== 'manual'}
-                disabled={loading}
-                autoComplete="off"
-              />
-            </div>
-          )}
-          {formData.source_type === 'manual' && (
-            <div className="rounded-md border p-3 text-sm bg-muted/40">
-              Manual source: define static channels below. Refresh re-applies this set.
-            </div>
-          )}
-
-          {(formData.source_type as string) !== 'manual' && (
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="username">Username</Label>
-                <Input
-                  id="username"
-                  value={formData.username || ''}
-                  onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                  placeholder="Optional"
-                  disabled={loading}
-                  autoComplete="off"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  value={formData.password || ''}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  placeholder="Optional"
-                  disabled={loading}
-                  autoComplete="off"
-                />
-              </div>
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="max_concurrent_streams">Max Concurrent Streams</Label>
-              <Input
-                id="max_concurrent_streams"
-                type="number"
-                min="0"
-                value={formData.max_concurrent_streams}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    max_concurrent_streams: parseInt(e.target.value) || 0,
-                  })
-                }
-                autoComplete="off"
-                required
-                disabled={loading}
-              />
-              <p className="text-xs text-muted-foreground">0 = unlimited</p>
-            </div>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="update_cron">Update Schedule (Cron)</Label>
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button variant="ghost" size="sm" className="h-6 px-2 text-xs">
-                        ?
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-sm">
-                      <div className="space-y-2">
-                        <p className="font-medium">6-field cron format:</p>
-                        <p className="text-xs">sec min hour day-of-month month day-of-week</p>
-                        <div className="space-y-1 text-xs">
-                          <p>
-                            <code>"0 0 */6 * * *"</code> - Every 6 hours
-                          </p>
-                          <p>
-                            <code>"0 0 2 * * *"</code> - Daily at 2:00 AM
-                          </p>
-                          <p>
-                            <code>"0 */30 * * * *"</code> - Every 30 minutes
-                          </p>
-                        </div>
-                      </div>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
-              <Input
-                id="update_cron"
-                value={formData.update_cron}
-                onChange={(e) => {
-                  const newValue = e.target.value;
-                  setFormData({ ...formData, update_cron: newValue });
-                  setCronValidation(validateCronExpression(newValue));
-                }}
-                placeholder="0 0 */6 * * *"
-                required
-                disabled={loading}
-                autoComplete="off"
-                className={
-                  cronValidation.isValid ? '' : 'border-destructive focus:border-destructive'
-                }
-              />
-              {!cronValidation.isValid && cronValidation.error && (
-                <div className="text-sm text-destructive space-y-1">
-                  <p>{cronValidation.error}</p>
-                  {cronValidation.suggestion && (
-                    <p className="text-xs text-muted-foreground">💡 {cronValidation.suggestion}</p>
-                  )}
-                </div>
-              )}
-              <div className="flex flex-wrap gap-1 text-xs">
-                {COMMON_CRON_TEMPLATES.slice(0, 3).map((template) => (
-                  <Button
-                    key={template.expression}
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 px-2 text-xs"
-                    onClick={() => {
-                      setFormData({ ...formData, update_cron: template.expression });
-                      setCronValidation(validateCronExpression(template.expression));
-                    }}
-                    disabled={loading}
-                    type="button"
-                  >
-                    {template.description}
-                  </Button>
-                ))}
-              </div>
-            </div>
-          </div>
-          {formData.source_type === 'manual' && (
-            <div className="pt-2 space-y-2">
-              <p className="text-xs text-muted-foreground">
-                Enter channel details below. Use full Stream URL (e.g.
-                http://example.com/stream.m3u8) and Logo URL (e.g. @logo:token or
-                https://logo.example/logo.png).
-              </p>
-              <ManualChannelEditor
-                value={manualChannels}
-                onChange={setManualChannels}
-                onValidityChange={setManualValid}
-                disabled={loading}
-              />
-            </div>
-          )}
-        </form>
-
-        <SheetFooter className="gap-2">
-          <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={loading}>
+    <DetailPanel
+      title="Create Stream Source"
+      actions={
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={onCancel} disabled={loading}>
             Cancel
           </Button>
           <Button
-            form="create-source-form"
-            type="submit"
-            disabled={
-              loading ||
-              (formData.source_type === 'manual' && (!manualValid || manualChannels.length === 0))
-            }
+            size="sm"
+            onClick={handleSubmit}
+            disabled={isSubmitDisabled}
           >
             {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Create Source
+            <Save className="h-4 w-4 mr-1" />
+            Create
           </Button>
-        </SheetFooter>
-      </SheetContent>
-    </Sheet>
+        </div>
+      }
+    >
+      {error && (
+        <Alert variant="destructive" className="mb-4">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-6" autoComplete="off">
+        {/* Basic Info */}
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="create-name">Name</Label>
+            <Input
+              id="create-name"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              placeholder="Premium Sports Channel"
+              required
+              disabled={loading}
+              autoComplete="off"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="create-source-type">Source Type</Label>
+            <Select
+              value={formData.source_type}
+              onValueChange={(value) =>
+                setFormData({ ...formData, source_type: value as StreamSourceType })
+              }
+              disabled={loading}
+            >
+              <SelectTrigger id="create-source-type">
+                <SelectValue placeholder="Select source type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="m3u">M3U Playlist</SelectItem>
+                <SelectItem value="xtream">Xtream Codes</SelectItem>
+                <SelectItem value="manual">Manual (Static)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        {/* URL (not for manual) */}
+        {formData.source_type !== 'manual' && (
+          <div className="space-y-2">
+            <Label htmlFor="create-url">URL</Label>
+            <Input
+              id="create-url"
+              value={formData.url}
+              onChange={(e) => setFormData({ ...formData, url: e.target.value })}
+              placeholder={
+                formData.source_type === 'm3u'
+                  ? 'https://example.com/playlist.m3u'
+                  : 'http://xtream.example.com:8080'
+              }
+              required
+              disabled={loading}
+              autoComplete="off"
+            />
+          </div>
+        )}
+
+        {/* Manual source info */}
+        {formData.source_type === 'manual' && (
+          <div className="rounded-md border p-3 text-sm bg-muted/40">
+            Manual source: define static channels below. Refresh re-applies this set.
+          </div>
+        )}
+
+        {/* Credentials (not for manual) */}
+        {formData.source_type !== 'manual' && (
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="create-username">Username</Label>
+              <Input
+                id="create-username"
+                value={formData.username || ''}
+                onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                placeholder="Optional"
+                disabled={loading}
+                autoComplete="off"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="create-password">Password</Label>
+              <Input
+                id="create-password"
+                type="password"
+                value={formData.password || ''}
+                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                placeholder="Optional"
+                disabled={loading}
+                autoComplete="off"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Settings */}
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="create-max-streams">Max Concurrent Streams</Label>
+            <Input
+              id="create-max-streams"
+              type="number"
+              min="0"
+              value={formData.max_concurrent_streams}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  max_concurrent_streams: parseInt(e.target.value) || 0,
+                })
+              }
+              autoComplete="off"
+              required
+              disabled={loading}
+            />
+            <p className="text-xs text-muted-foreground">0 = unlimited</p>
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="create-cron">Update Schedule (Cron)</Label>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" type="button">
+                      ?
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-sm">
+                    <div className="space-y-2">
+                      <p className="font-medium">6-field cron format:</p>
+                      <p className="text-xs">sec min hour day-of-month month day-of-week</p>
+                      <div className="space-y-1 text-xs">
+                        <p><code>"0 0 */6 * * *"</code> - Every 6 hours</p>
+                        <p><code>"0 0 2 * * *"</code> - Daily at 2:00 AM</p>
+                        <p><code>"0 */30 * * * *"</code> - Every 30 minutes</p>
+                      </div>
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+            <Input
+              id="create-cron"
+              value={formData.update_cron}
+              onChange={(e) => {
+                const newValue = e.target.value;
+                setFormData({ ...formData, update_cron: newValue });
+                setCronValidation(validateCronExpression(newValue));
+              }}
+              placeholder="0 0 */6 * * *"
+              required
+              disabled={loading}
+              autoComplete="off"
+              className={cronValidation.isValid ? '' : 'border-destructive focus-visible:ring-destructive'}
+            />
+            {!cronValidation.isValid && cronValidation.error && (
+              <div className="text-sm text-destructive space-y-1">
+                <p>{cronValidation.error}</p>
+                {cronValidation.suggestion && (
+                  <p className="text-xs text-muted-foreground">{cronValidation.suggestion}</p>
+                )}
+              </div>
+            )}
+            <div className="flex flex-wrap gap-1 text-xs">
+              {COMMON_CRON_TEMPLATES.slice(0, 3).map((template) => (
+                <Button
+                  key={template.expression}
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-xs"
+                  onClick={() => {
+                    setFormData({ ...formData, update_cron: template.expression });
+                    setCronValidation(validateCronExpression(template.expression));
+                  }}
+                  disabled={loading}
+                  type="button"
+                >
+                  {template.description}
+                </Button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Manual Channels */}
+        {formData.source_type === 'manual' && (
+          <div className="pt-2 space-y-2">
+            <p className="text-xs text-muted-foreground">
+              Enter channel details below. Use full Stream URL (e.g.
+              http://example.com/stream.m3u8) and Logo URL (e.g. @logo:token or
+              https://logo.example/logo.png).
+            </p>
+            <ManualChannelEditor
+              value={manualChannels}
+              onChange={setManualChannels}
+              onValidityChange={setManualValid}
+              disabled={loading}
+            />
+          </div>
+        )}
+      </form>
+    </DetailPanel>
   );
 }
 
-function EditSourceSheet({
+/**
+ * SourceDetailPanel - Detail panel for viewing/editing a stream source
+ * Used in MasterDetailLayout to replace sheet-based editing
+ */
+function SourceDetailPanel({
   source,
   onUpdateSource,
+  onDeleteSource,
+  onRefreshSource,
   loading,
   error,
-  open,
-  onOpenChange,
+  isOnline,
 }: {
-  source: StreamSourceResponse | null;
+  source: StreamSourceResponse;
   onUpdateSource: (id: string, source: UpdateStreamSourceRequest) => Promise<void>;
-  loading: boolean;
+  onDeleteSource: (id: string) => Promise<void>;
+  onRefreshSource: (id: string) => Promise<void>;
+  loading: { edit: boolean; delete: string | null };
   error: string | null;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  isOnline: boolean;
 }) {
   const [formData, setFormData] = useState<UpdateStreamSourceRequest>({
     name: '',
@@ -452,43 +458,47 @@ function EditSourceSheet({
   const [manualChannels, setManualChannels] = useState<ManualChannelInput[]>([]);
   const [manualValid, setManualValid] = useState(false);
   const [cronValidation, setCronValidation] = useState(validateCronExpression('0 0 */6 * * *'));
+  const [isDirty, setIsDirty] = useState(false);
 
   // Update form data when source changes
   useEffect(() => {
-    if (source) {
-      const defaultCron = '0 0 */6 * * *'; // Every 6 hours
-      const newFormData = {
-        name: source.name,
-        source_type: source.source_type,
-        url: source.url,
-        max_concurrent_streams: source.max_concurrent_streams,
-        update_cron: source.update_cron || defaultCron,
-        username: source.username || '',
-        password: source.password || '',
-      };
-      setFormData(newFormData);
-      setCronValidation(validateCronExpression(newFormData.update_cron));
-    }
+    const defaultCron = '0 0 */6 * * *';
+    const newFormData = {
+      name: source.name,
+      source_type: source.source_type,
+      url: source.url,
+      max_concurrent_streams: source.max_concurrent_streams,
+      update_cron: source.update_cron || defaultCron,
+      username: source.username || '',
+      password: '',
+    };
+    setFormData(newFormData);
+    setCronValidation(validateCronExpression(newFormData.update_cron));
+    setIsDirty(false);
   }, [source]);
 
   // Load existing manual channels when editing a manual source
   useEffect(() => {
-    if (source && source.source_type === 'manual') {
+    if (source.source_type === 'manual') {
       (async () => {
         try {
-          const chs = await apiClient.listManualChannels(source.id, true);
-          setManualChannels(chs);
-          setManualValid(chs.length > 0);
+          const response = await apiClient.listManualChannels(source.id);
+          setManualChannels(response.items);
+          setManualValid(response.items.length > 0);
         } catch {
-          // Silent fail; could add toast / alert if desired
+          // Silent fail
         }
       })();
     }
-  }, [source]);
+  }, [source.id, source.source_type]);
+
+  const updateFormData = (updates: Partial<UpdateStreamSourceRequest>) => {
+    setFormData((prev) => ({ ...prev, ...updates }));
+    setIsDirty(true);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!source) return;
     const payload: UpdateStreamSourceRequest = {
       ...formData,
       ...(formData.source_type === 'manual' && manualValid
@@ -502,293 +512,323 @@ function EditSourceSheet({
       delete updateData.password;
     }
 
-    // For manual sources include manual channel payload (already added in payload above)
     await onUpdateSource(
       source.id,
       updateData.source_type === 'manual' ? { ...payload } : updateData
     );
-    if (!error) {
-      onOpenChange(false);
-    }
+    setIsDirty(false);
   };
 
-  if (!source) return null;
+  const handleDelete = async () => {
+    if (!confirm('Are you sure you want to delete this source? This action cannot be undone.')) {
+      return;
+    }
+    await onDeleteSource(source.id);
+  };
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto">
-        <SheetHeader>
-          <SheetTitle>Edit Stream Source</SheetTitle>
-          <SheetDescription>Update the stream source configuration</SheetDescription>
-        </SheetHeader>
-
-        {error && (
-          <Alert variant="destructive">
-            <AlertCircle className="h-4 w-4" />
-            <AlertTitle>Error</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
-
-        <form
-          id="edit-source-form"
-          onSubmit={handleSubmit}
-          className="space-y-4 px-4"
-          autoComplete="off"
-        >
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-name">Name</Label>
-              <Input
-                id="edit-name"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="Premium Sports Channel"
-                required
-                disabled={loading}
-                autoComplete="off"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-source_type">Source Type</Label>
-              <div className="flex h-9 items-center px-3 py-2 text-sm border border-input bg-muted rounded-md">
-                <Badge variant="outline" className="capitalize">
-                  {formData.source_type === 'm3u'
-                    ? 'M3U Playlist'
-                    : formData.source_type === 'xtream'
-                      ? 'Xtream Codes'
-                      : 'Manual (Static)'}
-                </Badge>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Source type cannot be changed after creation
-              </p>
-            </div>
-          </div>
-
-          {(formData.source_type as string) !== 'manual' && (
-            <div className="space-y-2">
-              <Label htmlFor="edit-url">URL</Label>
-              <Input
-                id="edit-url"
-                value={formData.url}
-                onChange={(e) => setFormData({ ...formData, url: e.target.value })}
-                placeholder={
-                  formData.source_type === 'm3u'
-                    ? 'https://example.com/playlist.m3u'
-                    : 'http://xtream.example.com:8080'
-                }
-                required={formData.source_type !== 'manual'}
-                disabled={loading}
-                autoComplete="off"
-              />
-            </div>
-          )}
-          {formData.source_type === 'manual' && (
-            <div className="rounded-md border p-3 text-sm bg-muted/40">
-              Manual source: define static channels below. Existing channel list will be replaced on
-              update.
-            </div>
-          )}
-
-          {(formData.source_type as string) !== 'manual' && (
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="edit-username">Username</Label>
-                <Input
-                  id="edit-username"
-                  value={formData.username || ''}
-                  onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                  placeholder="Optional"
-                  disabled={loading}
-                  autoComplete="off"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit-password">Password</Label>
-                <Input
-                  id="edit-password"
-                  type="password"
-                  value={formData.password || ''}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  placeholder="Optional"
-                  disabled={loading}
-                  autoComplete="off"
-                />
-              </div>
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-max_concurrent_streams">Max Concurrent Streams</Label>
-              <Input
-                id="edit-max_concurrent_streams"
-                type="number"
-                min="0"
-                value={formData.max_concurrent_streams}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    max_concurrent_streams: parseInt(e.target.value) || 0,
-                  })
-                }
-                required
-                disabled={loading}
-                autoComplete="off"
-              />
-              <p className="text-xs text-muted-foreground">0 = unlimited</p>
-            </div>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="edit-update_cron">Update Schedule (Cron)</Label>
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button variant="ghost" size="sm" className="h-6 px-2 text-xs">
-                        ?
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-sm">
-                      <div className="space-y-2">
-                        <p className="font-medium">6-field cron format:</p>
-                        <p className="text-xs">sec min hour day-of-month month day-of-week</p>
-                        <div className="space-y-1 text-xs">
-                          <p>
-                            <code>"0 0 */6 * * *"</code> - Every 6 hours
-                          </p>
-                          <p>
-                            <code>"0 0 2 * * *"</code> - Daily at 2:00 AM
-                          </p>
-                          <p>
-                            <code>"0 */30 * * * *"</code> - Every 30 minutes
-                          </p>
-                        </div>
-                      </div>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
-              <Input
-                id="edit-update_cron"
-                value={formData.update_cron}
-                onChange={(e) => {
-                  const newValue = e.target.value;
-                  setFormData({ ...formData, update_cron: newValue });
-                  setCronValidation(validateCronExpression(newValue));
-                }}
-                placeholder="0 0 */6 * * *"
-                required
-                disabled={loading}
-                autoComplete="off"
-                className={
-                  cronValidation.isValid ? '' : 'border-destructive focus:border-destructive'
-                }
-              />
-              {!cronValidation.isValid && cronValidation.error && (
-                <div className="text-sm text-destructive space-y-1">
-                  <p>{cronValidation.error}</p>
-                  {cronValidation.suggestion && (
-                    <p className="text-xs text-muted-foreground">💡 {cronValidation.suggestion}</p>
-                  )}
-                </div>
-              )}
-              <div className="flex flex-wrap gap-1 text-xs">
-                {COMMON_CRON_TEMPLATES.slice(0, 3).map((template) => (
-                  <Button
-                    key={template.expression}
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 px-2 text-xs"
-                    onClick={() => {
-                      setFormData({ ...formData, update_cron: template.expression });
-                      setCronValidation(validateCronExpression(template.expression));
-                    }}
-                    disabled={loading}
-                    type="button"
-                  >
-                    {template.description}
-                  </Button>
-                ))}
-              </div>
-            </div>
-          </div>
-          {formData.source_type === 'manual' && (
-            <div className="pt-2 space-y-4">
-              <div className="flex flex-wrap gap-2 items-center">
-                <ManualM3UImportExport
-                  sourceId={source.id}
-                  existingChannels={manualChannels}
-                  disabled={loading}
-                  onPreviewParsed={(chs) => {
-                    setManualChannels(chs);
-                    setManualValid(chs.length > 0);
-                  }}
-                  onApplied={async () => {
-                    try {
-                      const chs = await apiClient.listManualChannels(source.id, true);
-                      setManualChannels(chs);
-                      setManualValid(chs.length > 0);
-                    } catch {
-                      /* ignore */
-                    }
-                  }}
-                />
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={loading}
-                  onClick={async () => {
-                    try {
-                      const chs = await apiClient.listManualChannels(source.id, true);
-                      setManualChannels(chs);
-                      setManualValid(chs.length > 0);
-                    } catch {
-                      /* ignore */
-                    }
-                  }}
-                >
-                  Reload Channels
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Provide Stream URL (e.g. http://example.com/live.m3u8) and Logo (e.g. @logo:token or
-                https://logo.example/img.png).
-              </p>
-              <ManualChannelEditor
-                value={manualChannels}
-                onChange={setManualChannels}
-                onValidityChange={setManualValid}
-                disabled={loading}
-              />
-            </div>
-          )}
-        </form>
-
-        <SheetFooter className="gap-2">
+    <DetailPanel
+      title={source.name}
+      actions={
+        <div className="flex items-center gap-2">
+          <RefreshButton
+            resourceId={source.id}
+            onRefresh={() => onRefreshSource(source.id)}
+            disabled={!isOnline}
+            size="sm"
+          />
           <Button
-            type="button"
             variant="outline"
-            onClick={() => onOpenChange(false)}
-            disabled={loading}
+            size="sm"
+            onClick={handleDelete}
+            disabled={loading.delete === source.id || !isOnline}
+            className="text-destructive hover:text-destructive"
           >
-            Cancel
+            {loading.delete === source.id ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Trash2 className="h-4 w-4" />
+            )}
           </Button>
           <Button
-            form="edit-source-form"
-            type="submit"
+            size="sm"
+            onClick={handleSubmit}
             disabled={
-              loading ||
+              loading.edit ||
+              !isDirty ||
+              !isOnline ||
               (formData.source_type === 'manual' && (!manualValid || manualChannels.length === 0))
             }
           >
-            {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Update Source
+            {loading.edit && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            <Save className="h-4 w-4 mr-1" />
+            Save
           </Button>
-        </SheetFooter>
-      </SheetContent>
-    </Sheet>
+        </div>
+      }
+    >
+      {error && (
+        <Alert variant="destructive" className="mb-4">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {/* Source Info Banner */}
+      <div className="flex items-center gap-4 mb-6 p-4 bg-muted/50 rounded-lg">
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary">
+            {source.source_type.toUpperCase()}
+          </Badge>
+          <Badge variant={source.status === 'success' ? 'secondary' : source.status === 'failed' ? 'destructive' : 'outline'}>
+            {getStatusLabel(source.status)}
+          </Badge>
+          <OperationStatusIndicator resourceId={source.id} />
+        </div>
+        <div className="flex-1" />
+        <div className="text-sm text-muted-foreground">
+          <Monitor className="h-4 w-4 inline mr-1" />
+          {source.channel_count} channels
+        </div>
+        {source.last_ingestion_at && (
+          <div className="text-sm text-muted-foreground">
+            <Clock className="h-4 w-4 inline mr-1" />
+            {formatRelativeTime(source.last_ingestion_at)}
+          </div>
+        )}
+      </div>
+
+      <form onSubmit={handleSubmit} className="space-y-6" autoComplete="off">
+        {/* Basic Info */}
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="name">Name</Label>
+            <Input
+              id="name"
+              value={formData.name}
+              onChange={(e) => updateFormData({ name: e.target.value })}
+              placeholder="Source name"
+              required
+              disabled={loading.edit}
+              autoComplete="off"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Source Type</Label>
+            <div className="flex h-9 items-center px-3 py-2 text-sm border border-input bg-muted rounded-md">
+              <Badge variant="outline" className="capitalize">
+                {formData.source_type === 'm3u'
+                  ? 'M3U Playlist'
+                  : formData.source_type === 'xtream'
+                    ? 'Xtream Codes'
+                    : 'Manual (Static)'}
+              </Badge>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Source type cannot be changed
+            </p>
+          </div>
+        </div>
+
+        {/* URL (not for manual) */}
+        {formData.source_type !== 'manual' && (
+          <div className="space-y-2">
+            <Label htmlFor="url">URL</Label>
+            <Input
+              id="url"
+              value={formData.url}
+              onChange={(e) => updateFormData({ url: e.target.value })}
+              placeholder={
+                formData.source_type === 'm3u'
+                  ? 'https://example.com/playlist.m3u'
+                  : 'http://xtream.example.com:8080'
+              }
+              required
+              disabled={loading.edit}
+              autoComplete="off"
+            />
+          </div>
+        )}
+
+        {/* Manual source info */}
+        {formData.source_type === 'manual' && (
+          <div className="rounded-md border p-3 text-sm bg-muted/40">
+            Manual source: define static channels below. Channel list will be replaced on update.
+          </div>
+        )}
+
+        {/* Credentials (not for manual) */}
+        {formData.source_type !== 'manual' && (
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="username">Username</Label>
+              <Input
+                id="username"
+                value={formData.username || ''}
+                onChange={(e) => updateFormData({ username: e.target.value })}
+                placeholder="Optional"
+                disabled={loading.edit}
+                autoComplete="off"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="password">Password</Label>
+              <Input
+                id="password"
+                type="password"
+                value={formData.password || ''}
+                onChange={(e) => updateFormData({ password: e.target.value })}
+                placeholder="Leave blank to keep existing"
+                disabled={loading.edit}
+                autoComplete="off"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Settings */}
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="max_concurrent_streams">Max Concurrent Streams</Label>
+            <Input
+              id="max_concurrent_streams"
+              type="number"
+              min="0"
+              value={formData.max_concurrent_streams}
+              onChange={(e) =>
+                updateFormData({ max_concurrent_streams: parseInt(e.target.value) || 0 })
+              }
+              required
+              disabled={loading.edit}
+              autoComplete="off"
+            />
+            <p className="text-xs text-muted-foreground">0 = unlimited</p>
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="update_cron">Update Schedule (Cron)</Label>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" type="button">
+                      ?
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-sm">
+                    <div className="space-y-2">
+                      <p className="font-medium">6-field cron format:</p>
+                      <p className="text-xs">sec min hour day-of-month month day-of-week</p>
+                      <div className="space-y-1 text-xs">
+                        <p><code>"0 0 */6 * * *"</code> - Every 6 hours</p>
+                        <p><code>"0 0 2 * * *"</code> - Daily at 2:00 AM</p>
+                        <p><code>"0 */30 * * * *"</code> - Every 30 minutes</p>
+                      </div>
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+            <Input
+              id="update_cron"
+              value={formData.update_cron}
+              onChange={(e) => {
+                const newValue = e.target.value;
+                updateFormData({ update_cron: newValue });
+                setCronValidation(validateCronExpression(newValue));
+              }}
+              placeholder="0 0 */6 * * *"
+              required
+              disabled={loading.edit}
+              autoComplete="off"
+              className={cronValidation.isValid ? '' : 'border-destructive focus-visible:ring-destructive'}
+            />
+            {!cronValidation.isValid && cronValidation.error && (
+              <div className="text-sm text-destructive space-y-1">
+                <p>{cronValidation.error}</p>
+                {cronValidation.suggestion && (
+                  <p className="text-xs text-muted-foreground">{cronValidation.suggestion}</p>
+                )}
+              </div>
+            )}
+            <div className="flex flex-wrap gap-1 text-xs">
+              {COMMON_CRON_TEMPLATES.slice(0, 3).map((template) => (
+                <Button
+                  key={template.expression}
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-xs"
+                  onClick={() => {
+                    updateFormData({ update_cron: template.expression });
+                    setCronValidation(validateCronExpression(template.expression));
+                  }}
+                  disabled={loading.edit}
+                  type="button"
+                >
+                  {template.description}
+                </Button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Manual Channels */}
+        {formData.source_type === 'manual' && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap gap-2 items-center">
+              <ManualM3UImportExport
+                sourceId={source.id}
+                existingChannels={manualChannels}
+                disabled={loading.edit}
+                onPreviewParsed={(chs) => {
+                  setManualChannels(chs);
+                  setManualValid(chs.length > 0);
+                  setIsDirty(true);
+                }}
+                onApplied={async () => {
+                  try {
+                    const response = await apiClient.listManualChannels(source.id);
+                    setManualChannels(response.items);
+                    setManualValid(response.items.length > 0);
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={loading.edit}
+                onClick={async () => {
+                  try {
+                    const response = await apiClient.listManualChannels(source.id);
+                    setManualChannels(response.items);
+                    setManualValid(response.items.length > 0);
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+              >
+                Reload Channels
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Provide Stream URL (e.g. http://example.com/live.m3u8) and Logo (e.g. @logo:token or https://logo.example/img.png).
+            </p>
+            <ManualChannelEditor
+              value={manualChannels}
+              onChange={(chs) => {
+                setManualChannels(chs);
+                setIsDirty(true);
+              }}
+              onValidityChange={setManualValid}
+              disabled={loading.edit}
+            />
+          </div>
+        )}
+      </form>
+    </DetailPanel>
   );
 }
 
@@ -799,10 +839,6 @@ export function StreamSources() {
     PaginatedResponse<StreamSourceResponse>,
     'items'
   > | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filterType, setFilterType] = useState<StreamSourceType | 'all'>('all');
-  const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'ingesting' | 'success' | 'failed'>('all');
-  const [currentPage, setCurrentPage] = useState(1);
 
   const [loading, setLoading] = useState<LoadingState>({
     sources: false,
@@ -820,63 +856,17 @@ export function StreamSources() {
     action: null,
   });
 
-  const [editingSource, setEditingSource] = useState<StreamSourceResponse | null>(null);
-  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [refreshingSources, setRefreshingSources] = useState<Set<string>>(new Set());
-  const [viewMode, setViewMode] = useState<'grid' | 'list' | 'table'>('table');
   const { handleApiError, dismissConflict, getConflictState } = useConflictHandler();
 
   const [isOnline, setIsOnline] = useState(true);
+  const [isCreating, setIsCreating] = useState(false);
 
-  // Compute filtered results locally
-  const filteredSources = useMemo(() => {
-    let filtered = allSources;
-
-    // Filter by source type
-    if (filterType !== 'all') {
-      filtered = filtered.filter((source) => source.source_type === filterType);
-    }
-
-    // Filter by status
-    if (filterStatus !== 'all') {
-      filtered = filtered.filter((source) => source.status === filterStatus);
-    }
-
-    // Filter by search term
-    if (searchTerm.trim()) {
-      const searchLower = searchTerm.toLowerCase();
-      filtered = filtered.filter((source) => {
-        const searchableText = [
-          source.name.toLowerCase(),
-          (source.url || '').toLowerCase(),
-          source.source_type.toLowerCase(),
-          source.username || '',
-          source.password || '',
-          source.update_cron.toLowerCase(),
-          source.max_concurrent_streams.toString(),
-          // Status labels
-          source.status,
-          source.enabled ? 'enabled' : 'disabled',
-          // Relative time and formatted dates
-          formatRelativeTime(source.created_at).toLowerCase(),
-          formatRelativeTime(source.updated_at).toLowerCase(),
-          formatDate(source.created_at).toLowerCase(),
-          formatDate(source.updated_at).toLowerCase(),
-          // Type labels
-          source.source_type === 'm3u' ? 'm3u playlist' : 'xtream codes api',
-          // Additional searchable terms
-          'stream source',
-          source.created_at.includes('T') ? 'created' : '',
-          source.updated_at.includes('T') ? 'updated' : '',
-        ];
-
-        return searchableText.some((text) => text.toLowerCase().includes(searchLower));
-      });
-    }
-
-    // Sort alphabetically by name
-    return filtered.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-  }, [allSources, searchTerm, filterType, filterStatus]);
+  // Sort sources alphabetically by name
+  const sortedSources = useMemo(() => {
+    return [...allSources].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  }, [allSources]);
 
   // Health check is handled by parent component, no need for redundant calls
 
@@ -993,6 +983,11 @@ export function StreamSources() {
             }
           : null
       );
+      // Exit create mode and select the new source
+      setIsCreating(false);
+      if (createdSource?.id) {
+        setSelectedSourceId(createdSource.id);
+      }
     } catch (error) {
       const apiError = error as ApiError;
       setErrors((prev) => ({
@@ -1023,11 +1018,6 @@ export function StreamSources() {
     } finally {
       setLoading((prev) => ({ ...prev, edit: false }));
     }
-  };
-
-  const handleEditSource = (source: StreamSourceResponse) => {
-    setEditingSource(source);
-    setEditDialogOpen(true);
   };
 
   const handleRefreshSource = async (sourceId: string) => {
@@ -1076,10 +1066,6 @@ export function StreamSources() {
   };
 
   const handleDeleteSource = async (sourceId: string) => {
-    if (!confirm('Are you sure you want to delete this source? This action cannot be undone.')) {
-      return;
-    }
-
     setLoading((prev) => ({ ...prev, delete: sourceId }));
     setErrors((prev) => ({ ...prev, action: null }));
 
@@ -1095,6 +1081,10 @@ export function StreamSources() {
             }
           : null
       );
+      // Clear selection if the deleted source was selected
+      if (selectedSourceId === sourceId) {
+        setSelectedSourceId(null);
+      }
     } catch (error) {
       const apiError = error as ApiError;
       setErrors((prev) => ({
@@ -1111,10 +1101,46 @@ export function StreamSources() {
   const m3uSources = allSources?.filter((s) => s.source_type === 'm3u').length || 0;
   const xtreamSources = allSources?.filter((s) => s.source_type === 'xtream').length || 0;
 
+  // Convert sources to MasterItem format
+  const masterItems = useMemo(
+    () => sortedSources.map(sourceToMasterItem),
+    [sortedSources]
+  );
+
+  // Find the selected source
+  const selectedSource = useMemo(
+    () => allSources.find((s) => s.id === selectedSourceId) ?? null,
+    [allSources, selectedSourceId]
+  );
+
+  // Custom filter for MasterDetailLayout - fuzzy search across all fields
+  const filterSource = useCallback(
+    (item: SourceMasterItem, term: string) => {
+      const lower = term.toLowerCase();
+      const source = item.source;
+      // Search across name, url, source_type, status, channel count
+      const searchableFields = [
+        source.name,
+        source.url || '',
+        source.source_type,
+        source.status,
+        `${source.channel_count} channels`,
+        source.enabled ? 'enabled' : 'disabled',
+      ];
+      return searchableFields.some(field => field.toLowerCase().includes(lower));
+    },
+    []
+  );
+
+  // Calculate stats
+  const totalSources = pagination?.total || 0;
+  const enabledSources = allSources.filter((s) => s.enabled).length;
+  const successSources = allSources.filter((s) => s.status === 'success').length;
+
   return (
     <TooltipProvider>
       <div className="space-y-6">
-        {/* Header Section */}
+        {/* Header */}
         <div className="flex items-center justify-between">
           <div>
             <p className="text-muted-foreground">
@@ -1123,596 +1149,152 @@ export function StreamSources() {
           </div>
           <div className="flex items-center gap-2">
             {!isOnline && <WifiOff className="h-5 w-5 text-destructive" />}
-            <CreateSourceSheet
-              onCreateSource={handleCreateSource}
-              loading={loading.create}
-              error={errors.create}
-            />
           </div>
         </div>
 
-        {/* Edit Sheet */}
-        <EditSourceSheet
-          source={editingSource}
-          onUpdateSource={handleUpdateSource}
-          loading={loading.edit}
-          error={errors.edit}
-          open={editDialogOpen}
-          onOpenChange={setEditDialogOpen}
-        />
-
-        {/* Connection Status Alert */}
-        {!isOnline && (
-          <Alert variant="destructive">
-            <WifiOff className="h-4 w-4" />
-            <AlertTitle>API Service Offline</AlertTitle>
-            <AlertDescription>
-              Unable to connect to the API service at {API_CONFIG.baseUrl}. Please ensure the
-              service is running and try again.
-              <Button
-                variant="outline"
-                size="sm"
-                className="ml-2"
-                onClick={() => window.location.reload()}
-              >
-                Retry
-              </Button>
-            </AlertDescription>
-          </Alert>
-        )}
-
-        {/* Action Error Alert */}
-        {errors.action && (
-          <Alert variant="destructive">
-            <AlertCircle className="h-4 w-4" />
-            <AlertTitle>Error</AlertTitle>
-            <AlertDescription>
-              {errors.action}
-              <Button
-                variant="outline"
-                size="sm"
-                className="ml-2"
-                onClick={() => setErrors((prev) => ({ ...prev, action: null }))}
-              >
-                Dismiss
-              </Button>
-            </AlertDescription>
-          </Alert>
-        )}
-
-        {/* Statistics Cards */}
-        <div className="grid gap-4 md:grid-cols-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Sources</CardTitle>
-              <Database className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{pagination?.total || 0}</div>
-              <p className="text-xs text-muted-foreground">{successfulSources} successful</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Channels</CardTitle>
-              <Activity className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{totalChannels}</div>
-              <p className="text-xs text-muted-foreground">Across all sources</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">M3U Sources</CardTitle>
-              <Database className="h-4 w-4 text-blue-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{m3uSources}</div>
-              <p className="text-xs text-muted-foreground">M3U playlists</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Xtream Sources</CardTitle>
-              <Database className="h-4 w-4 text-green-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{xtreamSources}</div>
-              <p className="text-xs text-muted-foreground">Xtream Codes APIs</p>
-            </CardContent>
-          </Card>
+        {/* Stats */}
+        <div className="grid gap-2 md:grid-cols-3">
+          <StatCard
+            title="Total Sources"
+            value={totalSources}
+            icon={<Database className="h-4 w-4" />}
+          />
+          <StatCard
+            title="Enabled"
+            value={enabledSources}
+            icon={<CheckCircle className="h-4 w-4 text-green-600" />}
+          />
+          <StatCard
+            title="Channels"
+            value={totalChannels}
+            icon={<Activity className="h-4 w-4 text-blue-600" />}
+          />
         </div>
 
-        {/* Filters Section */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Search className="h-5 w-5" />
-              Search & Filters
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col sm:flex-row gap-4">
-              <div className="flex-1">
-                <div className="relative">
-                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search sources, types, URLs, credentials..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-8"
-                    disabled={loading.sources}
-                    autoComplete="off"
-                  />
-                </div>
-              </div>
-              <Select
-                value={filterType}
-                onValueChange={(value) => setFilterType(value as StreamSourceType | 'all')}
-              >
-                <SelectTrigger className="w-full sm:w-[180px]">
-                  <SelectValue placeholder="Filter by type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Types</SelectItem>
-                  <SelectItem value="m3u">M3U Playlist</SelectItem>
-                  <SelectItem value="xtream">Xtream Codes</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select
-                value={filterStatus}
-                onValueChange={(value) => setFilterStatus(value as 'all' | 'pending' | 'ingesting' | 'success' | 'failed')}
-              >
-                <SelectTrigger className="w-full sm:w-[180px]">
-                  <SelectValue placeholder="Filter by status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Status</SelectItem>
-                  <SelectItem value="success">Success</SelectItem>
-                  <SelectItem value="pending">Pending</SelectItem>
-                  <SelectItem value="ingesting">Ingesting</SelectItem>
-                  <SelectItem value="failed">Failed</SelectItem>
-                </SelectContent>
-              </Select>
-
-              {/* Layout Chooser */}
-              <div className="flex rounded-md border">
-                <Button
-                  size="sm"
-                  variant={viewMode === 'table' ? 'default' : 'ghost'}
-                  className="rounded-r-none border-r"
-                  onClick={() => setViewMode('table')}
-                >
-                  <TableIcon className="w-4 h-4" />
-                </Button>
-                <Button
-                  size="sm"
-                  variant={viewMode === 'grid' ? 'default' : 'ghost'}
-                  className="rounded-none border-r"
-                  onClick={() => setViewMode('grid')}
-                >
-                  <Grid className="w-4 h-4" />
-                </Button>
-                <Button
-                  size="sm"
-                  variant={viewMode === 'list' ? 'default' : 'ghost'}
-                  className="rounded-l-none"
-                  onClick={() => setViewMode('list')}
-                >
-                  <List className="w-4 h-4" />
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Sources Table */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              <span>
-                Stream Sources ({filteredSources?.length || 0}
-                {searchTerm || filterType !== 'all' || filterStatus !== 'all'
-                  ? ` of ${allSources?.length || 0}`
-                  : ''}
-                )
-              </span>
-              {loading.sources && <Loader2 className="h-4 w-4 animate-spin" />}
-            </CardTitle>
-            <CardDescription>Configure and manage your stream sources</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {errors.sources ? (
+        {/* Alerts */}
+        {(!isOnline || errors.action || errors.sources) && (
+          <div className="space-y-2">
+            {!isOnline && (
               <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertTitle>Failed to Load Sources</AlertTitle>
+                <WifiOff className="h-4 w-4" />
+                <AlertTitle>API Service Offline</AlertTitle>
                 <AlertDescription>
-                  {errors.sources}
-                  <ConflictNotification
-                    show={getConflictState('stream-sources-retry').show}
-                    message={getConflictState('stream-sources-retry').message}
-                    onDismiss={() => dismissConflict('stream-sources-retry')}
-                  >
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="ml-2"
-                      onClick={async () => {
-                        try {
-                          await loadSources();
-                        } catch (error) {
-                          handleApiError(error, 'stream-sources-retry', 'Load sources');
-                        }
-                      }}
-                      disabled={loading.sources}
-                    >
-                      {loading.sources && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      Retry
-                    </Button>
-                  </ConflictNotification>
+                  Unable to connect to {API_CONFIG.baseUrl}.
+                  <Button variant="outline" size="sm" className="ml-2" onClick={() => window.location.reload()}>
+                    Retry
+                  </Button>
                 </AlertDescription>
               </Alert>
+            )}
+            {errors.action && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Error</AlertTitle>
+                <AlertDescription>
+                  {errors.action}
+                  <Button variant="outline" size="sm" className="ml-2" onClick={() => setErrors((prev) => ({ ...prev, action: null }))}>
+                    Dismiss
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            )}
+          </div>
+        )}
+
+        {/* MasterDetailLayout */}
+        <Card className="flex-1">
+          <CardContent className="p-0 min-h-[500px] h-[calc(100vh-320px)]">
+            {errors.sources ? (
+              <div className="p-6">
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Failed to Load Sources</AlertTitle>
+                  <AlertDescription>
+                    {errors.sources}
+                    <ConflictNotification
+                      show={getConflictState('stream-sources-retry').show}
+                      message={getConflictState('stream-sources-retry').message}
+                      onDismiss={() => dismissConflict('stream-sources-retry')}
+                    >
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="ml-2"
+                        onClick={async () => {
+                          try {
+                            await loadSources();
+                          } catch (error) {
+                            handleApiError(error, 'stream-sources-retry', 'Load sources');
+                          }
+                        }}
+                        disabled={loading.sources}
+                      >
+                        {loading.sources && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        Retry
+                      </Button>
+                    </ConflictNotification>
+                  </AlertDescription>
+                </Alert>
+              </div>
             ) : (
-              <>
-                {viewMode === 'table' ? (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Type</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Channels</TableHead>
-                        <TableHead>Last Updated</TableHead>
-                        <TableHead>Next Update</TableHead>
-                        <TableHead>Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredSources?.map((source) => (
-                        <TableRow key={source.id}>
-                          <TableCell>
-                            <div className="space-y-2">
-                              <div>
-                                <div className="font-medium">{source.name}</div>
-                                <div className="text-sm text-muted-foreground truncate max-w-xs sm:max-w-sm md:max-w-md lg:max-w-lg">
-                                  {source.url}
-                                </div>
-                              </div>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge className={getSourceTypeColor(source.source_type)}>
-                              {source.source_type.toUpperCase()}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-2">
-                              <Badge className={getStatusColor(source.status)}>
-                                {getStatusLabel(source.status)}
-                              </Badge>
-                              {/* T049: Operation error/warning indicator */}
-                              <OperationStatusIndicator resourceId={source.id} />
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-1">
-                              <Monitor className="h-4 w-4 text-muted-foreground" />
-                              {source.channel_count}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            {source.last_ingestion_at ? (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <div className="text-sm cursor-help">
-                                    {formatRelativeTime(source.last_ingestion_at)}
-                                  </div>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p className="text-sm">{formatDate(source.last_ingestion_at)}</p>
-                                </TooltipContent>
-                              </Tooltip>
-                            ) : (
-                              <span className="text-muted-foreground text-sm">Never</span>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {source.next_scheduled_update ? (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <div className="text-sm cursor-help flex items-center gap-1">
-                                    <Clock className="h-3 w-3 text-muted-foreground" />
-                                    {formatRelativeTime(source.next_scheduled_update)}
-                                  </div>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p className="text-sm">
-                                    {formatDate(source.next_scheduled_update)}
-                                  </p>
-                                </TooltipContent>
-                              </Tooltip>
-                            ) : (
-                              <span className="text-muted-foreground text-sm">-</span>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-2">
-                              <RefreshButton
-                                resourceId={source.id}
-                                onRefresh={() => {
-                                  console.log(
-                                    `[StreamSources] RefreshButton clicked for source ID: ${source.id}`
-                                  );
-                                  handleRefreshSource(source.id);
-                                }}
-                                onComplete={() => loadSources()}
-                                disabled={!isOnline}
-                                size="sm"
-                                className="h-8 w-8 p-0"
-                              />
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => handleEditSource(source)}
-                                    className="h-8 w-8 p-0"
-                                    disabled={!isOnline}
-                                  >
-                                    <Edit className="h-4 w-4" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p className="text-sm">Edit</p>
-                                </TooltipContent>
-                              </Tooltip>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => handleDeleteSource(source.id)}
-                                    className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                    disabled={loading.delete === source.id || !isOnline}
-                                  >
-                                    {loading.delete === source.id ? (
-                                      <Loader2 className="h-4 w-4 animate-spin" />
-                                    ) : (
-                                      <Trash2 className="h-4 w-4" />
-                                    )}
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p className="text-sm">Delete</p>
-                                </TooltipContent>
-                              </Tooltip>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                ) : viewMode === 'grid' ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    {filteredSources?.map((source) => (
-                      <Card key={source.id}>
-                        <CardHeader className="pb-3">
-                          <div className="flex items-start justify-between">
-                            <div className="space-y-1">
-                              <CardTitle className="text-base">{source.name}</CardTitle>
-                              <Badge className={getSourceTypeColor(source.source_type)}>
-                                {source.source_type.toUpperCase()}
-                              </Badge>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Badge className={getStatusColor(source.status)}>
-                                {getStatusLabel(source.status)}
-                              </Badge>
-                              {/* T049: Operation error/warning indicator */}
-                              <OperationStatusIndicator resourceId={source.id} />
-                            </div>
-                          </div>
-                        </CardHeader>
-                        <CardContent className="pt-0">
-                          <div className="space-y-2 text-sm">
-                            <p className="text-muted-foreground truncate">{source.url}</p>
-                            <div className="flex justify-between">
-                              <span>Channels:</span>
-                              <span>{source.channel_count || 0}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>Last Updated:</span>
-                              <span>
-                                {source.last_ingestion_at
-                                  ? new Date(source.last_ingestion_at).toLocaleDateString()
-                                  : 'Never'}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="flex justify-end gap-2 mt-3 pt-3 border-t">
-                            <RefreshButton
-                              resourceId={source.id}
-                              onRefresh={() => handleRefreshSource(source.id)}
-                              onComplete={() => loadSources()}
-                              disabled={!isOnline}
-                              size="sm"
-                              className="h-8 w-8 p-0"
-                            />
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleEditSource(source)}
-                                  className="h-8 w-8 p-0"
-                                  disabled={!isOnline}
-                                >
-                                  <Edit className="h-4 w-4" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p className="text-sm">Edit</p>
-                              </TooltipContent>
-                            </Tooltip>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleDeleteSource(source.id)}
-                                  className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                  disabled={loading.delete === source.id || !isOnline}
-                                >
-                                  {loading.delete === source.id ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <Trash2 className="h-4 w-4" />
-                                  )}
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p className="text-sm">Delete</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {filteredSources?.map((source) => (
-                      <Card key={source.id}>
-                        <CardContent className="p-4">
-                          <div className="flex items-center justify-between">
-                            <div className="flex-1 space-y-1">
-                              <div className="flex items-center gap-2">
-                                <h3 className="font-medium">{source.name}</h3>
-                                <Badge className={getSourceTypeColor(source.source_type)}>
-                                  {source.source_type.toUpperCase()}
-                                </Badge>
-                                <Badge className={getStatusColor(source.status)}>
-                                  {getStatusLabel(source.status)}
-                                </Badge>
-                                {/* T049: Operation error/warning indicator */}
-                                <OperationStatusIndicator resourceId={source.id} />
-                              </div>
-                              <p className="text-sm text-muted-foreground truncate">{source.url}</p>
-                              <div className="flex gap-4 text-xs text-muted-foreground">
-                                <span>Channels: {source.channel_count || 0}</span>
-                                <span>
-                                  Last Updated:{' '}
-                                  {source.last_ingestion_at
-                                    ? new Date(source.last_ingestion_at).toLocaleDateString()
-                                    : 'Never'}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2 ml-4">
-                              <RefreshButton
-                                resourceId={source.id}
-                                onRefresh={() => handleRefreshSource(source.id)}
-                                onComplete={() => loadSources()}
-                                disabled={!isOnline}
-                                size="sm"
-                                className="h-8 w-8 p-0"
-                              />
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => handleEditSource(source)}
-                                    className="h-8 w-8 p-0"
-                                    disabled={!isOnline}
-                                  >
-                                    <Edit className="h-4 w-4" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p className="text-sm">Edit</p>
-                                </TooltipContent>
-                              </Tooltip>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => handleDeleteSource(source.id)}
-                                    className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                    disabled={loading.delete === source.id || !isOnline}
-                                  >
-                                    {loading.delete === source.id ? (
-                                      <Loader2 className="h-4 w-4 animate-spin" />
-                                    ) : (
-                                      <Trash2 className="h-4 w-4" />
-                                    )}
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p className="text-sm">Delete</p>
-                                </TooltipContent>
-                              </Tooltip>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                )}
-
-                {filteredSources?.length === 0 && !loading.sources && (
-                  <div className="text-center py-8">
-                    <Database className="mx-auto h-12 w-12 text-muted-foreground" />
-                    <h3 className="mt-4 text-lg font-semibold">
-                      {searchTerm || filterType !== 'all' || filterStatus !== 'all'
-                        ? 'No matching sources'
-                        : 'No sources found'}
-                    </h3>
-                    <p className="text-muted-foreground">
-                      {searchTerm || filterType !== 'all' || filterStatus !== 'all'
-                        ? 'Try adjusting your search or filter criteria.'
-                        : 'Get started by adding your first stream source.'}
-                    </p>
-                  </div>
-                )}
-
-                {/* Pagination */}
-                {pagination && pagination.total_pages > 1 && (
-                  <div className="flex items-center justify-between pt-4">
-                    <div className="text-sm text-muted-foreground">
-                      Showing {(pagination.page - 1) * pagination.per_page + 1} to{' '}
-                      {Math.min(pagination.page * pagination.per_page, pagination.total)} of{' '}
-                      {pagination.total} sources
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-                        disabled={!pagination.has_previous || loading.sources}
-                      >
-                        Previous
-                      </Button>
-                      <span className="text-sm">
-                        Page {pagination.page} of {pagination.total_pages}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setCurrentPage((prev) => prev + 1)}
-                        disabled={!pagination.has_next || loading.sources}
-                      >
-                        Next
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </>
+              <MasterDetailLayout
+                items={masterItems}
+                selectedId={isCreating ? null : selectedSourceId}
+                onSelect={(item) => {
+                  setIsCreating(false);
+                  setSelectedSourceId(item?.id ?? null);
+                }}
+                isLoading={loading.sources}
+                title={`Stream Sources (${sortedSources.length})`}
+                searchPlaceholder="Search by name, type, status..."
+                headerAction={
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setIsCreating(true);
+                      setSelectedSourceId(null);
+                      setErrors((prev) => ({ ...prev, create: null }));
+                    }}
+                    disabled={loading.sources}
+                  >
+                    <Plus className="h-4 w-4" />
+                    <span className="sr-only">Add Source</span>
+                  </Button>
+                }
+                emptyState={{
+                  title: 'No stream sources configured',
+                  description: 'Get started by creating your first stream source.',
+                }}
+                filterFn={filterSource}
+              >
+                {(selectedItem) =>
+                  isCreating ? (
+                    <SourceCreatePanel
+                      onCreate={handleCreateSource}
+                      onCancel={() => setIsCreating(false)}
+                      loading={loading.create}
+                      error={errors.create}
+                    />
+                  ) : selectedItem && selectedSource ? (
+                    <SourceDetailPanel
+                      source={selectedSource}
+                      onUpdateSource={handleUpdateSource}
+                      onDeleteSource={handleDeleteSource}
+                      onRefreshSource={handleRefreshSource}
+                      loading={{ edit: loading.edit, delete: loading.delete }}
+                      error={errors.edit}
+                      isOnline={isOnline}
+                    />
+                  ) : (
+                    <DetailEmpty
+                      title="Select a source"
+                      description="Choose a stream source from the list to view and edit its configuration"
+                      icon={<Database className="h-12 w-12 text-muted-foreground" />}
+                    />
+                  )
+                }
+              </MasterDetailLayout>
             )}
           </CardContent>
         </Card>

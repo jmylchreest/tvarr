@@ -10,12 +10,7 @@ import {
   Search,
   Play,
   Filter,
-  Grid,
-  List,
-  Eye,
   Zap,
-  Check,
-  Table as TableIcon,
   Trash2,
   Loader2,
   Sparkles,
@@ -147,7 +142,6 @@ export default function ChannelsPage() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedGroup, setSelectedGroup] = useState<string>('');
   const [selectedSources, setSelectedSources] = useState<string[]>([]);
-  const [viewMode, setViewMode] = useState<'grid' | 'list' | 'table'>('table');
   const [currentPage, setCurrentPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -850,204 +844,6 @@ export default function ChannelsPage() {
     );
   };
 
-  const ChannelCard = ({ channel }: { channel: Channel }) => (
-    <Card className="transition-all duration-200 hover:shadow-lg hover:scale-105">
-      <CardHeader className="pb-2">
-        <div className="flex items-start justify-between">
-          <div className="flex-1 min-w-0">
-            <CardTitle className="text-sm font-medium truncate">
-              <button
-                type="button"
-                onClick={() => {
-                  setDetailsChannel(channel);
-                  setIsDetailsOpen(true);
-                }}
-                className="truncate w-full text-left hover:underline focus:outline-none focus:ring-2 focus:ring-ring rounded-sm"
-                title={channel.name || 'empty'}
-              >
-                {channel.name && channel.name.trim() !== '' ? (
-                  channel.name
-                ) : (
-                  <span className="text-muted-foreground italic">empty</span>
-                )}
-              </button>
-            </CardTitle>
-            {channel.group && (
-              <CardDescription className="mt-1">
-                <Badge variant="secondary" className="text-xs">
-                  {channel.group}
-                </Badge>
-              </CardDescription>
-            )}
-          </div>
-          {channel.logo_url && (
-            <img
-              src={channel.logo_url}
-              alt={channel.name}
-              className="w-8 h-8 object-contain ml-2 flex-shrink-0"
-              onError={(e) => {
-                const img = e.target as HTMLImageElement;
-                img.style.display = 'none';
-              }}
-            />
-          )}
-        </div>
-      </CardHeader>
-      <CardContent className="pt-0">
-        <div className="flex justify-between items-center">
-          <div className="flex flex-col text-xs text-muted-foreground">
-            <span>Source: {channel.source_name || channel.source_type}</span>
-            {channel.tvg_chno && <span>Channel #: {channel.tvg_chno}</span>}
-            {channel.video_codec && (
-              <div className="flex gap-1 mt-1">
-                <Badge variant="outline" className="text-xs">
-                  {channel.video_codec}
-                </Badge>
-                {channel.audio_codec && (
-                  <Badge variant="outline" className="text-xs">
-                    {channel.audio_codec}
-                  </Badge>
-                )}
-              </div>
-            )}
-          </div>
-          <div className="flex gap-1 ml-2">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button size="sm" onClick={() => handlePlayChannel(channel)}>
-                  <Play className="w-4 h-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Play channel</p>
-              </TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => handleProbeChannel(channel)}
-                  disabled={probingChannels.has(channel.id)}
-                >
-                  {probingChannels.has(channel.id) ? (
-                    <div className="w-4 h-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                  ) : (
-                    <Zap className="w-4 h-4" />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Probe codec information</p>
-              </TooltipContent>
-            </Tooltip>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-
-  const ChannelListItem = ({ channel, matchIndicator }: { channel: Channel; matchIndicator?: string | null }) => (
-    <Card className="transition-all duration-200 hover:shadow-md">
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            {channel.logo_url && (
-              <img
-                src={channel.logo_url}
-                alt={channel.name}
-                className="w-10 h-10 object-contain"
-                onError={(e) => {
-                  const img = e.target as HTMLImageElement;
-                  img.style.display = 'none';
-                }}
-              />
-            )}
-            <div>
-              <h3 className="font-medium flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDetailsChannel(channel);
-                    setIsDetailsOpen(true);
-                  }}
-                  className="hover:underline focus:outline-none focus:ring-2 focus:ring-ring rounded-sm text-left"
-                  title={channel.name || 'empty'}
-                >
-                  {channel.name && channel.name.trim() !== '' ? (
-                    channel.name
-                  ) : (
-                    <span className="text-muted-foreground italic">empty</span>
-                  )}
-                </button>
-                {matchIndicator && (
-                  <Badge variant="outline" className="text-xs bg-blue-50 text-blue-600 dark:bg-blue-950 dark:text-blue-400">
-                    <Sparkles className="w-3 h-3 mr-1" />
-                    {matchIndicator}
-                  </Badge>
-                )}
-              </h3>
-              <div className="flex items-center space-x-2 text-sm text-muted-foreground">
-                {channel.group && (
-                  <Badge variant="secondary" className="text-xs">
-                    {channel.group}
-                  </Badge>
-                )}
-                <span>Source: {channel.source_name || channel.source_type}</span>
-                {channel.tvg_chno && <span>• Ch #{channel.tvg_chno}</span>}
-                {channel.video_codec && (
-                  <>
-                    <span>•</span>
-                    <Badge variant="outline" className="text-xs">
-                      {channel.video_codec}
-                    </Badge>
-                  </>
-                )}
-                {channel.audio_codec && (
-                  <Badge variant="outline" className="text-xs">
-                    {channel.audio_codec}
-                  </Badge>
-                )}
-              </div>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button size="sm" onClick={() => handlePlayChannel(channel)}>
-                  <Play className="w-4 h-4 mr-2" />
-                  Play
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Play channel</p>
-              </TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => handleProbeChannel(channel)}
-                  disabled={probingChannels.has(channel.id)}
-                >
-                  {probingChannels.has(channel.id) ? (
-                    <div className="w-4 h-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                  ) : (
-                    <Zap className="w-4 h-4" />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Probe codec information</p>
-              </TooltipContent>
-            </Tooltip>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-
   if (loading && channels.length === 0) {
     return (
       <div className="container mx-auto p-6">
@@ -1137,33 +933,6 @@ export default function ChannelsPage() {
                 </DropdownMenuContent>
               </DropdownMenu>
 
-              <div className="flex bg-muted rounded-lg p-1">
-                <Button
-                  variant={viewMode === 'table' ? 'default' : 'ghost'}
-                  size="sm"
-                  onClick={() => setViewMode('table')}
-                  title="Table view"
-                >
-                  <TableIcon className="w-4 h-4" />
-                </Button>
-                <Button
-                  variant={viewMode === 'grid' ? 'default' : 'ghost'}
-                  size="sm"
-                  onClick={() => setViewMode('grid')}
-                  title="Grid view"
-                >
-                  <Grid className="w-4 h-4" />
-                </Button>
-                <Button
-                  variant={viewMode === 'list' ? 'default' : 'ghost'}
-                  size="sm"
-                  onClick={() => setViewMode('list')}
-                  title="Compact list view"
-                >
-                  <List className="w-4 h-4" />
-                </Button>
-              </div>
-
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -1236,41 +1005,27 @@ export default function ChannelsPage() {
         {/* Channels Display */}
         {displayChannels.length > 0 ? (
           <>
-            {viewMode === 'table' ? (
-              <Card className="mb-6">
-                <CardContent className="p-0">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="w-16">Logo</TableHead>
-                        <TableHead>Channel Name</TableHead>
-                        <TableHead>Group</TableHead>
-                        <TableHead>Probe Info</TableHead>
-                        <TableHead>Last Probed</TableHead>
-                        <TableHead className="w-32">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {displayChannels.map((channel) => (
-                        <ChannelTableRow key={channel.id} channel={channel} matchIndicator={getMatchIndicator(channel.id)} />
-                      ))}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
-            ) : viewMode === 'grid' ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-6">
-                {displayChannels.map((channel) => (
-                  <ChannelCard key={channel.id} channel={channel} />
-                ))}
-              </div>
-            ) : (
-              <div className="space-y-3 mb-6">
-                {displayChannels.map((channel) => (
-                  <ChannelListItem key={channel.id} channel={channel} matchIndicator={getMatchIndicator(channel.id)} />
-                ))}
-              </div>
-            )}
+            <Card className="mb-6">
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-16">Logo</TableHead>
+                      <TableHead>Channel Name</TableHead>
+                      <TableHead>Group</TableHead>
+                      <TableHead>Probe Info</TableHead>
+                      <TableHead>Last Probed</TableHead>
+                      <TableHead className="w-32">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {displayChannels.map((channel) => (
+                      <ChannelTableRow key={channel.id} channel={channel} matchIndicator={getMatchIndicator(channel.id)} />
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
 
             {/* Progressive Loading */}
             {hasMore && (

@@ -114,7 +114,7 @@ export const ManualM3UImportExport: React.FC<ManualM3UImportExportProps> = ({
     // We calculate simple high-level differences:
     // - count difference
     // - overlap by name + stream_url
-    const key = (c: ManualChannelInput) => `${c.name.trim()}||${c.stream_url.trim()}`;
+    const key = (c: ManualChannelInput) => `${c.channel_name.trim()}||${c.stream_url.trim()}`;
     const existingSet = new Set(existingChannels.map(key));
     const parsedSet = new Set(parsedChannels.map(key));
     let overlap = 0;
@@ -345,7 +345,7 @@ export const ManualM3UImportExport: React.FC<ManualM3UImportExportProps> = ({
                               existingChannels &&
                                 existingChannels.find(
                                   (e) =>
-                                    e.name.trim() === c.name.trim() &&
+                                    e.channel_name.trim() === c.channel_name.trim() &&
                                     e.stream_url.trim() === c.stream_url.trim()
                                 ) &&
                                 'bg-amber-50 dark:bg-amber-900/20'
@@ -354,7 +354,7 @@ export const ManualM3UImportExport: React.FC<ManualM3UImportExportProps> = ({
                             <td className="px-2 py-1 whitespace-nowrap">
                               {c.channel_number ?? ''}
                             </td>
-                            <td className="px-2 py-1 whitespace-nowrap">{c.name}</td>
+                            <td className="px-2 py-1 whitespace-nowrap">{c.channel_name}</td>
                             <td className="px-2 py-1 max-w-[220px] truncate">{c.stream_url}</td>
                             <td className="px-2 py-1 whitespace-nowrap">
                               {c.group_title || ''}

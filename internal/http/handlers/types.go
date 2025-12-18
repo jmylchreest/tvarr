@@ -1005,3 +1005,104 @@ type ValidateCronResponse struct {
 	Error   string     `json:"error,omitempty"`
 	NextRun *time.Time `json:"next_run,omitempty"`
 }
+
+// Manual Channel types
+
+// ManualChannelResponse represents a manual channel in API responses.
+type ManualChannelResponse struct {
+	ID            models.ULID `json:"id"`
+	SourceID      models.ULID `json:"source_id"`
+	TvgID         string      `json:"tvg_id,omitempty"`
+	TvgName       string      `json:"tvg_name,omitempty"`
+	TvgLogo       string      `json:"tvg_logo,omitempty"`
+	GroupTitle    string      `json:"group_title,omitempty"`
+	ChannelName   string      `json:"channel_name"`
+	ChannelNumber int         `json:"channel_number,omitempty"`
+	StreamURL     string      `json:"stream_url"`
+	StreamType    string      `json:"stream_type,omitempty"`
+	Language      string      `json:"language,omitempty"`
+	Country       string      `json:"country,omitempty"`
+	IsAdult       bool        `json:"is_adult"`
+	Enabled       bool        `json:"enabled"`
+	Priority      int         `json:"priority"`
+	CreatedAt     time.Time   `json:"created_at"`
+	UpdatedAt     time.Time   `json:"updated_at"`
+}
+
+// ManualChannelFromModel converts a model to a response.
+func ManualChannelFromModel(c *models.ManualStreamChannel) ManualChannelResponse {
+	return ManualChannelResponse{
+		ID:            c.ID,
+		SourceID:      c.SourceID,
+		TvgID:         c.TvgID,
+		TvgName:       c.TvgName,
+		TvgLogo:       c.TvgLogo,
+		GroupTitle:    c.GroupTitle,
+		ChannelName:   c.ChannelName,
+		ChannelNumber: c.ChannelNumber,
+		StreamURL:     c.StreamURL,
+		StreamType:    c.StreamType,
+		Language:      c.Language,
+		Country:       c.Country,
+		IsAdult:       c.IsAdult,
+		Enabled:       models.BoolVal(c.Enabled),
+		Priority:      c.Priority,
+		CreatedAt:     c.CreatedAt,
+		UpdatedAt:     c.UpdatedAt,
+	}
+}
+
+// ManualChannelInput is a single channel in PUT/import requests.
+type ManualChannelInput struct {
+	TvgID         string `json:"tvg_id,omitempty" doc:"EPG ID for matching" maxLength:"255"`
+	TvgName       string `json:"tvg_name,omitempty" doc:"Display name" maxLength:"512"`
+	TvgLogo       string `json:"tvg_logo,omitempty" doc:"Logo URL or @logo:token" maxLength:"2048"`
+	GroupTitle    string `json:"group_title,omitempty" doc:"Category/group" maxLength:"255"`
+	ChannelName   string `json:"channel_name" doc:"Required display name" minLength:"1" maxLength:"512"`
+	ChannelNumber int    `json:"channel_number,omitempty" doc:"Optional channel number"`
+	StreamURL     string `json:"stream_url" doc:"Stream URL (http/https/rtsp)" minLength:"1" maxLength:"4096"`
+	StreamType    string `json:"stream_type,omitempty" doc:"Stream format" maxLength:"50"`
+	Language      string `json:"language,omitempty" doc:"Language code" maxLength:"50"`
+	Country       string `json:"country,omitempty" doc:"Country code" maxLength:"10"`
+	IsAdult       bool   `json:"is_adult,omitempty" doc:"Adult content flag"`
+	Enabled       *bool  `json:"enabled,omitempty" doc:"Include in materialization (default: true)"`
+	Priority      int    `json:"priority,omitempty" doc:"Sort order"`
+}
+
+// ToModel converts input to model for persistence.
+func (r *ManualChannelInput) ToModel(sourceID models.ULID) *models.ManualStreamChannel {
+	enabled := models.BoolPtr(true)
+	if r.Enabled != nil {
+		enabled = r.Enabled
+	}
+	return &models.ManualStreamChannel{
+		SourceID:      sourceID,
+		TvgID:         r.TvgID,
+		TvgName:       r.TvgName,
+		TvgLogo:       r.TvgLogo,
+		GroupTitle:    r.GroupTitle,
+		ChannelName:   r.ChannelName,
+		ChannelNumber: r.ChannelNumber,
+		StreamURL:     r.StreamURL,
+		StreamType:    r.StreamType,
+		Language:      r.Language,
+		Country:       r.Country,
+		IsAdult:       r.IsAdult,
+		Enabled:       enabled,
+		Priority:      r.Priority,
+	}
+}
+
+// ReplaceManualChannelsRequest is the PUT request body.
+type ReplaceManualChannelsRequest struct {
+	Channels []ManualChannelInput `json:"channels" doc:"Complete list of channels (replaces all existing)"`
+}
+
+// M3UImportResult is the response for import operations.
+type M3UImportResult struct {
+	ParsedCount  int                     `json:"parsed_count" doc:"Number of channels parsed from M3U"`
+	SkippedCount int                     `json:"skipped_count" doc:"Number of invalid entries skipped"`
+	Applied      bool                    `json:"applied" doc:"Whether changes were persisted"`
+	Channels     []ManualChannelResponse `json:"channels" doc:"Parsed/applied channels"`
+	Errors       []string                `json:"errors,omitempty" doc:"Parse errors encountered"`
+}

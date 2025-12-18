@@ -27,7 +27,8 @@ export type StreamSourceType = 'm3u' | 'xtream' | 'manual';
 export type SourceStatus = 'pending' | 'ingesting' | 'success' | 'failed';
 
 // Manual channel definition (only used when source_type === 'manual')
-export interface ManualChannelInput {
+// Legacy input format - kept for backward compatibility
+export interface ManualChannelInputLegacy {
   channel_number?: number;
   name: string;
   stream_url: string;
@@ -38,6 +39,59 @@ export interface ManualChannelInput {
   epg_id?: string;
   // All rows are treated as active in current UX, but keep flag for possible future use
   is_active?: boolean;
+}
+
+// ManualChannel represents a channel in a manual stream source (API response)
+export interface ManualChannel {
+  id: string;
+  source_id: string;
+  tvg_id?: string;
+  tvg_name?: string;
+  tvg_logo?: string;
+  group_title?: string;
+  channel_name: string;
+  channel_number?: number;
+  stream_url: string;
+  stream_type?: string;
+  language?: string;
+  country?: string;
+  is_adult: boolean;
+  enabled: boolean;
+  priority: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// ManualChannelInput for creating/updating channels (API request)
+export interface ManualChannelInput {
+  tvg_id?: string;
+  tvg_name?: string;
+  tvg_logo?: string;
+  group_title?: string;
+  channel_name: string;
+  channel_number?: number;
+  stream_url: string;
+  stream_type?: string;
+  language?: string;
+  country?: string;
+  is_adult?: boolean;
+  enabled?: boolean;
+  priority?: number;
+}
+
+// M3UImportResult from import endpoint
+export interface M3UImportResult {
+  parsed_count: number;
+  skipped_count: number;
+  applied: boolean;
+  channels: ManualChannel[];
+  errors?: string[];
+}
+
+// ManualChannelsResponse from list endpoint
+export interface ManualChannelsResponse {
+  items: ManualChannel[];
+  total: number;
 }
 
 export interface StreamSource {

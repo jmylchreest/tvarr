@@ -542,6 +542,12 @@ func runServe(_ *cobra.Command, _ []string) error {
 	channelHandler := handlers.NewChannelHandler(db).WithLogger(logger)
 	channelHandler.Register(server.API())
 
+	// Manual channel handler for managing channels in manual stream sources
+	manualChannelService := service.NewManualChannelService(manualChannelRepo, streamSourceRepo).
+		WithLogger(logger)
+	manualChannelHandler := handlers.NewManualChannelHandler(manualChannelService)
+	manualChannelHandler.Register(server.API())
+
 	epgHandler := handlers.NewEpgHandler(db)
 	epgHandler.Register(server.API())
 

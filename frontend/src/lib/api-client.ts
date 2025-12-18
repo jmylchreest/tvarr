@@ -33,6 +33,7 @@ import {
   LogoAssetUpdateRequest,
   LogoUploadRequest,
   ManualChannelInput,
+  ManualChannelsResponse,
   ExportRequest,
   ConfigExport,
   FilterExportItem,
@@ -321,29 +322,27 @@ class ApiClient {
 
   /**
    * List manual channel definitions for a manual stream source.
-   * includeInactive currently future-proofs the API (all rows active today).
+   * Returns a ManualChannelsResponse with items array and total count.
    */
   async listManualChannels(
-    sourceId: string,
-    includeInactive = false
-  ): Promise<ManualChannelInput[]> {
-    const qs = includeInactive ? '?include_inactive=true' : '';
-    return this.request<ManualChannelInput[]>(
-      `${API_CONFIG.endpoints.streamSources}/${sourceId}/manual-channels${qs}`
+    sourceId: string
+  ): Promise<ManualChannelsResponse> {
+    return this.request<ManualChannelsResponse>(
+      `${API_CONFIG.endpoints.streamSources}/${sourceId}/manual-channels`
     );
   }
 
   /**
-   * Replace (full overwrite) manual channels and materialize them (server returns summary).
-   * Returns the summary object with replace & delta stats.
+   * Replace (full overwrite) manual channels for a manual source.
+   * Returns the replaced channels.
    */
-  async replaceManualChannels(sourceId: string, channels: ManualChannelInput[]): Promise<any> {
+  async replaceManualChannels(sourceId: string, channels: ManualChannelInput[]): Promise<ManualChannelsResponse> {
     if (!channels.length) {
-      throw new ApiError('manual_channels payload cannot be empty', 400);
+      throw new ApiError('At least one channel is required', 400);
     }
-    return this.request<any>(`${API_CONFIG.endpoints.streamSources}/${sourceId}/manual-channels`, {
+    return this.request<ManualChannelsResponse>(`${API_CONFIG.endpoints.streamSources}/${sourceId}/manual-channels`, {
       method: 'PUT',
-      body: JSON.stringify(channels),
+      body: JSON.stringify({ channels }),
     });
   }
 

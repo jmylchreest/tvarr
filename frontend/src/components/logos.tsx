@@ -41,9 +41,6 @@ import {
   Eye,
   Download,
   FileImage,
-  Grid,
-  List,
-  Table as TableIcon,
   RefreshCw,
 } from 'lucide-react';
 import {
@@ -55,6 +52,7 @@ import {
 } from '@/types/api';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { API_CONFIG } from '@/lib/config';
+import { StatCard } from '@/components/shared/feedback/StatCard';
 
 interface LoadingState {
   logos: boolean;
@@ -684,7 +682,7 @@ function EditLogoSheet({
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Type:</span>
-                <Badge className={getAssetTypeColor(logo.asset_type)}>
+                <Badge variant="secondary">
                   {logo.asset_type === 'cached' ? 'Cached' : 'Uploaded'}
                 </Badge>
               </div>
@@ -792,9 +790,7 @@ export function Logos() {
   const [hasMore, setHasMore] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
   const [isUploadSheetOpen, setIsUploadSheetOpen] = useState(false);
-  const [isEditSheetOpen, setIsEditSheetOpen] = useState(false);
-  const [editingLogo, setEditingLogo] = useState<LogoAsset | null>(null);
-  const [viewMode, setViewMode] = useState<'grid' | 'list' | 'table'>('grid');
+  const [selectedLogo, setSelectedLogo] = useState<LogoAsset | null>(null);
   const [isInitialLoad, setIsInitialLoad] = useState(true); // Track initial load
 
   // Ref for infinite scroll trigger
@@ -1323,260 +1319,98 @@ export function Logos() {
         )}
 
         {/* Statistics Cards */}
-        <div className="grid gap-4 md:grid-cols-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Logos</CardTitle>
-              <ImageIcon className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              {loading.stats ? (
-                <Skeleton className="h-8 w-16" />
-              ) : (
-                <>
-                  <div className="text-2xl font-bold">
-                    {(stats?.total_uploaded_logos || 0) + totalCachedLogos}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {stats?.total_uploaded_logos || 0} uploaded, {totalCachedLogos} cached
-                  </p>
-                </>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Storage Used</CardTitle>
-              <HardDrive className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              {loading.stats ? (
-                <Skeleton className="h-8 w-20" />
-              ) : (
-                <>
-                  <div className="text-2xl font-bold">{formatFileSize(totalStorageUsed)}</div>
-                  <p className="text-xs text-muted-foreground">Logo cache storage</p>
-                </>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Uploaded</CardTitle>
-              <Upload className="h-4 w-4 text-blue-600" />
-            </CardHeader>
-            <CardContent>
-              {loading.stats ? (
-                <Skeleton className="h-8 w-16" />
-              ) : (
-                <>
-                  <div className="text-2xl font-bold">{stats?.total_uploaded_logos || 0}</div>
-                  <p className="text-xs text-muted-foreground">User uploaded logos</p>
-                </>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Linked Assets</CardTitle>
-              <Link2 className="h-4 w-4 text-green-600" />
-            </CardHeader>
-            <CardContent>
-              {loading.stats ? (
-                <Skeleton className="h-8 w-16" />
-              ) : (
-                <>
-                  <div className="text-2xl font-bold">{stats?.total_linked_assets || 0}</div>
-                  <p className="text-xs text-muted-foreground">Format conversions</p>
-                </>
-              )}
-            </CardContent>
-          </Card>
+        <div className="grid gap-2 md:grid-cols-4">
+          <StatCard
+            title="Total Logos"
+            value={(stats?.total_uploaded_logos || 0) + totalCachedLogos}
+            icon={<ImageIcon className="h-4 w-4" />}
+          />
+          <StatCard
+            title="Storage Used"
+            value={formatFileSize(totalStorageUsed)}
+            icon={<HardDrive className="h-4 w-4" />}
+          />
+          <StatCard
+            title="Uploaded"
+            value={stats?.total_uploaded_logos || 0}
+            icon={<Upload className="h-4 w-4" />}
+          />
+          <StatCard
+            title="Linked Assets"
+            value={stats?.total_linked_assets || 0}
+            icon={<Link2 className="h-4 w-4" />}
+          />
         </div>
 
-        {/* Search and Filter Section */}
+        {/* Logo Display */}
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Search className="h-5 w-5" />
-              Search & Filter
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col sm:flex-row gap-4">
+          <CardHeader className="pb-4">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-4">
               <div className="flex-1">
+                <CardTitle className="flex items-center gap-2">
+                  <span>Logos ({filteredLogos.length})</span>
+                  {loading.logos && <Loader2 className="h-4 w-4 animate-spin" />}
+                </CardTitle>
+              </div>
+              <div className="flex items-center gap-2">
                 <div className="relative">
                   <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                   <Input
                     ref={searchInputRef}
-                    placeholder="Search logos by name, description, format..."
+                    placeholder="Search by name, format..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-8"
+                    className="pl-8 w-[200px] h-9"
                   />
                 </div>
-              </div>
-              <Select
-                value={logoFilter}
-                onValueChange={(value) => setLogoFilter(value as 'all' | 'uploaded' | 'cached')}
-                disabled={loading.logos}
-              >
-                <SelectTrigger className="w-full sm:w-[200px]">
-                  <SelectValue placeholder="Logo types" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Show All Types</SelectItem>
-                  <SelectItem value="uploaded">Uploaded Only</SelectItem>
-                  <SelectItem value="cached">Cached Only</SelectItem>
-                </SelectContent>
-              </Select>
-
-              {/* Layout Chooser */}
-              <div className="flex rounded-md border">
-                <Button
-                  size="sm"
-                  variant={viewMode === 'table' ? 'default' : 'ghost'}
-                  className="rounded-r-none border-r"
-                  onClick={() => setViewMode('table')}
+                <Select
+                  value={logoFilter}
+                  onValueChange={(value) => setLogoFilter(value as 'all' | 'uploaded' | 'cached')}
+                  disabled={loading.logos}
                 >
-                  <TableIcon className="w-4 h-4" />
-                </Button>
-                <Button
-                  size="sm"
-                  variant={viewMode === 'grid' ? 'default' : 'ghost'}
-                  className="rounded-none border-r"
-                  onClick={() => setViewMode('grid')}
-                >
-                  <Grid className="w-4 h-4" />
-                </Button>
-                <Button
-                  size="sm"
-                  variant={viewMode === 'list' ? 'default' : 'ghost'}
-                  className="rounded-l-none"
-                  onClick={() => setViewMode('list')}
-                >
-                  <List className="w-4 h-4" />
-                </Button>
+                  <SelectTrigger className="w-[140px] h-9">
+                    <SelectValue placeholder="Logo types" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Types</SelectItem>
+                    <SelectItem value="uploaded">Uploaded</SelectItem>
+                    <SelectItem value="cached">Cached</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
-          </CardContent>
-        </Card>
-
-        {/* Logo Display */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              <span>
-                Logos ({filteredLogos.length}
-                {searchTerm || logoFilter !== 'all' ? ` of ${totalCount}` : ''})
-              </span>
-              {loading.logos && <Loader2 className="h-4 w-4 animate-spin" />}
-            </CardTitle>
-            <CardDescription>Manage uploaded and cached logo assets</CardDescription>
           </CardHeader>
           <CardContent>
             {loading.logos && isInitialLoad ? (
-              <>
-                {/* Loading skeleton based on view mode */}
-                {viewMode === 'grid' && (
-                  <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
-                    {Array.from({ length: 12 }).map((_, i) => (
-                      <Card key={i} className="animate-pulse">
-                        <CardHeader className="pb-2">
-                          <div className="flex items-center gap-2">
-                            <Skeleton className="h-5 w-16" />
-                            <Skeleton className="h-5 w-12" />
-                          </div>
-                        </CardHeader>
-                        <CardContent className="space-y-3">
-                          <Skeleton className="aspect-square w-full" />
-                          <div className="space-y-2">
-                            <Skeleton className="h-4 w-3/4" />
-                            <Skeleton className="h-3 w-1/2" />
-                          </div>
-                          <div className="space-y-1">
-                            <div className="flex justify-between">
-                              <Skeleton className="h-3 w-8" />
-                              <Skeleton className="h-3 w-12" />
-                            </div>
-                            <div className="flex justify-between">
-                              <Skeleton className="h-3 w-8" />
-                              <Skeleton className="h-3 w-16" />
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                )}
-
-                {viewMode === 'list' && (
-                  <div className="space-y-2">
-                    {Array.from({ length: 8 }).map((_, i) => (
-                      <Card key={i} className="animate-pulse">
-                        <CardContent className="pt-4">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center space-x-4 flex-1">
-                              <Skeleton className="w-16 h-16" />
-                              <div className="flex-1 space-y-2">
-                                <div className="flex items-center gap-3">
-                                  <div>
-                                    <Skeleton className="h-4 w-32 mb-1" />
-                                    <Skeleton className="h-3 w-48" />
-                                  </div>
-                                  <div className="flex gap-2">
-                                    <Skeleton className="h-5 w-16" />
-                                    <Skeleton className="h-5 w-12" />
-                                    <Skeleton className="h-5 w-14" />
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                            <div className="flex gap-1">
-                              <Skeleton className="h-8 w-8" />
-                              <Skeleton className="h-8 w-8" />
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                )}
-
-                {viewMode === 'table' && (
-                  <div className="space-y-4">
-                    {Array.from({ length: 6 }).map((_, i) => (
-                      <Card key={i} className="animate-pulse">
-                        <CardHeader className="pb-3">
-                          <div className="flex items-start gap-4">
-                            <Skeleton className="w-24 h-24 flex-shrink-0" />
-                            <div className="space-y-2 flex-1">
-                              <div className="flex items-center gap-2">
-                                <Skeleton className="h-6 w-48" />
-                                <Skeleton className="h-5 w-16" />
-                                <Skeleton className="h-5 w-12" />
-                              </div>
-                              <Skeleton className="h-4 w-3/4" />
-                              <div className="flex gap-4">
-                                <Skeleton className="h-3 w-20" />
-                                <Skeleton className="h-3 w-24" />
-                                <Skeleton className="h-3 w-16" />
-                              </div>
-                            </div>
-                            <div className="flex gap-1">
-                              <Skeleton className="h-8 w-8" />
-                              <Skeleton className="h-8 w-8" />
-                            </div>
-                          </div>
-                        </CardHeader>
-                      </Card>
-                    ))}
-                  </div>
-                )}
-              </>
+              <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+                {Array.from({ length: 12 }).map((_, i) => (
+                  <Card key={i} className="animate-pulse">
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center gap-2">
+                        <Skeleton className="h-5 w-16" />
+                        <Skeleton className="h-5 w-12" />
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <Skeleton className="aspect-square w-full" />
+                      <div className="space-y-2">
+                        <Skeleton className="h-4 w-3/4" />
+                        <Skeleton className="h-3 w-1/2" />
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex justify-between">
+                          <Skeleton className="h-3 w-8" />
+                          <Skeleton className="h-3 w-12" />
+                        </div>
+                        <div className="flex justify-between">
+                          <Skeleton className="h-3 w-8" />
+                          <Skeleton className="h-3 w-16" />
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
             ) : errors.logos ? (
               <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
@@ -1597,128 +1431,19 @@ export function Logos() {
               </Alert>
             ) : (
               <>
-                {viewMode === 'table' && (
-                  <div className="space-y-4">
-                    {filteredLogos.map((logo) => (
-                      <Card key={logo.id} className="relative group">
-                        <CardHeader className="pb-3">
-                          <div className="flex items-start justify-between">
-                            <div className="flex items-start gap-4 flex-1">
-                              <div className="w-24 h-24 bg-muted rounded-md flex items-center justify-center overflow-hidden flex-shrink-0">
-                                <img
-                                  src={
-                                    logo.url.startsWith('http')
-                                      ? logo.url
-                                      : `${API_CONFIG.baseUrl}${logo.url}`
-                                  }
-                                  alt={logo.name}
-                                  className="max-w-full max-h-full object-contain"
-                                  onError={(e) => {
-                                    e.currentTarget.style.display = 'none';
-                                    e.currentTarget.nextElementSibling?.classList.remove('hidden');
-                                  }}
-                                />
-                                <div className="hidden flex-col items-center gap-1 text-muted-foreground">
-                                  <FileImage className="h-6 w-6" />
-                                  <span className="text-xs">No preview</span>
-                                </div>
-                              </div>
-                              <div className="space-y-2 flex-1">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <CardTitle className="text-lg">{logo.name}</CardTitle>
-                                  <Badge className={getAssetTypeColor(logo.asset_type)}>
-                                    {logo.asset_type === 'cached' ? 'Cached' : 'Uploaded'}
-                                  </Badge>
-                                  {/* Show format badges for linked assets */}
-                                  {logo.linked_assets && logo.linked_assets.length > 0 ? (
-                                    logo.linked_assets.map((asset, idx) => (
-                                      <Tooltip key={idx}>
-                                        <TooltipTrigger asChild>
-                                          <Badge
-                                            variant={asset.type === 'display' ? 'default' : 'outline'}
-                                            className="cursor-help"
-                                          >
-                                            {getFormatFromMimeType(asset.content_type)}
-                                          </Badge>
-                                        </TooltipTrigger>
-                                        <TooltipContent side="top" className="text-xs">
-                                          <p className="capitalize">{asset.type}</p>
-                                          <p className="text-muted-foreground">
-                                            {formatFileSize(asset.size)}
-                                          </p>
-                                        </TooltipContent>
-                                      </Tooltip>
-                                    ))
-                                  ) : (
-                                    <Badge variant="outline">
-                                      {getFormatFromMimeType(logo.mime_type)}
-                                    </Badge>
-                                  )}
-                                </div>
-                                {logo.description && (
-                                  <p className="text-sm text-muted-foreground">
-                                    {logo.description}
-                                  </p>
-                                )}
-                                <div className="flex gap-4 text-sm text-muted-foreground">
-                                  <span>
-                                    Size: {formatFileSize(logo.total_linked_size || logo.file_size)}
-                                  </span>
-                                  {logo.width && logo.height && (
-                                    <span>
-                                      Dimensions: {logo.width}×{logo.height}
-                                    </span>
-                                  )}
-                                  <span>Created: {formatRelativeTime(logo.created_at)}</span>
-                                </div>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              {logo.asset_type === 'uploaded' && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => {
-                                    setEditingLogo(logo);
-                                    setIsEditSheetOpen(true);
-                                  }}
-                                  className="h-8 w-8 p-0"
-                                  disabled={loading.edit}
-                                  title="Edit logo"
-                                >
-                                  <Edit className="h-4 w-4" />
-                                </Button>
-                              )}
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleDeleteLogo(logo.id)}
-                                className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                disabled={loading.delete === logo.id}
-                                title="Delete logo"
-                              >
-                                {loading.delete === logo.id ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Trash2 className="h-4 w-4" />
-                                )}
-                              </Button>
-                            </div>
-                          </div>
-                        </CardHeader>
-                      </Card>
-                    ))}
-                  </div>
-                )}
-
-                {viewMode === 'grid' && (
                   <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
                     {filteredLogos.map((logo) => (
-                      <Card key={logo.id} className="relative group transition-all hover:shadow-md">
+                      <Card
+                        key={logo.id}
+                        className={`relative group transition-all hover:shadow-md cursor-pointer ${
+                          selectedLogo?.id === logo.id ? 'ring-2 ring-primary' : ''
+                        }`}
+                        onClick={() => setSelectedLogo(logo)}
+                      >
                         <CardHeader className="pb-2">
                           <div className="flex items-start justify-between">
                             <div className="flex flex-wrap items-center gap-1">
-                              <Badge className={getAssetTypeColor(logo.asset_type)}>
+                              <Badge variant="secondary">
                                 {logo.asset_type === 'cached' ? 'Cached' : 'Uploaded'}
                               </Badge>
                               {/* Show format badges for linked assets */}
@@ -1745,22 +1470,10 @@ export function Logos() {
                                 </Badge>
                               )}
                             </div>
-                            <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-popover border border-border rounded-md p-1 shadow-md">
-                              {logo.asset_type === 'uploaded' && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => {
-                                    setEditingLogo(logo);
-                                    setIsEditSheetOpen(true);
-                                  }}
-                                  className="h-6 w-6 p-0 hover:bg-accent"
-                                  disabled={loading.edit}
-                                  title="Edit logo"
-                                >
-                                  <Edit className="h-3 w-3" />
-                                </Button>
-                              )}
+                            <div
+                              className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-popover border border-border rounded-md p-1 shadow-md"
+                              onClick={(e) => e.stopPropagation()}
+                            >
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -1922,123 +1635,6 @@ export function Logos() {
                       </Card>
                     ))}
                   </div>
-                )}
-
-                {viewMode === 'list' && (
-                  <div className="space-y-2">
-                    {filteredLogos.map((logo) => (
-                      <Card key={logo.id} className="transition-all hover:shadow-sm">
-                        <CardContent className="pt-4">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center space-x-4 flex-1">
-                              <div className="w-16 h-16 bg-muted rounded-md flex items-center justify-center overflow-hidden flex-shrink-0">
-                                <img
-                                  src={
-                                    logo.url.startsWith('http')
-                                      ? logo.url
-                                      : `${API_CONFIG.baseUrl}${logo.url}`
-                                  }
-                                  alt={logo.name}
-                                  className="max-w-full max-h-full object-contain"
-                                  onError={(e) => {
-                                    e.currentTarget.style.display = 'none';
-                                    e.currentTarget.nextElementSibling?.classList.remove('hidden');
-                                  }}
-                                />
-                                <div className="hidden flex-col items-center gap-1 text-muted-foreground">
-                                  <FileImage className="h-4 w-4" />
-                                </div>
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-3">
-                                  <div>
-                                    <p className="font-medium text-sm">{logo.name}</p>
-                                    <p className="text-xs text-muted-foreground">
-                                      {logo.description && logo.description.length > 50
-                                        ? `${logo.description.substring(0, 50)}...`
-                                        : logo.description || logo.file_name}
-                                    </p>
-                                  </div>
-                                  <div className="flex flex-wrap items-center gap-1">
-                                    <Badge className={getAssetTypeColor(logo.asset_type)}>
-                                      {logo.asset_type === 'cached' ? 'Cached' : 'Uploaded'}
-                                    </Badge>
-                                    {/* Show format badges for linked assets */}
-                                    {logo.linked_assets && logo.linked_assets.length > 0 ? (
-                                      logo.linked_assets.map((asset, idx) => (
-                                        <Tooltip key={idx}>
-                                          <TooltipTrigger asChild>
-                                            <Badge
-                                              variant={asset.type === 'display' ? 'default' : 'outline'}
-                                              className="text-xs cursor-help"
-                                            >
-                                              {getFormatFromMimeType(asset.content_type)}
-                                            </Badge>
-                                          </TooltipTrigger>
-                                          <TooltipContent side="top" className="text-xs">
-                                            <p className="capitalize">{asset.type}</p>
-                                            <p className="text-muted-foreground">
-                                              {formatFileSize(asset.size)}
-                                            </p>
-                                          </TooltipContent>
-                                        </Tooltip>
-                                      ))
-                                    ) : (
-                                      <Badge variant="outline" className="text-xs">
-                                        {getFormatFromMimeType(logo.mime_type)}
-                                      </Badge>
-                                    )}
-                                    <Badge variant="secondary" className="text-xs">
-                                      {formatFileSize(logo.total_linked_size || logo.file_size)}
-                                    </Badge>
-                                    {logo.width && logo.height && (
-                                      <Badge variant="outline" className="text-xs">
-                                        {logo.width}×{logo.height}
-                                      </Badge>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2 ml-4">
-                              <div className="flex items-center gap-1">
-                                {logo.asset_type === 'uploaded' && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => {
-                                      setEditingLogo(logo);
-                                      setIsEditSheetOpen(true);
-                                    }}
-                                    className="h-8 w-8 p-0"
-                                    disabled={loading.edit}
-                                    title="Edit logo"
-                                  >
-                                    <Edit className="h-4 w-4" />
-                                  </Button>
-                                )}
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleDeleteLogo(logo.id)}
-                                  className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                  disabled={loading.delete === logo.id}
-                                  title="Delete logo"
-                                >
-                                  {loading.delete === logo.id ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <Trash2 className="h-4 w-4" />
-                                  )}
-                                </Button>
-                              </div>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                )}
 
                 {/* Infinite Scroll Trigger */}
                 {hasMore && !searchTerm && (
@@ -2097,13 +1693,13 @@ export function Logos() {
       />
 
       <EditLogoSheet
-        logo={editingLogo}
+        logo={selectedLogo}
         onUpdateLogo={handleUpdateLogo}
         onReplaceLogo={handleReplaceLogo}
         loading={loading.edit}
         error={errors.edit}
-        open={isEditSheetOpen}
-        onOpenChange={setIsEditSheetOpen}
+        open={selectedLogo !== null}
+        onOpenChange={(open) => !open && setSelectedLogo(null)}
       />
     </TooltipProvider>
   );

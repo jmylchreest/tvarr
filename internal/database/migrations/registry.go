@@ -22,6 +22,7 @@ import (
 // - 011: Add is_active column to proxy_filters
 // - 012: Add auto_shift_timezone column to epg_sources for timezone auto-shift tracking
 // - 013: Add system client detection rules for popular media players (VLC, MPV, Kodi, Plex, Jellyfin, Emby)
+// - 014: Rename system timeshift detection rule to shorter name
 func AllMigrations() []Migration {
 	return []Migration{
 		migration001Schema(),
@@ -37,6 +38,7 @@ func AllMigrations() []Migration {
 		migration011ProxyFilterIsActive(),
 		migration012EpgAutoShiftTimezone(),
 		migration013SystemClientDetectionRules(),
+		migration014RenameTimeshiftRule(),
 	}
 }
 
@@ -189,7 +191,7 @@ func createDefaultFilters(tx *gorm.DB) error {
 func createDefaultDataMappingRules(tx *gorm.DB) error {
 	rules := []models.DataMappingRule{
 		{
-			Name:        "Default Timeshift Detection (Regex)",
+			Name:        "Timeshift Detection",
 			Description: "Automatically detects timeshift channels (+1, +24, etc.) and sets tvg-shift field using regex capture groups.",
 			SourceType:  models.DataMappingRuleSourceTypeStream,
 			Expression:  `channel_name matches ".*[ ](?:\\+([0-9]{1,2})|(-[0-9]{1,2}))([hH]?)(?:$|[ ]).*" AND channel_name not matches ".*(?:start:|stop:|24[-/]7).*" AND tvg_id matches "^.+$" SET tvg_shift = "$1$2"`,

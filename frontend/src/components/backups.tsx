@@ -24,6 +24,7 @@ import {
 import {
   Tooltip,
   TooltipContent,
+  TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import {
@@ -43,6 +44,7 @@ import {
 } from 'lucide-react';
 import { BackupInfo, BackupListResponse, BackupScheduleInfo, RestoreResult } from '@/types/api';
 import { apiClient } from '@/lib/api-client';
+import { StatCard } from '@/components/shared/feedback/StatCard';
 
 function formatFileSize(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -228,137 +230,107 @@ export function Backups() {
   const totalBackupSize = backups.reduce((sum, b) => sum + b.file_size, 0);
 
   return (
-    <div className="space-y-6">
-      {/* Hidden file input for upload */}
-      <input
-        type="file"
-        ref={fileInputRef}
-        onChange={handleFileSelect}
-        accept=".db.gz"
-        className="hidden"
-      />
+    <TooltipProvider>
+      <div className="space-y-6">
+        {/* Hidden file input for upload */}
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleFileSelect}
+          accept=".db.gz"
+          className="hidden"
+        />
 
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
+        {/* Header */}
+        <div className="flex items-center justify-between">
           <p className="text-muted-foreground">
             Manage database backups and restore points
           </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={handleUploadClick} disabled={uploading || loading}>
-            {uploading ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Uploading...
-              </>
-            ) : (
-              <>
-                <Upload className="mr-2 h-4 w-4" />
-                Upload Backup
-              </>
-            )}
-          </Button>
-          <Button onClick={handleCreateBackup} disabled={creating || loading}>
-            {creating ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Creating...
-              </>
-            ) : (
-              <>
-                <Plus className="mr-2 h-4 w-4" />
-                Create Backup
-              </>
-            )}
-          </Button>
-        </div>
-      </div>
-
-      {/* Alerts */}
-      {error && (
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Error</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-
-      {success && (
-        <Alert>
-          <CheckCircle className="h-4 w-4 text-green-500" />
-          <AlertTitle>Success</AlertTitle>
-          <AlertDescription>{success}</AlertDescription>
-        </Alert>
-      )}
-
-      {/* Statistics */}
-      <div className="grid gap-4 md:grid-cols-5">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Backups</CardTitle>
-            <Database className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{backups.length}</div>
-            <p className="text-xs text-muted-foreground">Available restore points</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Storage Used</CardTitle>
-            <HardDrive className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{formatFileSize(totalBackupSize)}</div>
-            <p className="text-xs text-muted-foreground">Total backup size</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Schedule</CardTitle>
-            <Clock className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {schedule?.enabled ? (
-                <Badge variant="default">Active</Badge>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={handleUploadClick} disabled={uploading || loading}>
+              {uploading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Uploading...
+                </>
               ) : (
-                <Badge variant="secondary">Disabled</Badge>
+                <>
+                  <Upload className="mr-2 h-4 w-4" />
+                  Upload
+                </>
               )}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {schedule?.enabled ? parseCronExpression(schedule.cron) : 'Not configured'}
-            </p>
-          </CardContent>
-        </Card>
+            </Button>
+            <Button onClick={handleCreateBackup} disabled={creating || loading}>
+              {creating ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                <>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Create
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Retention</CardTitle>
-            <Calendar className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{schedule?.retention || 0}</div>
-            <p className="text-xs text-muted-foreground">Backups to keep</p>
-          </CardContent>
-        </Card>
+        {/* Alerts */}
+        {error && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Location</CardTitle>
-            <FolderOpen className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <code className="text-xs bg-muted px-1 py-0.5 rounded truncate block" title={backupDir}>
-              {backupDir || 'Not configured'}
-            </code>
-            <p className="text-xs text-muted-foreground mt-1">Backup directory</p>
-          </CardContent>
-        </Card>
-      </div>
+        {success && (
+          <Alert>
+            <CheckCircle className="h-4 w-4 text-green-500" />
+            <AlertTitle>Success</AlertTitle>
+            <AlertDescription>{success}</AlertDescription>
+          </Alert>
+        )}
+
+        {/* Statistics */}
+        <div className="grid gap-2 md:grid-cols-5">
+          <StatCard
+            title="Total Backups"
+            value={backups.length}
+            icon={<Database className="h-4 w-4" />}
+          />
+          <StatCard
+            title="Storage Used"
+            value={formatFileSize(totalBackupSize)}
+            icon={<HardDrive className="h-4 w-4" />}
+          />
+          <StatCard
+            title="Schedule"
+            value={schedule?.enabled ? 'Active' : 'Disabled'}
+            icon={<Clock className="h-4 w-4" />}
+            className={schedule?.enabled ? 'border-green-500/30' : ''}
+          />
+          <StatCard
+            title="Retention"
+            value={schedule?.retention || 0}
+            icon={<Calendar className="h-4 w-4" />}
+          />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div>
+                <StatCard
+                  title="Location"
+                  value={backupDir ? '...' + backupDir.slice(-15) : 'Not set'}
+                  icon={<FolderOpen className="h-4 w-4" />}
+                />
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              <code className="text-xs">{backupDir || 'Not configured'}</code>
+            </TooltipContent>
+          </Tooltip>
+        </div>
 
       {/* Backups Table */}
       <Card>
@@ -556,6 +528,7 @@ export function Backups() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+      </div>
+    </TooltipProvider>
   );
 }

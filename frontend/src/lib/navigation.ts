@@ -79,19 +79,14 @@ export const navigation: NavigationGroup[] = [
     title: 'Global Config',
     items: [
       {
-        title: 'Filters',
-        url: '/admin/filters',
-        icon: Filter,
-      },
-      {
         title: 'Data Mapping',
         url: '/admin/data-mapping',
         icon: ArrowUpDown,
       },
       {
-        title: 'Logos',
-        url: '/admin/logos',
-        icon: Image,
+        title: 'Filters',
+        url: '/admin/filters',
+        icon: Filter,
       },
       {
         title: 'Encoding Profiles',
@@ -102,6 +97,11 @@ export const navigation: NavigationGroup[] = [
         title: 'Client Detection',
         url: '/admin/client-detection',
         icon: Users,
+      },
+      {
+        title: 'Logos',
+        url: '/admin/logos',
+        icon: Image,
       },
       {
         title: 'Backups',
