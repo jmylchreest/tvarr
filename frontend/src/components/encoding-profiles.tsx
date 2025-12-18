@@ -953,8 +953,6 @@ function EncodingProfileDetailPanel({
 
 export function EncodingProfiles() {
   const [allProfiles, setAllProfiles] = useState<EncodingProfile[]>([]);
-  const [filterVideoCodec, setFilterVideoCodec] = useState<string>('all');
-  const [filterQuality, setFilterQuality] = useState<string>('all');
   const [selectedProfile, setSelectedProfile] = useState<EncodingProfileMasterItem | null>(null);
   const [loading, setLoading] = useState<LoadingState>({
     profiles: true,
@@ -993,29 +991,12 @@ export function EncodingProfiles() {
     loadProfiles();
   }, [loadProfiles]);
 
-  // Local filtering (search is handled by MasterDetailLayout)
-  const filteredProfiles = useMemo(() => {
-    let filtered = allProfiles;
-
-    // Filter by video codec
-    if (filterVideoCodec !== 'all') {
-      filtered = filtered.filter((p) => p.target_video_codec === filterVideoCodec);
-    }
-
-    // Filter by quality preset
-    if (filterQuality !== 'all') {
-      filtered = filtered.filter((p) => p.quality_preset === filterQuality);
-    }
-
-    return filtered;
-  }, [allProfiles, filterVideoCodec, filterQuality]);
-
-  // Convert filtered profiles to master items for MasterDetailLayout, sorted alphabetically
+  // Convert profiles to master items for MasterDetailLayout, sorted alphabetically
   const masterItems = useMemo(
-    () => filteredProfiles
+    () => allProfiles
       .map(encodingProfileToMasterItem)
       .sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true })),
-    [filteredProfiles]
+    [allProfiles]
   );
 
   const handleCreate = async (data: ProfileFormData) => {
@@ -1116,7 +1097,7 @@ export function EncodingProfiles() {
 
   return (
     <TooltipProvider>
-      <div className="space-y-6">
+      <div className="flex flex-col gap-6 h-full">
         {/* Header Section */}
         <div className="flex items-center justify-between">
           <p className="text-muted-foreground">Manage transcoding settings for stream relay output</p>
@@ -1141,48 +1122,6 @@ export function EncodingProfiles() {
         <StatCard title="HW Accelerated" value={hwAccelProfiles} icon={<Zap className="h-4 w-4 text-orange-600" />} />
       </div>
 
-      {/* Filter Dropdowns */}
-      <Card className="p-4">
-        <div className="flex items-center gap-4 flex-wrap">
-          <Label className="text-sm font-medium">Filters:</Label>
-          <Select
-            value={filterVideoCodec}
-            onValueChange={setFilterVideoCodec}
-            disabled={loading.profiles}
-          >
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Video Codec" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Codecs</SelectItem>
-              {VIDEO_CODECS.map((codec) => (
-                <SelectItem key={codec.value} value={codec.value}>
-                  {codec.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select
-            value={filterQuality}
-            onValueChange={setFilterQuality}
-            disabled={loading.profiles}
-          >
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Quality" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Quality</SelectItem>
-              {QUALITY_PRESETS.map((preset) => (
-                <SelectItem key={preset.value} value={preset.value}>
-                  {preset.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </Card>
-
       {/* Error display */}
       {error.action && (
         <Alert variant="destructive">
@@ -1193,8 +1132,8 @@ export function EncodingProfiles() {
       )}
 
       {/* MasterDetailLayout */}
-      <Card className="flex-1">
-        <CardContent className="p-0 min-h-[500px] h-[calc(100vh-320px)]">
+      <Card className="flex-1 overflow-hidden min-h-0">
+        <CardContent className="p-0 h-full">
           {error.profiles ? (
             <div className="p-6">
               <Alert variant="destructive">
@@ -1224,7 +1163,7 @@ export function EncodingProfiles() {
                 setSelectedProfile(item);
               }}
               isLoading={loading.profiles}
-              title={`Encoding Profiles (${filteredProfiles.length}${filterVideoCodec !== 'all' || filterQuality !== 'all' ? ` of ${allProfiles.length}` : ''})`}
+              title={`Encoding Profiles (${allProfiles.length})`}
               searchPlaceholder="Search profiles by name, codec, quality..."
               headerAction={
                 <Button
@@ -1242,8 +1181,8 @@ export function EncodingProfiles() {
                 </Button>
               }
               emptyState={{
-                title: filterVideoCodec !== 'all' || filterQuality !== 'all' ? 'No matching profiles' : 'No encoding profiles yet',
-                description: filterVideoCodec !== 'all' || filterQuality !== 'all' ? 'Try adjusting your filter criteria.' : 'Get started by creating your first encoding profile.',
+                title: 'No encoding profiles yet',
+                description: 'Get started by creating your first encoding profile.',
               }}
               filterFn={(item, term) => {
                 const profile = item.profile;
@@ -1277,7 +1216,7 @@ export function EncodingProfiles() {
                   />
                 ) : (
                   <DetailEmpty
-                    icon={<Video className="h-12 w-12" />}
+                    icon={<Zap className="h-12 w-12" />}
                     title="Select an Encoding Profile"
                     description="Choose a profile from the list to view and edit its configuration."
                   />

@@ -342,5 +342,92 @@ func (r *streamProxyRepo) GetByEncodingProfileID(ctx context.Context, profileID 
 	return proxies, nil
 }
 
+// CountByStreamSourceID returns the count of all proxies using a stream source.
+func (r *streamProxyRepo) CountByStreamSourceID(ctx context.Context, sourceID models.ULID) (int64, error) {
+	var count int64
+	if err := r.db.WithContext(ctx).
+		Model(&models.ProxySource{}).
+		Where("source_id = ?", sourceID).
+		Count(&count).Error; err != nil {
+		return 0, fmt.Errorf("counting proxies by stream source ID: %w", err)
+	}
+	return count, nil
+}
+
+// CountByEpgSourceID returns the count of all proxies using an EPG source.
+func (r *streamProxyRepo) CountByEpgSourceID(ctx context.Context, epgSourceID models.ULID) (int64, error) {
+	var count int64
+	if err := r.db.WithContext(ctx).
+		Model(&models.ProxyEpgSource{}).
+		Where("epg_source_id = ?", epgSourceID).
+		Count(&count).Error; err != nil {
+		return 0, fmt.Errorf("counting proxies by EPG source ID: %w", err)
+	}
+	return count, nil
+}
+
+// CountByFilterID returns the count of all proxies using a filter.
+func (r *streamProxyRepo) CountByFilterID(ctx context.Context, filterID models.ULID) (int64, error) {
+	var count int64
+	if err := r.db.WithContext(ctx).
+		Model(&models.ProxyFilter{}).
+		Where("filter_id = ?", filterID).
+		Count(&count).Error; err != nil {
+		return 0, fmt.Errorf("counting proxies by filter ID: %w", err)
+	}
+	return count, nil
+}
+
+// GetProxyNamesByStreamSourceID returns names of proxies using a stream source.
+func (r *streamProxyRepo) GetProxyNamesByStreamSourceID(ctx context.Context, sourceID models.ULID) ([]string, error) {
+	var names []string
+	if err := r.db.WithContext(ctx).
+		Model(&models.StreamProxy{}).
+		Joins("JOIN proxy_sources ON proxy_sources.proxy_id = stream_proxies.id AND proxy_sources.deleted_at IS NULL").
+		Where("proxy_sources.source_id = ?", sourceID).
+		Pluck("stream_proxies.name", &names).Error; err != nil {
+		return nil, fmt.Errorf("getting proxy names by stream source ID: %w", err)
+	}
+	return names, nil
+}
+
+// GetProxyNamesByEpgSourceID returns names of proxies using an EPG source.
+func (r *streamProxyRepo) GetProxyNamesByEpgSourceID(ctx context.Context, epgSourceID models.ULID) ([]string, error) {
+	var names []string
+	if err := r.db.WithContext(ctx).
+		Model(&models.StreamProxy{}).
+		Joins("JOIN proxy_epg_sources ON proxy_epg_sources.proxy_id = stream_proxies.id AND proxy_epg_sources.deleted_at IS NULL").
+		Where("proxy_epg_sources.epg_source_id = ?", epgSourceID).
+		Pluck("stream_proxies.name", &names).Error; err != nil {
+		return nil, fmt.Errorf("getting proxy names by EPG source ID: %w", err)
+	}
+	return names, nil
+}
+
+// GetProxyNamesByFilterID returns names of proxies using a filter.
+func (r *streamProxyRepo) GetProxyNamesByFilterID(ctx context.Context, filterID models.ULID) ([]string, error) {
+	var names []string
+	if err := r.db.WithContext(ctx).
+		Model(&models.StreamProxy{}).
+		Joins("JOIN proxy_filters ON proxy_filters.proxy_id = stream_proxies.id AND proxy_filters.deleted_at IS NULL").
+		Where("proxy_filters.filter_id = ?", filterID).
+		Pluck("stream_proxies.name", &names).Error; err != nil {
+		return nil, fmt.Errorf("getting proxy names by filter ID: %w", err)
+	}
+	return names, nil
+}
+
+// GetProxyNamesByEncodingProfileID returns names of proxies using an encoding profile.
+func (r *streamProxyRepo) GetProxyNamesByEncodingProfileID(ctx context.Context, profileID models.ULID) ([]string, error) {
+	var names []string
+	if err := r.db.WithContext(ctx).
+		Model(&models.StreamProxy{}).
+		Where("encoding_profile_id = ?", profileID).
+		Pluck("name", &names).Error; err != nil {
+		return nil, fmt.Errorf("getting proxy names by encoding profile ID: %w", err)
+	}
+	return names, nil
+}
+
 // Ensure streamProxyRepo implements StreamProxyRepository at compile time.
 var _ StreamProxyRepository = (*streamProxyRepo)(nil)

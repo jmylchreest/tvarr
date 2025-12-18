@@ -56,6 +56,16 @@ const (
 	NumberingModeGroup NumberingMode = "group"
 )
 
+// IsValidNumberingMode returns true if the mode is a valid numbering mode.
+func IsValidNumberingMode(mode NumberingMode) bool {
+	switch mode {
+	case NumberingModeSequential, NumberingModePreserve, NumberingModeGroup:
+		return true
+	default:
+		return false
+	}
+}
+
 // StreamProxy represents a proxy configuration that combines sources,
 // applies filters and mappings, and generates output playlists.
 type StreamProxy struct {

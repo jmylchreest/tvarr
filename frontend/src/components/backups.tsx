@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -654,172 +655,178 @@ export function Backups() {
 
   return (
     <TooltipProvider>
-      {/* Hidden file input for upload */}
-      <input
-        type="file"
-        ref={fileInputRef}
-        onChange={handleFileSelect}
-        accept=".tar.gz,.db.gz"
-        className="hidden"
-      />
+      <div className="flex flex-col gap-6 h-full">
+        {/* Hidden file input for upload */}
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleFileSelect}
+          accept=".tar.gz,.db.gz"
+          className="hidden"
+        />
 
-      {/* Alerts */}
-      {(error || success) && (
-        <div className="px-4 py-2 border-b">
-          {error && (
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Error</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
-          {success && (
-            <Alert>
-              <CheckCircle className="h-4 w-4 text-green-500" />
-              <AlertTitle>Success</AlertTitle>
-              <AlertDescription>{success}</AlertDescription>
-            </Alert>
-          )}
-        </div>
-      )}
-
-      <MasterDetailLayout
-        items={masterItems}
-        selectedId={selectedId}
-        onSelect={handleSelect}
-        isLoading={loading}
-        title="Backups"
-        searchPlaceholder="Search backups..."
-        headerAction={
-          <div className="flex items-center gap-1">
-            <Button variant="ghost" size="sm" onClick={handleUploadClick} disabled={uploading || loading}>
-              {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-            </Button>
-            <Button variant="ghost" size="sm" onClick={handleCreateBackup} disabled={creating || loading}>
-              {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-            </Button>
-          </div>
-        }
-        emptyState={{
-          title: 'No backups',
-          description: 'Create a backup to get started',
-          actionLabel: 'Create Backup',
-        }}
-        filterFn={(item, term) => {
-          if (item.isSchedule) return true; // Always show schedule
-          return item.title.toLowerCase().includes(term.toLowerCase()) ||
-                 (item.subtitle?.toLowerCase().includes(term.toLowerCase()) ?? false);
-        }}
-        renderItem={(item, isSelected) => (
-          <div
-            className={`flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors overflow-hidden hover:bg-accent ${
-              isSelected ? 'bg-accent' : ''
-            } ${item.isSchedule ? 'border-b mb-1 pb-2' : ''}`}
-          >
-            {item.icon && (
-              <div className="flex-shrink-0 text-muted-foreground">
-                {item.icon}
-              </div>
-            )}
-            <div className="flex-1 min-w-0 overflow-hidden">
-              <div className="text-sm font-medium truncate">{item.title}</div>
-              {item.subtitle && (
-                <div className="text-[11px] text-muted-foreground truncate">
-                  {item.subtitle}
-                </div>
-              )}
-            </div>
-            {item.badge && <div className="flex-shrink-0 ml-auto">{item.badge}</div>}
-          </div>
-        )}
-      >
-        {() => (
-          <>
-            {showSchedule && (
-              <ScheduleDetailPanel
-                schedule={schedule}
-                backupDirectory={backupDirectory}
-                onSave={handleSaveSchedule}
-                saving={savingSchedule}
-                error={scheduleError}
-              />
-            )}
-            {selectedBackup && (
-              <BackupDetailPanel
-                backup={selectedBackup}
-                onRestore={setRestoreDialog}
-                onDelete={handleDeleteBackup}
-                onDownload={handleDownloadBackup}
-                onToggleProtection={handleToggleProtection}
-                restoring={restoring === selectedBackup.filename}
-                deleting={deleting === selectedBackup.filename}
-                togglingProtection={togglingProtection === selectedBackup.filename}
-              />
-            )}
-            {!showSchedule && !selectedBackup && (
-              <DetailEmpty
-                title="Select a backup"
-                description="Choose a backup from the list to view details, or select Schedule to configure automatic backups"
-                icon={<Database className="h-12 w-12" />}
-              />
-            )}
-          </>
-        )}
-      </MasterDetailLayout>
-
-      {/* Restore Confirmation Dialog */}
-      <Dialog open={restoreDialog !== null} onOpenChange={() => setRestoreDialog(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Restore Database</DialogTitle>
-            <DialogDescription>
-              This will replace all current data with the backup contents. A pre-restore
-              backup will be created automatically.
-            </DialogDescription>
-          </DialogHeader>
-
-          {restoreDialog && (
-            <div className="space-y-4">
+        {/* Alerts */}
+        {(error || success) && (
+          <div>
+            {error && (
               <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
-                <AlertTitle>Warning</AlertTitle>
-                <AlertDescription>
-                  Active streams will be interrupted. This action cannot be undone without
-                  restoring from another backup.
-                </AlertDescription>
+                <AlertTitle>Error</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
               </Alert>
+            )}
+            {success && (
+              <Alert>
+                <CheckCircle className="h-4 w-4 text-green-500" />
+                <AlertTitle>Success</AlertTitle>
+                <AlertDescription>{success}</AlertDescription>
+              </Alert>
+            )}
+          </div>
+        )}
 
-              <div className="bg-muted p-4 rounded-lg space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Backup:</span>
-                  <span className="font-mono">{restoreDialog.filename}</span>
+        <Card className="flex-1 overflow-hidden min-h-0">
+          <CardContent className="p-0 h-full">
+            <MasterDetailLayout
+              items={masterItems}
+              selectedId={selectedId}
+              onSelect={handleSelect}
+              isLoading={loading}
+              title="Backups"
+              searchPlaceholder="Search backups..."
+              headerAction={
+                <div className="flex items-center gap-1">
+                  <Button variant="ghost" size="sm" onClick={handleUploadClick} disabled={uploading || loading}>
+                    {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={handleCreateBackup} disabled={creating || loading}>
+                    {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                  </Button>
                 </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Created:</span>
-                  <span>{formatDate(restoreDialog.created_at)}</span>
+              }
+              emptyState={{
+                title: 'No backups',
+                description: 'Create a backup to get started',
+                actionLabel: 'Create Backup',
+              }}
+              filterFn={(item, term) => {
+                if (item.isSchedule) return true; // Always show schedule
+                return item.title.toLowerCase().includes(term.toLowerCase()) ||
+                       (item.subtitle?.toLowerCase().includes(term.toLowerCase()) ?? false);
+              }}
+              renderItem={(item, isSelected) => (
+                <div
+                  className={`flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors overflow-hidden hover:bg-accent ${
+                    isSelected ? 'bg-accent' : ''
+                  } ${item.isSchedule ? 'border-b mb-1 pb-2' : ''}`}
+                >
+                  {item.icon && (
+                    <div className="flex-shrink-0 text-muted-foreground">
+                      {item.icon}
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0 overflow-hidden">
+                    <div className="text-sm font-medium truncate">{item.title}</div>
+                    {item.subtitle && (
+                      <div className="text-[11px] text-muted-foreground truncate">
+                        {item.subtitle}
+                      </div>
+                    )}
+                  </div>
+                  {item.badge && <div className="flex-shrink-0 ml-auto">{item.badge}</div>}
                 </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Version:</span>
-                  <span>{restoreDialog.tvarr_version}</span>
+              )}
+            >
+              {() => (
+                <>
+                  {showSchedule && (
+                    <ScheduleDetailPanel
+                      schedule={schedule}
+                      backupDirectory={backupDirectory}
+                      onSave={handleSaveSchedule}
+                      saving={savingSchedule}
+                      error={scheduleError}
+                    />
+                  )}
+                  {selectedBackup && (
+                    <BackupDetailPanel
+                      backup={selectedBackup}
+                      onRestore={setRestoreDialog}
+                      onDelete={handleDeleteBackup}
+                      onDownload={handleDownloadBackup}
+                      onToggleProtection={handleToggleProtection}
+                      restoring={restoring === selectedBackup.filename}
+                      deleting={deleting === selectedBackup.filename}
+                      togglingProtection={togglingProtection === selectedBackup.filename}
+                    />
+                  )}
+                  {!showSchedule && !selectedBackup && (
+                    <DetailEmpty
+                      title="Select a backup"
+                      description="Choose a backup from the list to view details, or select Schedule to configure automatic backups"
+                      icon={<Database className="h-12 w-12" />}
+                    />
+                  )}
+                </>
+              )}
+            </MasterDetailLayout>
+          </CardContent>
+        </Card>
+
+        {/* Restore Confirmation Dialog */}
+        <Dialog open={restoreDialog !== null} onOpenChange={() => setRestoreDialog(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Restore Database</DialogTitle>
+              <DialogDescription>
+                This will replace all current data with the backup contents. A pre-restore
+                backup will be created automatically.
+              </DialogDescription>
+            </DialogHeader>
+
+            {restoreDialog && (
+              <div className="space-y-4">
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Warning</AlertTitle>
+                  <AlertDescription>
+                    Active streams will be interrupted. This action cannot be undone without
+                    restoring from another backup.
+                  </AlertDescription>
+                </Alert>
+
+                <div className="bg-muted p-4 rounded-lg space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Backup:</span>
+                    <span className="font-mono">{restoreDialog.filename}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Created:</span>
+                    <span>{formatDate(restoreDialog.created_at)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Version:</span>
+                    <span>{restoreDialog.tvarr_version}</span>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRestoreDialog(null)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => restoreDialog && handleRestoreBackup(restoreDialog)}
-            >
-              <RotateCcw className="mr-2 h-4 w-4" />
-              Restore Database
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setRestoreDialog(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => restoreDialog && handleRestoreBackup(restoreDialog)}
+              >
+                <RotateCcw className="mr-2 h-4 w-4" />
+                Restore Database
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
     </TooltipProvider>
   );
 }

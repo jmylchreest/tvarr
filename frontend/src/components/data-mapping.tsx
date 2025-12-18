@@ -15,12 +15,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { DataMappingExpressionEditor } from '@/components/data-mapping-expression-editor';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   Plus,
   Trash2,
-  ArrowRight as TransformIcon,
+  ArrowUpDown,
   AlertCircle,
   CheckCircle,
   Loader2,
@@ -48,6 +49,7 @@ interface LoadingState {
   edit: boolean;
   delete: string | null;
   reorder: boolean;
+  toggle: string | null;
 }
 
 interface ErrorState {
@@ -230,6 +232,7 @@ function DataMappingRuleDetailPanel({
   rule,
   onUpdate,
   onDelete,
+  onToggle,
   onMoveUp,
   onMoveDown,
   loading,
@@ -241,9 +244,10 @@ function DataMappingRuleDetailPanel({
   rule: DataMappingRule;
   onUpdate: (id: string, data: Omit<DataMappingRule, 'id' | 'created_at' | 'updated_at'>, isSystem?: boolean) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onToggle: (id: string, enabled: boolean) => Promise<void>;
   onMoveUp: (id: string) => Promise<void>;
   onMoveDown: (id: string) => Promise<void>;
-  loading: { edit: boolean; delete: string | null; reorder: boolean };
+  loading: { edit: boolean; delete: string | null; reorder: boolean; toggle: string | null };
   error: string | null;
   isOnline: boolean;
   isFirst: boolean;
@@ -294,6 +298,19 @@ function DataMappingRuleDetailPanel({
       title={rule.name}
       actions={
         <div className="flex items-center gap-1">
+          {/* Enabled/Disabled Toggle - applies immediately */}
+          <div className="flex items-center gap-1.5 mr-2 px-2 py-1 rounded-md bg-muted/50">
+            <Switch
+              id={`toggle-enabled-${rule.id}`}
+              checked={rule.is_enabled}
+              onCheckedChange={(checked) => onToggle(rule.id, checked)}
+              className="h-4 w-7 data-[state=checked]:bg-primary data-[state=unchecked]:bg-input"
+              disabled={loading.toggle === rule.id || !isOnline}
+            />
+            <label htmlFor={`toggle-enabled-${rule.id}`} className="text-xs text-muted-foreground cursor-pointer">
+              {rule.is_enabled ? 'Enabled' : 'Disabled'}
+            </label>
+          </div>
           <Button
             variant="ghost"
             size="sm"
@@ -343,7 +360,7 @@ function DataMappingRuleDetailPanel({
             <Lock className="h-4 w-4" />
             <AlertTitle>System Rule</AlertTitle>
             <AlertDescription>
-              This is a system rule. You can enable or disable it, but cannot modify or delete it.
+              This is a system rule. You can enable/disable it and change its order, but cannot modify or delete it.
             </AlertDescription>
           </Alert>
         )}
@@ -351,10 +368,6 @@ function DataMappingRuleDetailPanel({
         {/* Compact Rule Info */}
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <Badge variant="secondary">{rule.source_type.toUpperCase()}</Badge>
-          <Badge variant="secondary" className="font-mono">#{rule.priority}</Badge>
-          <Badge variant={rule.is_enabled ? 'default' : 'outline'}>
-            {rule.is_enabled ? 'Active' : 'Inactive'}
-          </Badge>
           <span className="text-muted-foreground">
             Created {rule.created_at ? formatRelativeTime(rule.created_at) : 'Unknown'}
           </span>
@@ -415,18 +428,6 @@ function DataMappingRuleDetailPanel({
             autoTest={true}
           />
 
-          <div className="flex items-center space-x-2">
-            <input
-              id="detail-is_enabled"
-              type="checkbox"
-              checked={formData.is_enabled}
-              onChange={(e) => handleFieldChange('is_enabled', e.target.checked)}
-              className="rounded border-gray-300"
-              disabled={loading.edit || !isOnline}
-            />
-            <Label htmlFor="detail-is_enabled">Active Rule</Label>
-          </div>
-
           {/* Save Button */}
           {hasChanges && (
             <div className="flex justify-end pt-4 border-t">
@@ -454,6 +455,7 @@ export function DataMapping() {
     edit: false,
     delete: null,
     reorder: false,
+    toggle: null,
   });
 
   const [errors, setErrors] = useState<ErrorState>({
@@ -617,6 +619,24 @@ export function DataMapping() {
     }
   };
 
+  const handleToggleRule = async (ruleId: string, enabled: boolean) => {
+    setLoading((prev) => ({ ...prev, toggle: ruleId }));
+    setErrors((prev) => ({ ...prev, action: null }));
+
+    try {
+      await apiClient.patchDataMappingRule(ruleId, enabled);
+      await loadRules(); // Reload rules after toggle
+    } catch (error) {
+      const apiError = error as ApiError;
+      setErrors((prev) => ({
+        ...prev,
+        action: `Failed to toggle data mapping rule: ${apiError.message}`,
+      }));
+    } finally {
+      setLoading((prev) => ({ ...prev, toggle: null }));
+    }
+  };
+
   const moveRule = async (ruleId: string, direction: 'up' | 'down') => {
     const currentIndex = sortedRules.findIndex((r) => r.id === ruleId);
     if (currentIndex === -1) return;
@@ -684,7 +704,7 @@ export function DataMapping() {
   const totalRules = allRules?.length || 0;
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6 h-full">
       {/* Header Section */}
       <div className="flex items-center justify-between">
         <div>
@@ -746,15 +766,15 @@ export function DataMapping() {
 
       {/* Statistics Cards */}
       <div className="grid gap-2 md:grid-cols-4">
-        <StatCard title="Total Rules" value={totalRules} icon={<TransformIcon className="h-4 w-4" />} />
+        <StatCard title="Total Rules" value={totalRules} icon={<ArrowUpDown className="h-4 w-4" />} />
         <StatCard title="Stream Rules" value={streamRules} icon={<Play className="h-4 w-4 text-blue-600" />} />
         <StatCard title="EPG Rules" value={epgRules} icon={<Code className="h-4 w-4 text-green-600" />} />
         <StatCard title="Active Rules" value={activeRules} icon={<CheckCircle className="h-4 w-4 text-orange-600" />} />
       </div>
 
       {/* MasterDetailLayout */}
-      <Card className="flex-1">
-        <CardContent className="p-0 min-h-[500px] h-[calc(100vh-320px)]">
+      <Card className="flex-1 overflow-hidden min-h-0">
+        <CardContent className="p-0 h-full">
           {errors.rules ? (
             <div className="p-6">
               <Alert variant="destructive">
@@ -835,9 +855,10 @@ export function DataMapping() {
                     rule={selected.rule}
                     onUpdate={handleUpdateRule}
                     onDelete={handleDeleteRule}
+                    onToggle={handleToggleRule}
                     onMoveUp={(id) => moveRule(id, 'up')}
                     onMoveDown={(id) => moveRule(id, 'down')}
-                    loading={{ edit: loading.edit, delete: loading.delete, reorder: loading.reorder }}
+                    loading={{ edit: loading.edit, delete: loading.delete, reorder: loading.reorder, toggle: loading.toggle }}
                     error={errors.edit}
                     isOnline={isOnline}
                     isFirst={sortedRules.findIndex((r) => r.id === selected.rule.id) === 0}
@@ -845,7 +866,7 @@ export function DataMapping() {
                   />
                 ) : (
                   <DetailEmpty
-                    icon={<TransformIcon className="h-12 w-12" />}
+                    icon={<ArrowUpDown className="h-12 w-12" />}
                     title="Select a Data Mapping Rule"
                     description="Choose a rule from the list to view and edit its configuration."
                   />

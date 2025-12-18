@@ -193,6 +193,20 @@ type StreamProxyRepository interface {
 	CountByEncodingProfileID(ctx context.Context, profileID models.ULID) (int64, error)
 	// GetByEncodingProfileID returns stream proxies using a given encoding profile.
 	GetByEncodingProfileID(ctx context.Context, profileID models.ULID) ([]*models.StreamProxy, error)
+	// CountByStreamSourceID returns the count of all proxies using a stream source.
+	CountByStreamSourceID(ctx context.Context, sourceID models.ULID) (int64, error)
+	// CountByEpgSourceID returns the count of all proxies using an EPG source.
+	CountByEpgSourceID(ctx context.Context, epgSourceID models.ULID) (int64, error)
+	// CountByFilterID returns the count of all proxies using a filter.
+	CountByFilterID(ctx context.Context, filterID models.ULID) (int64, error)
+	// GetProxyNamesByStreamSourceID returns names of proxies using a stream source.
+	GetProxyNamesByStreamSourceID(ctx context.Context, sourceID models.ULID) ([]string, error)
+	// GetProxyNamesByEpgSourceID returns names of proxies using an EPG source.
+	GetProxyNamesByEpgSourceID(ctx context.Context, epgSourceID models.ULID) ([]string, error)
+	// GetProxyNamesByFilterID returns names of proxies using a filter.
+	GetProxyNamesByFilterID(ctx context.Context, filterID models.ULID) ([]string, error)
+	// GetProxyNamesByEncodingProfileID returns names of proxies using an encoding profile.
+	GetProxyNamesByEncodingProfileID(ctx context.Context, profileID models.ULID) ([]string, error)
 }
 
 // FilterRepository defines operations for filter persistence.

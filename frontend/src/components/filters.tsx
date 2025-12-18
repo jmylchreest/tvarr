@@ -549,7 +549,7 @@ export function Filters() {
   const totalFilters = allFilters?.length || 0;
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6 h-full">
       {/* Header Section */}
       <div className="flex items-center justify-between">
         <div>
@@ -639,8 +639,8 @@ export function Filters() {
       )}
 
       {/* Master-Detail Layout */}
-      <Card className="flex-1 overflow-hidden">
-        <CardContent className="p-0 min-h-[500px] h-[calc(100vh-320px)]">
+      <Card className="flex-1 overflow-hidden min-h-0">
+        <CardContent className="p-0 h-full">
           <MasterDetailLayout
             items={masterItems}
             selectedId={selectedFilter?.id}

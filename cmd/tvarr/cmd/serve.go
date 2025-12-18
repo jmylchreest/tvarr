@@ -476,10 +476,14 @@ func runServe(_ *cobra.Command, _ []string) error {
 	healthHandler := handlers.NewHealthHandler(version.Version).WithDB(db)
 	healthHandler.Register(server.API())
 
-	streamSourceHandler := handlers.NewStreamSourceHandler(sourceService).WithScheduleSyncer(sched)
+	streamSourceHandler := handlers.NewStreamSourceHandler(sourceService).
+		WithScheduleSyncer(sched).
+		WithProxyUsageChecker(proxyRepo)
 	streamSourceHandler.Register(server.API())
 
-	epgSourceHandler := handlers.NewEpgSourceHandler(epgService).WithScheduleSyncer(sched)
+	epgSourceHandler := handlers.NewEpgSourceHandler(epgService).
+		WithScheduleSyncer(sched).
+		WithProxyUsageChecker(proxyRepo)
 	epgSourceHandler.Register(server.API())
 
 	unifiedSourcesHandler := handlers.NewUnifiedSourcesHandler(sourceService, epgService)
@@ -491,7 +495,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	expressionHandler := handlers.NewExpressionHandler(channelRepo, epgProgramRepo)
 	expressionHandler.Register(server.API())
 
-	filterHandler := handlers.NewFilterHandler(filterRepo)
+	filterHandler := handlers.NewFilterHandler(filterRepo).WithProxyUsageChecker(proxyRepo)
 	filterHandler.Register(server.API())
 
 	dataMappingRuleHandler := handlers.NewDataMappingRuleHandler(dataMappingRuleRepo)
@@ -518,7 +522,8 @@ func runServe(_ *cobra.Command, _ []string) error {
 
 	logoHandler.Register(server.API())
 
-	encodingProfileHandler := handlers.NewEncodingProfileHandler(encodingProfileService)
+	encodingProfileHandler := handlers.NewEncodingProfileHandler(encodingProfileService).
+		WithProxyUsageChecker(proxyRepo)
 	encodingProfileHandler.Register(server.API())
 
 	relayStreamHandler := handlers.NewRelayStreamHandler(relayService).

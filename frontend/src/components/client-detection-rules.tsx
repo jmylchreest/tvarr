@@ -569,9 +569,6 @@ function ClientDetectionRuleDetailPanel({
     preferred_format: rule.preferred_format || 'auto',
   });
   const [hasChanges, setHasChanges] = useState(false);
-  const [testUserAgent, setTestUserAgent] = useState('');
-  const [testResult, setTestResult] = useState<{ matches: boolean; error?: string } | null>(null);
-  const [testing, setTesting] = useState(false);
 
   // Reset form when rule changes
   useEffect(() => {
@@ -590,7 +587,6 @@ function ClientDetectionRuleDetailPanel({
       preferred_format: rule.preferred_format || 'auto',
     });
     setHasChanges(false);
-    setTestResult(null);
   }, [rule.id]);
 
   const handleFieldChange = (field: keyof RuleFormData, value: any) => {
@@ -601,27 +597,6 @@ function ClientDetectionRuleDetailPanel({
   const handleSave = async () => {
     await onUpdate(rule.id, formData);
     setHasChanges(false);
-  };
-
-  const handleTestExpression = async () => {
-    if (!formData.expression.trim() || !testUserAgent.trim()) return;
-
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const result = await apiClient.testClientDetectionExpression(
-        formData.expression,
-        testUserAgent
-      );
-      setTestResult(result);
-    } catch (err) {
-      setTestResult({
-        matches: false,
-        error: err instanceof Error ? err.message : 'Test failed',
-      });
-    } finally {
-      setTesting(false);
-    }
   };
 
   const toggleVideoCodec = (codec: string) => {
@@ -645,6 +620,19 @@ function ClientDetectionRuleDetailPanel({
       title={rule.name}
       actions={
         <div className="flex items-center gap-1">
+          {/* Enabled/Disabled Toggle */}
+          <div className="flex items-center gap-1.5 mr-2 px-2 py-1 rounded-md bg-muted/50">
+            <Switch
+              id={`toggle-enabled-${rule.id}`}
+              checked={rule.is_enabled}
+              onCheckedChange={() => onToggle(rule)}
+              disabled={loading.toggle === rule.id}
+              className="h-4 w-7 data-[state=checked]:bg-primary data-[state=unchecked]:bg-input"
+            />
+            <label htmlFor={`toggle-enabled-${rule.id}`} className="text-xs text-muted-foreground cursor-pointer">
+              {rule.is_enabled ? 'Enabled' : 'Disabled'}
+            </label>
+          </div>
           <Button
             variant="ghost"
             size="sm"
@@ -694,29 +682,10 @@ function ClientDetectionRuleDetailPanel({
             <Lock className="h-4 w-4" />
             <AlertTitle>System Rule</AlertTitle>
             <AlertDescription>
-              This is a system rule and cannot be modified or deleted.
+              This is a system rule. You can enable/disable it and change its order, but cannot modify or delete it.
             </AlertDescription>
           </Alert>
         )}
-
-        {/* Rule Info */}
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <Label className="text-xs text-muted-foreground">Status</Label>
-            <div className="mt-1 flex items-center gap-2">
-              <Switch
-                checked={rule.is_enabled}
-                onCheckedChange={() => onToggle(rule)}
-                disabled={loading.toggle === rule.id}
-              />
-              <span className="text-sm">{rule.is_enabled ? 'Enabled' : 'Disabled'}</span>
-            </div>
-          </div>
-          <div>
-            <Label className="text-xs text-muted-foreground">Priority</Label>
-            <div className="mt-1 text-sm font-medium">{rule.priority}</div>
-          </div>
-        </div>
 
         {/* Basic Settings */}
         <CollapsibleSection title="Basic Settings" defaultOpen={true}>
@@ -754,39 +723,6 @@ function ClientDetectionRuleDetailPanel({
               disabled={loading.edit || isSystem}
               showValidationBadges={true}
             />
-
-            {/* Test Expression */}
-            <div className="space-y-2 p-3 border rounded-lg bg-muted/50">
-              <Label className="text-sm font-medium">Test Expression</Label>
-              <div className="flex gap-2">
-                <Input
-                  value={testUserAgent}
-                  onChange={(e) => setTestUserAgent(e.target.value)}
-                  placeholder="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0..."
-                  className="flex-1 text-sm"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={handleTestExpression}
-                  disabled={testing || !formData.expression.trim() || !testUserAgent.trim()}
-                >
-                  {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                </Button>
-              </div>
-              {testResult && (
-                <div className={`flex items-center gap-2 text-sm ${testResult.error ? 'text-destructive' : testResult.matches ? 'text-green-600' : 'text-orange-600'}`}>
-                  {testResult.error ? (
-                    <><AlertCircle className="h-4 w-4" /> {testResult.error}</>
-                  ) : testResult.matches ? (
-                    <><CheckCircle className="h-4 w-4" /> Expression matches</>
-                  ) : (
-                    <><XCircle className="h-4 w-4" /> Expression does not match</>
-                  )}
-                </div>
-              )}
-            </div>
           </div>
         </CollapsibleSection>
 
@@ -1136,7 +1072,7 @@ export function ClientDetectionRules() {
   const systemRules = allRules.filter((r) => r.is_system).length;
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6 h-full">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -1187,8 +1123,8 @@ export function ClientDetectionRules() {
       )}
 
       {/* MasterDetailLayout */}
-      <Card className="flex-1">
-        <CardContent className="p-0 min-h-[500px] h-[calc(100vh-400px)]">
+      <Card className="flex-1 overflow-hidden min-h-0">
+        <CardContent className="p-0 h-full">
           {errors.rules ? (
             <div className="p-6">
               <Alert variant="destructive">

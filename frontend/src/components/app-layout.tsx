@@ -79,7 +79,7 @@ export function AppLayout({ children }: AppLayoutProps) {
               <NotificationBell operationType={operationType} />
             </div>
           </header>
-          <div className="flex flex-1 flex-col gap-4 p-4 pt-0">{children}</div>
+          <div className="flex flex-1 flex-col gap-4 p-4 pt-0 min-h-0 overflow-hidden">{children}</div>
         </main>
       </SidebarInset>
     </SidebarProvider>

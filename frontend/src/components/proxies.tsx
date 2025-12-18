@@ -385,7 +385,7 @@ export function Proxies() {
 
   return (
     <TooltipProvider>
-      <div className="space-y-6">
+      <div className="flex flex-col gap-6 h-full">
         {/* Header */}
         <div className="flex items-center justify-between">
           <p className="text-muted-foreground">
@@ -472,8 +472,8 @@ export function Proxies() {
           </Alert>
         ) : (
           /* Master-Detail Layout in Card container */
-          <Card className="flex-1">
-            <CardContent className="p-0 min-h-[500px] h-[calc(100vh-320px)]">
+          <Card className="flex-1 overflow-hidden min-h-0">
+            <CardContent className="p-0 h-full">
               <MasterDetailLayout
                 items={masterItems}
                 selectedId={isCreating ? null : selectedProxy?.id}

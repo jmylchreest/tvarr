@@ -351,7 +351,7 @@ func (s *ProxyService) createErrorDetail(err error) progress.ErrorDetail {
 		detail.Suggestion = "Restart generation if needed"
 	} else {
 		detail.Stage = "unknown"
-		detail.Message = "Pipeline generation failed"
+		detail.Message = err.Error()
 		detail.Suggestion = "Check server logs for more details"
 	}
 

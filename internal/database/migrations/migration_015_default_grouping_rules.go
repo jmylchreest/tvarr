@@ -50,8 +50,8 @@ func migration015DefaultGroupingRules() Migration {
 			}
 
 			// Delete the grouping filters by name
+			// Note: "Exclude Adult Content" is NOT in this list as it's created by migration 002
 			filterNames := []string{
-				"Exclude Adult Content",
 				"Sports Only",
 				"Movies Only",
 				"News Only",
@@ -244,14 +244,6 @@ func createGroupingDataMappingRules(tx *gorm.DB) error {
 // controlled at the proxy-filter relationship level (ProxyFilter.IsActive).
 func createGroupingFilters(tx *gorm.DB) error {
 	filters := []models.Filter{
-		{
-			Name:        "Exclude Adult Content",
-			Description: "Excludes channels marked as adult or with adult-related group names. Works with both provider-set is_adult flag and group_title patterns.",
-			SourceType:  models.FilterSourceTypeStream,
-			Action:      models.FilterActionExclude,
-			Expression:  `is_adult == true OR group_title matches "(?i)\\b(adult|xxx|18\\+)"`,
-			IsSystem:    true,
-		},
 		{
 			Name:        "Sports Only",
 			Description: "Includes only channels in the Sports category. Enable 'Group Sports Channels' data mapping rule first for best results.",

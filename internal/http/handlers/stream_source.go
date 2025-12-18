@@ -19,10 +19,23 @@ type ScheduleSyncer interface {
 	ForceSync(ctx context.Context) error
 }
 
+// ProxyUsageChecker checks if entities are in use by proxies.
+type ProxyUsageChecker interface {
+	// GetProxyNamesByStreamSourceID returns names of proxies using a stream source.
+	GetProxyNamesByStreamSourceID(ctx context.Context, sourceID models.ULID) ([]string, error)
+	// GetProxyNamesByEpgSourceID returns names of proxies using an EPG source.
+	GetProxyNamesByEpgSourceID(ctx context.Context, epgSourceID models.ULID) ([]string, error)
+	// GetProxyNamesByFilterID returns names of proxies using a filter.
+	GetProxyNamesByFilterID(ctx context.Context, filterID models.ULID) ([]string, error)
+	// GetProxyNamesByEncodingProfileID returns names of proxies using an encoding profile.
+	GetProxyNamesByEncodingProfileID(ctx context.Context, profileID models.ULID) ([]string, error)
+}
+
 // StreamSourceHandler handles stream source API endpoints.
 type StreamSourceHandler struct {
-	sourceService   *service.SourceService
-	scheduleSyncer  ScheduleSyncer
+	sourceService      *service.SourceService
+	scheduleSyncer     ScheduleSyncer
+	proxyUsageChecker  ProxyUsageChecker
 }
 
 // NewStreamSourceHandler creates a new stream source handler.
@@ -35,6 +48,12 @@ func NewStreamSourceHandler(sourceService *service.SourceService) *StreamSourceH
 // WithScheduleSyncer sets the schedule syncer for immediate schedule updates.
 func (h *StreamSourceHandler) WithScheduleSyncer(syncer ScheduleSyncer) *StreamSourceHandler {
 	h.scheduleSyncer = syncer
+	return h
+}
+
+// WithProxyUsageChecker sets the proxy usage checker for delete validation.
+func (h *StreamSourceHandler) WithProxyUsageChecker(checker ProxyUsageChecker) *StreamSourceHandler {
+	h.proxyUsageChecker = checker
 	return h
 }
 
@@ -255,6 +274,19 @@ func (h *StreamSourceHandler) Delete(ctx context.Context, input *DeleteStreamSou
 	id, err := models.ParseULID(input.ID)
 	if err != nil {
 		return nil, huma.Error400BadRequest("invalid ID format", err)
+	}
+
+	// Check if stream source is in use by any proxies
+	if h.proxyUsageChecker != nil {
+		proxyNames, err := h.proxyUsageChecker.GetProxyNamesByStreamSourceID(ctx, id)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("failed to check proxy usage", err)
+		}
+		if len(proxyNames) > 0 {
+			return nil, huma.Error409Conflict(fmt.Sprintf(
+				"cannot delete stream source: in use by %d proxy(s): %s. Remove it from these proxies first.",
+				len(proxyNames), strings.Join(proxyNames, ", ")))
+		}
 	}
 
 	if err := h.sourceService.Delete(ctx, id); err != nil {

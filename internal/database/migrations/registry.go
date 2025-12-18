@@ -27,6 +27,7 @@ import (
 // - 016: Fix grouping rules: enable country/adult, reorder priorities, rename to Group
 // - 017: Remove is_enabled column from filters (filters are enabled/disabled at proxy level)
 // - 018: Add backup_settings table for user-configurable backup schedule
+// - 019: Fix duplicate "Exclude Adult Content" filters and upgrade expression
 func AllMigrations() []Migration {
 	return []Migration{
 		migration001Schema(),
@@ -47,6 +48,7 @@ func AllMigrations() []Migration {
 		migration016FixGroupingRules(),
 		migration017RemoveFilterIsEnabled(),
 		migration018BackupSettings(),
+		migration019FixDuplicateFilters(),
 	}
 }
 

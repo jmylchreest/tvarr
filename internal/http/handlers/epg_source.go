@@ -14,8 +14,9 @@ import (
 
 // EpgSourceHandler handles EPG source API endpoints.
 type EpgSourceHandler struct {
-	epgService     *service.EpgService
-	scheduleSyncer ScheduleSyncer
+	epgService        *service.EpgService
+	scheduleSyncer    ScheduleSyncer
+	proxyUsageChecker ProxyUsageChecker
 }
 
 // NewEpgSourceHandler creates a new EPG source handler.
@@ -28,6 +29,12 @@ func NewEpgSourceHandler(epgService *service.EpgService) *EpgSourceHandler {
 // WithScheduleSyncer sets the schedule syncer for immediate schedule updates.
 func (h *EpgSourceHandler) WithScheduleSyncer(syncer ScheduleSyncer) *EpgSourceHandler {
 	h.scheduleSyncer = syncer
+	return h
+}
+
+// WithProxyUsageChecker sets the proxy usage checker for delete validation.
+func (h *EpgSourceHandler) WithProxyUsageChecker(checker ProxyUsageChecker) *EpgSourceHandler {
+	h.proxyUsageChecker = checker
 	return h
 }
 
@@ -247,6 +254,19 @@ func (h *EpgSourceHandler) Delete(ctx context.Context, input *DeleteEpgSourceInp
 	id, err := models.ParseULID(input.ID)
 	if err != nil {
 		return nil, huma.Error400BadRequest("invalid ID format", err)
+	}
+
+	// Check if EPG source is in use by any proxies
+	if h.proxyUsageChecker != nil {
+		proxyNames, err := h.proxyUsageChecker.GetProxyNamesByEpgSourceID(ctx, id)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("failed to check proxy usage", err)
+		}
+		if len(proxyNames) > 0 {
+			return nil, huma.Error409Conflict(fmt.Sprintf(
+				"cannot delete EPG source: in use by %d proxy(s): %s. Remove it from these proxies first.",
+				len(proxyNames), strings.Join(proxyNames, ", ")))
+		}
 	}
 
 	if err := h.epgService.Delete(ctx, id); err != nil {

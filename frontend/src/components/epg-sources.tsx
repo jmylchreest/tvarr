@@ -26,6 +26,7 @@ import {
   Loader2,
   WifiOff,
   Clock,
+  Globe,
 } from 'lucide-react';
 import {
   EpgSourceResponse,
@@ -94,7 +95,7 @@ function getTimezoneOffset(timezone: string): string | null {
 // Format detected timezone with offset for display
 function formatDetectedTimezone(timezone: string | undefined): { display: string; tooltip: string } {
   if (!timezone) {
-    return { display: 'Not detected yet', tooltip: '' };
+    return { display: 'Not detected', tooltip: 'Timezone will be detected after first ingestion' };
   }
 
   const offset = getTimezoneOffset(timezone);
@@ -104,11 +105,11 @@ function formatDetectedTimezone(timezone: string | undefined): { display: string
     return { display: `UTC${timezone}`, tooltip: '' };
   }
 
-  // For named timezones, show name with offset
+  // For named timezones, show compact UTC offset with full name in tooltip
   if (offset) {
     return {
-      display: `${timezone} (UTC${offset})`,
-      tooltip: `UTC offset: ${offset}`,
+      display: `UTC${offset}`,
+      tooltip: timezone,
     };
   }
 
@@ -532,32 +533,43 @@ function EpgSourceDetailPanel({
         )}
 
         {/* Source Info Banner */}
-        <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
-          <div className="flex items-center gap-2">
-            <Badge variant="secondary">
-              {source.source_type.toUpperCase()}
-            </Badge>
-            <Badge variant={source.status === 'success' ? 'secondary' : source.status === 'failed' ? 'destructive' : 'outline'}>
-              {getStatusLabel(source.status)}
-            </Badge>
-            <OperationStatusIndicator resourceId={source.id} />
-          </div>
-          <div className="flex-1" />
-          <div className="text-sm text-muted-foreground">
-            <Archive className="h-4 w-4 inline mr-1" />
-            {source.program_count} programs
-          </div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+          <Badge variant="secondary" className="text-xs">
+            {source.source_type.toUpperCase()}
+          </Badge>
+          <Badge variant={source.status === 'success' ? 'secondary' : source.status === 'failed' ? 'destructive' : 'outline'} className="text-xs">
+            {getStatusLabel(source.status)}
+          </Badge>
+          <OperationStatusIndicator resourceId={source.id} />
+          <span className="text-muted-foreground">
+            <Archive className="h-3.5 w-3.5 inline mr-1" />
+            {source.program_count.toLocaleString()}
+          </span>
           {source.last_ingestion_at && (
-            <div className="text-sm text-muted-foreground">
-              <Clock className="h-4 w-4 inline mr-1" />
+            <span className="text-muted-foreground">
+              <Clock className="h-3.5 w-3.5 inline mr-1" />
               {formatRelativeTime(source.last_ingestion_at)}
-            </div>
+            </span>
           )}
-          {source.detected_timezone && (
-            <div className="text-sm text-muted-foreground">
-              TZ: {formatDetectedTimezone(source.detected_timezone).display}
-            </div>
-          )}
+          {(() => {
+            const tz = formatDetectedTimezone(source.detected_timezone);
+            return tz.tooltip ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="text-muted-foreground cursor-help">
+                    <Globe className="h-3.5 w-3.5 inline mr-1" />
+                    {tz.display}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>{tz.tooltip}</TooltipContent>
+              </Tooltip>
+            ) : (
+              <span className="text-muted-foreground">
+                <Globe className="h-3.5 w-3.5 inline mr-1" />
+                {tz.display}
+              </span>
+            );
+          })()}
         </div>
 
         {/* Edit Form */}
@@ -969,7 +981,7 @@ export function EpgSources() {
 
   return (
     <TooltipProvider>
-      <div className="space-y-6">
+      <div className="flex flex-col gap-6 h-full">
         {/* Header Section */}
         <div className="flex items-center justify-between">
           <p className="text-muted-foreground">
@@ -1059,8 +1071,8 @@ export function EpgSources() {
         )}
 
         {/* Master-Detail Layout */}
-        <Card className="flex-1 overflow-hidden">
-          <CardContent className="p-0 min-h-[500px] h-[calc(100vh-320px)]">
+        <Card className="flex-1 overflow-hidden min-h-0">
+          <CardContent className="p-0 h-full">
             <MasterDetailLayout
               items={masterItems}
               selectedId={selectedSource?.id}

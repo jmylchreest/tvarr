@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/jmylchreest/tvarr/internal/models"
@@ -11,12 +12,19 @@ import (
 
 // FilterHandler handles filter API endpoints.
 type FilterHandler struct {
-	repo repository.FilterRepository
+	repo              repository.FilterRepository
+	proxyUsageChecker ProxyUsageChecker
 }
 
 // NewFilterHandler creates a new filter handler.
 func NewFilterHandler(repo repository.FilterRepository) *FilterHandler {
 	return &FilterHandler{repo: repo}
+}
+
+// WithProxyUsageChecker sets the proxy usage checker for delete validation.
+func (h *FilterHandler) WithProxyUsageChecker(checker ProxyUsageChecker) *FilterHandler {
+	h.proxyUsageChecker = checker
+	return h
 }
 
 // Register registers the filter routes with the API.
@@ -327,6 +335,19 @@ func (h *FilterHandler) Delete(ctx context.Context, input *DeleteFilterInput) (*
 	// Prevent deletion of system filters
 	if filter.IsSystem {
 		return nil, huma.Error403Forbidden("system filters cannot be deleted")
+	}
+
+	// Check if filter is in use by any proxies
+	if h.proxyUsageChecker != nil {
+		proxyNames, err := h.proxyUsageChecker.GetProxyNamesByFilterID(ctx, id)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("failed to check proxy usage", err)
+		}
+		if len(proxyNames) > 0 {
+			return nil, huma.Error409Conflict(fmt.Sprintf(
+				"cannot delete filter: in use by %d proxy(s): %s. Remove it from these proxies first.",
+				len(proxyNames), strings.Join(proxyNames, ", ")))
+		}
 	}
 
 	if err := h.repo.Delete(ctx, id); err != nil {

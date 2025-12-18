@@ -240,7 +240,7 @@ export function ProxyDetailPanel({
                 <Badge variant={proxy.is_active ? 'secondary' : 'outline'}>
                   {proxy.is_active ? 'Active' : 'Inactive'}
                 </Badge>
-                {proxy.status === 'failed' && proxy.last_error && (
+                {proxy.status === 'failed' && proxy.last_error ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Badge variant="destructive" className="cursor-help">
@@ -255,8 +255,9 @@ export function ProxyDetailPanel({
                       </p>
                     </TooltipContent>
                   </Tooltip>
+                ) : (
+                  <OperationStatusIndicator resourceId={proxy.id} />
                 )}
-                <OperationStatusIndicator resourceId={proxy.id} />
               </div>
               <div className="flex-1" />
               <div className="text-sm text-muted-foreground">

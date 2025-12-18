@@ -482,6 +482,8 @@ type CreateStreamProxyRequest struct {
 	IsActive               *bool                  `json:"is_active,omitempty" doc:"Whether the proxy is active (default: true)"`
 	AutoRegenerate         *bool                  `json:"auto_regenerate,omitempty" doc:"Auto-regenerate when sources change (default: false)"`
 	StartingChannelNumber  *int                   `json:"starting_channel_number,omitempty" doc:"Base channel number (default: 1)"`
+	NumberingMode          *models.NumberingMode  `json:"numbering_mode,omitempty" doc:"How to assign channel numbers: sequential, preserve, or group" enum:"sequential,preserve,group"`
+	GroupNumberingSize     *int                   `json:"group_numbering_size,omitempty" doc:"Size of each group range when using group numbering mode (default: 100)"`
 	UpstreamTimeout        *int                   `json:"upstream_timeout,omitempty" doc:"Timeout in seconds for upstream connections"`
 	BufferSize             *int                   `json:"buffer_size,omitempty" doc:"Buffer size in bytes for proxy mode"`
 	MaxConcurrentStreams   *int                   `json:"max_concurrent_streams,omitempty" doc:"Max concurrent streams (0 = unlimited)"`
@@ -505,6 +507,8 @@ func (r *CreateStreamProxyRequest) ToModel() *models.StreamProxy {
 		IsActive:               models.BoolPtr(true),
 		AutoRegenerate:         false,
 		StartingChannelNumber:  1,
+		NumberingMode:          models.NumberingModePreserve, // Default
+		GroupNumberingSize:     100,                          // Default
 		UpstreamTimeout:        30,
 		BufferSize:             8192,
 		MaxConcurrentStreams:   0,
@@ -524,6 +528,12 @@ func (r *CreateStreamProxyRequest) ToModel() *models.StreamProxy {
 	}
 	if r.StartingChannelNumber != nil {
 		proxy.StartingChannelNumber = *r.StartingChannelNumber
+	}
+	if r.NumberingMode != nil && models.IsValidNumberingMode(*r.NumberingMode) {
+		proxy.NumberingMode = *r.NumberingMode
+	}
+	if r.GroupNumberingSize != nil {
+		proxy.GroupNumberingSize = *r.GroupNumberingSize
 	}
 	if r.UpstreamTimeout != nil {
 		proxy.UpstreamTimeout = *r.UpstreamTimeout
@@ -557,6 +567,8 @@ type UpdateStreamProxyRequest struct {
 	IsActive               *bool                   `json:"is_active,omitempty" doc:"Whether the proxy is active"`
 	AutoRegenerate         *bool                   `json:"auto_regenerate,omitempty" doc:"Auto-regenerate when sources change"`
 	StartingChannelNumber  *int                    `json:"starting_channel_number,omitempty" doc:"Base channel number"`
+	NumberingMode          *models.NumberingMode   `json:"numbering_mode,omitempty" doc:"How to assign channel numbers: sequential, preserve, or group" enum:"sequential,preserve,group"`
+	GroupNumberingSize     *int                    `json:"group_numbering_size,omitempty" doc:"Size of each group range when using group numbering mode"`
 	UpstreamTimeout        *int                    `json:"upstream_timeout,omitempty" doc:"Timeout in seconds for upstream connections"`
 	BufferSize             *int                    `json:"buffer_size,omitempty" doc:"Buffer size in bytes for proxy mode"`
 	MaxConcurrentStreams   *int                    `json:"max_concurrent_streams,omitempty" doc:"Max concurrent streams (0 = unlimited)"`
@@ -590,6 +602,12 @@ func (r *UpdateStreamProxyRequest) ApplyToModel(p *models.StreamProxy) {
 	}
 	if r.StartingChannelNumber != nil {
 		p.StartingChannelNumber = *r.StartingChannelNumber
+	}
+	if r.NumberingMode != nil && models.IsValidNumberingMode(*r.NumberingMode) {
+		p.NumberingMode = *r.NumberingMode
+	}
+	if r.GroupNumberingSize != nil {
+		p.GroupNumberingSize = *r.GroupNumberingSize
 	}
 	if r.UpstreamTimeout != nil {
 		p.UpstreamTimeout = *r.UpstreamTimeout
