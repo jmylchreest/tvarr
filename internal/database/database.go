@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jmylchreest/tvarr/internal/config"
@@ -99,7 +100,21 @@ func New(cfg config.DatabaseConfig, log *slog.Logger, opts *Options) (*DB, error
 func getDialector(cfg config.DatabaseConfig) (gorm.Dialector, error) {
 	switch cfg.Driver {
 	case "sqlite":
-		return sqlite.Open(cfg.DSN), nil
+		// Add SQLite connection parameters for better concurrency.
+		// These are applied to every connection in the pool (unlike PRAGMAs which are per-connection).
+		// - _busy_timeout: wait up to 30s when database is locked (matches PRAGMA busy_timeout)
+		// - _journal_mode: WAL mode for better read/write concurrency
+		// - _synchronous: NORMAL for better performance with WAL
+		// - _foreign_keys: enable foreign key constraints
+		dsn := cfg.DSN
+		if dsn != "" && dsn != ":memory:" {
+			separator := "?"
+			if strings.Contains(dsn, "?") {
+				separator = "&"
+			}
+			dsn = dsn + separator + "_busy_timeout=30000&_journal_mode=WAL&_synchronous=NORMAL&_foreign_keys=ON"
+		}
+		return sqlite.Open(dsn), nil
 	case "postgres":
 		return postgres.Open(cfg.DSN), nil
 	case "mysql":
