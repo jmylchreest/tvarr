@@ -25,7 +25,7 @@ func TestLoad_Defaults(t *testing.T) {
 	// Database defaults
 	assert.Equal(t, "sqlite", cfg.Database.Driver)
 	assert.Equal(t, "tvarr.db", cfg.Database.DSN)
-	assert.Equal(t, 10, cfg.Database.MaxOpenConns)
+	assert.Equal(t, 25, cfg.Database.MaxOpenConns)
 
 	// Storage defaults
 	assert.Equal(t, "./data", cfg.Storage.BaseDir)

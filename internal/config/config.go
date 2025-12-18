@@ -16,8 +16,8 @@ const (
 	defaultServerPort            = 8080
 	defaultServerTimeout         = 30 * time.Second
 	defaultShutdownTimeout       = 10 * time.Second
-	defaultMaxOpenConns          = 10
-	defaultMaxIdleConns          = 5
+	defaultMaxOpenConns          = 25
+	defaultMaxIdleConns          = 10
 	defaultConnMaxIdleTime       = 30 * time.Minute
 	defaultLogoRetentionDays     = 30
 	defaultMaxLogoSizeBytes      = 5 * 1024 * 1024 // 5MB
