@@ -278,6 +278,14 @@ func registerChannelFields(r *FieldRegistry) {
 		Description: "Whether the stream is a radio station",
 		Domains:     []FieldDomain{DomainStream, DomainFilter},
 	})
+
+	r.Register(&FieldDefinition{
+		Name:        "is_adult",
+		Type:        FieldTypeBoolean,
+		Description: "Whether the stream contains adult content",
+		Aliases:     []string{"adult"},
+		Domains:     []FieldDomain{DomainStream, DomainFilter},
+	})
 }
 
 // registerEPGFields registers standard EPG/programme fields.

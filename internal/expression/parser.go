@@ -214,6 +214,7 @@ func (p *Parser) parsePrimaryCondition() (ConditionNode, error) {
 
 // parseSimpleCondition parses a simple field-operator-value condition.
 // Supports both "field operator value" and "field not operator value" syntax.
+// Also supports symbolic operators: "field == value" and "field != value".
 func (p *Parser) parseSimpleCondition() (*Condition, error) {
 	// Expect field name
 	if p.current.Type != TokenIdent {
@@ -229,22 +230,34 @@ func (p *Parser) parseSimpleCondition() (*Condition, error) {
 		p.advance()
 	}
 
-	// Expect operator (as identifier)
-	if p.current.Type != TokenIdent {
-		return nil, p.errorf("expected operator but got %s", p.current.Value)
+	// Handle symbolic operators (== and !=)
+	var op FilterOperator
+	if p.current.Type == TokenEquals {
+		op = OpEquals
+		p.advance()
+	} else if p.current.Type == TokenNotEquals {
+		op = OpNotEquals
+		p.advance()
+	} else {
+		// Expect operator (as identifier)
+		if p.current.Type != TokenIdent {
+			return nil, p.errorf("expected operator but got %s", p.current.Value)
+		}
+		opStr := p.current.Value
+		var ok bool
+		op, ok = ParseFilterOperator(opStr)
+		if !ok {
+			return nil, p.errorf("unknown operator: %s", opStr)
+		}
+		p.advance()
 	}
-	opStr := p.current.Value
-	op, ok := ParseFilterOperator(opStr)
-	if !ok {
-		return nil, p.errorf("unknown operator: %s", opStr)
-	}
+
 	// Apply negation if "not" modifier was present
 	if negated {
 		op = negateOperator(op)
 	}
-	p.advance()
 
-	// Expect value (string or number)
+	// Expect value (string, number, boolean, or identifier)
 	var value string
 	switch p.current.Type {
 	case TokenString:
@@ -254,6 +267,10 @@ func (p *Parser) parseSimpleCondition() (*Condition, error) {
 	case TokenIdent:
 		// Allow unquoted identifiers as values for backward compatibility
 		value = p.current.Value
+	case TokenTrue:
+		value = "true"
+	case TokenFalse:
+		value = "false"
 	default:
 		return nil, p.errorf("expected value but got %s", p.current.Value)
 	}
@@ -389,6 +406,14 @@ func (p *Parser) parseActionValue() (ActionValue, error) {
 		value := p.current.Value
 		p.advance()
 		return NewLiteralValue(value), nil
+
+	case TokenTrue:
+		p.advance()
+		return NewLiteralValue("true"), nil
+
+	case TokenFalse:
+		p.advance()
+		return NewLiteralValue("false"), nil
 
 	case TokenIdent:
 		value := p.current.Value

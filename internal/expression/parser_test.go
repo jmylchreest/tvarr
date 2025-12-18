@@ -514,6 +514,65 @@ func TestParser_UnquotedValue(t *testing.T) {
 	assert.Equal(t, "SimpleValue", cond.Value)
 }
 
+func TestParser_BooleanActionValues(t *testing.T) {
+	tests := []struct {
+		name          string
+		input         string
+		expectedValue string
+	}{
+		{
+			name:          "true value",
+			input:         `group_title matches "(?i)adult" SET is_adult = true`,
+			expectedValue: "true",
+		},
+		{
+			name:          "false value",
+			input:         `channel_name contains "kids" SET is_adult = false`,
+			expectedValue: "false",
+		},
+		{
+			name:          "TRUE uppercase",
+			input:         `group_title matches "adult" SET is_adult = TRUE`,
+			expectedValue: "true",
+		},
+		{
+			name:          "FALSE uppercase",
+			input:         `channel_name contains "kids" SET is_adult = FALSE`,
+			expectedValue: "false",
+		},
+		{
+			name:          "multiple actions with boolean",
+			input:         `group_title matches "adult" SET group_title = "Adult", is_adult = true`,
+			expectedValue: "true",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, err := Parse(tt.input)
+			require.NoError(t, err, "Failed to parse: %s", tt.input)
+
+			condActions, ok := parsed.Expression.(*ConditionWithActions)
+			require.True(t, ok, "Expected ConditionWithActions")
+			require.NotEmpty(t, condActions.Actions)
+
+			// Find the is_adult action
+			var foundAction *Action
+			for _, action := range condActions.Actions {
+				if action.Field == "is_adult" {
+					foundAction = action
+					break
+				}
+			}
+			require.NotNil(t, foundAction, "Expected is_adult action")
+
+			litVal, ok := foundAction.Value.(*LiteralValue)
+			require.True(t, ok, "Expected LiteralValue")
+			assert.Equal(t, tt.expectedValue, litVal.Value)
+		})
+	}
+}
+
 func TestParser_ComplexExpression(t *testing.T) {
 	// Test a complex real-world expression
 	input := `(channel_name contains "BBC" OR channel_name contains "ITV") AND NOT group_title contains "Adult" SET group_title = "UK Channels", logo = "uk.png"`
@@ -648,6 +707,98 @@ func TestParser_MultipleShorthandActions(t *testing.T) {
 
 	assert.Equal(t, "group_title", condActions.Actions[2].Field)
 	assert.Equal(t, ActionSetIfEmpty, condActions.Actions[2].Operator)
+}
+
+func TestParser_SymbolicOperators(t *testing.T) {
+	// Test symbolic operators == and != with boolean values
+	tests := []struct {
+		name     string
+		input    string
+		field    string
+		operator FilterOperator
+		value    string
+	}{
+		{
+			name:     "equals with true",
+			input:    `is_adult == true`,
+			field:    "is_adult",
+			operator: OpEquals,
+			value:    "true",
+		},
+		{
+			name:     "equals with false",
+			input:    `is_adult == false`,
+			field:    "is_adult",
+			operator: OpEquals,
+			value:    "false",
+		},
+		{
+			name:     "not equals with true",
+			input:    `is_adult != true`,
+			field:    "is_adult",
+			operator: OpNotEquals,
+			value:    "true",
+		},
+		{
+			name:     "not equals with false",
+			input:    `is_adult != false`,
+			field:    "is_adult",
+			operator: OpNotEquals,
+			value:    "false",
+		},
+		{
+			name:     "equals with string",
+			input:    `channel_name == "BBC One"`,
+			field:    "channel_name",
+			operator: OpEquals,
+			value:    "BBC One",
+		},
+		{
+			name:     "not equals with string",
+			input:    `group_title != "Adult"`,
+			field:    "group_title",
+			operator: OpNotEquals,
+			value:    "Adult",
+		},
+		{
+			name:     "combined with OR",
+			input:    `is_adult == true OR group_title matches "(?i)\\b(adult|xxx)"`,
+			field:    "is_adult",
+			operator: OpEquals,
+			value:    "true",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, err := Parse(tt.input)
+			require.NoError(t, err)
+
+			condOnly, ok := parsed.Expression.(*ConditionOnly)
+			require.True(t, ok, "expected ConditionOnly")
+			require.NotNil(t, condOnly.Condition)
+			require.NotNil(t, condOnly.Condition.Root)
+
+			// Handle the combined OR case
+			if tt.name == "combined with OR" {
+				group, ok := condOnly.Condition.Root.(*ConditionGroup)
+				require.True(t, ok, "expected ConditionGroup for OR")
+				require.Len(t, group.Children, 2)
+
+				cond, ok := group.Children[0].(*Condition)
+				require.True(t, ok)
+				assert.Equal(t, tt.field, cond.Field)
+				assert.Equal(t, tt.operator, cond.Operator)
+				assert.Equal(t, tt.value, cond.Value)
+			} else {
+				cond, ok := condOnly.Condition.Root.(*Condition)
+				require.True(t, ok)
+				assert.Equal(t, tt.field, cond.Field)
+				assert.Equal(t, tt.operator, cond.Operator)
+				assert.Equal(t, tt.value, cond.Value)
+			}
+		})
+	}
 }
 
 func TestParser_ShorthandBackwardCompatibility(t *testing.T) {
