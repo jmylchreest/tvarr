@@ -201,63 +201,13 @@ func TestGormLogLevel(t *testing.T) {
 	}
 }
 
-func TestBuildSQLiteDSN(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		contains []string
-		excludes []string
-	}{
-		{
-			name:     "empty DSN unchanged",
-			input:    "",
-			contains: []string{},
-			excludes: []string{"_busy_timeout"},
-		},
-		{
-			name:     "memory DSN unchanged",
-			input:    ":memory:",
-			contains: []string{},
-			excludes: []string{"_busy_timeout"},
-		},
-		{
-			name:     "simple file path gets defaults",
-			input:    "tvarr.db",
-			contains: []string{"_busy_timeout=30000", "_journal_mode=WAL", "_synchronous=NORMAL", "_foreign_keys=ON", "_txlock=immediate"},
-			excludes: []string{},
-		},
-		{
-			name:     "path with existing params preserves them",
-			input:    "/data/tvarr.db?_busy_timeout=5000",
-			contains: []string{"_busy_timeout=5000", "_journal_mode=WAL"},
-			excludes: []string{"_busy_timeout=30000"},
-		},
-		{
-			name:     "user can override all defaults",
-			input:    "test.db?_busy_timeout=1000&_journal_mode=DELETE&_synchronous=FULL&_foreign_keys=OFF&_txlock=deferred",
-			contains: []string{"_busy_timeout=1000", "_journal_mode=DELETE", "_synchronous=FULL", "_foreign_keys=OFF", "_txlock=deferred"},
-			excludes: []string{"_busy_timeout=30000", "_journal_mode=WAL"},
-		},
-		{
-			name:     "case insensitive parameter detection",
-			input:    "test.db?_BUSY_TIMEOUT=5000",
-			contains: []string{"_BUSY_TIMEOUT=5000", "_journal_mode=WAL"},
-			excludes: []string{"_busy_timeout=30000"},
-		},
-	}
+func TestRegisterSQLiteDriver(t *testing.T) {
+	// Test that the driver can be registered multiple times without error
+	registerSQLiteDriver()
+	registerSQLiteDriver() // Should be a no-op
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := buildSQLiteDSN(tt.input)
-
-			for _, s := range tt.contains {
-				assert.Contains(t, result, s, "expected DSN to contain %q", s)
-			}
-			for _, s := range tt.excludes {
-				assert.NotContains(t, result, s, "expected DSN to NOT contain %q", s)
-			}
-		})
-	}
+	// Verify the driver is registered
+	assert.True(t, sqliteDriverRegistered)
 }
 
 // setupTestDB creates an in-memory SQLite database for testing.

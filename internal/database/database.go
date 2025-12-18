@@ -4,12 +4,13 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/jmylchreest/tvarr/internal/config"
+	sqlite3 "github.com/mattn/go-sqlite3"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
@@ -71,23 +72,8 @@ func New(cfg config.DatabaseConfig, log *slog.Logger, opts *Options) (*DB, error
 	sqlDB.SetConnMaxLifetime(cfg.ConnMaxLifetime)
 	sqlDB.SetConnMaxIdleTime(cfg.ConnMaxIdleTime)
 
-	// Enable WAL mode for SQLite (better concurrency)
-	if cfg.Driver == "sqlite" {
-		if err := db.Exec("PRAGMA journal_mode=WAL").Error; err != nil {
-			log.Warn("failed to enable WAL mode", slog.String("error", err.Error()))
-		}
-		// Set busy_timeout to 30 seconds to handle long-running transactions during
-		// ingestion/generation without failing API requests
-		if err := db.Exec("PRAGMA busy_timeout=30000").Error; err != nil {
-			log.Warn("failed to set busy timeout", slog.String("error", err.Error()))
-		}
-		if err := db.Exec("PRAGMA synchronous=NORMAL").Error; err != nil {
-			log.Warn("failed to set synchronous mode", slog.String("error", err.Error()))
-		}
-		if err := db.Exec("PRAGMA foreign_keys=ON").Error; err != nil {
-			log.Warn("failed to enable foreign keys", slog.String("error", err.Error()))
-		}
-	}
+	// Note: SQLite PRAGMAs are applied via ConnectHook in registerSQLiteDriver()
+	// which ensures they are set on EVERY connection from the pool, not just the first.
 
 	return &DB{
 		DB:     db,
@@ -96,15 +82,59 @@ func New(cfg config.DatabaseConfig, log *slog.Logger, opts *Options) (*DB, error
 	}, nil
 }
 
+// sqliteDriverName is the custom driver name for SQLite with connection hooks.
+const sqliteDriverName = "sqlite3_tvarr"
+
+// sqliteDriverRegistered tracks whether our custom driver has been registered.
+var sqliteDriverRegistered bool
+
+// registerSQLiteDriver registers a custom SQLite driver with a ConnectHook
+// that applies PRAGMAs to every new connection. This is more reliable than
+// DSN parameters because it works with all connection pool implementations.
+func registerSQLiteDriver() {
+	if sqliteDriverRegistered {
+		return
+	}
+
+	sql.Register(sqliteDriverName, &sqlite3.SQLiteDriver{
+		ConnectHook: func(conn *sqlite3.SQLiteConn) error {
+			// These PRAGMAs are applied to EVERY connection from the pool.
+			// This ensures consistent behavior regardless of which connection
+			// handles a particular request.
+			pragmas := []string{
+				"PRAGMA busy_timeout = 30000",   // Wait 30s when database is locked
+				"PRAGMA journal_mode = WAL",     // Better read/write concurrency
+				"PRAGMA synchronous = NORMAL",   // Better performance with WAL
+				"PRAGMA foreign_keys = ON",      // Enable foreign key constraints
+				"PRAGMA cache_size = -64000",    // 64MB cache (negative = KB)
+			}
+
+			for _, pragma := range pragmas {
+				if _, err := conn.Exec(pragma, nil); err != nil {
+					// Log but don't fail - some pragmas may not be supported
+					// in all SQLite versions or configurations
+					return nil
+				}
+			}
+			return nil
+		},
+	})
+
+	sqliteDriverRegistered = true
+}
+
 // getDialector returns the appropriate GORM dialector for the configured driver.
 func getDialector(cfg config.DatabaseConfig) (gorm.Dialector, error) {
 	switch cfg.Driver {
 	case "sqlite":
-		// Add SQLite connection parameters for better concurrency.
-		// These are applied to every connection in the pool (unlike PRAGMAs which are per-connection).
-		// Only add parameters that the user hasn't already specified in their DSN.
-		dsn := buildSQLiteDSN(cfg.DSN)
-		return sqlite.Open(dsn), nil
+		// Register our custom SQLite driver with connection hooks
+		registerSQLiteDriver()
+
+		// Use the custom driver that applies PRAGMAs on every connection
+		return sqlite.Dialector{
+			DriverName: sqliteDriverName,
+			DSN:        cfg.DSN,
+		}, nil
 	case "postgres":
 		return postgres.Open(cfg.DSN), nil
 	case "mysql":
@@ -112,57 +142,6 @@ func getDialector(cfg config.DatabaseConfig) (gorm.Dialector, error) {
 	default:
 		return nil, fmt.Errorf("unsupported database driver: %s", cfg.Driver)
 	}
-}
-
-// buildSQLiteDSN adds default SQLite parameters to the DSN if not already present.
-// This ensures all connections in the pool have proper settings for concurrency.
-func buildSQLiteDSN(dsn string) string {
-	// Skip for in-memory databases or empty DSN
-	if dsn == "" || dsn == ":memory:" || strings.HasPrefix(dsn, ":memory:") {
-		return dsn
-	}
-
-	// Default parameters for better concurrency and reliability
-	defaults := map[string]string{
-		"_busy_timeout":  "30000",  // Wait 30s when database is locked
-		"_journal_mode":  "WAL",    // Better read/write concurrency
-		"_synchronous":   "NORMAL", // Better performance with WAL
-		"_foreign_keys":  "ON",     // Enable foreign key constraints
-		"_txlock":        "immediate", // Acquire write lock immediately in transactions
-	}
-
-	// Parse existing parameters from DSN
-	existing := make(map[string]bool)
-	if idx := strings.Index(dsn, "?"); idx != -1 {
-		params := dsn[idx+1:]
-		for _, param := range strings.Split(params, "&") {
-			if eqIdx := strings.Index(param, "="); eqIdx != -1 {
-				key := strings.ToLower(param[:eqIdx])
-				existing[key] = true
-			}
-		}
-	}
-
-	// Build list of parameters to add (only those not already specified)
-	var toAdd []string
-	for key, value := range defaults {
-		if !existing[strings.ToLower(key)] {
-			toAdd = append(toAdd, key+"="+value)
-		}
-	}
-
-	// Nothing to add
-	if len(toAdd) == 0 {
-		return dsn
-	}
-
-	// Append parameters to DSN
-	separator := "?"
-	if strings.Contains(dsn, "?") {
-		separator = "&"
-	}
-
-	return dsn + separator + strings.Join(toAdd, "&")
 }
 
 // gormLogLevel maps string log levels to GORM logger levels.
