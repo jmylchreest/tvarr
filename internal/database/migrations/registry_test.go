@@ -45,7 +45,7 @@ func TestAllMigrations_ReturnsExpectedCount(t *testing.T) {
 	// 016: Fix grouping rules: enable country/adult, reorder priorities, rename to Group
 	// 017: Remove is_enabled column from filters (filters are enabled/disabled at proxy level)
 	// 018: Add backup_settings table for user-configurable backup schedule
-	assert.Len(t, migrations, 18)
+	assert.Len(t, migrations, 19)
 }
 
 func TestAllMigrations_VersionsAreUnique(t *testing.T) {
@@ -115,10 +115,10 @@ func TestMigrator_Status(t *testing.T) {
 	migrator := NewMigrator(db, nil)
 	migrator.RegisterAll(AllMigrations())
 
-	// Before running migrations (18 migrations total)
+	// Before running migrations (19 migrations total)
 	statuses, err := migrator.Status(ctx)
 	require.NoError(t, err)
-	assert.Len(t, statuses, 18)
+	assert.Len(t, statuses, 19)
 
 	for _, s := range statuses {
 		assert.False(t, s.Applied)
@@ -153,6 +153,14 @@ func TestMigrator_Down_RollsBackLastMigration(t *testing.T) {
 	assert.True(t, db.Migrator().HasTable("data_mapping_rules"))
 	assert.True(t, db.Migrator().HasTable("encoding_profiles"))
 	assert.True(t, db.Migrator().HasTable("client_detection_rules"))
+	assert.True(t, db.Migrator().HasTable("backup_settings"))
+
+	// Roll back migration 019 (fix duplicate filters)
+	err = migrator.Down(ctx)
+	require.NoError(t, err)
+
+	// Tables still exist after rolling back duplicate filter fix
+	assert.True(t, db.Migrator().HasTable("filters"))
 	assert.True(t, db.Migrator().HasTable("backup_settings"))
 
 	// Roll back migration 018 (backup_settings table)
@@ -313,10 +321,10 @@ func TestMigrator_Pending(t *testing.T) {
 	migrator := NewMigrator(db, nil)
 	migrator.RegisterAll(AllMigrations())
 
-	// All should be pending initially (18 migrations total)
+	// All should be pending initially (19 migrations total)
 	pending, err := migrator.Pending(ctx)
 	require.NoError(t, err)
-	assert.Len(t, pending, 18)
+	assert.Len(t, pending, 19)
 
 	// Run migrations
 	err = migrator.Up(ctx)

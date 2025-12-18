@@ -102,18 +102,8 @@ func getDialector(cfg config.DatabaseConfig) (gorm.Dialector, error) {
 	case "sqlite":
 		// Add SQLite connection parameters for better concurrency.
 		// These are applied to every connection in the pool (unlike PRAGMAs which are per-connection).
-		// - _busy_timeout: wait up to 30s when database is locked (matches PRAGMA busy_timeout)
-		// - _journal_mode: WAL mode for better read/write concurrency
-		// - _synchronous: NORMAL for better performance with WAL
-		// - _foreign_keys: enable foreign key constraints
-		dsn := cfg.DSN
-		if dsn != "" && dsn != ":memory:" {
-			separator := "?"
-			if strings.Contains(dsn, "?") {
-				separator = "&"
-			}
-			dsn = dsn + separator + "_busy_timeout=30000&_journal_mode=WAL&_synchronous=NORMAL&_foreign_keys=ON"
-		}
+		// Only add parameters that the user hasn't already specified in their DSN.
+		dsn := buildSQLiteDSN(cfg.DSN)
 		return sqlite.Open(dsn), nil
 	case "postgres":
 		return postgres.Open(cfg.DSN), nil
@@ -122,6 +112,57 @@ func getDialector(cfg config.DatabaseConfig) (gorm.Dialector, error) {
 	default:
 		return nil, fmt.Errorf("unsupported database driver: %s", cfg.Driver)
 	}
+}
+
+// buildSQLiteDSN adds default SQLite parameters to the DSN if not already present.
+// This ensures all connections in the pool have proper settings for concurrency.
+func buildSQLiteDSN(dsn string) string {
+	// Skip for in-memory databases or empty DSN
+	if dsn == "" || dsn == ":memory:" || strings.HasPrefix(dsn, ":memory:") {
+		return dsn
+	}
+
+	// Default parameters for better concurrency and reliability
+	defaults := map[string]string{
+		"_busy_timeout":  "30000",  // Wait 30s when database is locked
+		"_journal_mode":  "WAL",    // Better read/write concurrency
+		"_synchronous":   "NORMAL", // Better performance with WAL
+		"_foreign_keys":  "ON",     // Enable foreign key constraints
+		"_txlock":        "immediate", // Acquire write lock immediately in transactions
+	}
+
+	// Parse existing parameters from DSN
+	existing := make(map[string]bool)
+	if idx := strings.Index(dsn, "?"); idx != -1 {
+		params := dsn[idx+1:]
+		for _, param := range strings.Split(params, "&") {
+			if eqIdx := strings.Index(param, "="); eqIdx != -1 {
+				key := strings.ToLower(param[:eqIdx])
+				existing[key] = true
+			}
+		}
+	}
+
+	// Build list of parameters to add (only those not already specified)
+	var toAdd []string
+	for key, value := range defaults {
+		if !existing[strings.ToLower(key)] {
+			toAdd = append(toAdd, key+"="+value)
+		}
+	}
+
+	// Nothing to add
+	if len(toAdd) == 0 {
+		return dsn
+	}
+
+	// Append parameters to DSN
+	separator := "?"
+	if strings.Contains(dsn, "?") {
+		separator = "&"
+	}
+
+	return dsn + separator + strings.Join(toAdd, "&")
 }
 
 // gormLogLevel maps string log levels to GORM logger levels.
