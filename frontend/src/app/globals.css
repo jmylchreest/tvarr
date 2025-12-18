@@ -193,3 +193,141 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Badge animations for active operations */
+
+/* 1. Sweep - gradient sweeping across */
+@keyframes badge-sweep {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.badge-sweep {
+  position: relative;
+  overflow: hidden;
+}
+
+.badge-sweep::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in oklch, var(--primary) 15%, transparent) 25%,
+    color-mix(in oklch, var(--primary) 30%, transparent) 50%,
+    color-mix(in oklch, var(--primary) 15%, transparent) 75%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: badge-sweep 2.5s linear infinite;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+.dark .badge-sweep::after {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in oklch, var(--primary) 20%, transparent) 25%,
+    color-mix(in oklch, var(--primary) 40%, transparent) 50%,
+    color-mix(in oklch, var(--primary) 20%, transparent) 75%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+}
+
+/* 2. Sparkle - orbiting dot around the border with bright outline */
+@keyframes badge-sparkle-orbit {
+  0% {
+    top: 0;
+    left: 0;
+    transform: translate(-50%, -50%);
+  }
+  25% {
+    top: 0;
+    left: 100%;
+    transform: translate(-50%, -50%);
+  }
+  50% {
+    top: 100%;
+    left: 100%;
+    transform: translate(-50%, -50%);
+  }
+  75% {
+    top: 100%;
+    left: 0;
+    transform: translate(-50%, -50%);
+  }
+  100% {
+    top: 0;
+    left: 0;
+    transform: translate(-50%, -50%);
+  }
+}
+
+.badge-sparkle {
+  position: relative;
+  overflow: visible;
+  outline: 1px solid var(--primary);
+  outline-offset: 0px;
+}
+
+.badge-sparkle::after {
+  content: '';
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  background: white;
+  border-radius: 50%;
+  animation: badge-sparkle-orbit 2s linear infinite;
+  pointer-events: none;
+  box-shadow: 0 0 2px 1px white, 0 0 4px 2px var(--primary);
+}
+
+/* 3. Pulse - opacity pulse */
+@keyframes badge-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.badge-pulse {
+  animation: badge-pulse 2s ease-in-out infinite;
+}
+
+/* 4. Border - animated border highlight */
+@keyframes badge-border {
+  0%, 100% {
+    border-color: transparent;
+  }
+  50% {
+    border-color: var(--primary);
+  }
+}
+
+.badge-border {
+  border: 1px solid transparent;
+  animation: badge-border 1.5s ease-in-out infinite;
+}
+
+/* 5. Bounce - subtle vertical bounce */
+@keyframes badge-bounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+.badge-bounce {
+  animation: badge-bounce 1s ease-in-out infinite;
+}
