@@ -13,11 +13,13 @@ import {
 export type BadgePriority = 'error' | 'warning' | 'success' | 'info' | 'default' | 'secondary' | 'outline';
 
 export interface BadgeItem {
-  label: string;
+  label: React.ReactNode;
   /** Priority determines sort order and color. Higher priority items shown first. */
   priority?: BadgePriority;
   /** Direct variant override (auto-mapped from priority if not specified) */
   variant?: 'default' | 'secondary' | 'outline' | 'destructive';
+  /** Additional class names for the badge */
+  className?: string;
 }
 
 export type BadgeAnimation = 'none' | 'sweep' | 'sparkle' | 'pulse' | 'border' | 'bounce';
@@ -158,15 +160,24 @@ export function BadgeGroup({
   const getBadgeClassName = (badge: BadgeItem) => {
     const baseClass = size === 'sm' ? 'text-[10px] px-1.5 py-0' : '';
 
-    // Custom colors for warning and success
-    if (badge.priority === 'warning' && !badge.variant) {
+    // Custom colors for warning and success (if no custom className provided)
+    if (badge.priority === 'warning' && !badge.variant && !badge.className) {
       return cn(baseClass, 'bg-amber-500 text-white border-transparent');
     }
-    if (badge.priority === 'success' && !badge.variant) {
+    if (badge.priority === 'success' && !badge.variant && !badge.className) {
       return cn(baseClass, 'bg-emerald-500 text-white border-transparent');
     }
 
-    return baseClass;
+    // Include badge's custom className if provided
+    return cn(baseClass, badge.className);
+  };
+
+  // Format label - only uppercase strings, leave ReactNodes as-is
+  const formatLabel = (label: React.ReactNode): React.ReactNode => {
+    if (typeof label === 'string') {
+      return label.toUpperCase();
+    }
+    return label;
   };
 
   if (badges.length === 0) return null;
@@ -211,7 +222,7 @@ export function BadgeGroup({
             variant={getVariant(badge)}
             className={getBadgeClassName(badge)}
           >
-            {badge.label.toUpperCase()}
+            {formatLabel(badge.label)}
           </Badge>
         ))}
       </div>
@@ -223,7 +234,7 @@ export function BadgeGroup({
           variant={getVariant(badge)}
           className={getBadgeClassName(badge)}
         >
-          {badge.label.toUpperCase()}
+          {formatLabel(badge.label)}
         </Badge>
       ))}
 
@@ -260,7 +271,7 @@ export function BadgeGroup({
                   variant={getVariant(badge)}
                   className={getBadgeClassName(badge)}
                 >
-                  {badge.label.toUpperCase()}
+                  {formatLabel(badge.label)}
                 </Badge>
               ))}
             </div>

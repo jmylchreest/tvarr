@@ -268,7 +268,6 @@ func (s *ImportService) findUniqueFilterName(tx *gorm.DB, baseName string) strin
 }
 
 func filterFromExportItem(item models.FilterExportItem) models.Filter {
-	enabled := item.IsEnabled
 	var sourceID *models.ULID
 	if item.SourceID != nil {
 		id, err := models.ParseULID(*item.SourceID)
@@ -282,19 +281,16 @@ func filterFromExportItem(item models.FilterExportItem) models.Filter {
 		Expression:  item.Expression,
 		SourceType:  models.FilterSourceType(item.SourceType),
 		Action:      models.FilterAction(item.Action),
-		IsEnabled:   &enabled,
 		IsSystem:    false, // Always user-created on import
 		SourceID:    sourceID,
 	}
 }
 
 func updateFilter(existing *models.Filter, item models.FilterExportItem) {
-	enabled := item.IsEnabled
 	existing.Description = item.Description
 	existing.Expression = item.Expression
 	existing.SourceType = models.FilterSourceType(item.SourceType)
 	existing.Action = models.FilterAction(item.Action)
-	existing.IsEnabled = &enabled
 	if item.SourceID != nil {
 		id, err := models.ParseULID(*item.SourceID)
 		if err == nil {

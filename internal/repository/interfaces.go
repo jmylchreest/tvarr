@@ -10,6 +10,12 @@ import (
 	"github.com/jmylchreest/tvarr/internal/models"
 )
 
+// FieldValueResult represents a distinct field value with its occurrence count.
+type FieldValueResult struct {
+	Value string `json:"value"`
+	Count int64  `json:"count"`
+}
+
 // StreamSourceRepository defines operations for stream source persistence.
 type StreamSourceRepository interface {
 	// Create creates a new stream source.
@@ -60,6 +66,10 @@ type ChannelRepository interface {
 	CountBySourceID(ctx context.Context, sourceID models.ULID) (int64, error)
 	// GetByExtID retrieves a channel by source ID and external ID.
 	GetByExtID(ctx context.Context, sourceID models.ULID, extID string) (*models.Channel, error)
+	// GetDistinctFieldValues returns distinct values for a channel field with occurrence counts.
+	// The field parameter must be one of the allowed fields (group_title, channel_name, tvg_id, country).
+	// Results are filtered by the query parameter (case-insensitive contains) and limited.
+	GetDistinctFieldValues(ctx context.Context, field string, query string, limit int) ([]FieldValueResult, error)
 	// Transaction executes the given function within a database transaction.
 	// The provided function receives a transactional repository.
 	// If the function returns an error, the transaction is rolled back.
@@ -186,6 +196,8 @@ type StreamProxyRepository interface {
 }
 
 // FilterRepository defines operations for filter persistence.
+// Note: Filters do not have an enabled/disabled state. The enabled state is
+// controlled at the proxy-filter relationship level (ProxyFilter.IsActive).
 type FilterRepository interface {
 	// Create creates a new filter.
 	Create(ctx context.Context, filter *models.Filter) error
@@ -197,16 +209,12 @@ type FilterRepository interface {
 	GetByName(ctx context.Context, name string) (*models.Filter, error)
 	// GetAll retrieves all filters.
 	GetAll(ctx context.Context) ([]*models.Filter, error)
-	// GetEnabled retrieves all enabled filters.
-	GetEnabled(ctx context.Context) ([]*models.Filter, error)
 	// GetUserCreated retrieves all user-created filters (IsSystem=false).
 	GetUserCreated(ctx context.Context) ([]*models.Filter, error)
 	// GetBySourceType retrieves filters by source type (stream/epg).
 	GetBySourceType(ctx context.Context, sourceType models.FilterSourceType) ([]*models.Filter, error)
 	// GetBySourceID retrieves filters for a specific source (or global if sourceID is nil).
 	GetBySourceID(ctx context.Context, sourceID *models.ULID) ([]*models.Filter, error)
-	// GetEnabledForSourceType retrieves enabled filters for a source type.
-	GetEnabledForSourceType(ctx context.Context, sourceType models.FilterSourceType, sourceID *models.ULID) ([]*models.Filter, error)
 	// Update updates an existing filter.
 	Update(ctx context.Context, filter *models.Filter) error
 	// Delete deletes a filter by ID.

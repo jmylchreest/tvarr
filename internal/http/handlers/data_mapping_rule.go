@@ -53,9 +53,27 @@ func (h *DataMappingRuleHandler) Register(api huma.API) {
 		Method:      "PUT",
 		Path:        "/api/v1/data-mapping/{id}",
 		Summary:     "Update data mapping rule",
-		Description: "Updates an existing data mapping rule",
+		Description: "Updates an existing data mapping rule. System rules cannot be updated via PUT - use PATCH to toggle enabled status.",
 		Tags:        []string{"DataMappingRules"},
 	}, h.Update)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "patchDataMappingRule",
+		Method:      "PATCH",
+		Path:        "/api/v1/data-mapping/{id}",
+		Summary:     "Update data mapping rule enabled/priority",
+		Description: "Updates the enabled status or priority of a data mapping rule. This is the only way to modify system rules.",
+		Tags:        []string{"DataMappingRules"},
+	}, h.Patch)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "reorderDataMappingRules",
+		Method:      "PUT",
+		Path:        "/api/v1/data-mapping/reorder",
+		Summary:     "Reorder data mapping rules",
+		Description: "Updates the priority of multiple data mapping rules at once. Works for both user and system rules.",
+		Tags:        []string{"DataMappingRules"},
+	}, h.Reorder)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "deleteDataMappingRule",
@@ -267,6 +285,7 @@ type UpdateDataMappingRuleOutput struct {
 }
 
 // Update updates an existing data mapping rule.
+// System rules cannot be updated via PUT - use PATCH to toggle enabled status.
 func (h *DataMappingRuleHandler) Update(ctx context.Context, input *UpdateDataMappingRuleInput) (*UpdateDataMappingRuleOutput, error) {
 	id, err := models.ParseULID(input.ID)
 	if err != nil {
@@ -281,51 +300,42 @@ func (h *DataMappingRuleHandler) Update(ctx context.Context, input *UpdateDataMa
 		return nil, huma.Error404NotFound(fmt.Sprintf("data mapping rule %s not found", input.ID))
 	}
 
-	// System defaults can only have is_enabled toggled
+	// System rules cannot be updated via PUT - use PATCH to toggle enabled status
 	if rule.IsSystem {
-		if input.Body.Name != nil || input.Body.Description != nil ||
-			input.Body.SourceType != nil || input.Body.Expression != nil ||
-			input.Body.Priority != nil || input.Body.StopOnMatch != nil ||
-			input.Body.SourceID != nil {
-			return nil, huma.Error403Forbidden("system rules can only have is_enabled toggled")
-		}
-		// Only allow is_enabled update
-		if input.Body.IsEnabled != nil {
-			rule.IsEnabled = input.Body.IsEnabled
-		}
-	} else {
-		// Apply updates for non-system rules
-		if input.Body.Name != nil {
-			rule.Name = *input.Body.Name
-		}
-		if input.Body.Description != nil {
-			rule.Description = *input.Body.Description
-		}
-		if input.Body.SourceType != nil {
-			rule.SourceType = models.DataMappingRuleSourceType(*input.Body.SourceType)
-		}
-		if input.Body.Expression != nil {
-			rule.Expression = *input.Body.Expression
-		}
-		if input.Body.Priority != nil {
-			rule.Priority = *input.Body.Priority
-		}
-		if input.Body.StopOnMatch != nil {
-			rule.StopOnMatch = *input.Body.StopOnMatch
-		}
-		if input.Body.IsEnabled != nil {
-			rule.IsEnabled = input.Body.IsEnabled
-		}
-		if input.Body.SourceID != nil {
-			if *input.Body.SourceID == "" {
-				rule.SourceID = nil
-			} else {
-				sourceID, err := models.ParseULID(*input.Body.SourceID)
-				if err != nil {
-					return nil, huma.Error400BadRequest("invalid source_id format", err)
-				}
-				rule.SourceID = &sourceID
+		return nil, huma.Error403Forbidden("system rules cannot be updated via PUT - use PATCH to toggle enabled status")
+	}
+
+	// Apply updates for non-system rules
+	if input.Body.Name != nil {
+		rule.Name = *input.Body.Name
+	}
+	if input.Body.Description != nil {
+		rule.Description = *input.Body.Description
+	}
+	if input.Body.SourceType != nil {
+		rule.SourceType = models.DataMappingRuleSourceType(*input.Body.SourceType)
+	}
+	if input.Body.Expression != nil {
+		rule.Expression = *input.Body.Expression
+	}
+	if input.Body.Priority != nil {
+		rule.Priority = *input.Body.Priority
+	}
+	if input.Body.StopOnMatch != nil {
+		rule.StopOnMatch = *input.Body.StopOnMatch
+	}
+	if input.Body.IsEnabled != nil {
+		rule.IsEnabled = input.Body.IsEnabled
+	}
+	if input.Body.SourceID != nil {
+		if *input.Body.SourceID == "" {
+			rule.SourceID = nil
+		} else {
+			sourceID, err := models.ParseULID(*input.Body.SourceID)
+			if err != nil {
+				return nil, huma.Error400BadRequest("invalid source_id format", err)
 			}
+			rule.SourceID = &sourceID
 		}
 	}
 
@@ -334,6 +344,58 @@ func (h *DataMappingRuleHandler) Update(ctx context.Context, input *UpdateDataMa
 	}
 
 	return &UpdateDataMappingRuleOutput{
+		Body: DataMappingRuleFromModel(rule),
+	}, nil
+}
+
+// PatchDataMappingRuleRequest is the request body for patching a data mapping rule.
+type PatchDataMappingRuleRequest struct {
+	IsEnabled *bool `json:"is_enabled,omitempty" doc:"Whether the rule is enabled"`
+	Priority  *int  `json:"priority,omitempty" doc:"Priority (lower = higher priority)"`
+}
+
+// PatchDataMappingRuleInput is the input for patching a data mapping rule.
+type PatchDataMappingRuleInput struct {
+	ID   string `path:"id" doc:"Rule ID (ULID)"`
+	Body PatchDataMappingRuleRequest
+}
+
+// PatchDataMappingRuleOutput is the output for patching a data mapping rule.
+type PatchDataMappingRuleOutput struct {
+	Body DataMappingRuleResponse
+}
+
+// Patch updates allowed fields on a data mapping rule.
+// For system rules, only is_enabled and priority can be changed.
+func (h *DataMappingRuleHandler) Patch(ctx context.Context, input *PatchDataMappingRuleInput) (*PatchDataMappingRuleOutput, error) {
+	id, err := models.ParseULID(input.ID)
+	if err != nil {
+		return nil, huma.Error400BadRequest("invalid ID format", err)
+	}
+
+	rule, err := h.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, huma.Error500InternalServerError("failed to get data mapping rule", err)
+	}
+	if rule == nil {
+		return nil, huma.Error404NotFound(fmt.Sprintf("data mapping rule %s not found", input.ID))
+	}
+
+	// Update is_enabled
+	if input.Body.IsEnabled != nil {
+		rule.IsEnabled = input.Body.IsEnabled
+	}
+
+	// Update priority
+	if input.Body.Priority != nil {
+		rule.Priority = *input.Body.Priority
+	}
+
+	if err := h.repo.Update(ctx, rule); err != nil {
+		return nil, huma.Error500InternalServerError("failed to update data mapping rule", err)
+	}
+
+	return &PatchDataMappingRuleOutput{
 		Body: DataMappingRuleFromModel(rule),
 	}, nil
 }
@@ -379,6 +441,61 @@ func (h *DataMappingRuleHandler) Delete(ctx context.Context, input *DeleteDataMa
 			Message string `json:"message"`
 		}{
 			Message: fmt.Sprintf("data mapping rule %s deleted", input.ID),
+		},
+	}, nil
+}
+
+// ReorderRuleItem represents a single rule's new priority.
+type ReorderRuleItem struct {
+	ID       string `json:"id" doc:"Rule ID (ULID)"`
+	Priority int    `json:"priority" doc:"New priority (lower = higher priority)"`
+}
+
+// ReorderDataMappingRulesRequest is the request body for reordering data mapping rules.
+type ReorderDataMappingRulesRequest struct {
+	Rules []ReorderRuleItem `json:"rules" doc:"List of rules with their new priorities"`
+}
+
+// ReorderDataMappingRulesInput is the input for reordering data mapping rules.
+type ReorderDataMappingRulesInput struct {
+	Body ReorderDataMappingRulesRequest
+}
+
+// ReorderDataMappingRulesOutput is the output for reordering data mapping rules.
+type ReorderDataMappingRulesOutput struct {
+	Body struct {
+		Message string `json:"message"`
+	}
+}
+
+// Reorder updates the priority of multiple data mapping rules.
+// This works for both user and system rules.
+func (h *DataMappingRuleHandler) Reorder(ctx context.Context, input *ReorderDataMappingRulesInput) (*ReorderDataMappingRulesOutput, error) {
+	for _, item := range input.Body.Rules {
+		id, err := models.ParseULID(item.ID)
+		if err != nil {
+			return nil, huma.Error400BadRequest(fmt.Sprintf("invalid ID format: %s", item.ID), err)
+		}
+
+		rule, err := h.repo.GetByID(ctx, id)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("failed to get data mapping rule", err)
+		}
+		if rule == nil {
+			return nil, huma.Error404NotFound(fmt.Sprintf("data mapping rule %s not found", item.ID))
+		}
+
+		rule.Priority = item.Priority
+		if err := h.repo.Update(ctx, rule); err != nil {
+			return nil, huma.Error500InternalServerError("failed to update data mapping rule priority", err)
+		}
+	}
+
+	return &ReorderDataMappingRulesOutput{
+		Body: struct {
+			Message string `json:"message"`
+		}{
+			Message: fmt.Sprintf("updated priority for %d rules", len(input.Body.Rules)),
 		},
 	}, nil
 }

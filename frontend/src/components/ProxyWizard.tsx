@@ -342,7 +342,6 @@ export function ProxyWizard({
         { label: filter.source_type.toUpperCase(), priority: 'info' as const },
         { label: filter.action.toUpperCase(), priority: filter.action === 'exclude' ? 'warning' as const : 'success' as const },
         ...(filter.is_system ? [{ label: 'System', priority: 'secondary' as const }] : []),
-        ...(!filter.is_enabled ? [{ label: 'Off', priority: 'error' as const }] : []),
       ],
     })), [filters]);
 

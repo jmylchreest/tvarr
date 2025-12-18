@@ -121,56 +121,211 @@ export function normalizeCronExpression(cronExpression: string): string {
 }
 
 /**
- * Get human-readable description of common cron patterns
+ * Get human-readable description of cron patterns
+ * Handles 6-field format: sec min hour day-of-month month day-of-week
  */
 export function describeCronExpression(cronExpression: string): string {
   const validation = validateCronExpression(cronExpression);
   if (!validation.isValid) {
-    return 'Invalid cron expression';
+    return 'Invalid schedule';
   }
 
   const normalized = validation.normalizedExpression || cronExpression;
   const fields = normalized.trim().split(/\s+/);
   const [sec, min, hour, dayOfMonth, month, dayOfWeek] = fields;
 
-  // Common patterns (6-field)
-  if (normalized === '0 0 */6 * * *') {
-    return 'Every 6 hours';
-  }
-  if (normalized === '0 0 */2 * * *') {
-    return 'Every 2 hours';
-  }
-  if (normalized === '0 0 */12 * * *') {
-    return 'Every 12 hours (twice daily)';
-  }
-  if (normalized === '0 0 0 * * *') {
-    return 'Daily at midnight';
-  }
-  if (normalized === '0 0 2 * * *') {
-    return 'Daily at 2:00 AM';
-  }
-  if (normalized === '0 0 */4 * * *') {
-    return 'Every 4 hours';
-  }
-  if (normalized === '0 */30 * * * *') {
-    return 'Every 30 minutes';
-  }
+  // Helper to format time
+  const formatTime = (h: string, m: string): string => {
+    const hourNum = parseInt(h, 10);
+    const minNum = parseInt(m, 10);
+    const minStr = minNum.toString().padStart(2, '0');
 
-  // Generate description from pattern
-  let description = 'Custom schedule: ';
+    if (hourNum === 0 && minNum === 0) return 'midnight';
+    if (hourNum === 12 && minNum === 0) return 'noon';
 
-  if (hour.includes('/')) {
-    const interval = hour.match(/\*\/(\d+)/);
-    if (interval) {
-      description += `every ${interval[1]} hour(s)`;
+    const period = hourNum >= 12 ? 'PM' : 'AM';
+    const hour12 = hourNum === 0 ? 12 : hourNum > 12 ? hourNum - 12 : hourNum;
+
+    if (minNum === 0) {
+      return `${hour12}${period}`;
     }
-  } else if (hour === '*') {
-    description += 'every hour';
-  } else {
-    description += `at ${hour}:${min === '*' ? '00' : min.padStart(2, '0')}`;
+    return `${hour12}:${minStr}${period}`;
+  };
+
+  // Helper to format hour (for patterns without specific minute)
+  const formatHour = (h: string): string => {
+    const hourNum = parseInt(h, 10);
+    if (hourNum === 0) return '12AM';
+    if (hourNum === 12) return '12PM';
+    const period = hourNum >= 12 ? 'PM' : 'AM';
+    const hour12 = hourNum > 12 ? hourNum - 12 : hourNum;
+    return `${hour12}${period}`;
+  };
+
+  // Helper to get day name
+  const getDayName = (day: string): string => {
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const num = parseInt(day, 10);
+    return days[num] || day;
+  };
+
+  // Helper to get short day name
+  const getShortDayName = (day: string): string => {
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const num = parseInt(day, 10);
+    return days[num] || day;
+  };
+
+  // Helper to format list of hours
+  const formatHourList = (hourField: string): string => {
+    const hours = hourField.split(',').map(h => formatHour(h));
+    if (hours.length === 2) return `${hours[0]} and ${hours[1]}`;
+    if (hours.length > 2) {
+      const last = hours.pop();
+      return `${hours.join(', ')}, and ${last}`;
+    }
+    return hours[0];
+  };
+
+  // Every minute (sec=0, min=*, hour=*, day=*, month=*, dow=*)
+  if (min === '*' && hour === '*' && dayOfMonth === '*' && dayOfWeek === '*') {
+    return 'Every minute';
   }
 
-  return description;
+  // Every minute during specific hour(s) (sec=0, min=*, hour=specific)
+  if (min === '*' && hour !== '*' && !hour.includes('/')) {
+    if (hour.includes(',')) {
+      return `Every minute at ${formatHourList(hour)}`;
+    }
+    if (hour.includes('-')) {
+      const [start, end] = hour.split('-');
+      return `Every minute from ${formatHour(start)} to ${formatHour(end)}`;
+    }
+    if (!isNaN(parseInt(hour, 10))) {
+      return `Every minute during ${formatHour(hour)} hour`;
+    }
+  }
+
+  // Helper to extract start and interval from step patterns like */6 or 0/6
+  const extractStep = (field: string): { start: number | null; interval: number } | null => {
+    const match = field.match(/^(\*|\d+)\/(\d+)$/);
+    if (!match) return null;
+    const start = match[1] === '*' ? null : parseInt(match[1], 10);
+    const interval = parseInt(match[2], 10);
+    return { start, interval };
+  };
+
+  // Check for second intervals (less common but possible)
+  if (sec.includes('/')) {
+    const step = extractStep(sec);
+    if (step) {
+      if (step.start !== null && step.start !== 0) {
+        return `Every ${step.interval} seconds from :${step.start.toString().padStart(2, '0')}`;
+      }
+      return `Every ${step.interval} seconds`;
+    }
+  }
+
+  // Check for minute intervals
+  if (min.includes('/')) {
+    const step = extractStep(min);
+    if (step) {
+      // Check if it's during specific hour(s)
+      if (hour !== '*' && !hour.includes('/')) {
+        if (hour.includes(',')) {
+          return `Every ${step.interval} minutes at ${formatHourList(hour)}`;
+        }
+        if (!isNaN(parseInt(hour, 10))) {
+          return `Every ${step.interval} minutes during ${formatHour(hour)} hour`;
+        }
+      }
+      if (step.start !== null && step.start !== 0) {
+        return `Every ${step.interval} minutes from :${step.start.toString().padStart(2, '0')}`;
+      }
+      return `Every ${step.interval} minutes`;
+    }
+  }
+
+  // Check for hourly intervals
+  if (hour.includes('/')) {
+    const step = extractStep(hour);
+    if (step) {
+      // Format the starting time
+      const startHour = step.start ?? 0;
+      const minNum = !isNaN(parseInt(min, 10)) ? parseInt(min, 10) : 0;
+      const startTimeStr = `${startHour.toString().padStart(2, '0')}:${minNum.toString().padStart(2, '0')}`;
+
+      // Only show "from HH:MM" if not starting at 00:00
+      const showFrom = startHour !== 0 || minNum !== 0;
+
+      if (step.interval === 1) {
+        return showFrom ? `Every hour from ${startTimeStr}` : 'Every hour';
+      }
+      if (step.interval === 12) {
+        return showFrom ? `Twice daily from ${startTimeStr}` : 'Twice daily';
+      }
+      return showFrom ? `Every ${step.interval} hours from ${startTimeStr}` : `Every ${step.interval} hours`;
+    }
+  }
+
+  // Every hour at specific minute (sec=0, min=specific, hour=*)
+  if (hour === '*' && !isNaN(parseInt(min, 10))) {
+    const minNum = parseInt(min, 10);
+    if (minNum === 0) return 'Every hour';
+    return `Every hour at :${minNum.toString().padStart(2, '0')}`;
+  }
+
+  // Multiple specific hours at specific minute (e.g., "0 0 0,6,12,18 * * *")
+  if (hour.includes(',') && !isNaN(parseInt(min, 10))) {
+    const minNum = parseInt(min, 10);
+    if (minNum === 0) {
+      return `Daily at ${formatHourList(hour)}`;
+    }
+    const minStr = minNum.toString().padStart(2, '0');
+    return `Daily at :${minStr} past ${formatHourList(hour)}`;
+  }
+
+  // Specific time patterns
+  if (!isNaN(parseInt(hour, 10)) && !isNaN(parseInt(min, 10))) {
+    const timeStr = formatTime(hour, min);
+
+    // Check for day-of-week patterns
+    if (dayOfWeek !== '*' && dayOfMonth === '*') {
+      // Specific day(s) of week
+      if (dayOfWeek.includes(',')) {
+        const days = dayOfWeek.split(',').map(d => getShortDayName(d)).join(', ');
+        return `${days} at ${timeStr}`;
+      }
+      if (dayOfWeek.includes('-')) {
+        const [start, end] = dayOfWeek.split('-');
+        return `${getShortDayName(start)}-${getShortDayName(end)} at ${timeStr}`;
+      }
+      // Single day of week
+      return `${getDayName(dayOfWeek)}s at ${timeStr}`;
+    }
+
+    // Check for day-of-month patterns
+    if (dayOfMonth !== '*') {
+      if (dayOfMonth.includes('/')) {
+        const interval = dayOfMonth.match(/\*\/(\d+)/);
+        if (interval) {
+          return `Every ${interval[1]} days at ${timeStr}`;
+        }
+      }
+      // Specific day of month
+      const dayNum = parseInt(dayOfMonth, 10);
+      if (!isNaN(dayNum)) {
+        const suffix = dayNum === 1 ? 'st' : dayNum === 2 ? 'nd' : dayNum === 3 ? 'rd' : 'th';
+        return `${dayNum}${suffix} of each month at ${timeStr}`;
+      }
+    }
+
+    // Daily at specific time
+    return `Daily at ${timeStr}`;
+  }
+
+  // Fallback for complex patterns
+  return normalized;
 }
 
 /**

@@ -41,7 +41,6 @@ const (
 type ExpressionFilter struct {
 	ID         string       `json:"id"`
 	Name       string       `json:"name"`
-	Enabled    bool         `json:"enabled"`
 	Target     FilterTarget `json:"target"`
 	Action     FilterAction `json:"action"`
 	Expression string       `json:"expression"`
@@ -364,9 +363,6 @@ func (s *Stage) compileExpressionFilters() error {
 
 	for i := range s.expressionFilters {
 		filter := &s.expressionFilters[i]
-		if !filter.Enabled {
-			continue
-		}
 
 		// Skip empty expressions
 		if strings.TrimSpace(filter.Expression) == "" {
@@ -436,14 +432,6 @@ func (s *Stage) loadFiltersFromProxy(ctx context.Context, proxy *models.StreamPr
 
 		f := pf.Filter
 
-		// Skip disabled filters (disabled at the filter level)
-		if !models.BoolVal(f.IsEnabled) {
-			s.log(ctx, slog.LevelDebug, "skipping disabled filter",
-				slog.String("filter_id", f.ID.String()),
-				slog.String("filter_name", f.Name))
-			continue
-		}
-
 		var target FilterTarget
 		switch f.SourceType {
 		case models.FilterSourceTypeStream:
@@ -473,7 +461,6 @@ func (s *Stage) loadFiltersFromProxy(ctx context.Context, proxy *models.StreamPr
 		s.expressionFilters = append(s.expressionFilters, ExpressionFilter{
 			ID:         f.ID.String(),
 			Name:       f.Name,
-			Enabled:    models.BoolVal(f.IsEnabled),
 			Target:     target,
 			Action:     action,
 			Expression: f.Expression,

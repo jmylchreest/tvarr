@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/go-chi/chi/v5"
@@ -13,9 +14,18 @@ import (
 	"github.com/jmylchreest/tvarr/internal/service"
 )
 
+// BackupScheduleUpdater is called when the backup schedule is changed via API.
+// This allows the scheduler to be updated without a direct dependency.
+type BackupScheduleUpdater interface {
+	// UpdateBackupSchedule updates the scheduled backup job.
+	// If enabled is false or cron is empty, the job is disabled.
+	UpdateBackupSchedule(enabled bool, cron string) error
+}
+
 // BackupHandler handles backup and restore API endpoints.
 type BackupHandler struct {
-	backupService *service.BackupService
+	backupService    *service.BackupService
+	scheduleUpdater  BackupScheduleUpdater
 }
 
 // NewBackupHandler creates a new backup handler.
@@ -23,6 +33,12 @@ func NewBackupHandler(backupService *service.BackupService) *BackupHandler {
 	return &BackupHandler{
 		backupService: backupService,
 	}
+}
+
+// WithScheduleUpdater sets the schedule updater for dynamic schedule changes.
+func (h *BackupHandler) WithScheduleUpdater(updater BackupScheduleUpdater) *BackupHandler {
+	h.scheduleUpdater = updater
+	return h
 }
 
 // Register registers the backup routes with the Huma API.
@@ -71,6 +87,33 @@ func (h *BackupHandler) Register(api huma.API) {
 		Description: "Restores the database from a backup file. Requires confirm=true query parameter. Creates a pre-restore backup for rollback capability. NOTE: Application restart may be required after restore.",
 		Tags:        []string{"Backup"},
 	}, h.RestoreBackup)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "getBackupSchedule",
+		Method:      "GET",
+		Path:        "/api/v1/backups/schedule",
+		Summary:     "Get backup schedule",
+		Description: "Returns the effective backup schedule configuration (database settings merged with config defaults)",
+		Tags:        []string{"Backup"},
+	}, h.GetSchedule)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "updateBackupSchedule",
+		Method:      "PUT",
+		Path:        "/api/v1/backups/schedule",
+		Summary:     "Update backup schedule",
+		Description: "Updates the backup schedule settings. Only provided fields are updated; omitted fields keep their current values.",
+		Tags:        []string{"Backup"},
+	}, h.UpdateSchedule)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "setBackupProtection",
+		Method:      "PATCH",
+		Path:        "/api/v1/backups/{filename}/protection",
+		Summary:     "Set backup protection",
+		Description: "Sets whether a backup is protected from retention cleanup. Protected backups are never automatically deleted.",
+		Tags:        []string{"Backup"},
+	}, h.SetProtection)
 }
 
 // RegisterChiRoutes registers Chi-specific routes for file downloads and uploads.
@@ -108,7 +151,7 @@ func (h *BackupHandler) ListBackups(ctx context.Context, _ *ListBackupsInput) (*
 		}{
 			Backups:         backups,
 			BackupDirectory: h.backupService.GetBackupDirectory(),
-			Schedule:        h.backupService.GetScheduleInfo(),
+			Schedule:        h.backupService.GetScheduleInfo(ctx),
 		},
 	}, nil
 }
@@ -234,6 +277,93 @@ func (h *BackupHandler) RestoreBackup(ctx context.Context, input *RestoreBackupI
 			RestartRequired: true, // SQLite requires app restart after restore
 		},
 	}, nil
+}
+
+// Schedule types
+
+// GetScheduleInput is the input for getting backup schedule.
+type GetScheduleInput struct{}
+
+// GetScheduleOutput is the output for getting backup schedule.
+type GetScheduleOutput struct {
+	Body models.BackupScheduleInfo
+}
+
+// GetSchedule returns the effective backup schedule configuration.
+func (h *BackupHandler) GetSchedule(ctx context.Context, _ *GetScheduleInput) (*GetScheduleOutput, error) {
+	schedule := h.backupService.GetScheduleInfo(ctx)
+	return &GetScheduleOutput{Body: schedule}, nil
+}
+
+// UpdateScheduleInput is the input for updating backup schedule.
+type UpdateScheduleInput struct {
+	Body struct {
+		Enabled   *bool   `json:"enabled,omitempty" doc:"Enable or disable scheduled backups"`
+		Cron      *string `json:"cron,omitempty" doc:"6-field cron expression (sec min hour day month weekday)" example:"0 0 2 * * *"`
+		Retention *int    `json:"retention,omitempty" doc:"Number of backups to keep (0 = unlimited)" minimum:"0"`
+	}
+}
+
+// UpdateScheduleOutput is the output for updating backup schedule.
+type UpdateScheduleOutput struct {
+	Body models.BackupScheduleInfo
+}
+
+// UpdateSchedule updates the backup schedule settings.
+func (h *BackupHandler) UpdateSchedule(ctx context.Context, input *UpdateScheduleInput) (*UpdateScheduleOutput, error) {
+	schedule, err := h.backupService.UpdateScheduleSettings(
+		ctx,
+		input.Body.Enabled,
+		input.Body.Cron,
+		input.Body.Retention,
+	)
+	if err != nil {
+		return nil, huma.Error400BadRequest("invalid schedule settings", err)
+	}
+
+	// Notify the scheduler of the schedule change
+	if h.scheduleUpdater != nil {
+		if err := h.scheduleUpdater.UpdateBackupSchedule(schedule.Enabled, schedule.Cron); err != nil {
+			// Log but don't fail - the database was updated successfully
+			// The schedule will be picked up on next restart
+		}
+	}
+
+	return &UpdateScheduleOutput{Body: *schedule}, nil
+}
+
+// Protection types
+
+// SetProtectionInput is the input for setting backup protection.
+type SetProtectionInput struct {
+	Filename string `path:"filename" doc:"Backup filename"`
+	Body     struct {
+		Protected bool `json:"protected" doc:"Whether the backup should be protected from retention cleanup"`
+	}
+}
+
+// SetProtectionOutput is the output for setting backup protection.
+type SetProtectionOutput struct {
+	Body *models.BackupMetadata
+}
+
+// SetProtection sets the protection status of a backup.
+func (h *BackupHandler) SetProtection(ctx context.Context, input *SetProtectionInput) (*SetProtectionOutput, error) {
+	if err := validateBackupFilename(input.Filename); err != nil {
+		return nil, huma.Error400BadRequest("invalid filename", err)
+	}
+
+	if err := h.backupService.SetBackupProtection(ctx, input.Filename, input.Body.Protected); err != nil {
+		return nil, huma.Error500InternalServerError("failed to set protection", err)
+	}
+
+	// Return updated metadata
+	meta, err := h.backupService.GetBackup(ctx, input.Filename)
+	if err != nil {
+		return nil, huma.Error404NotFound("backup not found")
+	}
+
+	return &SetProtectionOutput{Body: meta}, nil
 }
 
 // UploadBackup handles uploading a backup file for later restore.
@@ -362,8 +492,10 @@ func containsPathTraversal(filename string) bool {
 // isValidBackupFilename checks if a filename matches the expected backup format.
 func isValidBackupFilename(filename string) bool {
 	// Expected formats:
-	// - tvarr-backup-YYYY-MM-DDTHH-MM-SS.db.gz (34 chars)
-	// - tvarr-backup-YYYY-MM-DDTHH-MM-SS.mmm.db.gz (38 chars)
+	// - tvarr-backup-YYYY-MM-DDTHH-MM-SS.tar.gz (35 chars) - new format with embedded metadata
+	// - tvarr-backup-YYYY-MM-DDTHH-MM-SS.mmm.tar.gz (39 chars) - new format with milliseconds
+	// - tvarr-backup-YYYY-MM-DDTHH-MM-SS.db.gz (34 chars) - legacy format
+	// - tvarr-backup-YYYY-MM-DDTHH-MM-SS.mmm.db.gz (38 chars) - legacy format with milliseconds
 	if len(filename) < 34 { // Minimum length for valid filename
 		return false
 	}
@@ -374,9 +506,8 @@ func isValidBackupFilename(filename string) bool {
 		return false
 	}
 
-	// Must end with .db.gz
-	suffix := ".db.gz"
-	if len(filename) < len(suffix) || filename[len(filename)-len(suffix):] != suffix {
+	// Must end with .tar.gz (new format) or .db.gz (legacy format)
+	if !strings.HasSuffix(filename, ".tar.gz") && !strings.HasSuffix(filename, ".db.gz") {
 		return false
 	}
 

@@ -263,6 +263,56 @@ func (r *channelRepo) GetDistinctGroups(ctx context.Context) ([]string, error) {
 	return groups, nil
 }
 
+// allowedAutocompleteFields defines which fields can be queried for autocomplete.
+// This prevents SQL injection by whitelisting allowed column names.
+var allowedAutocompleteFields = map[string]string{
+	"group_title":  "group_title",
+	"channel_name": "channel_name",
+	"tvg_id":       "tvg_id",
+	"tvg_name":     "tvg_name",
+	"country":      "country",
+	"language":     "language",
+}
+
+// GetDistinctFieldValues returns distinct values for a channel field with occurrence counts.
+// The field parameter must be one of the allowed fields (group_title, channel_name, tvg_id, country, language).
+// Results are filtered by the query parameter (case-insensitive contains) and limited.
+func (r *channelRepo) GetDistinctFieldValues(ctx context.Context, field string, query string, limit int) ([]FieldValueResult, error) {
+	// Validate field name against whitelist to prevent SQL injection
+	columnName, ok := allowedAutocompleteFields[field]
+	if !ok {
+		return nil, fmt.Errorf("invalid field name: %s", field)
+	}
+
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	// Build query for distinct values with counts
+	var results []FieldValueResult
+	db := r.db.WithContext(ctx).
+		Model(&models.Channel{}).
+		Select(columnName+" AS value, COUNT(*) AS count").
+		Where(columnName + " IS NOT NULL AND " + columnName + " != ''").
+		Group(columnName).
+		Order("count DESC").
+		Limit(limit)
+
+	// Add search filter if query provided
+	if query != "" {
+		db = db.Where("LOWER("+columnName+") LIKE LOWER(?)", "%"+query+"%")
+	}
+
+	if err := db.Find(&results).Error; err != nil {
+		return nil, fmt.Errorf("getting distinct field values: %w", err)
+	}
+
+	return results, nil
+}
+
 // Transaction executes the given function within a database transaction.
 // The provided function receives a transactional repository.
 // If the function returns an error, the transaction is rolled back.

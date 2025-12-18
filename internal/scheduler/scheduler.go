@@ -310,8 +310,9 @@ func (s *Scheduler) loadSchedules(ctx context.Context) error {
 	}
 
 	// Remove entries that no longer exist in the database
+	// Skip internal jobs (key starts with "internal:") as they're managed separately
 	for key, entryID := range s.entryMap {
-		if !seenEntries[key] {
+		if !seenEntries[key] && !strings.HasPrefix(key, "internal:") {
 			s.cronScheduler.Remove(entryID)
 			delete(s.entryMap, key)
 			s.logger.Debug("removed schedule", slog.String("key", key))
@@ -704,6 +705,38 @@ func (s *Scheduler) AddInternalJob(jobType models.JobType, targetName string, cr
 		slog.String("schedule", cronSchedule))
 
 	return nil
+}
+
+// RemoveInternalJob removes an internal recurring job at runtime.
+// This is useful for disabling jobs after the scheduler has started.
+func (s *Scheduler) RemoveInternalJob(jobType models.JobType) error {
+	key := fmt.Sprintf("internal:%s", jobType)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	existingID, exists := s.entryMap[key]
+	if !exists {
+		return nil // Job doesn't exist, nothing to remove
+	}
+
+	s.cronScheduler.Remove(existingID)
+	delete(s.entryMap, key)
+
+	s.logger.Info("removed internal job",
+		slog.String("job_type", string(jobType)))
+
+	return nil
+}
+
+// UpdateInternalJob updates an internal recurring job at runtime.
+// If enabled is false or cronSchedule is empty, the job is removed.
+// Otherwise, the job is added/updated with the new schedule.
+func (s *Scheduler) UpdateInternalJob(jobType models.JobType, targetName string, enabled bool, cronSchedule string) error {
+	if !enabled || cronSchedule == "" {
+		return s.RemoveInternalJob(jobType)
+	}
+	return s.AddInternalJob(jobType, targetName, cronSchedule)
 }
 
 // CatchupMissedRuns checks all sources with cron schedules and schedules immediate

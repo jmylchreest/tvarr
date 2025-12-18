@@ -16,9 +16,10 @@ import (
 
 // StreamProxyHandler handles stream proxy API endpoints.
 type StreamProxyHandler struct {
-	proxyService *service.ProxyService
-	baseURL      string
-	logger       *slog.Logger
+	proxyService   *service.ProxyService
+	baseURL        string
+	logger         *slog.Logger
+	scheduleSyncer ScheduleSyncer
 }
 
 // buildOrderMapFromIDs creates an order map from array indices.
@@ -70,6 +71,21 @@ func NewStreamProxyHandler(proxyService *service.ProxyService) *StreamProxyHandl
 		proxyService: proxyService,
 		baseURL:      baseURL,
 		logger:       slog.Default(),
+	}
+}
+
+// WithScheduleSyncer sets the schedule syncer for immediate schedule updates.
+func (h *StreamProxyHandler) WithScheduleSyncer(syncer ScheduleSyncer) *StreamProxyHandler {
+	h.scheduleSyncer = syncer
+	return h
+}
+
+// syncSchedules triggers an immediate sync if a syncer is configured.
+func (h *StreamProxyHandler) syncSchedules(ctx context.Context) {
+	if h.scheduleSyncer != nil {
+		go func() {
+			_ = h.scheduleSyncer.ForceSync(ctx)
+		}()
 	}
 }
 
@@ -252,6 +268,11 @@ func (h *StreamProxyHandler) Create(ctx context.Context, input *CreateStreamProx
 		}
 	}
 
+	// Trigger immediate schedule sync if proxy has a cron schedule
+	if proxy.CronSchedule != "" {
+		h.syncSchedules(ctx)
+	}
+
 	return &CreateStreamProxyOutput{
 		Body: StreamProxyFromModel(proxy, h.baseURL),
 	}, nil
@@ -319,6 +340,9 @@ func (h *StreamProxyHandler) Update(ctx context.Context, input *UpdateStreamProx
 		}
 	}
 
+	// Trigger immediate schedule sync (schedule may have changed)
+	h.syncSchedules(ctx)
+
 	return &UpdateStreamProxyOutput{
 		Body: StreamProxyFromModel(proxy, h.baseURL),
 	}, nil
@@ -345,6 +369,9 @@ func (h *StreamProxyHandler) Delete(ctx context.Context, input *DeleteStreamProx
 		}
 		return nil, huma.Error500InternalServerError("failed to delete proxy", err)
 	}
+
+	// Trigger immediate schedule sync (removed proxy's schedule needs cleanup)
+	h.syncSchedules(ctx)
 
 	return &DeleteStreamProxyOutput{}, nil
 }

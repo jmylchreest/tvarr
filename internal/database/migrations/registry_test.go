@@ -38,7 +38,14 @@ func TestAllMigrations_ReturnsExpectedCount(t *testing.T) {
 	// 009: Add dynamic codec header fields to client detection rules
 	// 010: Update client detection rules to use @dynamic() syntax for user-agent
 	// 011: Add is_active column to proxy_filters
-	assert.Len(t, migrations, 11)
+	// 012: Add auto_shift_timezone column to epg_sources
+	// 013: Add system client detection rules for popular media players
+	// 014: Rename system timeshift detection rule to shorter name
+	// 015: Add default channel grouping data mapping rules and filters
+	// 016: Fix grouping rules: enable country/adult, reorder priorities, rename to Group
+	// 017: Remove is_enabled column from filters (filters are enabled/disabled at proxy level)
+	// 018: Add backup_settings table for user-configurable backup schedule
+	assert.Len(t, migrations, 18)
 }
 
 func TestAllMigrations_VersionsAreUnique(t *testing.T) {
@@ -108,10 +115,10 @@ func TestMigrator_Status(t *testing.T) {
 	migrator := NewMigrator(db, nil)
 	migrator.RegisterAll(AllMigrations())
 
-	// Before running migrations (11 migrations total)
+	// Before running migrations (18 migrations total)
 	statuses, err := migrator.Status(ctx)
 	require.NoError(t, err)
-	assert.Len(t, statuses, 11)
+	assert.Len(t, statuses, 18)
 
 	for _, s := range statuses {
 		assert.False(t, s.Applied)
@@ -146,6 +153,62 @@ func TestMigrator_Down_RollsBackLastMigration(t *testing.T) {
 	assert.True(t, db.Migrator().HasTable("data_mapping_rules"))
 	assert.True(t, db.Migrator().HasTable("encoding_profiles"))
 	assert.True(t, db.Migrator().HasTable("client_detection_rules"))
+	assert.True(t, db.Migrator().HasTable("backup_settings"))
+
+	// Roll back migration 018 (backup_settings table)
+	err = migrator.Down(ctx)
+	require.NoError(t, err)
+
+	// backup_settings table should be removed
+	assert.False(t, db.Migrator().HasTable("backup_settings"))
+
+	// Roll back migration 017 (remove filter is_enabled column)
+	err = migrator.Down(ctx)
+	require.NoError(t, err)
+
+	// Tables still exist after rolling back is_enabled column removal
+	assert.True(t, db.Migrator().HasTable("filters"))
+	assert.True(t, db.Migrator().HasTable("data_mapping_rules"))
+
+	// Roll back migration 016 (fix grouping rules)
+	err = migrator.Down(ctx)
+	require.NoError(t, err)
+
+	// Tables still exist after rolling back fix grouping rules
+	assert.True(t, db.Migrator().HasTable("filters"))
+	assert.True(t, db.Migrator().HasTable("data_mapping_rules"))
+
+	// Roll back migration 015 (default grouping rules and filters)
+	err = migrator.Down(ctx)
+	require.NoError(t, err)
+
+	// Tables still exist after rolling back grouping rules
+	assert.True(t, db.Migrator().HasTable("filters"))
+	assert.True(t, db.Migrator().HasTable("data_mapping_rules"))
+
+	// Roll back migration 014 (rename timeshift rule)
+	err = migrator.Down(ctx)
+	require.NoError(t, err)
+
+	// Tables still exist after rolling back timeshift rule rename
+	assert.True(t, db.Migrator().HasTable("filters"))
+	assert.True(t, db.Migrator().HasTable("data_mapping_rules"))
+
+	// Roll back migration 013 (system client detection rules)
+	err = migrator.Down(ctx)
+	require.NoError(t, err)
+
+	// Tables still exist after rolling back client detection rules
+	assert.True(t, db.Migrator().HasTable("filters"))
+	assert.True(t, db.Migrator().HasTable("client_detection_rules"))
+
+	// Roll back migration 012 (auto_shift_timezone column)
+	err = migrator.Down(ctx)
+	require.NoError(t, err)
+
+	// Tables still exist after rolling back auto_shift_timezone column
+	assert.True(t, db.Migrator().HasTable("filters"))
+	assert.True(t, db.Migrator().HasTable("epg_sources"))
 
 	// Roll back migration 011 (proxy_filter is_active column)
 	err = migrator.Down(ctx)
@@ -250,10 +313,10 @@ func TestMigrator_Pending(t *testing.T) {
 	migrator := NewMigrator(db, nil)
 	migrator.RegisterAll(AllMigrations())
 
-	// All should be pending initially (11 migrations total)
+	// All should be pending initially (18 migrations total)
 	pending, err := migrator.Pending(ctx)
 	require.NoError(t, err)
-	assert.Len(t, pending, 11)
+	assert.Len(t, pending, 18)
 
 	// Run migrations
 	err = migrator.Up(ctx)

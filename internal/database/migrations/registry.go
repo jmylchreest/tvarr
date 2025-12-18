@@ -23,6 +23,10 @@ import (
 // - 012: Add auto_shift_timezone column to epg_sources for timezone auto-shift tracking
 // - 013: Add system client detection rules for popular media players (VLC, MPV, Kodi, Plex, Jellyfin, Emby)
 // - 014: Rename system timeshift detection rule to shorter name
+// - 015: Add default channel grouping data mapping rules and filters
+// - 016: Fix grouping rules: enable country/adult, reorder priorities, rename to Group
+// - 017: Remove is_enabled column from filters (filters are enabled/disabled at proxy level)
+// - 018: Add backup_settings table for user-configurable backup schedule
 func AllMigrations() []Migration {
 	return []Migration{
 		migration001Schema(),
@@ -39,6 +43,10 @@ func AllMigrations() []Migration {
 		migration012EpgAutoShiftTimezone(),
 		migration013SystemClientDetectionRules(),
 		migration014RenameTimeshiftRule(),
+		migration015DefaultGroupingRules(),
+		migration016FixGroupingRules(),
+		migration017RemoveFilterIsEnabled(),
+		migration018BackupSettings(),
 	}
 }
 
@@ -165,7 +173,6 @@ func createDefaultFilters(tx *gorm.DB) error {
 			SourceType: models.FilterSourceTypeStream,
 			Action:     models.FilterActionInclude,
 			Expression: `stream_url starts_with "http"`,
-			IsEnabled:  models.BoolPtr(true),
 			IsSystem:   true,
 		},
 		{
@@ -174,7 +181,6 @@ func createDefaultFilters(tx *gorm.DB) error {
 			SourceType:  models.FilterSourceTypeStream,
 			Action:      models.FilterActionExclude,
 			Expression:  `group_title contains "adult" OR group_title contains "xxx" OR group_title contains "porn" OR channel_name contains "adult" OR channel_name contains "xxx" OR channel_name contains "porn"`,
-			IsEnabled:   models.BoolPtr(true),
 			IsSystem:    true,
 		},
 	}

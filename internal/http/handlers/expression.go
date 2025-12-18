@@ -86,6 +86,15 @@ func (h *ExpressionHandler) Register(api huma.API) {
 	}, h.GetClientDetectionFields)
 
 	huma.Register(api, huma.Operation{
+		OperationID: "autocompleteChannelValues",
+		Method:      "GET",
+		Path:        "/api/v1/autocomplete/channel-values",
+		Summary:     "Autocomplete channel field values",
+		Description: "Returns distinct values for a channel field with occurrence counts, filtered by search query. Useful for expression editor autocomplete.",
+		Tags:        []string{"Expressions"},
+	}, h.AutocompleteChannelValues)
+
+	huma.Register(api, huma.Operation{
 		OperationID: "validateExpression",
 		Method:      "POST",
 		Path:        "/api/v1/expressions/validate",
@@ -367,6 +376,42 @@ func (h *ExpressionHandler) GetDataMappingHelpers(ctx context.Context, input *st
 				EmptyMessage: "No logos found",
 			},
 		},
+		{
+			Name:        "group",
+			Prefix:      "@group:",
+			Description: "Autocomplete group_title values from your channel data",
+			Example:     "@group:Sports → \"Sports\"",
+			Completion: &HelperCompletion{
+				Type:         "search",
+				Endpoint:     "/api/v1/autocomplete/channel-values?field=group_title&quote=true",
+				QueryParam:   "q",
+				DisplayField: "value",
+				ValueField:   "value",
+				MinChars:     1,
+				DebounceMs:   200,
+				MaxResults:   20,
+				Placeholder:  "Search groups...",
+				EmptyMessage: "No groups found",
+			},
+		},
+		{
+			Name:        "channel",
+			Prefix:      "@channel:",
+			Description: "Autocomplete channel_name values from your channel data",
+			Example:     "@channel:ESPN → \"ESPN HD\"",
+			Completion: &HelperCompletion{
+				Type:         "search",
+				Endpoint:     "/api/v1/autocomplete/channel-values?field=channel_name&quote=true",
+				QueryParam:   "q",
+				DisplayField: "value",
+				ValueField:   "value",
+				MinChars:     2,
+				DebounceMs:   200,
+				MaxResults:   20,
+				Placeholder:  "Search channels...",
+				EmptyMessage: "No channels found",
+			},
+		},
 	}
 
 	resp := &HelpersOutput{}
@@ -392,6 +437,58 @@ func (h *ExpressionHandler) GetClientDetectionFields(ctx context.Context, input 
 	}
 
 	return &FieldsOutput{Body: fields}, nil
+}
+
+// AutocompleteChannelValuesInput is the input for autocompleting channel field values.
+type AutocompleteChannelValuesInput struct {
+	Field string `query:"field" doc:"Field name to get values for (group_title, channel_name, tvg_id, tvg_name, country, language)" required:"true"`
+	Query string `query:"q" doc:"Search query to filter values (case-insensitive contains)" required:"false"`
+	Limit int    `query:"limit" doc:"Maximum number of results to return (default: 20, max: 100)" required:"false"`
+	Quote bool   `query:"quote" doc:"If true, wrap values in double quotes for expression insertion" required:"false"`
+}
+
+// AutocompleteValueResponse represents a single autocomplete suggestion.
+type AutocompleteValueResponse struct {
+	Value       string `json:"value" doc:"The field value"`
+	Count       int64  `json:"count" doc:"Number of channels with this value"`
+	Description string `json:"description,omitempty" doc:"Description (shows count)"`
+}
+
+// AutocompleteChannelValuesOutput is the output for channel value autocomplete.
+type AutocompleteChannelValuesOutput struct {
+	Body []AutocompleteValueResponse
+}
+
+// AutocompleteChannelValues returns distinct values for a channel field with occurrence counts.
+func (h *ExpressionHandler) AutocompleteChannelValues(ctx context.Context, input *AutocompleteChannelValuesInput) (*AutocompleteChannelValuesOutput, error) {
+	limit := input.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+
+	results, err := h.channelRepo.GetDistinctFieldValues(ctx, input.Field, input.Query, limit)
+	if err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+
+	resp := &AutocompleteChannelValuesOutput{
+		Body: make([]AutocompleteValueResponse, 0, len(results)),
+	}
+
+	for _, r := range results {
+		value := r.Value
+		if input.Quote {
+			// Escape any existing quotes in the value and wrap in double quotes
+			value = `"` + strings.ReplaceAll(value, `"`, `\"`) + `"`
+		}
+		resp.Body = append(resp.Body, AutocompleteValueResponse{
+			Value:       value,
+			Count:       r.Count,
+			Description: fmt.Sprintf("%d channels", r.Count),
+		})
+	}
+
+	return resp, nil
 }
 
 // TestFilterExpressionInput is the input for testing a filter expression.

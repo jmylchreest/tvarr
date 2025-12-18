@@ -40,8 +40,6 @@ import {
   DetailPanel,
   DetailEmpty,
   MasterItem,
-  BadgeGroup,
-  BadgeItem,
 } from '@/components/shared';
 
 interface LoadingState {
@@ -79,41 +77,17 @@ function formatRelativeTime(dateString: string): string {
   }
 }
 
-function getSourceTypeColor(sourceType: string): string {
-  switch (sourceType.toLowerCase()) {
-    case 'stream':
-      return 'bg-blue-100 text-blue-800';
-    case 'epg':
-      return 'bg-green-100 text-green-800';
-    default:
-      return 'bg-gray-100 text-gray-800';
-  }
-}
-
 // Convert DataMappingRule to MasterItem format for MasterDetailLayout
 interface DataMappingRuleMasterItem extends MasterItem {
   rule: DataMappingRule;
 }
 
 function dataMappingRuleToMasterItem(rule: DataMappingRule): DataMappingRuleMasterItem {
-  // Build array of badges with priority-based styling
-  const badges: BadgeItem[] = [
-    { label: rule.source_type, priority: 'info' },
-  ];
-
-  if (rule.is_system) {
-    badges.push({ label: 'System', priority: 'secondary' });
-  }
-
-  if (!rule.is_enabled) {
-    badges.push({ label: 'Disabled', priority: 'error' });
-  }
-
+  // No badges in master list - keep it clean
   return {
     id: rule.id,
     title: rule.name,
     enabled: rule.is_enabled,
-    badge: <BadgeGroup badges={badges} size="sm" />,
     rule,
   };
 }
@@ -265,7 +239,7 @@ function DataMappingRuleDetailPanel({
   isLast,
 }: {
   rule: DataMappingRule;
-  onUpdate: (id: string, data: Omit<DataMappingRule, 'id' | 'created_at' | 'updated_at'>) => Promise<void>;
+  onUpdate: (id: string, data: Omit<DataMappingRule, 'id' | 'created_at' | 'updated_at'>, isSystem?: boolean) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onMoveUp: (id: string) => Promise<void>;
   onMoveDown: (id: string) => Promise<void>;
@@ -309,7 +283,7 @@ function DataMappingRuleDetailPanel({
   };
 
   const handleSave = async () => {
-    await onUpdate(rule.id, formData);
+    await onUpdate(rule.id, formData, rule.is_system);
     setHasChanges(false);
   };
 
@@ -369,41 +343,21 @@ function DataMappingRuleDetailPanel({
             <Lock className="h-4 w-4" />
             <AlertTitle>System Rule</AlertTitle>
             <AlertDescription>
-              This is a system rule and cannot be modified or deleted.
+              This is a system rule. You can enable or disable it, but cannot modify or delete it.
             </AlertDescription>
           </Alert>
         )}
 
-        {/* Rule Info */}
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <Label className="text-xs text-muted-foreground">Source Type</Label>
-            <div className="mt-1">
-              <Badge variant="secondary">
-                {rule.source_type.toUpperCase()}
-              </Badge>
-            </div>
-          </div>
-          <div>
-            <Label className="text-xs text-muted-foreground">Priority</Label>
-            <div className="mt-1">
-              <Badge variant="secondary" className="font-mono">#{rule.priority}</Badge>
-            </div>
-          </div>
-          <div>
-            <Label className="text-xs text-muted-foreground">Status</Label>
-            <div className="mt-1">
-              <Badge variant={rule.is_enabled ? 'default' : 'outline'}>
-                {rule.is_enabled ? 'Active' : 'Inactive'}
-              </Badge>
-            </div>
-          </div>
-          <div>
-            <Label className="text-xs text-muted-foreground">Created</Label>
-            <div className="mt-1 text-sm">
-              {rule.created_at ? formatRelativeTime(rule.created_at) : 'Unknown'}
-            </div>
-          </div>
+        {/* Compact Rule Info */}
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <Badge variant="secondary">{rule.source_type.toUpperCase()}</Badge>
+          <Badge variant="secondary" className="font-mono">#{rule.priority}</Badge>
+          <Badge variant={rule.is_enabled ? 'default' : 'outline'}>
+            {rule.is_enabled ? 'Active' : 'Inactive'}
+          </Badge>
+          <span className="text-muted-foreground">
+            Created {rule.created_at ? formatRelativeTime(rule.created_at) : 'Unknown'}
+          </span>
         </div>
 
         {/* Edit Form */}
@@ -468,13 +422,13 @@ function DataMappingRuleDetailPanel({
               checked={formData.is_enabled}
               onChange={(e) => handleFieldChange('is_enabled', e.target.checked)}
               className="rounded border-gray-300"
-              disabled={loading.edit || !isOnline || isSystem}
+              disabled={loading.edit || !isOnline}
             />
             <Label htmlFor="detail-is_enabled">Active Rule</Label>
           </div>
 
           {/* Save Button */}
-          {hasChanges && !isSystem && (
+          {hasChanges && (
             <div className="flex justify-end pt-4 border-t">
               <Button
                 onClick={handleSave}
@@ -611,13 +565,19 @@ export function DataMapping() {
 
   const handleUpdateRule = async (
     id: string,
-    ruleData: Omit<DataMappingRule, 'id' | 'created_at' | 'updated_at'>
+    ruleData: Omit<DataMappingRule, 'id' | 'created_at' | 'updated_at'>,
+    isSystem?: boolean
   ) => {
     setLoading((prev) => ({ ...prev, edit: true }));
     setErrors((prev) => ({ ...prev, edit: null }));
 
     try {
-      await apiClient.updateDataMappingRule(id, ruleData);
+      // System rules can only be toggled via PATCH
+      if (isSystem) {
+        await apiClient.patchDataMappingRule(id, ruleData.is_enabled);
+      } else {
+        await apiClient.updateDataMappingRule(id, ruleData);
+      }
       await loadRules(); // Reload rules after update
     } catch (error) {
       const apiError = error as ApiError;

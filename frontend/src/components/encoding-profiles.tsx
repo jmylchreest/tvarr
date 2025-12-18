@@ -1010,9 +1010,11 @@ export function EncodingProfiles() {
     return filtered;
   }, [allProfiles, filterVideoCodec, filterQuality]);
 
-  // Convert filtered profiles to master items for MasterDetailLayout
+  // Convert filtered profiles to master items for MasterDetailLayout, sorted alphabetically
   const masterItems = useMemo(
-    () => filteredProfiles.map(encodingProfileToMasterItem),
+    () => filteredProfiles
+      .map(encodingProfileToMasterItem)
+      .sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true })),
     [filteredProfiles]
   );
 

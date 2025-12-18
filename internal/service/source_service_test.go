@@ -244,6 +244,11 @@ func (r *mockChannelRepo) Transaction(ctx context.Context, fn func(repository.Ch
 	return fn(r)
 }
 
+func (r *mockChannelRepo) GetDistinctFieldValues(ctx context.Context, field string, query string, limit int) ([]repository.FieldValueResult, error) {
+	// Mock implementation - return empty results
+	return []repository.FieldValueResult{}, nil
+}
+
 func TestSourceService_CreateSource(t *testing.T) {
 	sourceRepo := newMockStreamSourceRepo()
 	channelRepo := newMockChannelRepo()

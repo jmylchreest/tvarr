@@ -77,7 +77,6 @@ func (s *ExportService) ExportFilters(ctx context.Context, ids []models.ULID, ex
 			Expression:  f.Expression,
 			SourceType:  string(f.SourceType),
 			Action:      string(f.Action),
-			IsEnabled:   models.BoolVal(f.IsEnabled),
 			SourceID:    ulidPtrToStringPtr(f.SourceID),
 		}
 	}

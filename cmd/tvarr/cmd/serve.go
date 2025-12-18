@@ -380,17 +380,8 @@ func runServe(_ *cobra.Command, _ []string) error {
 		})
 	}
 
-	// Add scheduled backup job if enabled
-	if backupConfig.Schedule.Enabled && backupConfig.Schedule.Cron != "" {
-		internalJobs = append(internalJobs, scheduler.InternalJobConfig{
-			JobType:      models.JobTypeBackup,
-			TargetName:   "Scheduled Backup",
-			CronSchedule: backupConfig.Schedule.Cron,
-		})
-		logger.Info("scheduled backups configured",
-			slog.String("schedule", backupConfig.Schedule.Cron),
-			slog.Int("retention", backupConfig.Schedule.Retention))
-	}
+	// Note: Backup job is added dynamically after scheduler starts to use DB settings
+	// See the code block after sched.Start(ctx) below
 
 	// Initialize scheduler and runner
 	sched := scheduler.NewScheduler(
@@ -485,16 +476,16 @@ func runServe(_ *cobra.Command, _ []string) error {
 	healthHandler := handlers.NewHealthHandler(version.Version).WithDB(db)
 	healthHandler.Register(server.API())
 
-	streamSourceHandler := handlers.NewStreamSourceHandler(sourceService)
+	streamSourceHandler := handlers.NewStreamSourceHandler(sourceService).WithScheduleSyncer(sched)
 	streamSourceHandler.Register(server.API())
 
-	epgSourceHandler := handlers.NewEpgSourceHandler(epgService)
+	epgSourceHandler := handlers.NewEpgSourceHandler(epgService).WithScheduleSyncer(sched)
 	epgSourceHandler.Register(server.API())
 
 	unifiedSourcesHandler := handlers.NewUnifiedSourcesHandler(sourceService, epgService)
 	unifiedSourcesHandler.Register(server.API())
 
-	proxyHandler := handlers.NewStreamProxyHandler(proxyService)
+	proxyHandler := handlers.NewStreamProxyHandler(proxyService).WithScheduleSyncer(sched)
 	proxyHandler.Register(server.API())
 
 	expressionHandler := handlers.NewExpressionHandler(channelRepo, epgProgramRepo)
@@ -586,7 +577,10 @@ func runServe(_ *cobra.Command, _ []string) error {
 	exportHandler.Register(server.API())
 
 	// Register backup/restore handlers (backupService created earlier for scheduler)
-	backupHandler := handlers.NewBackupHandler(backupService)
+	// Create schedule updater adapter that connects handler to scheduler
+	scheduleUpdater := &backupScheduleUpdaterAdapter{scheduler: sched}
+	backupHandler := handlers.NewBackupHandler(backupService).
+		WithScheduleUpdater(scheduleUpdater)
 	backupHandler.Register(server.API())
 	backupHandler.RegisterChiRoutes(server.Router())
 
@@ -610,6 +604,19 @@ func runServe(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("starting scheduler: %w", err)
 	}
 	defer sched.Stop()
+
+	// Register backup job with effective settings from database
+	// This uses DB settings merged with config defaults
+	effectiveSchedule := backupService.GetScheduleInfo(ctx)
+	if effectiveSchedule.Enabled && effectiveSchedule.Cron != "" {
+		if err := sched.AddInternalJob(models.JobTypeBackup, "Scheduled Backup", effectiveSchedule.Cron); err != nil {
+			logger.Warn("failed to register backup job", slog.Any("error", err))
+		} else {
+			logger.Info("scheduled backups configured",
+				slog.String("schedule", effectiveSchedule.Cron),
+				slog.Int("retention", effectiveSchedule.Retention))
+		}
+	}
 
 	// Schedule startup jobs BEFORE starting the runner to avoid database contention.
 	// The runner's workers immediately start polling for jobs, so we need all
@@ -722,4 +729,13 @@ func (a *backupServiceAdapter) CreateBackupForScheduler(ctx context.Context) (sc
 
 func (a *backupServiceAdapter) CleanupOldBackups(ctx context.Context) (int, error) {
 	return a.svc.CleanupOldBackups(ctx)
+}
+
+// backupScheduleUpdaterAdapter adapts *scheduler.Scheduler to implement handlers.BackupScheduleUpdater.
+type backupScheduleUpdaterAdapter struct {
+	scheduler *scheduler.Scheduler
+}
+
+func (a *backupScheduleUpdaterAdapter) UpdateBackupSchedule(enabled bool, cron string) error {
+	return a.scheduler.UpdateInternalJob(models.JobTypeBackup, "Scheduled Backup", enabled, cron)
 }

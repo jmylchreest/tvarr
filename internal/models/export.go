@@ -48,13 +48,14 @@ type ExportMetadata struct {
 }
 
 // FilterExportItem represents a filter for export/import.
+// Note: Filters do not have an enabled/disabled state. The enabled state is
+// controlled at the proxy-filter relationship level (ProxyFilter.IsActive).
 type FilterExportItem struct {
 	Name        string  `json:"name"`
 	Description string  `json:"description,omitempty"`
 	Expression  string  `json:"expression"`
 	SourceType  string  `json:"source_type"` // "stream" or "epg"
 	Action      string  `json:"action"`      // "include" or "exclude"
-	IsEnabled   bool    `json:"is_enabled"`
 	SourceID    *string `json:"source_id,omitempty"` // Optional source restriction
 }
 

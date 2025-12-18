@@ -14,13 +14,29 @@ import (
 
 // EpgSourceHandler handles EPG source API endpoints.
 type EpgSourceHandler struct {
-	epgService *service.EpgService
+	epgService     *service.EpgService
+	scheduleSyncer ScheduleSyncer
 }
 
 // NewEpgSourceHandler creates a new EPG source handler.
 func NewEpgSourceHandler(epgService *service.EpgService) *EpgSourceHandler {
 	return &EpgSourceHandler{
 		epgService: epgService,
+	}
+}
+
+// WithScheduleSyncer sets the schedule syncer for immediate schedule updates.
+func (h *EpgSourceHandler) WithScheduleSyncer(syncer ScheduleSyncer) *EpgSourceHandler {
+	h.scheduleSyncer = syncer
+	return h
+}
+
+// syncSchedules triggers an immediate sync if a syncer is configured.
+func (h *EpgSourceHandler) syncSchedules(ctx context.Context) {
+	if h.scheduleSyncer != nil {
+		go func() {
+			_ = h.scheduleSyncer.ForceSync(ctx)
+		}()
 	}
 }
 
@@ -168,6 +184,11 @@ func (h *EpgSourceHandler) Create(ctx context.Context, input *CreateEpgSourceInp
 		return nil, huma.Error500InternalServerError("failed to create EPG source", err)
 	}
 
+	// Trigger immediate schedule sync if source has a cron schedule
+	if source.CronSchedule != "" {
+		h.syncSchedules(ctx)
+	}
+
 	return &CreateEpgSourceOutput{
 		Body: EpgSourceFromModel(source),
 	}, nil
@@ -205,6 +226,9 @@ func (h *EpgSourceHandler) Update(ctx context.Context, input *UpdateEpgSourceInp
 		return nil, huma.Error500InternalServerError("failed to update EPG source", err)
 	}
 
+	// Trigger immediate schedule sync (schedule may have changed)
+	h.syncSchedules(ctx)
+
 	return &UpdateEpgSourceOutput{
 		Body: EpgSourceFromModel(source),
 	}, nil
@@ -231,6 +255,9 @@ func (h *EpgSourceHandler) Delete(ctx context.Context, input *DeleteEpgSourceInp
 		}
 		return nil, huma.Error500InternalServerError("failed to delete EPG source", err)
 	}
+
+	// Trigger immediate schedule sync (removed source's schedule needs cleanup)
+	h.syncSchedules(ctx)
 
 	return &DeleteEpgSourceOutput{}, nil
 }

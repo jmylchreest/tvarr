@@ -75,18 +75,6 @@ func (r *filterRepository) GetAll(ctx context.Context) ([]*models.Filter, error)
 	return filters, nil
 }
 
-// GetEnabled retrieves all enabled filters.
-func (r *filterRepository) GetEnabled(ctx context.Context) ([]*models.Filter, error) {
-	var filters []*models.Filter
-	if err := r.db.WithContext(ctx).
-		Where("is_enabled = ?", true).
-		Order("created_at ASC").
-		Find(&filters).Error; err != nil {
-		return nil, err
-	}
-	return filters, nil
-}
-
 // GetUserCreated retrieves all user-created filters (IsSystem=false).
 func (r *filterRepository) GetUserCreated(ctx context.Context) ([]*models.Filter, error) {
 	var filters []*models.Filter
@@ -120,27 +108,6 @@ func (r *filterRepository) GetBySourceID(ctx context.Context, sourceID *models.U
 	} else {
 		query = query.Where("source_id IS NULL")
 	}
-	if err := query.Order("created_at ASC").Find(&filters).Error; err != nil {
-		return nil, err
-	}
-	return filters, nil
-}
-
-// GetEnabledForSourceType retrieves enabled filters for a source type, ordered by creation time.
-func (r *filterRepository) GetEnabledForSourceType(ctx context.Context, sourceType models.FilterSourceType, sourceID *models.ULID) ([]*models.Filter, error) {
-	var filters []*models.Filter
-	query := r.db.WithContext(ctx).
-		Where("is_enabled = ?", true).
-		Where("source_type = ?", sourceType)
-
-	if sourceID != nil {
-		// Get global filters (source_id IS NULL) and source-specific filters
-		query = query.Where("source_id = ? OR source_id IS NULL", sourceID)
-	} else {
-		// Only global filters
-		query = query.Where("source_id IS NULL")
-	}
-
 	if err := query.Order("created_at ASC").Find(&filters).Error; err != nil {
 		return nil, err
 	}

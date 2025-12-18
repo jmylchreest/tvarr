@@ -45,6 +45,8 @@ import {
   ConflictResolution,
   BackupListResponse,
   BackupInfo,
+  BackupScheduleInfo,
+  BackupScheduleUpdateRequest,
   RestoreResult,
 } from '@/types/api';
 
@@ -786,6 +788,13 @@ class ApiClient {
     });
   }
 
+  async patchDataMappingRule(id: string, isEnabled: boolean): Promise<ApiResponse<DataMappingRule>> {
+    return this.request<ApiResponse<DataMappingRule>>(`${API_CONFIG.endpoints.dataMapping}/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ is_enabled: isEnabled }),
+    });
+  }
+
   async deleteDataMappingRule(id: string): Promise<void> {
     await this.request<void>(`${API_CONFIG.endpoints.dataMapping}/${id}`, {
       method: 'DELETE',
@@ -1414,6 +1423,27 @@ class ApiClient {
 
   getBackupDownloadUrl(filename: string): string {
     return `${this.baseUrl}/api/v1/backups/${encodeURIComponent(filename)}/download`;
+  }
+
+  async getBackupSchedule(): Promise<BackupScheduleInfo> {
+    return this.request<BackupScheduleInfo>('/api/v1/backups/schedule');
+  }
+
+  async updateBackupSchedule(settings: BackupScheduleUpdateRequest): Promise<BackupScheduleInfo> {
+    return this.request<BackupScheduleInfo>('/api/v1/backups/schedule', {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    });
+  }
+
+  async setBackupProtection(filename: string, protected_: boolean): Promise<BackupInfo> {
+    return this.request<BackupInfo>(
+      `/api/v1/backups/${encodeURIComponent(filename)}/protection`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ protected: protected_ }),
+      }
+    );
   }
 }
 

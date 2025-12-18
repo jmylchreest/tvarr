@@ -26,7 +26,7 @@ func (h *FilterHandler) Register(api huma.API) {
 		Method:      "GET",
 		Path:        "/api/v1/filters",
 		Summary:     "List filters",
-		Description: "Returns all filters, ordered by priority",
+		Description: "Returns all filters",
 		Tags:        []string{"Filters"},
 	}, h.List)
 
@@ -53,7 +53,7 @@ func (h *FilterHandler) Register(api huma.API) {
 		Method:      "PUT",
 		Path:        "/api/v1/filters/{id}",
 		Summary:     "Update filter",
-		Description: "Updates an existing filter",
+		Description: "Updates an existing filter. System filters cannot be modified.",
 		Tags:        []string{"Filters"},
 	}, h.Update)
 
@@ -68,6 +68,8 @@ func (h *FilterHandler) Register(api huma.API) {
 }
 
 // FilterResponse represents a filter in API responses.
+// Note: Filters do not have an enabled/disabled state. The enabled state is
+// controlled at the proxy-filter relationship level (ProxyFilter.IsActive).
 type FilterResponse struct {
 	ID          string  `json:"id" doc:"Filter ID (ULID)"`
 	Name        string  `json:"name" doc:"Filter name"`
@@ -75,7 +77,6 @@ type FilterResponse struct {
 	SourceType  string  `json:"source_type" doc:"Source type (stream or epg)"`
 	Action      string  `json:"action" doc:"Filter action (include or exclude)"`
 	Expression  string  `json:"expression" doc:"Filter expression"`
-	IsEnabled   bool    `json:"is_enabled" doc:"Whether the filter is enabled"`
 	IsSystem    bool    `json:"is_system" doc:"Whether this is a system-provided filter (cannot be edited/deleted)"`
 	SourceID    *string `json:"source_id,omitempty" doc:"Source ID to restrict filter to (optional)"`
 	CreatedAt   string  `json:"created_at" doc:"Creation timestamp"`
@@ -91,7 +92,6 @@ func FilterFromModel(f *models.Filter) FilterResponse {
 		SourceType:  string(f.SourceType),
 		Action:      string(f.Action),
 		Expression:  f.Expression,
-		IsEnabled:   models.BoolVal(f.IsEnabled),
 		IsSystem:    f.IsSystem,
 		CreatedAt:   f.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:   f.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -106,7 +106,6 @@ func FilterFromModel(f *models.Filter) FilterResponse {
 // ListFiltersInput is the input for listing filters.
 type ListFiltersInput struct {
 	SourceType string `query:"source_type" doc:"Filter by source type (stream or epg)" required:"false"`
-	Enabled    string `query:"enabled" doc:"Filter by enabled status (true or false)" required:"false" enum:"true,false,"`
 }
 
 // ListFiltersOutput is the output for listing filters.
@@ -122,17 +121,7 @@ func (h *FilterHandler) List(ctx context.Context, input *ListFiltersInput) (*Lis
 	var filters []*models.Filter
 	var err error
 
-	// Parse enabled filter (string to bool)
-	enabledFilter := input.Enabled == "true"
-	hasEnabledFilter := input.Enabled != ""
-
-	if hasEnabledFilter && enabledFilter {
-		if input.SourceType != "" {
-			filters, err = h.repo.GetEnabledForSourceType(ctx, models.FilterSourceType(input.SourceType), nil)
-		} else {
-			filters, err = h.repo.GetEnabled(ctx)
-		}
-	} else if input.SourceType != "" {
+	if input.SourceType != "" {
 		filters, err = h.repo.GetBySourceType(ctx, models.FilterSourceType(input.SourceType))
 	} else {
 		filters, err = h.repo.GetAll(ctx)
@@ -189,7 +178,6 @@ type CreateFilterRequest struct {
 	SourceType  string  `json:"source_type" doc:"Source type (stream or epg)" enum:"stream,epg"`
 	Action      string  `json:"action" doc:"Filter action (include or exclude)" enum:"include,exclude"`
 	Expression  string  `json:"expression" doc:"Filter expression" minLength:"1"`
-	IsEnabled   *bool   `json:"is_enabled,omitempty" doc:"Whether the filter is enabled (default: true)"`
 	SourceID    *string `json:"source_id,omitempty" doc:"Source ID to restrict filter to (optional)"`
 }
 
@@ -211,11 +199,6 @@ func (h *FilterHandler) Create(ctx context.Context, input *CreateFilterInput) (*
 		SourceType:  models.FilterSourceType(input.Body.SourceType),
 		Action:      models.FilterAction(input.Body.Action),
 		Expression:  input.Body.Expression,
-		IsEnabled:   models.BoolPtr(true),
-	}
-
-	if input.Body.IsEnabled != nil {
-		filter.IsEnabled = input.Body.IsEnabled
 	}
 
 	if input.Body.SourceID != nil && *input.Body.SourceID != "" {
@@ -242,7 +225,6 @@ type UpdateFilterRequest struct {
 	SourceType  *string `json:"source_type,omitempty" doc:"Source type (stream or epg)" enum:"stream,epg"`
 	Action      *string `json:"action,omitempty" doc:"Filter action (include or exclude)" enum:"include,exclude"`
 	Expression  *string `json:"expression,omitempty" doc:"Filter expression"`
-	IsEnabled   *bool   `json:"is_enabled,omitempty" doc:"Whether the filter is enabled"`
 	SourceID    *string `json:"source_id,omitempty" doc:"Source ID to restrict filter to (null to make global)"`
 }
 
@@ -258,6 +240,7 @@ type UpdateFilterOutput struct {
 }
 
 // Update updates an existing filter.
+// System filters cannot be modified.
 func (h *FilterHandler) Update(ctx context.Context, input *UpdateFilterInput) (*UpdateFilterOutput, error) {
 	id, err := models.ParseULID(input.ID)
 	if err != nil {
@@ -272,47 +255,36 @@ func (h *FilterHandler) Update(ctx context.Context, input *UpdateFilterInput) (*
 		return nil, huma.Error404NotFound(fmt.Sprintf("filter %s not found", input.ID))
 	}
 
-	// System defaults can only have is_enabled toggled
+	// System filters cannot be modified
 	if filter.IsSystem {
-		if input.Body.Name != nil || input.Body.Description != nil ||
-			input.Body.SourceType != nil || input.Body.Action != nil ||
-			input.Body.Expression != nil || input.Body.SourceID != nil {
-			return nil, huma.Error403Forbidden("system filters can only have is_enabled toggled")
-		}
-		// Only allow is_enabled update
-		if input.Body.IsEnabled != nil {
-			filter.IsEnabled = input.Body.IsEnabled
-		}
-	} else {
-		// Apply updates for non-system filters
-		if input.Body.Name != nil {
-			filter.Name = *input.Body.Name
-		}
-		if input.Body.Description != nil {
-			filter.Description = *input.Body.Description
-		}
-		if input.Body.SourceType != nil {
-			filter.SourceType = models.FilterSourceType(*input.Body.SourceType)
-		}
-		if input.Body.Action != nil {
-			filter.Action = models.FilterAction(*input.Body.Action)
-		}
-		if input.Body.Expression != nil {
-			filter.Expression = *input.Body.Expression
-		}
-		if input.Body.IsEnabled != nil {
-			filter.IsEnabled = input.Body.IsEnabled
-		}
-		if input.Body.SourceID != nil {
-			if *input.Body.SourceID == "" {
-				filter.SourceID = nil
-			} else {
-				sourceID, err := models.ParseULID(*input.Body.SourceID)
-				if err != nil {
-					return nil, huma.Error400BadRequest("invalid source_id format", err)
-				}
-				filter.SourceID = &sourceID
+		return nil, huma.Error403Forbidden("system filters cannot be modified")
+	}
+
+	// Apply updates for non-system filters
+	if input.Body.Name != nil {
+		filter.Name = *input.Body.Name
+	}
+	if input.Body.Description != nil {
+		filter.Description = *input.Body.Description
+	}
+	if input.Body.SourceType != nil {
+		filter.SourceType = models.FilterSourceType(*input.Body.SourceType)
+	}
+	if input.Body.Action != nil {
+		filter.Action = models.FilterAction(*input.Body.Action)
+	}
+	if input.Body.Expression != nil {
+		filter.Expression = *input.Body.Expression
+	}
+	if input.Body.SourceID != nil {
+		if *input.Body.SourceID == "" {
+			filter.SourceID = nil
+		} else {
+			sourceID, err := models.ParseULID(*input.Body.SourceID)
+			if err != nil {
+				return nil, huma.Error400BadRequest("invalid source_id format", err)
 			}
+			filter.SourceID = &sourceID
 		}
 	}
 

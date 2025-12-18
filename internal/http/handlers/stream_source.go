@@ -12,15 +12,39 @@ import (
 	"gorm.io/gorm"
 )
 
+// ScheduleSyncer is called when cron schedules are changed via API.
+// This allows the scheduler to immediately pick up changes without waiting for the sync interval.
+type ScheduleSyncer interface {
+	// ForceSync triggers an immediate sync of schedules from the database.
+	ForceSync(ctx context.Context) error
+}
+
 // StreamSourceHandler handles stream source API endpoints.
 type StreamSourceHandler struct {
-	sourceService *service.SourceService
+	sourceService   *service.SourceService
+	scheduleSyncer  ScheduleSyncer
 }
 
 // NewStreamSourceHandler creates a new stream source handler.
 func NewStreamSourceHandler(sourceService *service.SourceService) *StreamSourceHandler {
 	return &StreamSourceHandler{
 		sourceService: sourceService,
+	}
+}
+
+// WithScheduleSyncer sets the schedule syncer for immediate schedule updates.
+func (h *StreamSourceHandler) WithScheduleSyncer(syncer ScheduleSyncer) *StreamSourceHandler {
+	h.scheduleSyncer = syncer
+	return h
+}
+
+// syncSchedules triggers an immediate sync if a syncer is configured.
+func (h *StreamSourceHandler) syncSchedules(ctx context.Context) {
+	if h.scheduleSyncer != nil {
+		// Fire and forget - don't block on sync errors
+		go func() {
+			_ = h.scheduleSyncer.ForceSync(ctx)
+		}()
 	}
 }
 
@@ -168,6 +192,11 @@ func (h *StreamSourceHandler) Create(ctx context.Context, input *CreateStreamSou
 		return nil, huma.Error500InternalServerError("failed to create source", err)
 	}
 
+	// Trigger immediate schedule sync if source has a cron schedule
+	if source.CronSchedule != "" {
+		h.syncSchedules(ctx)
+	}
+
 	return &CreateStreamSourceOutput{
 		Body: StreamSourceFromModel(source),
 	}, nil
@@ -205,6 +234,9 @@ func (h *StreamSourceHandler) Update(ctx context.Context, input *UpdateStreamSou
 		return nil, huma.Error500InternalServerError("failed to update source", err)
 	}
 
+	// Trigger immediate schedule sync (schedule may have changed)
+	h.syncSchedules(ctx)
+
 	return &UpdateStreamSourceOutput{
 		Body: StreamSourceFromModel(source),
 	}, nil
@@ -231,6 +263,9 @@ func (h *StreamSourceHandler) Delete(ctx context.Context, input *DeleteStreamSou
 		}
 		return nil, huma.Error500InternalServerError("failed to delete source", err)
 	}
+
+	// Trigger immediate schedule sync (removed source's schedule needs cleanup)
+	h.syncSchedules(ctx)
 
 	return &DeleteStreamSourceOutput{}, nil
 }

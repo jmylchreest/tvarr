@@ -202,6 +202,9 @@ export interface ProxyFilterRequest {
 export type FilterSourceType = 'stream' | 'epg';
 export type FilterAction = 'include' | 'exclude';
 
+// Note: Filters do not have an enabled/disabled state. The enabled state is
+// controlled at the proxy-filter relationship level (ProxyFilter.is_active),
+// allowing the same filter to be enabled on one proxy and disabled on another.
 export interface Filter {
   id: string;
   name: string;
@@ -209,7 +212,6 @@ export interface Filter {
   source_type: FilterSourceType;
   action: FilterAction;
   expression: string;
-  is_enabled: boolean;
   is_system?: boolean;  // Optional - set by backend, not API
   source_id?: string;
   created_at: string;
@@ -1095,7 +1097,6 @@ export interface FilterExportItem {
   expression: string;
   source_type: 'stream' | 'epg';
   action: 'include' | 'exclude';
-  is_enabled: boolean;
   source_id?: string | null;
 }
 
@@ -1203,6 +1204,8 @@ export interface BackupInfo {
   tvarr_version: string;
   checksum: string;
   table_counts: BackupTableCounts;
+  protected: boolean;
+  imported: boolean;
 }
 
 export interface BackupScheduleInfo {
@@ -1210,6 +1213,12 @@ export interface BackupScheduleInfo {
   cron: string;
   retention: number;
   next_run?: string | null;
+}
+
+export interface BackupScheduleUpdateRequest {
+  enabled?: boolean;
+  cron?: string;
+  retention?: number;
 }
 
 export interface BackupListResponse {

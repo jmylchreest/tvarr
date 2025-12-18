@@ -23,6 +23,9 @@ const (
 )
 
 // Filter represents an expression-based filter rule stored in the database.
+// Note: Filters do not have an enabled/disabled state. The enabled state is
+// controlled at the proxy-filter relationship level (ProxyFilter.IsActive),
+// allowing the same filter to be enabled on one proxy and disabled on another.
 type Filter struct {
 	BaseModel
 
@@ -41,12 +44,7 @@ type Filter struct {
 	// Expression is the filter expression string.
 	Expression string `gorm:"type:text;not null" json:"expression"`
 
-	// IsEnabled determines if the filter is active.
-	// Using pointer to distinguish between "not set" (nil->default true) and "explicitly false".
-	IsEnabled *bool `gorm:"default:true" json:"is_enabled"`
-
 	// IsSystem indicates this is a system-provided default that cannot be edited or deleted.
-	// Only IsEnabled can be toggled for system filters.
 	IsSystem bool `gorm:"default:false" json:"is_system"`
 
 	// SourceID optionally restricts this filter to a specific source.

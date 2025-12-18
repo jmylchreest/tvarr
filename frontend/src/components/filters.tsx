@@ -1,20 +1,11 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { cn } from '@/lib/utils';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { FilterExpressionEditor } from '@/components/filter-expression-editor';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
@@ -29,18 +20,16 @@ import {
   Plus,
   Trash2,
   Filter as FilterIcon,
-  Search,
   AlertCircle,
   Loader2,
   WifiOff,
   Code,
   Play,
-  Settings,
   Lock,
 } from 'lucide-react';
 import { Filter, FilterAction } from '@/types/api';
 import { apiClient, ApiError } from '@/lib/api-client';
-import { DEFAULT_PAGE_SIZE, API_CONFIG } from '@/lib/config';
+import { API_CONFIG } from '@/lib/config';
 import { ExportDialog, ImportDialog } from '@/components/config-export';
 import {
   MasterDetailLayout,
@@ -49,7 +38,6 @@ import {
   MasterItem,
 } from '@/components/shared';
 import { StatCard } from '@/components/shared/feedback/StatCard';
-import { BadgeGroup, BadgeItem } from '@/components/shared';
 
 interface LoadingState {
   filters: boolean;
@@ -63,10 +51,6 @@ interface ErrorState {
   create: string | null;
   edit: string | null;
   action: string | null;
-}
-
-function formatDate(dateString: string): string {
-  return new Date(dateString).toLocaleString();
 }
 
 function formatRelativeTime(dateString: string): string {
@@ -85,42 +69,15 @@ function formatRelativeTime(dateString: string): string {
   }
 }
 
-function getSourceTypeColor(sourceType: string): string {
-  switch (sourceType.toLowerCase()) {
-    case 'stream':
-      return 'bg-blue-100 text-blue-800';
-    case 'epg':
-      return 'bg-green-100 text-green-800';
-    default:
-      return 'bg-gray-100 text-gray-800';
-  }
-}
-
 // Convert Filter to MasterItem format for MasterDetailLayout
 interface FilterMasterItem extends MasterItem {
   filter: Filter;
 }
 
 function filterToMasterItem(filter: Filter): FilterMasterItem {
-  // Build badges array with priority-based styling
-  const badges: BadgeItem[] = [
-    { label: filter.source_type, priority: 'info' },
-    { label: filter.action, priority: filter.action === 'exclude' ? 'warning' : 'success' },
-  ];
-
-  if (filter.is_system) {
-    badges.push({ label: 'System', priority: 'secondary' });
-  }
-
-  if (!filter.is_enabled) {
-    badges.push({ label: 'Disabled', priority: 'error' });
-  }
-
   return {
     id: filter.id,
     title: filter.name,
-    enabled: filter.is_enabled,
-    badge: <BadgeGroup badges={badges} size="sm" />,
     filter,
   };
 }
@@ -142,7 +99,6 @@ function FilterCreatePanel({
     source_type: 'stream',
     action: 'include',
     expression: '',
-    is_enabled: true,
   });
   const [filterExpression, setFilterExpression] = useState('');
 
@@ -241,18 +197,6 @@ function FilterCreatePanel({
               <option value="exclude">Exclude</option>
             </select>
           </div>
-
-          <div className="flex items-center space-x-2">
-            <input
-              id="create-is_enabled"
-              type="checkbox"
-              checked={formData.is_enabled}
-              onChange={(e) => setFormData({ ...formData, is_enabled: e.target.checked })}
-              className="rounded border-gray-300"
-              disabled={loading}
-            />
-            <Label htmlFor="create-is_enabled">Enabled</Label>
-          </div>
         </form>
       </div>
     </DetailPanel>
@@ -281,7 +225,6 @@ function FilterDetailPanel({
     source_type: filter.source_type,
     action: filter.action,
     expression: filter.expression,
-    is_enabled: filter.is_enabled,
   });
   const [filterExpression, setFilterExpression] = useState(filter.expression || '');
   const [hasChanges, setHasChanges] = useState(false);
@@ -294,14 +237,13 @@ function FilterDetailPanel({
       source_type: filter.source_type,
       action: filter.action,
       expression: filter.expression,
-      is_enabled: filter.is_enabled,
     };
     setFormData(newFormData);
     setFilterExpression(filter.expression || '');
     setHasChanges(false);
   }, [filter.id]);
 
-  const handleFieldChange = (field: keyof typeof formData, value: any) => {
+  const handleFieldChange = (field: keyof typeof formData, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
     setHasChanges(true);
   };
@@ -354,44 +296,19 @@ function FilterDetailPanel({
           </Alert>
         )}
 
-        {/* Filter Info */}
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <Label className="text-xs text-muted-foreground">Source Type</Label>
-            <div className="mt-1">
-              <Badge variant="secondary">
-                {filter.source_type.toUpperCase()}
-              </Badge>
-            </div>
-          </div>
-          <div>
-            <Label className="text-xs text-muted-foreground">Action</Label>
-            <div className="mt-1">
-              <Badge variant={filter.action === 'exclude' ? 'destructive' : 'default'}>
-                {filter.action.toUpperCase()}
-              </Badge>
-            </div>
-          </div>
-          <div>
-            <Label className="text-xs text-muted-foreground">Status</Label>
-            <div className="mt-1">
-              <Badge variant={filter.is_enabled ? 'default' : 'outline'}>
-                {filter.is_enabled ? 'Enabled' : 'Disabled'}
-              </Badge>
-            </div>
-          </div>
-          <div>
-            <Label className="text-xs text-muted-foreground">Created</Label>
-            <div className="mt-1 text-sm">
-              {filter.created_at ? formatRelativeTime(filter.created_at) : 'Unknown'}
-            </div>
-          </div>
+        {/* Compact Filter Info */}
+        <div className="flex flex-wrap gap-2 text-sm">
+          <Badge variant="secondary">{filter.source_type.toUpperCase()}</Badge>
+          <Badge variant={filter.action === 'exclude' ? 'destructive' : 'default'}>
+            {filter.action.toUpperCase()}
+          </Badge>
+          <span className="text-muted-foreground">
+            Created {filter.created_at ? formatRelativeTime(filter.created_at) : 'Unknown'}
+          </span>
         </div>
 
         {/* Edit Form */}
-        <div className="border-t pt-4 space-y-4">
-          <h3 className="text-sm font-medium">Configuration</h3>
-
+        <div className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="detail-name">Name</Label>
             <Input
@@ -443,18 +360,6 @@ function FilterDetailPanel({
               <option value="include">Include</option>
               <option value="exclude">Exclude</option>
             </select>
-          </div>
-
-          <div className="flex items-center space-x-2">
-            <input
-              id="detail-is_enabled"
-              type="checkbox"
-              checked={formData.is_enabled}
-              onChange={(e) => handleFieldChange('is_enabled', e.target.checked)}
-              className="rounded border-gray-300"
-              disabled={loading.edit || !isOnline || isSystem}
-            />
-            <Label htmlFor="detail-is_enabled">Enabled</Label>
           </div>
 
           {/* Save Button */}
@@ -513,8 +418,6 @@ export function Filters() {
     [sortedFilters]
   );
 
-  // Health check is handled by parent component, no need for redundant calls
-
   const loadFilters = useCallback(async () => {
     if (!isOnline) return;
 
@@ -522,7 +425,6 @@ export function Filters() {
     setErrors((prev) => ({ ...prev, filters: null }));
 
     try {
-      // Load all filters without search parameters - filtering happens locally
       const filters = await apiClient.getFilters();
 
       // Filter out any malformed filter objects that might cause React key issues
@@ -610,7 +512,7 @@ export function Filters() {
         ...prev,
         edit: `Failed to update filter: ${apiError.message}`,
       }));
-      throw error; // Re-throw to prevent dialog from closing
+      throw error;
     } finally {
       setLoading((prev) => ({ ...prev, edit: false }));
     }
@@ -643,7 +545,7 @@ export function Filters() {
     allFilters?.filter((f) => f.source_type.toLowerCase() === 'stream').length || 0;
   const epgFilters =
     allFilters?.filter((f) => f.source_type.toLowerCase() === 'epg').length || 0;
-  const disabledFilters = allFilters?.filter((f) => !f.is_enabled).length || 0;
+  const systemFilters = allFilters?.filter((f) => f.is_system).length || 0;
   const totalFilters = allFilters?.length || 0;
 
   return (
@@ -712,7 +614,7 @@ export function Filters() {
         <StatCard title="Total Filters" value={totalFilters} icon={<FilterIcon className="h-4 w-4" />} />
         <StatCard title="Stream Filters" value={streamFilters} icon={<Play className="h-4 w-4 text-blue-600" />} />
         <StatCard title="EPG Filters" value={epgFilters} icon={<Code className="h-4 w-4 text-green-600" />} />
-        <StatCard title="Disabled" value={disabledFilters} icon={<Settings className="h-4 w-4 text-orange-600" />} />
+        <StatCard title="System" value={systemFilters} icon={<Lock className="h-4 w-4 text-orange-600" />} />
       </div>
 
       {/* Error Loading Filters */}
@@ -778,7 +680,6 @@ export function Filters() {
                 filter.source_type,
                 filter.action,
                 filter.description || '',
-                filter.is_enabled ? 'enabled' : 'disabled',
                 filter.is_system ? 'system' : '',
               ];
               return searchableFields.some(field => field.toLowerCase().includes(lower));

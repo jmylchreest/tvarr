@@ -156,7 +156,51 @@ export function ProxyDetailPanel({
               <p className="text-sm text-muted-foreground mt-1">{proxy.description}</p>
             )}
           </div>
-          <div className="flex items-center gap-2 ml-4">
+          <div className="flex items-center gap-1 ml-4">
+            {/* Copy URL buttons - subtle ghost style */}
+            {proxy.m3u8_url && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => copyToClipboard(proxy.m3u8_url!, 'm3u8')}
+                    disabled={!isOnline}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    {copiedUrls.has('m3u8') ? (
+                      <Check className="h-4 w-4 text-green-600" />
+                    ) : (
+                      <Copy className="h-4 w-4" />
+                    )}
+                    <span className="ml-1 text-xs">M3U</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Copy M3U8 URL</TooltipContent>
+              </Tooltip>
+            )}
+            {proxy.xmltv_url && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => copyToClipboard(proxy.xmltv_url!, 'xmltv')}
+                    disabled={!isOnline}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    {copiedUrls.has('xmltv') ? (
+                      <Check className="h-4 w-4 text-green-600" />
+                    ) : (
+                      <Copy className="h-4 w-4" />
+                    )}
+                    <span className="ml-1 text-xs">EPG</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Copy XMLTV URL</TooltipContent>
+              </Tooltip>
+            )}
+            <div className="w-px h-5 bg-border mx-1" />
             <Button size="sm" variant="outline" onClick={onEdit}>
               <Edit className="h-4 w-4 mr-1" />
               Edit
@@ -170,10 +214,10 @@ export function ProxyDetailPanel({
             />
             <Button
               size="sm"
-              variant="outline"
+              variant="ghost"
               onClick={onDelete}
               disabled={isDeleting || !isOnline}
-              className="text-destructive hover:text-destructive"
+              className="text-destructive hover:text-destructive hover:bg-destructive/10"
             >
               {isDeleting ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -226,46 +270,10 @@ export function ProxyDetailPanel({
                 </div>
               )}
             </div>
-            {/* Quick Actions */}
-            <div className="flex flex-wrap gap-2">
-              {proxy.m3u8_url && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => copyToClipboard(proxy.m3u8_url!, 'm3u8')}
-                  disabled={!isOnline}
-                >
-                  {copiedUrls.has('m3u8') ? (
-                    <Check className="h-4 w-4 mr-1 text-green-600" />
-                  ) : (
-                    <Copy className="h-4 w-4 mr-1" />
-                  )}
-                  Copy M3U8
-                </Button>
-              )}
-              {proxy.xmltv_url && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => copyToClipboard(proxy.xmltv_url!, 'xmltv')}
-                  disabled={!isOnline}
-                >
-                  {copiedUrls.has('xmltv') ? (
-                    <Check className="h-4 w-4 mr-1 text-green-600" />
-                  ) : (
-                    <Copy className="h-4 w-4 mr-1" />
-                  )}
-                  Copy XMLTV
-                </Button>
-              )}
-            </div>
-
-            <Separator />
-
             {/* Statistics */}
             <div>
               <h3 className="text-sm font-medium mb-3">Statistics</h3>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <div className="rounded-lg border p-3">
                   <div className="text-2xl font-bold">{proxy.channel_count.toLocaleString()}</div>
                   <div className="text-xs text-muted-foreground">Channels</div>
@@ -273,6 +281,26 @@ export function ProxyDetailPanel({
                 <div className="rounded-lg border p-3">
                   <div className="text-2xl font-bold">{proxy.program_count.toLocaleString()}</div>
                   <div className="text-xs text-muted-foreground">Programs</div>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="cursor-help">
+                        <div className="text-sm font-medium">{formatRelativeTime(proxy.created_at)}</div>
+                        <div className="text-xs text-muted-foreground">Created</div>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent>{formatDate(proxy.created_at)}</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="cursor-help mt-1">
+                        <div className="text-sm font-medium">{formatRelativeTime(proxy.updated_at)}</div>
+                        <div className="text-xs text-muted-foreground">Updated</div>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent>{formatDate(proxy.updated_at)}</TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
             </div>
@@ -446,35 +474,6 @@ export function ProxyDetailPanel({
               </>
             ) : null}
 
-            <Separator />
-
-            {/* Timestamps */}
-            <div>
-              <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
-                <Clock className="h-4 w-4" />
-                Timestamps
-              </h3>
-              <div className="space-y-2 text-sm">
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Created</span>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="cursor-help">{formatRelativeTime(proxy.created_at)}</span>
-                    </TooltipTrigger>
-                    <TooltipContent>{formatDate(proxy.created_at)}</TooltipContent>
-                  </Tooltip>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Updated</span>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="cursor-help">{formatRelativeTime(proxy.updated_at)}</span>
-                    </TooltipTrigger>
-                    <TooltipContent>{formatDate(proxy.updated_at)}</TooltipContent>
-                  </Tooltip>
-                </div>
-              </div>
-            </div>
           </div>
         </ScrollArea>
       </div>

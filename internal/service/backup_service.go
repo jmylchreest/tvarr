@@ -2,6 +2,7 @@
 package service
 
 import (
+	"archive/tar"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -23,6 +24,12 @@ import (
 	"github.com/jmylchreest/tvarr/internal/version"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+)
+
+// Backup archive internal filenames
+const (
+	backupDatabaseFile = "database.db"
+	backupMetadataFile = "metadata.json"
 )
 
 // BackupService provides business logic for database backup and restore.
@@ -51,13 +58,78 @@ func (s *BackupService) WithLogger(logger *slog.Logger) *BackupService {
 	return s
 }
 
-// GetScheduleInfo returns the backup schedule configuration.
-func (s *BackupService) GetScheduleInfo() models.BackupScheduleInfo {
-	return models.BackupScheduleInfo{
-		Enabled:   s.cfg.Schedule.Enabled,
-		Cron:      s.cfg.Schedule.Cron,
-		Retention: s.cfg.Schedule.Retention,
+// GetScheduleInfo returns the effective backup schedule configuration.
+// Database settings take precedence over config file defaults.
+func (s *BackupService) GetScheduleInfo(ctx context.Context) models.BackupScheduleInfo {
+	// Get database settings (may be nil or have nil fields)
+	var dbSettings models.BackupSettings
+	s.db.WithContext(ctx).First(&dbSettings)
+
+	// Merge with config defaults
+	return dbSettings.ToScheduleInfo(
+		s.cfg.Schedule.Enabled,
+		s.cfg.Schedule.Cron,
+		s.cfg.Schedule.Retention,
+	)
+}
+
+// GetEffectiveSchedule returns the effective schedule settings for the scheduler.
+// This is used by the scheduler to determine if and when to run backups.
+func (s *BackupService) GetEffectiveSchedule(ctx context.Context) (enabled bool, cron string, retention int) {
+	info := s.GetScheduleInfo(ctx)
+	return info.Enabled, info.Cron, info.Retention
+}
+
+// UpdateScheduleSettings updates the backup schedule settings in the database.
+// Only non-nil values in the input will be updated.
+func (s *BackupService) UpdateScheduleSettings(ctx context.Context, enabled *bool, cron *string, retention *int) (*models.BackupScheduleInfo, error) {
+	// Validate cron if provided
+	if cron != nil && *cron != "" {
+		// Basic validation - ensure it has 6 fields
+		fields := strings.Fields(*cron)
+		if len(fields) != 6 {
+			return nil, fmt.Errorf("invalid cron expression: must have 6 fields (sec min hour day month weekday)")
+		}
 	}
+
+	// Validate retention if provided
+	if retention != nil && *retention < 0 {
+		return nil, fmt.Errorf("invalid retention: must be non-negative")
+	}
+
+	// Get or create the settings record (singleton, ID=1)
+	var settings models.BackupSettings
+	result := s.db.WithContext(ctx).First(&settings)
+	if result.Error != nil {
+		// Create new record
+		settings = models.BackupSettings{ID: 1}
+	}
+
+	// Update fields if provided
+	if enabled != nil {
+		settings.Enabled = enabled
+	}
+	if cron != nil {
+		settings.Cron = *cron
+	}
+	if retention != nil {
+		settings.Retention = retention
+	}
+
+	// Save to database
+	if err := s.db.WithContext(ctx).Save(&settings).Error; err != nil {
+		return nil, fmt.Errorf("saving backup settings: %w", err)
+	}
+
+	s.logger.Info("backup settings updated",
+		slog.Any("enabled", settings.Enabled),
+		slog.String("cron", settings.Cron),
+		slog.Any("retention", settings.Retention),
+	)
+
+	// Return the effective settings
+	info := s.GetScheduleInfo(ctx)
+	return &info, nil
 }
 
 // GetBackupDirectory returns the backup storage directory path.
@@ -65,7 +137,8 @@ func (s *BackupService) GetBackupDirectory() string {
 	return s.storageDir
 }
 
-// CreateBackup creates a full database backup.
+// CreateBackup creates a full database backup as a tar.gz archive containing
+// both the database and metadata.
 func (s *BackupService) CreateBackup(ctx context.Context) (*models.BackupMetadata, error) {
 	// Ensure backup directory exists
 	if err := os.MkdirAll(s.storageDir, 0755); err != nil {
@@ -81,12 +154,11 @@ func (s *BackupService) CreateBackup(ctx context.Context) (*models.BackupMetadat
 	timestamp := time.Now().UTC()
 	baseName := fmt.Sprintf("tvarr-backup-%s", timestamp.Format("2006-01-02T15-04-05.000"))
 	dbPath := filepath.Join(s.storageDir, baseName+".db")
-	gzPath := filepath.Join(s.storageDir, baseName+".db.gz")
-	metaPath := filepath.Join(s.storageDir, baseName+".meta.json")
+	tarGzPath := filepath.Join(s.storageDir, baseName+".tar.gz")
 
 	// Check if backup with same name already exists (extremely rare with ms precision)
-	if _, err := os.Stat(gzPath); err == nil {
-		return nil, fmt.Errorf("backup already exists: %s", filepath.Base(gzPath))
+	if _, err := os.Stat(tarGzPath); err == nil {
+		return nil, fmt.Errorf("backup already exists: %s", filepath.Base(tarGzPath))
 	}
 
 	// Use VACUUM INTO for consistent SQLite backup
@@ -94,6 +166,7 @@ func (s *BackupService) CreateBackup(ctx context.Context) (*models.BackupMetadat
 	if err := s.db.Exec("VACUUM INTO ?", dbPath).Error; err != nil {
 		return nil, fmt.Errorf("vacuum into backup: %w", err)
 	}
+	defer os.Remove(dbPath) // Clean up temp database file
 
 	// Get uncompressed size
 	dbInfo, err := os.Stat(dbPath)
@@ -102,26 +175,6 @@ func (s *BackupService) CreateBackup(ctx context.Context) (*models.BackupMetadat
 	}
 	uncompressedSize := dbInfo.Size()
 
-	// Compress with gzip
-	if err := s.compressFile(dbPath, gzPath); err != nil {
-		os.Remove(dbPath)
-		return nil, fmt.Errorf("compressing backup: %w", err)
-	}
-
-	// Remove uncompressed file
-	os.Remove(dbPath)
-
-	// Get compressed size and calculate checksum
-	gzInfo, err := os.Stat(gzPath)
-	if err != nil {
-		return nil, fmt.Errorf("stat compressed backup: %w", err)
-	}
-
-	checksum, err := s.calculateChecksum(gzPath)
-	if err != nil {
-		return nil, fmt.Errorf("calculating checksum: %w", err)
-	}
-
 	// Get table counts
 	tableCounts, err := s.getTableCounts(ctx)
 	if err != nil {
@@ -129,35 +182,52 @@ func (s *BackupService) CreateBackup(ctx context.Context) (*models.BackupMetadat
 		tableCounts = make(map[string]int)
 	}
 
-	// Create metadata file struct
+	// Create metadata struct (checksum will be added after we know the archive size)
 	metaFile := &models.BackupMetadataFile{
-		TvarrVersion:   version.Version,
-		DatabaseSize:   uncompressedSize,
-		CompressedSize: gzInfo.Size(),
-		Checksum:       checksum,
-		CreatedAt:      timestamp,
-		TableCounts:    tableCounts,
+		TvarrVersion: version.Version,
+		DatabaseSize: uncompressedSize,
+		CreatedAt:    timestamp,
+		TableCounts:  tableCounts,
 	}
 
-	// Write metadata file
-	metaJSON, err := json.MarshalIndent(metaFile, "", "  ")
+	// Create the tar.gz archive
+	if err := s.createTarGzArchive(tarGzPath, dbPath, metaFile); err != nil {
+		os.Remove(tarGzPath)
+		return nil, fmt.Errorf("creating archive: %w", err)
+	}
+
+	// Get archive size and calculate checksum
+	archiveInfo, err := os.Stat(tarGzPath)
 	if err != nil {
-		return nil, fmt.Errorf("marshaling metadata: %w", err)
+		return nil, fmt.Errorf("stat archive: %w", err)
 	}
-	if err := os.WriteFile(metaPath, metaJSON, 0644); err != nil {
-		return nil, fmt.Errorf("writing metadata: %w", err)
+
+	checksum, err := s.calculateChecksum(tarGzPath)
+	if err != nil {
+		return nil, fmt.Errorf("calculating checksum: %w", err)
 	}
+
+	// Update the archive with the checksum in metadata
+	metaFile.CompressedSize = archiveInfo.Size()
+	metaFile.Checksum = checksum
+	if err := s.createTarGzArchive(tarGzPath, dbPath, metaFile); err != nil {
+		os.Remove(tarGzPath)
+		return nil, fmt.Errorf("updating archive with checksum: %w", err)
+	}
+
+	// Get final archive size (should be nearly identical)
+	archiveInfo, _ = os.Stat(tarGzPath)
 
 	// Build return metadata
 	meta := &models.BackupMetadata{
-		Filename:       filepath.Base(gzPath),
-		FilePath:       gzPath,
+		Filename:       filepath.Base(tarGzPath),
+		FilePath:       tarGzPath,
 		CreatedAt:      timestamp,
-		FileSize:       gzInfo.Size(),
+		FileSize:       archiveInfo.Size(),
 		Checksum:       checksum,
 		TvarrVersion:   version.Version,
 		DatabaseSize:   uncompressedSize,
-		CompressedSize: gzInfo.Size(),
+		CompressedSize: archiveInfo.Size(),
 		TableCounts:    metaFile.ToTableCounts(),
 	}
 
@@ -170,8 +240,73 @@ func (s *BackupService) CreateBackup(ctx context.Context) (*models.BackupMetadat
 	return meta, nil
 }
 
+// createTarGzArchive creates a tar.gz archive containing the database and metadata.
+func (s *BackupService) createTarGzArchive(archivePath, dbPath string, meta *models.BackupMetadataFile) error {
+	// Create the archive file
+	archiveFile, err := os.Create(archivePath)
+	if err != nil {
+		return err
+	}
+	defer archiveFile.Close()
+
+	// Create gzip writer
+	gzWriter := gzip.NewWriter(archiveFile)
+	defer gzWriter.Close()
+
+	// Create tar writer
+	tarWriter := tar.NewWriter(gzWriter)
+	defer tarWriter.Close()
+
+	// Add database file to archive
+	dbFile, err := os.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("opening database: %w", err)
+	}
+	defer dbFile.Close()
+
+	dbInfo, err := dbFile.Stat()
+	if err != nil {
+		return fmt.Errorf("stat database: %w", err)
+	}
+
+	dbHeader := &tar.Header{
+		Name:    backupDatabaseFile,
+		Size:    dbInfo.Size(),
+		Mode:    0644,
+		ModTime: meta.CreatedAt,
+	}
+	if err := tarWriter.WriteHeader(dbHeader); err != nil {
+		return fmt.Errorf("writing database header: %w", err)
+	}
+	if _, err := io.Copy(tarWriter, dbFile); err != nil {
+		return fmt.Errorf("writing database content: %w", err)
+	}
+
+	// Add metadata file to archive
+	metaJSON, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling metadata: %w", err)
+	}
+
+	metaHeader := &tar.Header{
+		Name:    backupMetadataFile,
+		Size:    int64(len(metaJSON)),
+		Mode:    0644,
+		ModTime: meta.CreatedAt,
+	}
+	if err := tarWriter.WriteHeader(metaHeader); err != nil {
+		return fmt.Errorf("writing metadata header: %w", err)
+	}
+	if _, err := tarWriter.Write(metaJSON); err != nil {
+		return fmt.Errorf("writing metadata content: %w", err)
+	}
+
+	return nil
+}
+
 
 // ListBackups returns all available backups sorted by creation time (newest first).
+// Supports both new .tar.gz format and legacy .db.gz format.
 func (s *BackupService) ListBackups(ctx context.Context) ([]*models.BackupMetadata, error) {
 	entries, err := os.ReadDir(s.storageDir)
 	if err != nil {
@@ -183,7 +318,8 @@ func (s *BackupService) ListBackups(ctx context.Context) ([]*models.BackupMetada
 
 	var backups []*models.BackupMetadata
 	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".db.gz") {
+		// Support both new .tar.gz and legacy .db.gz formats
+		if !strings.HasSuffix(entry.Name(), ".tar.gz") && !strings.HasSuffix(entry.Name(), ".db.gz") {
 			continue
 		}
 
@@ -218,6 +354,7 @@ func (s *BackupService) GetBackup(ctx context.Context, filename string) (*models
 }
 
 // DeleteBackup deletes a backup file and its metadata.
+// Handles both new .tar.gz format and legacy .db.gz format with companion .meta.json.
 func (s *BackupService) DeleteBackup(ctx context.Context, filename string) error {
 	// Validate filename (prevent path traversal)
 	if filepath.Base(filename) != filename {
@@ -225,19 +362,21 @@ func (s *BackupService) DeleteBackup(ctx context.Context, filename string) error
 	}
 
 	backupPath := filepath.Join(s.storageDir, filename)
-	metaPath := strings.TrimSuffix(backupPath, ".db.gz") + ".meta.json"
 
 	// Remove backup file
 	if err := os.Remove(backupPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("removing backup file: %w", err)
 	}
 
-	// Remove metadata file
-	if err := os.Remove(metaPath); err != nil && !os.IsNotExist(err) {
-		s.logger.Warn("failed to remove metadata file",
-			slog.String("path", metaPath),
-			slog.String("error", err.Error()),
-		)
+	// For legacy .db.gz files, also remove companion .meta.json if it exists
+	if strings.HasSuffix(filename, ".db.gz") {
+		metaPath := strings.TrimSuffix(backupPath, ".db.gz") + ".meta.json"
+		if err := os.Remove(metaPath); err != nil && !os.IsNotExist(err) {
+			s.logger.Warn("failed to remove metadata file",
+				slog.String("path", metaPath),
+				slog.String("error", err.Error()),
+			)
+		}
 	}
 
 	s.logger.Info("backup deleted", slog.String("filename", filename))
@@ -257,6 +396,7 @@ func (s *BackupService) OpenBackupFile(ctx context.Context, filename string) (*o
 
 // RestoreBackup restores the database from a backup file.
 // Note: The caller must handle database reconnection after restore.
+// Supports both new .tar.gz format and legacy .db.gz format.
 func (s *BackupService) RestoreBackup(ctx context.Context, filename string) error {
 	// Validate filename
 	if filepath.Base(filename) != filename {
@@ -276,13 +416,15 @@ func (s *BackupService) RestoreBackup(ctx context.Context, filename string) erro
 		return fmt.Errorf("loading backup metadata: %w", err)
 	}
 
-	// Verify checksum
-	checksum, err := s.calculateChecksum(backupPath)
-	if err != nil {
-		return fmt.Errorf("calculating checksum: %w", err)
-	}
-	if checksum != meta.Checksum {
-		return fmt.Errorf("checksum mismatch: backup may be corrupted")
+	// Verify checksum (skip if metadata has no checksum - legacy backups)
+	if meta.Checksum != "" {
+		checksum, err := s.calculateChecksum(backupPath)
+		if err != nil {
+			return fmt.Errorf("calculating checksum: %w", err)
+		}
+		if checksum != meta.Checksum {
+			return fmt.Errorf("checksum mismatch: backup may be corrupted")
+		}
 	}
 
 	// Create pre-restore backup for rollback capability
@@ -292,7 +434,7 @@ func (s *BackupService) RestoreBackup(ctx context.Context, filename string) erro
 	}
 	s.logger.Info("created pre-restore backup", slog.String("filename", preRestoreBackup.Filename))
 
-	// Decompress to temp file
+	// Extract/decompress database to temp file
 	tempDB, err := os.CreateTemp(s.storageDir, "restore-*.db")
 	if err != nil {
 		return fmt.Errorf("creating temp file: %w", err)
@@ -300,9 +442,18 @@ func (s *BackupService) RestoreBackup(ctx context.Context, filename string) erro
 	tempPath := tempDB.Name()
 	tempDB.Close()
 
-	if err := s.decompressFile(backupPath, tempPath); err != nil {
-		os.Remove(tempPath)
-		return fmt.Errorf("decompressing backup: %w", err)
+	// Handle both formats
+	if strings.HasSuffix(backupPath, ".tar.gz") {
+		if err := s.extractDatabaseFromArchive(backupPath, tempPath); err != nil {
+			os.Remove(tempPath)
+			return fmt.Errorf("extracting database from archive: %w", err)
+		}
+	} else {
+		// Legacy .db.gz format
+		if err := s.decompressFile(backupPath, tempPath); err != nil {
+			os.Remove(tempPath)
+			return fmt.Errorf("decompressing backup: %w", err)
+		}
 	}
 
 	// Validate the restored database can be opened
@@ -346,9 +497,11 @@ func (s *BackupService) RestoreBackup(ctx context.Context, filename string) erro
 	return nil
 }
 
-// CleanupOldBackups removes backups exceeding the retention limit.
+// CleanupOldBackups removes unprotected backups exceeding the retention limit.
+// Protected backups are excluded from retention counting and are never deleted.
+// Uses effective retention from database settings, falling back to config defaults.
 func (s *BackupService) CleanupOldBackups(ctx context.Context) (int, error) {
-	retention := s.cfg.Schedule.Retention
+	_, _, retention := s.GetEffectiveSchedule(ctx)
 	if retention <= 0 {
 		return 0, nil // No cleanup configured
 	}
@@ -358,14 +511,22 @@ func (s *BackupService) CleanupOldBackups(ctx context.Context) (int, error) {
 		return 0, err
 	}
 
-	if len(backups) <= retention {
+	// Filter to only unprotected backups for retention calculation
+	var unprotected []*models.BackupMetadata
+	for _, b := range backups {
+		if !b.Protected {
+			unprotected = append(unprotected, b)
+		}
+	}
+
+	if len(unprotected) <= retention {
 		return 0, nil
 	}
 
-	// Delete oldest backups beyond retention limit
+	// Delete oldest unprotected backups beyond retention limit
 	deleted := 0
-	for i := retention; i < len(backups); i++ {
-		backup := backups[i]
+	for i := retention; i < len(unprotected); i++ {
+		backup := unprotected[i]
 		if err := s.DeleteBackup(ctx, backup.Filename); err != nil {
 			s.logger.Warn("failed to delete old backup",
 				slog.String("filename", backup.Filename),
@@ -381,6 +542,118 @@ func (s *BackupService) CleanupOldBackups(ctx context.Context) (int, error) {
 	}
 
 	return deleted, nil
+}
+
+// SetBackupProtection sets the protected status for a backup.
+// Protected backups are excluded from retention cleanup.
+// Supports both new .tar.gz format and legacy .db.gz format.
+func (s *BackupService) SetBackupProtection(ctx context.Context, filename string, protected bool) error {
+	// Validate filename (prevent path traversal)
+	if filepath.Base(filename) != filename {
+		return fmt.Errorf("invalid filename")
+	}
+
+	backupPath := filepath.Join(s.storageDir, filename)
+
+	if strings.HasSuffix(filename, ".tar.gz") {
+		// New format: update metadata inside the tar.gz archive
+		return s.setProtectionInArchive(backupPath, protected)
+	}
+
+	// Legacy .db.gz format: update companion .meta.json file
+	metaPath := strings.TrimSuffix(backupPath, ".db.gz") + ".meta.json"
+
+	// Load existing metadata
+	var metaFile models.BackupMetadataFile
+	metaData, err := os.ReadFile(metaPath)
+	if err == nil {
+		if err := json.Unmarshal(metaData, &metaFile); err != nil {
+			return fmt.Errorf("parsing metadata: %w", err)
+		}
+	} else if os.IsNotExist(err) {
+		// Create minimal metadata if it doesn't exist
+		metaFile = models.BackupMetadataFile{
+			CreatedAt: parseTimestampFromFilename(filename),
+		}
+	} else {
+		return fmt.Errorf("reading metadata: %w", err)
+	}
+
+	// Update protected status
+	metaFile.Protected = protected
+
+	// Write back
+	metaJSON, err := json.MarshalIndent(metaFile, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling metadata: %w", err)
+	}
+	if err := os.WriteFile(metaPath, metaJSON, 0644); err != nil {
+		return fmt.Errorf("writing metadata: %w", err)
+	}
+
+	s.logger.Info("backup protection updated",
+		slog.String("filename", filename),
+		slog.Bool("protected", protected),
+	)
+
+	return nil
+}
+
+// setProtectionInArchive updates the protected status in a tar.gz backup archive.
+// This requires extracting the database, updating metadata, and recreating the archive.
+func (s *BackupService) setProtectionInArchive(archivePath string, protected bool) error {
+	// Read current metadata
+	metaFile, err := s.readMetadataFromArchive(archivePath)
+	if err != nil {
+		return fmt.Errorf("reading metadata: %w", err)
+	}
+
+	// If protection status is already as requested, no need to update
+	if metaFile.Protected == protected {
+		return nil
+	}
+
+	// Extract database to temp file
+	tempDB, err := os.CreateTemp(s.storageDir, "protection-update-*.db")
+	if err != nil {
+		return fmt.Errorf("creating temp file: %w", err)
+	}
+	tempDBPath := tempDB.Name()
+	tempDB.Close()
+	defer os.Remove(tempDBPath)
+
+	if err := s.extractDatabaseFromArchive(archivePath, tempDBPath); err != nil {
+		return fmt.Errorf("extracting database: %w", err)
+	}
+
+	// Update metadata
+	metaFile.Protected = protected
+
+	// Create temp archive
+	tempArchive, err := os.CreateTemp(s.storageDir, "protection-update-*.tar.gz")
+	if err != nil {
+		return fmt.Errorf("creating temp archive: %w", err)
+	}
+	tempArchivePath := tempArchive.Name()
+	tempArchive.Close()
+	defer os.Remove(tempArchivePath)
+
+	// Create new archive with updated metadata
+	if err := s.createTarGzArchive(tempArchivePath, tempDBPath, &metaFile); err != nil {
+		return fmt.Errorf("creating archive: %w", err)
+	}
+
+	// Atomic replace: rename temp to original
+	if err := os.Rename(tempArchivePath, archivePath); err != nil {
+		return fmt.Errorf("replacing archive: %w", err)
+	}
+
+	s.logger.Info("backup protection updated",
+		slog.String("filename", filepath.Base(archivePath)),
+		slog.Bool("protected", protected),
+	)
+
+	return nil
 }
 
 // Helper methods
@@ -503,40 +776,145 @@ func (s *BackupService) loadBackupMetadata(backupPath string) (*models.BackupMet
 		return nil, err
 	}
 
-	// Try to load companion metadata file
-	metaPath := strings.TrimSuffix(backupPath, ".db.gz") + ".meta.json"
 	var metaFile models.BackupMetadataFile
+	filename := filepath.Base(backupPath)
 
-	metaData, err := os.ReadFile(metaPath)
-	if err == nil {
-		if err := json.Unmarshal(metaData, &metaFile); err != nil {
-			s.logger.Warn("failed to parse metadata file",
-				slog.String("path", metaPath),
+	// Determine format and load metadata accordingly
+	if strings.HasSuffix(backupPath, ".tar.gz") {
+		// New format: read metadata from inside tar.gz archive
+		metaFile, err = s.readMetadataFromArchive(backupPath)
+		if err != nil {
+			s.logger.Warn("failed to read metadata from archive",
+				slog.String("path", backupPath),
 				slog.String("error", err.Error()),
 			)
+		}
+	} else if strings.HasSuffix(backupPath, ".db.gz") {
+		// Legacy format: read from companion .meta.json file
+		metaPath := strings.TrimSuffix(backupPath, ".db.gz") + ".meta.json"
+		metaData, err := os.ReadFile(metaPath)
+		if err == nil {
+			if err := json.Unmarshal(metaData, &metaFile); err != nil {
+				s.logger.Warn("failed to parse metadata file",
+					slog.String("path", metaPath),
+					slog.String("error", err.Error()),
+				)
+			}
 		}
 	}
 
 	// Parse timestamp from filename if metadata doesn't have it
 	createdAt := metaFile.CreatedAt
 	if createdAt.IsZero() {
-		createdAt = parseTimestampFromFilename(filepath.Base(backupPath))
+		createdAt = parseTimestampFromFilename(filename)
 		if createdAt.IsZero() {
 			createdAt = info.ModTime()
 		}
 	}
 
+	// For legacy files without metadata, version is unknown
+	tvarrVersion := metaFile.TvarrVersion
+	if tvarrVersion == "" && strings.HasSuffix(backupPath, ".db.gz") {
+		tvarrVersion = "unknown"
+	}
+
 	return &models.BackupMetadata{
-		Filename:       filepath.Base(backupPath),
+		Filename:       filename,
 		FilePath:       backupPath,
 		CreatedAt:      createdAt,
 		FileSize:       info.Size(),
 		Checksum:       metaFile.Checksum,
-		TvarrVersion:   metaFile.TvarrVersion,
+		TvarrVersion:   tvarrVersion,
 		DatabaseSize:   metaFile.DatabaseSize,
 		CompressedSize: metaFile.CompressedSize,
 		TableCounts:    metaFile.ToTableCounts(),
+		Protected:      metaFile.Protected,
+		Imported:       metaFile.Imported,
 	}, nil
+}
+
+// readMetadataFromArchive reads the metadata.json file from inside a tar.gz archive.
+func (s *BackupService) readMetadataFromArchive(archivePath string) (models.BackupMetadataFile, error) {
+	var metaFile models.BackupMetadataFile
+
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return metaFile, err
+	}
+	defer file.Close()
+
+	gzReader, err := gzip.NewReader(file)
+	if err != nil {
+		return metaFile, fmt.Errorf("opening gzip: %w", err)
+	}
+	defer gzReader.Close()
+
+	tarReader := tar.NewReader(gzReader)
+
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return metaFile, fmt.Errorf("reading tar: %w", err)
+		}
+
+		if header.Name == backupMetadataFile {
+			metaData, err := io.ReadAll(tarReader)
+			if err != nil {
+				return metaFile, fmt.Errorf("reading metadata: %w", err)
+			}
+			if err := json.Unmarshal(metaData, &metaFile); err != nil {
+				return metaFile, fmt.Errorf("parsing metadata: %w", err)
+			}
+			return metaFile, nil
+		}
+	}
+
+	return metaFile, fmt.Errorf("metadata.json not found in archive")
+}
+
+// extractDatabaseFromArchive extracts the database.db file from a tar.gz archive to the specified path.
+func (s *BackupService) extractDatabaseFromArchive(archivePath, destPath string) error {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	gzReader, err := gzip.NewReader(file)
+	if err != nil {
+		return fmt.Errorf("opening gzip: %w", err)
+	}
+	defer gzReader.Close()
+
+	tarReader := tar.NewReader(gzReader)
+
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("reading tar: %w", err)
+		}
+
+		if header.Name == backupDatabaseFile {
+			destFile, err := os.Create(destPath)
+			if err != nil {
+				return fmt.Errorf("creating destination file: %w", err)
+			}
+			defer destFile.Close()
+
+			if _, err := io.Copy(destFile, tarReader); err != nil {
+				return fmt.Errorf("extracting database: %w", err)
+			}
+			return nil
+		}
+	}
+
+	return fmt.Errorf("database.db not found in archive")
 }
 
 func (s *BackupService) validateDatabase(dbPath string) error {
@@ -591,32 +969,45 @@ func (s *BackupService) getDatabasePath() string {
 }
 
 // parseTimestampFromFilename extracts timestamp from backup filename.
-// Expected formats: tvarr-backup-YYYY-MM-DDTHH-MM-SS.db.gz or tvarr-backup-YYYY-MM-DDTHH-MM-SS.mmm.db.gz
+// Expected formats:
+// - tvarr-backup-YYYY-MM-DDTHH-MM-SS.mmm.tar.gz (new format with ms)
+// - tvarr-backup-YYYY-MM-DDTHH-MM-SS.tar.gz (new format)
+// - tvarr-backup-YYYY-MM-DDTHH-MM-SS.mmm.db.gz (legacy with ms)
+// - tvarr-backup-YYYY-MM-DDTHH-MM-SS.db.gz (legacy)
 func parseTimestampFromFilename(filename string) time.Time {
-	// Pattern: tvarr-backup-2006-01-02T15-04-05[.000].db.gz
-	// Try with milliseconds first
-	reMs := regexp.MustCompile(`tvarr-backup-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3})\.db\.gz`)
-	matches := reMs.FindStringSubmatch(filename)
-	if len(matches) == 2 {
-		t, err := time.Parse("2006-01-02T15-04-05.000", matches[1])
-		if err == nil {
+	// Try new .tar.gz format with milliseconds first
+	reTarMs := regexp.MustCompile(`tvarr-backup-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3})\.tar\.gz`)
+	if matches := reTarMs.FindStringSubmatch(filename); len(matches) == 2 {
+		if t, err := time.Parse("2006-01-02T15-04-05.000", matches[1]); err == nil {
 			return t.UTC()
 		}
 	}
 
-	// Fallback to format without milliseconds (for older backups)
-	re := regexp.MustCompile(`tvarr-backup-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})\.db\.gz`)
-	matches = re.FindStringSubmatch(filename)
-	if len(matches) != 2 {
-		return time.Time{}
+	// Try new .tar.gz format without milliseconds
+	reTar := regexp.MustCompile(`tvarr-backup-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})\.tar\.gz`)
+	if matches := reTar.FindStringSubmatch(filename); len(matches) == 2 {
+		if t, err := time.Parse("2006-01-02T15-04-05", matches[1]); err == nil {
+			return t.UTC()
+		}
 	}
 
-	t, err := time.Parse("2006-01-02T15-04-05", matches[1])
-	if err != nil {
-		return time.Time{}
+	// Try legacy .db.gz format with milliseconds
+	reDbMs := regexp.MustCompile(`tvarr-backup-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3})\.db\.gz`)
+	if matches := reDbMs.FindStringSubmatch(filename); len(matches) == 2 {
+		if t, err := time.Parse("2006-01-02T15-04-05.000", matches[1]); err == nil {
+			return t.UTC()
+		}
 	}
 
-	return t.UTC()
+	// Try legacy .db.gz format without milliseconds
+	reDb := regexp.MustCompile(`tvarr-backup-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})\.db\.gz`)
+	if matches := reDb.FindStringSubmatch(filename); len(matches) == 2 {
+		if t, err := time.Parse("2006-01-02T15-04-05", matches[1]); err == nil {
+			return t.UTC()
+		}
+	}
+
+	return time.Time{}
 }
 
 // truncateChecksum returns a truncated checksum for display.
@@ -629,6 +1020,7 @@ func truncateChecksum(checksum string) string {
 
 // ImportBackup imports a backup file from an io.Reader and stores it in the backup directory.
 // This allows uploading previously downloaded backups for restore on a new installation.
+// Supports both new .tar.gz format (with embedded metadata) and legacy .db.gz format.
 func (s *BackupService) ImportBackup(ctx context.Context, reader io.Reader, originalFilename string) (*models.BackupMetadata, error) {
 	// Ensure backup directory exists
 	if err := os.MkdirAll(s.storageDir, 0755); err != nil {
@@ -642,7 +1034,7 @@ func (s *BackupService) ImportBackup(ctx context.Context, reader io.Reader, orig
 
 	// Check if filename matches expected pattern
 	if !isValidBackupFilename(originalFilename) {
-		return nil, fmt.Errorf("invalid filename format: expected tvarr-backup-YYYY-MM-DDTHH-MM-SS.db.gz")
+		return nil, fmt.Errorf("invalid filename format: expected tvarr-backup-YYYY-MM-DDTHH-MM-SS.tar.gz or .db.gz")
 	}
 
 	// Check if backup with same name already exists
@@ -652,7 +1044,7 @@ func (s *BackupService) ImportBackup(ctx context.Context, reader io.Reader, orig
 	}
 
 	// Write uploaded file to temp location first
-	tempFile, err := os.CreateTemp(s.storageDir, "upload-*.db.gz")
+	tempFile, err := os.CreateTemp(s.storageDir, "upload-*")
 	if err != nil {
 		return nil, fmt.Errorf("creating temp file: %w", err)
 	}
@@ -666,15 +1058,93 @@ func (s *BackupService) ImportBackup(ctx context.Context, reader io.Reader, orig
 	}
 	tempFile.Close()
 
+	// Handle based on file format
+	if strings.HasSuffix(originalFilename, ".tar.gz") {
+		return s.importTarGzBackup(ctx, tempPath, destPath, originalFilename)
+	}
+
+	// Legacy .db.gz format
+	return s.importLegacyBackup(ctx, tempPath, destPath, originalFilename)
+}
+
+// importTarGzBackup handles importing a new format .tar.gz backup.
+func (s *BackupService) importTarGzBackup(ctx context.Context, tempPath, destPath, originalFilename string) (*models.BackupMetadata, error) {
+	defer os.Remove(tempPath)
+
+	// Validate the archive by trying to read its metadata
+	metaFile, err := s.readMetadataFromArchive(tempPath)
+	if err != nil {
+		return nil, fmt.Errorf("invalid backup archive: %w", err)
+	}
+
+	// Extract and validate the database
+	tempDBPath := tempPath + ".db"
+	defer os.Remove(tempDBPath)
+
+	if err := s.extractDatabaseFromArchive(tempPath, tempDBPath); err != nil {
+		return nil, fmt.Errorf("extracting database: %w", err)
+	}
+
+	if err := s.validateDatabase(tempDBPath); err != nil {
+		return nil, fmt.Errorf("validating database: %w", err)
+	}
+
+	// Move archive to final location
+	if err := os.Rename(tempPath, destPath); err != nil {
+		return nil, fmt.Errorf("moving backup to final location: %w", err)
+	}
+
+	// Get file info
+	fileInfo, err := os.Stat(destPath)
+	if err != nil {
+		return nil, fmt.Errorf("getting file info: %w", err)
+	}
+
+	// Mark as imported and protected if not already
+	if !metaFile.Imported {
+		metaFile.Imported = true
+		metaFile.Protected = true
+		// Update the archive with the imported flag
+		if err := s.setProtectionInArchive(destPath, true); err != nil {
+			s.logger.Warn("failed to update imported flag", slog.String("error", err.Error()))
+		}
+	}
+
+	meta := &models.BackupMetadata{
+		Filename:       originalFilename,
+		FilePath:       destPath,
+		CreatedAt:      metaFile.CreatedAt,
+		FileSize:       fileInfo.Size(),
+		Checksum:       metaFile.Checksum,
+		TvarrVersion:   metaFile.TvarrVersion,
+		DatabaseSize:   metaFile.DatabaseSize,
+		CompressedSize: metaFile.CompressedSize,
+		TableCounts:    metaFile.ToTableCounts(),
+		Protected:      metaFile.Protected,
+		Imported:       metaFile.Imported,
+	}
+
+	s.logger.Info("backup imported",
+		slog.String("filename", meta.Filename),
+		slog.Int64("size", meta.FileSize),
+		slog.String("version", meta.TvarrVersion),
+		slog.Bool("protected", meta.Protected),
+	)
+
+	return meta, nil
+}
+
+// importLegacyBackup handles importing a legacy .db.gz backup.
+func (s *BackupService) importLegacyBackup(ctx context.Context, tempPath, destPath, originalFilename string) (*models.BackupMetadata, error) {
+	defer os.Remove(tempPath)
+
 	// Verify the uploaded file is a valid gzipped SQLite database
 	if err := s.validateGzippedBackup(tempPath); err != nil {
-		os.Remove(tempPath)
 		return nil, fmt.Errorf("validating backup: %w", err)
 	}
 
 	// Move temp file to final location
 	if err := os.Rename(tempPath, destPath); err != nil {
-		os.Remove(tempPath)
 		return nil, fmt.Errorf("moving backup to final location: %w", err)
 	}
 
@@ -696,14 +1166,16 @@ func (s *BackupService) ImportBackup(ctx context.Context, reader io.Reader, orig
 		createdAt = time.Now().UTC()
 	}
 
-	// Create metadata file
+	// Create metadata file - imported backups are protected by default
 	metaPath := strings.TrimSuffix(destPath, ".db.gz") + ".meta.json"
 	metaFile := &models.BackupMetadataFile{
-		TvarrVersion:   "imported", // Mark as imported since we don't know the original version
+		TvarrVersion:   "unknown", // Legacy imports don't have version info
 		CompressedSize: fileInfo.Size(),
 		Checksum:       checksum,
 		CreatedAt:      createdAt,
-		TableCounts:    make(map[string]int), // Will be populated when we validate
+		TableCounts:    make(map[string]int),
+		Protected:      true,
+		Imported:       true,
 	}
 
 	// Try to get database size and table counts by temporarily decompressing
@@ -730,11 +1202,14 @@ func (s *BackupService) ImportBackup(ctx context.Context, reader io.Reader, orig
 		DatabaseSize:   metaFile.DatabaseSize,
 		CompressedSize: metaFile.CompressedSize,
 		TableCounts:    metaFile.ToTableCounts(),
+		Protected:      metaFile.Protected,
+		Imported:       metaFile.Imported,
 	}
 
-	s.logger.Info("backup imported",
+	s.logger.Info("legacy backup imported",
 		slog.String("filename", meta.Filename),
 		slog.Int64("size", meta.FileSize),
+		slog.Bool("protected", meta.Protected),
 	)
 
 	return meta, nil
@@ -813,21 +1288,22 @@ func (s *BackupService) inspectGzippedDatabase(gzPath string) (int64, map[string
 // isValidBackupFilename checks if a filename matches the expected backup format.
 func isValidBackupFilename(filename string) bool {
 	// Expected formats:
-	// - tvarr-backup-YYYY-MM-DDTHH-MM-SS.db.gz (34 chars)
-	// - tvarr-backup-YYYY-MM-DDTHH-MM-SS.mmm.db.gz (38 chars)
+	// - tvarr-backup-YYYY-MM-DDTHH-MM-SS.tar.gz (35 chars, new format)
+	// - tvarr-backup-YYYY-MM-DDTHH-MM-SS.mmm.tar.gz (39 chars, new format with ms)
+	// - tvarr-backup-YYYY-MM-DDTHH-MM-SS.db.gz (34 chars, legacy)
+	// - tvarr-backup-YYYY-MM-DDTHH-MM-SS.mmm.db.gz (38 chars, legacy with ms)
 	if len(filename) < 34 { // Minimum length for valid filename
 		return false
 	}
 
 	// Must start with tvarr-backup-
 	prefix := "tvarr-backup-"
-	if len(filename) < len(prefix) || filename[:len(prefix)] != prefix {
+	if !strings.HasPrefix(filename, prefix) {
 		return false
 	}
 
-	// Must end with .db.gz
-	suffix := ".db.gz"
-	if len(filename) < len(suffix) || filename[len(filename)-len(suffix):] != suffix {
+	// Must end with .tar.gz or .db.gz
+	if !strings.HasSuffix(filename, ".tar.gz") && !strings.HasSuffix(filename, ".db.gz") {
 		return false
 	}
 
