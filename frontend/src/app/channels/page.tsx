@@ -1,7 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import Fuse from 'fuse.js';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -13,15 +12,9 @@ import {
   Zap,
   Trash2,
   Loader2,
-  Sparkles,
 } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
 import type { VideoTrackInfo, AudioTrackInfo, SubtitleTrackInfo } from '@/types/api';
-import {
-  getPrimaryMatchField,
-  formatMatchFieldName,
-  type FuzzyMatch,
-} from '@/lib/fuzzy-search';
 import {
   Select,
   SelectContent,
@@ -154,8 +147,6 @@ export default function ChannelsPage() {
   const [detailsChannel, setDetailsChannel] = useState<Channel | null>(null);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [clearingCache, setClearingCache] = useState(false);
-  const [fuzzyEnabled, setFuzzyEnabled] = useState(true);
-  const [fuzzyResults, setFuzzyResults] = useState<Map<string, FuzzyMatch[]>>(new Map());
   const [isTyping, setIsTyping] = useState(false);
 
   // No longer need proxy resolution - only using direct stream sources
@@ -369,62 +360,6 @@ export default function ChannelsPage() {
     setSearch(value);
   };
 
-  // Create Fuse.js instance for fuzzy search on loaded channels
-  const channelFuse = useMemo(() => {
-    if (channels.length === 0) return null;
-    // Cast channels to satisfy Fuse.js generic - Channel extends FuzzySearchChannel fields
-    return new Fuse(channels, {
-      keys: [
-        { name: 'name', weight: 0.4 },
-        { name: 'tvg_name', weight: 0.2 },
-        { name: 'tvg_id', weight: 0.15 },
-        { name: 'group', weight: 0.15 },
-        { name: 'tvg_chno', weight: 0.05 },
-      ],
-      threshold: 0.4,
-      distance: 100,
-      includeScore: true,
-      includeMatches: true,
-      ignoreLocation: true,
-      minMatchCharLength: 2,
-    });
-  }, [channels]);
-
-  // Apply fuzzy filtering when fuzzy search is enabled and there's a search term
-  const displayChannels = useMemo((): Channel[] => {
-    // Clear fuzzy results if disabled or no search
-    if (!fuzzyEnabled || !debouncedSearch || debouncedSearch.length < 2 || !channelFuse) {
-      setFuzzyResults(new Map());
-      return channels;
-    }
-
-    // Perform fuzzy search on currently loaded channels
-    const results = channelFuse.search(debouncedSearch);
-
-    // Store match info for display
-    const matchMap = new Map<string, FuzzyMatch[]>();
-    results.forEach((result) => {
-      const matches: FuzzyMatch[] = (result.matches ?? []).map((match) => ({
-        key: match.key ?? '',
-        value: match.value ?? '',
-        indices: (match.indices ?? []) as [number, number][],
-      }));
-      matchMap.set(result.item.id, matches);
-    });
-    setFuzzyResults(matchMap);
-
-    // Return matched channels sorted by score
-    return results.map((r) => r.item);
-  }, [channels, debouncedSearch, fuzzyEnabled, channelFuse]);
-
-  // Get match indicator for a channel
-  const getMatchIndicator = useCallback((channelId: string): string | null => {
-    const matches = fuzzyResults.get(channelId);
-    if (!matches || matches.length === 0) return null;
-    const primaryField = getPrimaryMatchField(matches);
-    return primaryField ? formatMatchFieldName(primaryField) : null;
-  }, [fuzzyResults]);
-
   const handleSourceToggle = (sourceId: string) => {
     setSelectedSources((prev) => {
       if (prev.includes(sourceId)) {
@@ -611,7 +546,7 @@ export default function ChannelsPage() {
     );
   };
 
-  const ChannelTableRow = ({ channel, matchIndicator }: { channel: Channel; matchIndicator?: string | null }) => {
+  const ChannelTableRow = ({ channel }: { channel: Channel }) => {
     // Track counts for styling multi-track badges
     const videoTrackCount = channel.video_tracks?.length ?? 0;
     const audioTrackCount = channel.audio_tracks?.length ?? 0;
@@ -693,12 +628,6 @@ export default function ChannelsPage() {
                 <span className="text-muted-foreground italic">empty</span>
             )}
             </button>
-            {matchIndicator && (
-              <Badge variant="outline" className="text-xs bg-blue-50 text-blue-600 dark:bg-blue-950 dark:text-blue-400 flex-shrink-0">
-                <Sparkles className="w-3 h-3 mr-1" />
-                {matchIndicator}
-              </Badge>
-            )}
           </div>
         </TableCell>
         <TableCell className="text-xs">
@@ -871,7 +800,7 @@ export default function ChannelsPage() {
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
                 <Input
                   ref={searchInputRef}
-                  placeholder={fuzzyEnabled ? "Search channels (fuzzy)..." : "Search channels..."}
+                  placeholder="Search channels..."
                   value={search}
                   onChange={(e) => handleSearch(e.target.value)}
                   onKeyDown={(e) => {
@@ -879,23 +808,8 @@ export default function ChannelsPage() {
                       e.preventDefault();
                     }
                   }}
-                  className="pl-10 pr-10"
+                  className="pl-10"
                 />
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant={fuzzyEnabled ? 'default' : 'ghost'}
-                      size="sm"
-                      onClick={() => setFuzzyEnabled(!fuzzyEnabled)}
-                      className="absolute right-1 top-1/2 transform -translate-y-1/2 h-7 w-7 p-0"
-                    >
-                      <Sparkles className={`w-4 h-4 ${fuzzyEnabled ? '' : 'text-muted-foreground'}`} />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>{fuzzyEnabled ? 'Fuzzy search enabled (typo tolerant)' : 'Click to enable fuzzy search'}</p>
-                  </TooltipContent>
-                </Tooltip>
               </div>
 
               <DropdownMenu>
@@ -981,16 +895,15 @@ export default function ChannelsPage() {
         )}
 
         {/* Results Summary */}
-        {displayChannels.length > 0 && (
+        {channels.length > 0 && (
           <div className="mb-4 text-sm text-muted-foreground">
-            Showing {displayChannels.length} of {total} channels
-            {fuzzyEnabled && debouncedSearch.length >= 2 && displayChannels.length !== channels.length && (
-              <span className="ml-2 text-blue-500">
-                <Sparkles className="w-3 h-3 inline mr-1" />
-                {displayChannels.length} fuzzy matches
+            Showing {channels.length} of {total} channels
+            {debouncedSearch && (
+              <span className="ml-2 text-primary">
+                (filtered by "{debouncedSearch}")
               </span>
             )}
-            {hasMore && !loading && (
+            {hasMore && !loading && !debouncedSearch && (
               <span className="ml-2 text-primary">
                 {' '}
                 • {Math.ceil((total - channels.length) / 200)} more pages available
@@ -1000,7 +913,7 @@ export default function ChannelsPage() {
         )}
 
         {/* Channels Display */}
-        {displayChannels.length > 0 ? (
+        {channels.length > 0 ? (
           <>
             <Card className="mb-6">
               <CardContent className="p-0">
@@ -1015,16 +928,16 @@ export default function ChannelsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {displayChannels.map((channel) => (
-                      <ChannelTableRow key={channel.id} channel={channel} matchIndicator={getMatchIndicator(channel.id)} />
+                    {channels.map((channel) => (
+                      <ChannelTableRow key={channel.id} channel={channel} />
                     ))}
                   </TableBody>
                 </Table>
               </CardContent>
             </Card>
 
-            {/* Progressive Loading */}
-            {hasMore && (
+            {/* Progressive Loading - only show when not searching */}
+            {hasMore && !debouncedSearch && (
               <div ref={loadMoreRef} className="flex justify-center mt-6">
                 <Card className="w-full max-w-md">
                   <CardContent className="p-4 text-center">
