@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import { BackupInfo, BackupListResponse, BackupScheduleInfo, BackupScheduleUpdateRequest, RestoreResult } from '@/types/api';
 import { apiClient } from '@/lib/api-client';
+import { createFuzzyFilter } from '@/lib/fuzzy-search';
 import { describeCronExpression, validateCronExpression } from '@/lib/cron-validation';
 import { formatFileSize, formatDate, formatRelativeTimeShort } from '@/lib/format';
 import {
@@ -711,8 +712,14 @@ export function Backups() {
               }}
               filterFn={(item, term) => {
                 if (item.isSchedule) return true; // Always show schedule
-                return item.title.toLowerCase().includes(term.toLowerCase()) ||
-                       (item.subtitle?.toLowerCase().includes(term.toLowerCase()) ?? false);
+                // Use fuzzy filter for backups
+                const fuzzyFilter = createFuzzyFilter<BackupMasterItem>({
+                  keys: [
+                    { name: 'title', weight: 0.6 },
+                    { name: 'subtitle', weight: 0.4 },
+                  ],
+                });
+                return fuzzyFilter(item, term);
               }}
               renderItem={(item, isSelected) => (
                 <div

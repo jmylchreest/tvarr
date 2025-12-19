@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { Filter, FilterAction } from '@/types/api';
 import { apiClient, ApiError } from '@/lib/api-client';
+import { createFuzzyFilter } from '@/lib/fuzzy-search';
 import { API_CONFIG } from '@/lib/config';
 import { ExportDialog, ImportDialog } from '@/components/config-export';
 import {
@@ -670,20 +671,24 @@ export function Filters() {
               title: 'No filters configured',
               description: 'Get started by creating your first filter rule.',
             }}
-            filterFn={(item, term) => {
-              const filter = item.filter;
-              const lower = term.toLowerCase();
-              // Search across name, expression, source_type, action
-              const searchableFields = [
-                filter.name,
-                filter.expression || '',
-                filter.source_type,
-                filter.action,
-                filter.description || '',
-                filter.is_system ? 'system' : '',
-              ];
-              return searchableFields.some(field => field.toLowerCase().includes(lower));
-            }}
+            filterFn={createFuzzyFilter<FilterMasterItem>({
+              keys: [
+                { name: 'name', weight: 0.35 },
+                { name: 'expression', weight: 0.2 },
+                { name: 'description', weight: 0.2 },
+                { name: 'source_type', weight: 0.1 },
+                { name: 'action', weight: 0.1 },
+                { name: 'system', weight: 0.05 },
+              ],
+              accessor: (item) => ({
+                name: item.filter.name,
+                expression: item.filter.expression || '',
+                description: item.filter.description || '',
+                source_type: item.filter.source_type,
+                action: item.filter.action,
+                system: item.filter.is_system ? 'system' : '',
+              }),
+            })}
           >
             {(selected) =>
               isCreating ? (

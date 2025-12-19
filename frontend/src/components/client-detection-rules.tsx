@@ -57,6 +57,7 @@ import {
   ClientDetectionRuleUpdateRequest,
 } from '@/types/api';
 import { apiClient, ApiError } from '@/lib/api-client';
+import { createFuzzyFilter } from '@/lib/fuzzy-search';
 import { ExportDialog, ImportDialog } from '@/components/config-export';
 import { ClientDetectionExpressionEditor } from '@/components/client-detection-expression-editor';
 import {
@@ -1177,19 +1178,22 @@ export function ClientDetectionRules() {
                 title: 'No client detection rules configured',
                 description: 'Get started by creating your first client detection rule.',
               }}
-              filterFn={(item, term) => {
-                const rule = item.rule;
-                const lower = term.toLowerCase();
-                // Search across name, description, expression
-                const searchableFields = [
-                  rule.name,
-                  rule.description || '',
-                  rule.expression,
-                  rule.is_enabled ? 'enabled' : 'disabled',
-                  rule.is_system ? 'system' : '',
-                ];
-                return searchableFields.some(field => field.toLowerCase().includes(lower));
-              }}
+              filterFn={createFuzzyFilter<ClientDetectionRuleMasterItem>({
+                keys: [
+                  { name: 'name', weight: 0.4 },
+                  { name: 'description', weight: 0.25 },
+                  { name: 'expression', weight: 0.2 },
+                  { name: 'enabled', weight: 0.1 },
+                  { name: 'system', weight: 0.05 },
+                ],
+                accessor: (item) => ({
+                  name: item.rule.name,
+                  description: item.rule.description || '',
+                  expression: item.rule.expression,
+                  enabled: item.rule.is_enabled ? 'enabled' : 'disabled',
+                  system: item.rule.is_system ? 'system' : '',
+                }),
+              })}
             >
               {(selected) =>
                 isCreating ? (

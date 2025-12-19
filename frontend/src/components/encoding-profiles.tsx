@@ -44,6 +44,7 @@ import {
 } from 'lucide-react';
 import { EncodingProfile, EncodingProfilePreview, QualityPreset } from '@/types/api';
 import { apiClient, ApiError } from '@/lib/api-client';
+import { createFuzzyFilter } from '@/lib/fuzzy-search';
 import { ExportDialog, ImportDialog } from '@/components/config-export';
 import {
   MasterDetailLayout,
@@ -1184,18 +1185,24 @@ export function EncodingProfiles() {
                 title: 'No encoding profiles yet',
                 description: 'Get started by creating your first encoding profile.',
               }}
-              filterFn={(item, term) => {
-                const profile = item.profile;
-                const lower = term.toLowerCase();
-                return (
-                  profile.name.toLowerCase().includes(lower) ||
-                  (profile.description || '').toLowerCase().includes(lower) ||
-                  profile.target_video_codec.toLowerCase().includes(lower) ||
-                  profile.target_audio_codec.toLowerCase().includes(lower) ||
-                  profile.quality_preset.toLowerCase().includes(lower) ||
-                  profile.hw_accel.toLowerCase().includes(lower)
-                );
-              }}
+              filterFn={createFuzzyFilter<EncodingProfileMasterItem>({
+                keys: [
+                  { name: 'name', weight: 0.35 },
+                  { name: 'description', weight: 0.2 },
+                  { name: 'video_codec', weight: 0.15 },
+                  { name: 'audio_codec', weight: 0.1 },
+                  { name: 'quality_preset', weight: 0.1 },
+                  { name: 'hw_accel', weight: 0.1 },
+                ],
+                accessor: (item) => ({
+                  name: item.profile.name,
+                  description: item.profile.description || '',
+                  video_codec: item.profile.target_video_codec,
+                  audio_codec: item.profile.target_audio_codec,
+                  quality_preset: item.profile.quality_preset,
+                  hw_accel: item.profile.hw_accel,
+                }),
+              })}
             >
               {(selected) =>
                 isCreating ? (

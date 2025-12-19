@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import Fuse from 'fuse.js';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -855,11 +856,30 @@ export function Logos() {
     }
   }, [loading.logos, isTyping]);
 
-  // Client-side filtering for fast local search
+  // Create Fuse.js instance for fuzzy search
+  const logoFuse = useMemo(() => {
+    if (allLogos.length === 0) return null;
+    return new Fuse(allLogos, {
+      keys: [
+        { name: 'name', weight: 0.4 },
+        { name: 'description', weight: 0.2 },
+        { name: 'file_name', weight: 0.15 },
+        { name: 'asset_type', weight: 0.1 },
+        { name: 'source_url', weight: 0.15 },
+      ],
+      threshold: 0.4,
+      distance: 100,
+      includeScore: true,
+      ignoreLocation: true,
+      minMatchCharLength: 2,
+    });
+  }, [allLogos]);
+
+  // Client-side filtering with Fuse.js fuzzy search
   const filteredLogos = useMemo(() => {
     let filtered = allLogos;
 
-    // Filter by logo type
+    // Filter by logo type first
     if (logoFilter === 'uploaded') {
       filtered = filtered.filter((logo) => logo.asset_type !== 'cached');
     } else if (logoFilter === 'cached') {
@@ -867,22 +887,30 @@ export function Logos() {
     }
     // logoFilter === 'all' shows everything (no additional filtering)
 
-    // Filter by search term (client-side for responsiveness)
+    // Apply fuzzy search if search term is provided
     if (searchTerm.trim()) {
-      const searchLower = searchTerm.toLowerCase();
-      filtered = filtered.filter((logo) => {
-        const searchableText = [
-          logo.name.toLowerCase(),
-          logo.description?.toLowerCase() || '',
-          logo.file_name.toLowerCase(),
-          logo.asset_type.toLowerCase(),
-          getFormatFromMimeType(logo.mime_type).toLowerCase(),
-          logo.source_url?.toLowerCase() || '',
-          formatFileSize(logo.file_size).toLowerCase(),
-        ];
-
-        return searchableText.some((text) => text.includes(searchLower));
-      });
+      if (searchTerm.length >= 2 && logoFuse) {
+        // Use Fuse.js for fuzzy matching (typo tolerant)
+        const results = logoFuse.search(searchTerm);
+        const matchedIds = new Set(results.map((r) => r.item.id));
+        // Filter the already-filtered list to maintain type filter
+        filtered = filtered.filter((logo) => matchedIds.has(logo.id));
+      } else {
+        // Fall back to simple includes for very short queries
+        const searchLower = searchTerm.toLowerCase();
+        filtered = filtered.filter((logo) => {
+          const searchableText = [
+            logo.name.toLowerCase(),
+            logo.description?.toLowerCase() || '',
+            logo.file_name.toLowerCase(),
+            logo.asset_type.toLowerCase(),
+            getFormatFromMimeType(logo.mime_type).toLowerCase(),
+            logo.source_url?.toLowerCase() || '',
+            formatFileSize(logo.file_size).toLowerCase(),
+          ];
+          return searchableText.some((text) => text.includes(searchLower));
+        });
+      }
     }
 
     // Sort: uploaded logos first, then cached, each sorted alphabetically by name
@@ -896,7 +924,7 @@ export function Logos() {
       // Within same type, sort alphabetically by name
       return a.name.localeCompare(b.name, undefined, { numeric: true });
     });
-  }, [allLogos, searchTerm, logoFilter]);
+  }, [allLogos, searchTerm, logoFilter, logoFuse]);
 
   const loadStats = useCallback(async () => {
     if (!isOnline) return;
@@ -1357,7 +1385,7 @@ export function Logos() {
                   <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                   <Input
                     ref={searchInputRef}
-                    placeholder="Search by name, format..."
+                    placeholder="Search logos (fuzzy)..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="pl-8 w-[200px] h-9"

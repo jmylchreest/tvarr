@@ -23,6 +23,7 @@ import {
 } from '@/types/api';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { API_CONFIG } from '@/lib/config';
+import { createFuzzyFilter } from '@/lib/fuzzy-search';
 import { useProgressContext } from '@/providers/ProgressProvider';
 import { ProxyWizard, ProxyFormData } from '@/components/ProxyWizard';
 import { ProxyDetailPanel } from '@/components/ProxyDetailPanel';
@@ -503,20 +504,24 @@ export function Proxies() {
                   title: 'No proxies configured',
                   description: 'Get started by creating your first proxy configuration.',
                 }}
-                filterFn={(item, term) => {
-                  const proxy = item.proxy;
-                  const lower = term.toLowerCase();
-                  // Search across name, description, proxy_mode, status, channel count
-                  const searchableFields = [
-                    proxy.name,
-                    proxy.description || '',
-                    proxy.proxy_mode,
-                    proxy.status || '',
-                    `${proxy.channel_count} channels`,
-                    proxy.is_active ? 'active' : 'inactive',
-                  ];
-                  return searchableFields.some(field => field.toLowerCase().includes(lower));
-                }}
+                filterFn={createFuzzyFilter<ProxyMasterItem>({
+                  keys: [
+                    { name: 'name', weight: 0.4 },
+                    { name: 'description', weight: 0.2 },
+                    { name: 'proxy_mode', weight: 0.15 },
+                    { name: 'status', weight: 0.1 },
+                    { name: 'channel_count', weight: 0.1 },
+                    { name: 'active', weight: 0.05 },
+                  ],
+                  accessor: (item) => ({
+                    name: item.proxy.name,
+                    description: item.proxy.description || '',
+                    proxy_mode: item.proxy.proxy_mode,
+                    status: item.proxy.status || '',
+                    channel_count: `${item.proxy.channel_count} channels`,
+                    active: item.proxy.is_active ? 'active' : 'inactive',
+                  }),
+                })}
               >
                 {(item) =>
                   isCreating ? (

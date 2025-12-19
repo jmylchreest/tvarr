@@ -3,7 +3,7 @@
  * in channel and EPG browsers.
  */
 
-import Fuse, { IFuseOptions, FuseResult } from 'fuse.js';
+import Fuse, { IFuseOptions, FuseResult, FuseOptionKey } from 'fuse.js';
 
 /**
  * Result of a fuzzy search with match information.
@@ -314,4 +314,185 @@ export function formatMatchFieldName(field: string): string {
   };
 
   return fieldNames[field] || field.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/**
+ * Configuration for creating a fuzzy filter function.
+ */
+export interface FuzzyFilterConfig<T> {
+  /**
+   * Fields to search with optional weights.
+   * Can be simple field names or weighted key configs.
+   * @example ['name', 'description'] or [{ name: 'name', weight: 0.6 }, { name: 'description', weight: 0.4 }]
+   */
+  keys: (string | { name: string; weight: number })[];
+  /**
+   * Fuzzy matching threshold (0 = exact, 1 = match anything).
+   * @default 0.4
+   */
+  threshold?: number;
+  /**
+   * Function to extract the searchable object from an item.
+   * Use this when your items are wrapped (e.g., { source: {...} }).
+   * @example (item) => item.source
+   */
+  accessor?: (item: T) => Record<string, unknown>;
+}
+
+/**
+ * Creates a fuzzy filter function compatible with MasterDetailLayout's filterFn prop.
+ * Uses Fuse.js for typo-tolerant searching across multiple fields.
+ *
+ * @param config - Configuration for the fuzzy filter
+ * @returns A filter function that can be passed to MasterDetailLayout's filterFn
+ *
+ * @example
+ * // Simple usage with field names
+ * const filterSource = createFuzzyFilter<SourceMasterItem>({
+ *   keys: ['name', 'url', 'source_type'],
+ *   accessor: (item) => item.source,
+ * });
+ *
+ * @example
+ * // With weighted fields
+ * const filterProfile = createFuzzyFilter<ProfileItem>({
+ *   keys: [
+ *     { name: 'name', weight: 0.5 },
+ *     { name: 'description', weight: 0.3 },
+ *     { name: 'codec', weight: 0.2 },
+ *   ],
+ *   threshold: 0.3,
+ * });
+ */
+export function createFuzzyFilter<T>(
+  config: FuzzyFilterConfig<T>
+): (item: T, searchTerm: string) => boolean {
+  const { keys, threshold = 0.4, accessor } = config;
+
+  // We'll create the Fuse instance lazily and cache it
+  let fuseInstance: Fuse<Record<string, unknown>> | null = null;
+  let cachedItems: T[] = [];
+
+  return (item: T, searchTerm: string): boolean => {
+    // For very short queries, fall back to simple includes matching
+    if (searchTerm.length < 2) {
+      const searchable = accessor ? accessor(item) : (item as Record<string, unknown>);
+      const lower = searchTerm.toLowerCase();
+      return keys.some((key) => {
+        const fieldName = typeof key === 'string' ? key : key.name;
+        const value = searchable[fieldName];
+        return value != null && String(value).toLowerCase().includes(lower);
+      });
+    }
+
+    // Get the searchable object
+    const searchable = accessor ? accessor(item) : (item as Record<string, unknown>);
+
+    // Create a temporary Fuse instance for single-item search
+    // This is efficient for small lists used in MasterDetailLayout
+    const tempFuse = new Fuse([searchable], {
+      keys: keys as FuseOptionKey<Record<string, unknown>>[],
+      threshold,
+      distance: 100,
+      ignoreLocation: true,
+      minMatchCharLength: 2,
+    });
+
+    const results = tempFuse.search(searchTerm);
+    return results.length > 0;
+  };
+}
+
+/**
+ * Creates a memoized fuzzy filter that pre-indexes all items for better performance.
+ * Use this when you have the full list of items available upfront.
+ *
+ * @param items - Array of items to index
+ * @param config - Configuration for the fuzzy filter
+ * @returns Object with search function and item ID set for quick lookups
+ *
+ * @example
+ * const { matchingIds, search } = createMemoizedFuzzyFilter(allSources, {
+ *   keys: ['name', 'url'],
+ *   accessor: (item) => item.source,
+ *   getId: (item) => item.id,
+ * });
+ *
+ * // Use in filterFn
+ * filterFn={(item, term) => matchingIds(term).has(item.id)}
+ */
+export function createMemoizedFuzzyFilter<T>(
+  items: T[],
+  config: FuzzyFilterConfig<T> & { getId: (item: T) => string }
+): {
+  search: (term: string) => T[];
+  matchingIds: (term: string) => Set<string>;
+} {
+  const { keys, threshold = 0.4, accessor, getId } = config;
+
+  // Build searchable array
+  const searchableItems = items.map((item) => ({
+    _original: item,
+    _id: getId(item),
+    ...(accessor ? accessor(item) : (item as Record<string, unknown>)),
+  }));
+
+  const fuse = new Fuse(searchableItems, {
+    keys: keys as FuseOptionKey<typeof searchableItems[0]>[],
+    threshold,
+    distance: 100,
+    ignoreLocation: true,
+    minMatchCharLength: 2,
+  });
+
+  // Cache for search results
+  const cache = new Map<string, Set<string>>();
+
+  return {
+    search: (term: string): T[] => {
+      if (term.length < 2) {
+        // Fall back to simple matching for short queries
+        const lower = term.toLowerCase();
+        return items.filter((item) => {
+          const searchable = accessor ? accessor(item) : (item as Record<string, unknown>);
+          return keys.some((key) => {
+            const fieldName = typeof key === 'string' ? key : key.name;
+            const value = searchable[fieldName];
+            return value != null && String(value).toLowerCase().includes(lower);
+          });
+        });
+      }
+
+      const results = fuse.search(term);
+      return results.map((r) => r.item._original);
+    },
+    matchingIds: (term: string): Set<string> => {
+      if (cache.has(term)) {
+        return cache.get(term)!;
+      }
+
+      let ids: Set<string>;
+      if (term.length < 2) {
+        const lower = term.toLowerCase();
+        ids = new Set(
+          items
+            .filter((item) => {
+              const searchable = accessor ? accessor(item) : (item as Record<string, unknown>);
+              return keys.some((key) => {
+                const fieldName = typeof key === 'string' ? key : key.name;
+                const value = searchable[fieldName];
+                return value != null && String(value).toLowerCase().includes(lower);
+              });
+            })
+            .map(getId)
+        );
+      } else {
+        const results = fuse.search(term);
+        ids = new Set(results.map((r) => r.item._id));
+      }
+
+      cache.set(term, ids);
+      return ids;
+    },
+  };
 }

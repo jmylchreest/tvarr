@@ -42,6 +42,7 @@ import { useConflictHandler } from '@/hooks/useConflictHandler';
 import { ConflictNotification } from '@/components/ConflictNotification';
 import { useProgressContext } from '@/providers/ProgressProvider';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
+import { createFuzzyFilter } from '@/lib/fuzzy-search';
 import {
   validateCronExpression,
   describeCronExpression,
@@ -1102,20 +1103,24 @@ export function EpgSources() {
                 title: 'No EPG sources configured',
                 description: 'Get started by creating your first EPG source.',
               }}
-              filterFn={(item, term) => {
-                const source = item.source;
-                const lower = term.toLowerCase();
-                // Search across name, url, source_type, status, program count
-                const searchableFields = [
-                  source.name,
-                  source.url || '',
-                  source.source_type,
-                  source.status,
-                  `${source.program_count} programs`,
-                  source.enabled ? 'enabled' : 'disabled',
-                ];
-                return searchableFields.some(field => field.toLowerCase().includes(lower));
-              }}
+              filterFn={createFuzzyFilter<EpgSourceMasterItem>({
+                keys: [
+                  { name: 'name', weight: 0.4 },
+                  { name: 'url', weight: 0.2 },
+                  { name: 'source_type', weight: 0.15 },
+                  { name: 'status', weight: 0.1 },
+                  { name: 'program_count', weight: 0.1 },
+                  { name: 'enabled', weight: 0.05 },
+                ],
+                accessor: (item) => ({
+                  name: item.source.name,
+                  url: item.source.url || '',
+                  source_type: item.source.source_type,
+                  status: item.source.status,
+                  program_count: `${item.source.program_count} programs`,
+                  enabled: item.source.enabled ? 'enabled' : 'disabled',
+                }),
+              })}
             >
               {(selected) =>
                 isCreating ? (

@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { DataMappingRule, DataMappingSourceType } from '@/types/api';
 import { apiClient, ApiError } from '@/lib/api-client';
+import { createFuzzyFilter } from '@/lib/fuzzy-search';
 import { API_CONFIG } from '@/lib/config';
 import { ExportDialog, ImportDialog } from '@/components/config-export';
 import {
@@ -827,20 +828,24 @@ export function DataMapping() {
                 title: 'No data mapping rules configured',
                 description: 'Get started by creating your first data transformation rule.',
               }}
-              filterFn={(item, term) => {
-                const rule = item.rule;
-                const lower = term.toLowerCase();
-                // Search across name, expression, description, source_type
-                const searchableFields = [
-                  rule.name,
-                  rule.expression || '',
-                  rule.description || '',
-                  rule.source_type,
-                  rule.is_enabled ? 'enabled' : 'disabled',
-                  rule.is_system ? 'system' : '',
-                ];
-                return searchableFields.some(field => field.toLowerCase().includes(lower));
-              }}
+              filterFn={createFuzzyFilter<DataMappingRuleMasterItem>({
+                keys: [
+                  { name: 'name', weight: 0.35 },
+                  { name: 'expression', weight: 0.2 },
+                  { name: 'description', weight: 0.2 },
+                  { name: 'source_type', weight: 0.1 },
+                  { name: 'enabled', weight: 0.1 },
+                  { name: 'system', weight: 0.05 },
+                ],
+                accessor: (item) => ({
+                  name: item.rule.name,
+                  expression: item.rule.expression || '',
+                  description: item.rule.description || '',
+                  source_type: item.rule.source_type,
+                  enabled: item.rule.is_enabled ? 'enabled' : 'disabled',
+                  system: item.rule.is_system ? 'system' : '',
+                }),
+              })}
             >
               {(selected) =>
                 isCreating ? (

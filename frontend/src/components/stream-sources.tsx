@@ -46,6 +46,7 @@ import {
 import { apiClient, ApiError } from '@/lib/api-client';
 import { API_CONFIG } from '@/lib/config';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
+import { createFuzzyFilter } from '@/lib/fuzzy-search';
 import {
   validateCronExpression,
   COMMON_CRON_TEMPLATES,
@@ -1114,21 +1115,25 @@ export function StreamSources() {
   );
 
   // Custom filter for MasterDetailLayout - fuzzy search across all fields
-  const filterSource = useCallback(
-    (item: SourceMasterItem, term: string) => {
-      const lower = term.toLowerCase();
-      const source = item.source;
-      // Search across name, url, source_type, status, channel count
-      const searchableFields = [
-        source.name,
-        source.url || '',
-        source.source_type,
-        source.status,
-        `${source.channel_count} channels`,
-        source.enabled ? 'enabled' : 'disabled',
-      ];
-      return searchableFields.some(field => field.toLowerCase().includes(lower));
-    },
+  const filterSource = useMemo(
+    () => createFuzzyFilter<SourceMasterItem>({
+      keys: [
+        { name: 'name', weight: 0.4 },
+        { name: 'url', weight: 0.2 },
+        { name: 'source_type', weight: 0.15 },
+        { name: 'status', weight: 0.1 },
+        { name: 'channel_count', weight: 0.1 },
+        { name: 'enabled', weight: 0.05 },
+      ],
+      accessor: (item) => ({
+        name: item.source.name,
+        url: item.source.url || '',
+        source_type: item.source.source_type,
+        status: item.source.status,
+        channel_count: `${item.source.channel_count} channels`,
+        enabled: item.source.enabled ? 'enabled' : 'disabled',
+      }),
+    }),
     []
   );
 

@@ -140,23 +140,23 @@ export default function ChannelsPage() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [selectedGroup, setSelectedGroup] = useState<string>('');
   const [selectedSources, setSelectedSources] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
-  const [groups, setGroups] = useState<string[]>([]);
   const [sources, setSources] = useState<StreamSourceOption[]>([]);
   const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
   const [probingChannels, setProbingChannels] = useState<Set<string>>(new Set());
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const isSearchChangeRef = useRef(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [detailsChannel, setDetailsChannel] = useState<Channel | null>(null);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [clearingCache, setClearingCache] = useState(false);
   const [fuzzyEnabled, setFuzzyEnabled] = useState(true);
   const [fuzzyResults, setFuzzyResults] = useState<Map<string, FuzzyMatch[]>>(new Map());
+  const [isTyping, setIsTyping] = useState(false);
 
   // No longer need proxy resolution - only using direct stream sources
   // Fetch stream sources (id + name) for reliable ID-based filtering
@@ -187,6 +187,30 @@ export default function ChannelsPage() {
     return () => clearTimeout(timer);
   }, [search]);
 
+  // Track typing state for focus preservation
+  useEffect(() => {
+    if (search !== debouncedSearch) {
+      setIsTyping(true);
+    } else {
+      setIsTyping(false);
+    }
+  }, [search, debouncedSearch]);
+
+  // Maintain focus on search input when loading completes during typing
+  useEffect(() => {
+    if (
+      !loading &&
+      isTyping &&
+      searchInputRef.current &&
+      document.activeElement !== searchInputRef.current
+    ) {
+      // Restore focus and cursor position after API call completes
+      const cursorPosition = searchInputRef.current.selectionStart;
+      searchInputRef.current.focus();
+      searchInputRef.current.setSelectionRange(cursorPosition || 0, cursorPosition || 0);
+    }
+  }, [loading, isTyping]);
+
   /**
    * Explicit channel fetch that does NOT rely on closure-captured filter state.
    * All filter inputs are passed as arguments so regressions are easier to spot.
@@ -194,14 +218,12 @@ export default function ChannelsPage() {
   const fetchChannels = useCallback(
     async ({
       searchTerm = '',
-      group = '',
       pageNum = 1,
       append = false,
       isSearchChange = false,
       sourceIds = [],
     }: {
       searchTerm?: string;
-      group?: string;
       pageNum?: number;
       append?: boolean;
       isSearchChange?: boolean;
@@ -216,7 +238,6 @@ export default function ChannelsPage() {
         });
 
         if (searchTerm) params.append('search', searchTerm);
-        if (group) params.append('group', group);
 
         // Multi-source param (backend expects a single comma-separated source_id value)
         if (sourceIds.length > 0) {
@@ -261,13 +282,6 @@ export default function ChannelsPage() {
         setTotal(data.total || 0);
         setHasMore(data.has_next || false);
 
-        if (!append) {
-          const uniqueGroups = Array.from(
-            new Set(channelsData.map((c: Channel) => c.group).filter(Boolean))
-          ) as string[];
-          setGroups(uniqueGroups);
-        }
-
         setError(null);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'An error occurred');
@@ -283,7 +297,6 @@ export default function ChannelsPage() {
     if (hasMore && !loading) {
       fetchChannels({
         searchTerm: debouncedSearch,
-        group: selectedGroup,
         pageNum: currentPage + 1,
         append: true,
         isSearchChange: false,
@@ -294,7 +307,6 @@ export default function ChannelsPage() {
     hasMore,
     loading,
     debouncedSearch,
-    selectedGroup,
     selectedSources,
     currentPage,
     fetchChannels,
@@ -306,7 +318,6 @@ export default function ChannelsPage() {
       isSearchChangeRef.current = false;
       fetchChannels({
         searchTerm: debouncedSearch,
-        group: selectedGroup,
         pageNum: 1,
         append: false,
         isSearchChange: true,
@@ -317,14 +328,13 @@ export default function ChannelsPage() {
       setCurrentPage(1);
       fetchChannels({
         searchTerm: debouncedSearch,
-        group: selectedGroup,
         pageNum: 1,
         append: false,
         isSearchChange: false,
         sourceIds: selectedSources,
       });
     }
-  }, [debouncedSearch, selectedGroup, selectedSources, fetchChannels]);
+  }, [debouncedSearch, selectedSources, fetchChannels]);
 
   // Intersection observer for infinite scroll
   useEffect(() => {
@@ -414,10 +424,6 @@ export default function ChannelsPage() {
     const primaryField = getPrimaryMatchField(matches);
     return primaryField ? formatMatchFieldName(primaryField) : null;
   }, [fuzzyResults]);
-
-  const handleGroupFilter = (value: string) => {
-    setSelectedGroup(value === 'all' ? '' : value);
-  };
 
   const handleSourceToggle = (sourceId: string) => {
     setSelectedSources((prev) => {
@@ -695,15 +701,6 @@ export default function ChannelsPage() {
             )}
           </div>
         </TableCell>
-        <TableCell>
-          {channel.group ? (
-            <Badge variant="secondary" className="text-xs">
-              {channel.group}
-            </Badge>
-          ) : (
-            <span className="text-muted-foreground">-</span>
-          )}
-        </TableCell>
         <TableCell className="text-xs">
           {probeInfo ? (
             <Tooltip>
@@ -873,6 +870,7 @@ export default function ChannelsPage() {
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
                 <Input
+                  ref={searchInputRef}
                   placeholder={fuzzyEnabled ? "Search channels (fuzzy)..." : "Search channels..."}
                   value={search}
                   onChange={(e) => handleSearch(e.target.value)}
@@ -968,8 +966,7 @@ export default function ChannelsPage() {
                 onClick={() =>
                   fetchChannels({
                     searchTerm: debouncedSearch,
-                    group: selectedGroup,
-                    pageNum: 1,
+                                pageNum: 1,
                     append: false,
                     isSearchChange: false,
                     sourceIds: selectedSources,
@@ -1012,7 +1009,6 @@ export default function ChannelsPage() {
                     <TableRow>
                       <TableHead className="w-16">Logo</TableHead>
                       <TableHead>Channel Name</TableHead>
-                      <TableHead>Group</TableHead>
                       <TableHead>Probe Info</TableHead>
                       <TableHead>Last Probed</TableHead>
                       <TableHead className="w-32">Actions</TableHead>
@@ -1062,12 +1058,11 @@ export default function ChannelsPage() {
             <Card>
               <CardContent className="p-8 text-center">
                 <p className="text-muted-foreground">No channels found</p>
-                {(search || selectedGroup || selectedSources.length > 0) && (
+                {(search || selectedSources.length > 0) && (
                   <Button
                     variant="outline"
                     onClick={() => {
                       setSearch('');
-                      setSelectedGroup('');
                       setSelectedSources([]);
                     }}
                     className="mt-4"
