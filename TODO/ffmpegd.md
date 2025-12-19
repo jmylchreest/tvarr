@@ -447,7 +447,240 @@ logging:
   format: "json"
 ```
 
-### 5. Network Protocol Considerations
+### 5. GPU Session Tracking & Cluster-Wide Load Balancing
+
+Hardware encoders have **session limits** that must be tracked across the cluster:
+
+#### The Problem
+
+| GPU Type | Encode Sessions | Notes |
+|----------|-----------------|-------|
+| NVIDIA GeForce (consumer) | 3-5 | Artificial limit, can be patched but not recommended |
+| NVIDIA Quadro/RTX Pro | Unlimited | Professional cards |
+| NVIDIA Tesla/A-series | Unlimited | Datacenter cards |
+| Intel QSV (iGPU) | 4-8 | Varies by generation, shared with display |
+| AMD VCE/VCN | 4-8 | Varies by chip generation |
+| Apple VideoToolbox | ~8 | Varies by chip, shared with system |
+
+If a daemon tries to start an encode when all GPU sessions are in use, FFmpeg will fail with cryptic errors. The coordinator must track session availability **before** routing jobs.
+
+#### Session Tracking Design
+
+```go
+// Coordinator tracks cluster-wide GPU state
+type ClusterGPUState struct {
+    mu     sync.RWMutex
+    // daemon_id -> gpu_index -> GPUSessionState
+    gpus   map[string]map[int]*GPUSessionState
+}
+
+type GPUSessionState struct {
+    DaemonID          string
+    GPUIndex          int
+    GPUName           string
+    GPUClass          GPUClass
+
+    // Session limits (discovered at registration)
+    MaxEncodeSessions int
+    MaxDecodeSessions int
+
+    // Current usage (updated via heartbeat)
+    ActiveEncodeSessions int
+    ActiveDecodeSessions int
+
+    // Utilization metrics
+    EncoderUtilization float64  // 0-100%
+    MemoryUtilization  float64  // 0-100%
+    Temperature        int      // Celsius
+
+    LastUpdated time.Time
+}
+
+// Check if a GPU can accept a new encode job
+func (s *GPUSessionState) CanAcceptEncodeJob() bool {
+    // Hard limit check
+    if s.ActiveEncodeSessions >= s.MaxEncodeSessions {
+        return false
+    }
+    // Soft limit: avoid overloading (optional policy)
+    if s.EncoderUtilization > 90 || s.MemoryUtilization > 90 {
+        return false
+    }
+    if s.Temperature > 85 {
+        return false  // Thermal throttling likely
+    }
+    return true
+}
+```
+
+#### Session Limit Detection
+
+At daemon startup, detect GPU session limits:
+
+```go
+// internal/daemon/gpu_limits.go
+
+func DetectGPUSessionLimits(gpuIndex int, gpuName string) (maxEncode, maxDecode int) {
+    // NVIDIA: Parse nvidia-smi or use NVML
+    if strings.Contains(gpuName, "GeForce") {
+        // Consumer cards: check driver version for patched limits
+        // Default: 3 (older) or 5 (RTX 30/40 series)
+        return detectNVIDIAConsumerLimits(gpuIndex)
+    }
+    if strings.Contains(gpuName, "Quadro") || strings.Contains(gpuName, "RTX A") {
+        return 32, 32  // Effectively unlimited
+    }
+    if strings.Contains(gpuName, "Tesla") || strings.Contains(gpuName, "A100") {
+        return 64, 64  // Datacenter - very high limits
+    }
+
+    // Intel QSV: Check generation
+    if isIntelGPU(gpuName) {
+        return detectIntelQSVLimits()
+    }
+
+    // AMD: Check VCN generation
+    if isAMDGPU(gpuName) {
+        return detectAMDVCNLimits()
+    }
+
+    // Default conservative limits
+    return 4, 8
+}
+
+func detectNVIDIAConsumerLimits(gpuIndex int) (int, int) {
+    // Try to query NVML for actual session count
+    // Or: try to start sessions until we hit the limit (during capability detection)
+    // Or: use known limits based on GPU model
+    //
+    // Known limits (as of 2024):
+    // - GTX 10 series: 2 encode sessions
+    // - GTX 16 series: 3 encode sessions
+    // - RTX 20 series: 3 encode sessions
+    // - RTX 30 series: 5 encode sessions
+    // - RTX 40 series: 5 encode sessions
+    return 5, 16  // Conservative default for RTX
+}
+```
+
+#### Load Balancing with GPU Awareness
+
+```go
+// internal/relay/daemon_registry.go
+
+type DaemonSelectionStrategy int
+
+const (
+    StrategyLeastLoaded DaemonSelectionStrategy = iota
+    StrategyRoundRobin
+    StrategyCapabilityMatch
+    StrategyGPUAware  // NEW: Consider GPU session availability
+)
+
+func (r *DaemonRegistry) SelectDaemon(profile *EncodingProfile) (*DaemonInfo, error) {
+    r.mu.RLock()
+    defer r.mu.RUnlock()
+
+    needsHWAccel := profile.VideoEncoder != "" &&
+        (strings.HasSuffix(profile.VideoEncoder, "_nvenc") ||
+         strings.HasSuffix(profile.VideoEncoder, "_vaapi") ||
+         strings.HasSuffix(profile.VideoEncoder, "_qsv"))
+
+    var candidates []*DaemonInfo
+
+    for _, daemon := range r.daemons {
+        if !daemon.IsHealthy() {
+            continue
+        }
+
+        if needsHWAccel {
+            // Check if daemon has a GPU with available sessions
+            gpu := r.findAvailableGPU(daemon, profile.VideoEncoder)
+            if gpu == nil {
+                continue  // No GPU with available sessions
+            }
+        }
+
+        candidates = append(candidates, daemon)
+    }
+
+    if len(candidates) == 0 {
+        if needsHWAccel {
+            return nil, ErrNoGPUSessionsAvailable
+        }
+        return nil, ErrNoDaemonsAvailable
+    }
+
+    // Apply selection strategy among candidates
+    return r.selectFromCandidates(candidates)
+}
+
+func (r *DaemonRegistry) findAvailableGPU(daemon *DaemonInfo, encoder string) *GPUSessionState {
+    for _, gpu := range daemon.GPUs {
+        if !gpu.CanAcceptEncodeJob() {
+            continue
+        }
+        // Check encoder compatibility
+        if strings.HasSuffix(encoder, "_nvenc") && gpu.GPUClass != GPU_CLASS_CONSUMER &&
+           gpu.GPUClass != GPU_CLASS_PROFESSIONAL && gpu.GPUClass != GPU_CLASS_DATACENTER {
+            continue
+        }
+        // ... similar checks for vaapi, qsv
+        return gpu
+    }
+    return nil
+}
+```
+
+#### Fallback to Software Encoding
+
+When all GPU sessions are exhausted, the coordinator has options:
+
+1. **Queue and wait**: Hold the job until a GPU session becomes available
+2. **Fallback to software**: Route to a daemon with CPU capacity for libx264/libx265
+3. **Reject**: Return error to client immediately
+
+```go
+type GPUExhaustedPolicy int
+
+const (
+    PolicyQueue    GPUExhaustedPolicy = iota  // Wait for GPU
+    PolicyFallback                             // Use software encoder
+    PolicyReject                               // Fail immediately
+)
+
+// Configurable per encoding profile
+type EncodingProfile struct {
+    // ... existing fields ...
+    GPUExhaustedPolicy GPUExhaustedPolicy `json:"gpu_exhausted_policy"`
+    FallbackEncoder    string             `json:"fallback_encoder,omitempty"` // e.g., "libx264"
+}
+```
+
+#### Multi-GPU Support
+
+A single daemon may have multiple GPUs. The daemon tracks sessions per-GPU and reports all:
+
+```yaml
+# Example: Server with 2 GPUs
+# tvarr-ffmpegd reports:
+capabilities:
+  gpus:
+    - index: 0
+      name: "NVIDIA GeForce RTX 4090"
+      max_encode_sessions: 5
+      active_encode_sessions: 3
+      encoders: [h264_nvenc, hevc_nvenc, av1_nvenc]
+    - index: 1
+      name: "NVIDIA GeForce RTX 3080"
+      max_encode_sessions: 5
+      active_encode_sessions: 5  # FULL
+      encoders: [h264_nvenc, hevc_nvenc]
+```
+
+The coordinator can route to GPU 0 (has 2 available sessions) but not GPU 1 (full).
+
+### 6. Network Protocol Considerations
 
 #### Efficient Sample Transport
 
@@ -549,6 +782,23 @@ message GPUStats {
   int32 power_watts = 9;
   int32 encoder_utilization = 10; // NVENC utilization %
   int32 decoder_utilization = 11; // NVDEC utilization %
+
+  // Session tracking - CRITICAL for proper load balancing
+  int32 max_encode_sessions = 12;     // Hardware limit (NVIDIA consumer: 3-5, Quadro: unlimited)
+  int32 active_encode_sessions = 13;  // Currently in use by this daemon
+  int32 max_decode_sessions = 14;     // Usually higher than encode
+  int32 active_decode_sessions = 15;  // Currently in use by this daemon
+
+  // GPU type classification for session limit detection
+  GPUClass gpu_class = 16;
+}
+
+enum GPUClass {
+  GPU_CLASS_UNKNOWN = 0;
+  GPU_CLASS_CONSUMER = 1;      // GeForce, Radeon - limited encode sessions
+  GPU_CLASS_PROFESSIONAL = 2;  // Quadro, Pro - unlimited or high limits
+  GPU_CLASS_DATACENTER = 3;    // Tesla, A100, etc. - no artificial limits
+  GPU_CLASS_INTEGRATED = 4;    // Intel iGPU, AMD APU - shared memory, varies
 }
 
 message PressureStats {
@@ -1074,3 +1324,24 @@ api/
    - tvarr: Keeps all logic in coordinator
    - tvarr-ffmpegd: Daemon already has FFmpeg, reduces network calls
    - **Recommendation**: tvarr-ffmpegd handles probing, reports results to coordinator
+
+7. **GPU session exhaustion policy**: What happens when all GPU encode sessions are in use?
+   - Queue: Hold job until a session becomes available (may delay stream start)
+   - Fallback: Use software encoder (higher CPU, but works)
+   - Reject: Fail immediately (client sees error)
+   - **Recommendation**: Configurable per-profile, default to fallback with warning
+
+8. **GPU sharing between containers**: Can multiple ffmpegd containers share one GPU?
+   - Yes, but must coordinate session limits across containers
+   - NVIDIA MPS (Multi-Process Service) can help with sharing
+   - Kubernetes device plugins can partition GPUs
+   - **Recommendation**: Support GPU sharing but track sessions per-GPU globally, not per-daemon.
+     This requires daemons to report which physical GPU they're using (by PCI ID or similar)
+     so the coordinator can aggregate session counts across multiple daemons sharing a GPU.
+
+9. **Session limit detection accuracy**: How to determine actual GPU session limits?
+   - NVIDIA: NVML API can query, or parse nvidia-smi, or use known model limits
+   - Intel QSV: No standard API, use known generation limits
+   - AMD VCN: Parse rocm-smi or use known limits
+   - Option: Let user override via config (`TVARR_GPU_MAX_SESSIONS=8`)
+   - **Recommendation**: Auto-detect with model database, allow user override
