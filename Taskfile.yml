@@ -883,8 +883,11 @@ tasks:
   deps:upgrade:
     desc: Upgrade Go dependencies to latest versions (may include breaking changes)
     cmds:
-      - go get -u ./...
-      - go mod tidy
+      # Filter symlink warnings from pnpm's node_modules structure
+      - |
+        go get -u ./... 2>&1 | grep -v "warning: ignoring symlink" || true
+      - |
+        go mod tidy 2>&1 | grep -v "warning: ignoring symlink" || true
 
   deps:update:all:
     desc: Update all dependencies within compatible versions (safe)
