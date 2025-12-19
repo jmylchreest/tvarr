@@ -1,0 +1,451 @@
+// pkg/ffmpegd/proto/ffmpegd.proto
+//
+// tvarr-ffmpegd Protocol Buffer Service Definition
+// This file defines the gRPC service for daemon-coordinator communication.
+//
+// Third-party clients can use this file to generate client code in any language.
+// Install protoc and run:
+//   protoc --go_out=. --go-grpc_out=. pkg/ffmpegd/proto/ffmpegd.proto
+
+syntax = "proto3";
+
+package ffmpegd;
+
+option go_package = "github.com/jmylchreest/tvarr/pkg/ffmpegd/proto";
+
+import "google/protobuf/duration.proto";
+
+// =============================================================================
+// FFmpegDaemon Service
+// =============================================================================
+
+// FFmpegDaemon is the gRPC service implemented by tvarr-ffmpegd workers.
+// The coordinator connects to daemons to register, send heartbeats, and
+// initiate transcoding jobs.
+service FFmpegDaemon {
+  // Register announces this daemon to the coordinator and reports capabilities.
+  // Called once when daemon starts or reconnects.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+
+  // Heartbeat sends periodic health updates with system stats.
+  // Expected every 5 seconds. Coordinator marks daemon unhealthy after 30s.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // Unregister gracefully removes daemon from the registry.
+  // Called during graceful shutdown.
+  rpc Unregister(UnregisterRequest) returns (UnregisterResponse);
+
+  // Transcode streams ES samples bidirectionally for transcoding.
+  // Coordinator sends source samples, daemon returns transcoded samples.
+  rpc Transcode(stream TranscodeMessage) returns (stream TranscodeMessage);
+
+  // GetStats returns current daemon statistics.
+  // Used for dashboard and monitoring.
+  rpc GetStats(GetStatsRequest) returns (GetStatsResponse);
+}
+
+// =============================================================================
+// Registration Messages
+// =============================================================================
+
+message RegisterRequest {
+  // Unique daemon identifier (UUID or ULID)
+  string daemon_id = 1;
+
+  // Human-readable name for dashboard display
+  string daemon_name = 2;
+
+  // tvarr-ffmpegd version (semver)
+  string version = 3;
+
+  // Daemon's capabilities (encoders, decoders, hardware acceleration)
+  Capabilities capabilities = 4;
+
+  // Authentication token (must match coordinator's TVARR_FFMPEGD_AUTH_TOKEN)
+  string auth_token = 5;
+}
+
+message RegisterResponse {
+  // Whether registration succeeded
+  bool success = 1;
+
+  // Error message if registration failed
+  string error = 2;
+
+  // Coordinator's expected heartbeat interval
+  google.protobuf.Duration heartbeat_interval = 3;
+
+  // Coordinator version for compatibility checking
+  string coordinator_version = 4;
+}
+
+message UnregisterRequest {
+  string daemon_id = 1;
+  string reason = 2;  // "shutdown", "maintenance", etc.
+}
+
+message UnregisterResponse {
+  bool success = 1;
+}
+
+// =============================================================================
+// Heartbeat Messages
+// =============================================================================
+
+message HeartbeatRequest {
+  string daemon_id = 1;
+
+  // Current system statistics
+  SystemStats system_stats = 2;
+
+  // Currently active transcoding jobs
+  repeated JobStatus active_jobs = 3;
+}
+
+message HeartbeatResponse {
+  bool success = 1;
+
+  // Commands from coordinator (optional)
+  repeated DaemonCommand commands = 2;
+}
+
+// DaemonCommand allows coordinator to send instructions to daemon
+message DaemonCommand {
+  enum CommandType {
+    COMMAND_UNSPECIFIED = 0;
+    DRAIN = 1;           // Stop accepting new jobs
+    RESUME = 2;          // Resume accepting jobs
+    CANCEL_JOB = 3;      // Cancel specific job
+    UPDATE_CONFIG = 4;   // Update configuration
+  }
+  CommandType type = 1;
+  string job_id = 2;     // For CANCEL_JOB
+  bytes payload = 3;     // For UPDATE_CONFIG (JSON)
+}
+
+message JobStatus {
+  string job_id = 1;
+  string session_id = 2;
+  string channel_name = 3;
+  TranscodeStats stats = 4;
+  google.protobuf.Duration running_time = 5;
+}
+
+// =============================================================================
+// Capabilities Messages
+// =============================================================================
+
+message Capabilities {
+  // Available hardware accelerators
+  repeated HWAccelInfo hw_accels = 1;
+
+  // GPU information with session limits
+  repeated GPUInfo gpus = 2;
+
+  // Supported video encoders (e.g., libx264, h264_nvenc, hevc_vaapi)
+  repeated string video_encoders = 3;
+
+  // Supported video decoders (e.g., h264, hevc, h264_cuvid)
+  repeated string video_decoders = 4;
+
+  // Supported audio encoders (e.g., aac, libopus, ac3)
+  repeated string audio_encoders = 5;
+
+  // Supported audio decoders (e.g., aac, ac3, eac3, mp3)
+  repeated string audio_decoders = 6;
+
+  // Maximum concurrent transcoding jobs this daemon will accept
+  int32 max_concurrent_jobs = 7;
+
+  // Optional performance benchmark results
+  PerformanceMetrics performance = 8;
+}
+
+// HWAccelInfo describes a hardware acceleration method.
+// Maps directly to internal/ffmpeg.HWAccelInfo for consistency.
+message HWAccelInfo {
+  // Acceleration type: vaapi, cuda, qsv, videotoolbox, d3d11va, dxva2
+  string type = 1;
+
+  // Device path or name: /dev/dri/renderD128, GPU 0, etc.
+  string device = 2;
+
+  // Whether this accelerator is available and tested
+  bool available = 3;
+
+  // Hardware encoders available through this accelerator
+  repeated string encoders = 4;
+
+  // Hardware decoders available through this accelerator
+  repeated string decoders = 5;
+}
+
+// GPUInfo describes a GPU and its session tracking
+message GPUInfo {
+  // GPU index (0-based)
+  int32 index = 1;
+
+  // GPU name (e.g., "NVIDIA GeForce RTX 3080")
+  string name = 2;
+
+  // GPU class for session limit detection
+  GPUClass gpu_class = 3;
+
+  // Driver version
+  string driver_version = 4;
+
+  // Session limits (critical for load balancing)
+  int32 max_encode_sessions = 5;
+  int32 max_decode_sessions = 6;
+  int32 active_encode_sessions = 7;
+  int32 active_decode_sessions = 8;
+
+  // Current utilization metrics
+  double utilization_percent = 9;    // 0-100
+  uint64 memory_total_bytes = 10;
+  uint64 memory_used_bytes = 11;
+  double encoder_utilization = 12;   // NVENC utilization %
+  double decoder_utilization = 13;   // NVDEC utilization %
+  int32 temperature_celsius = 14;
+  int32 power_watts = 15;
+}
+
+// GPUClass categorizes GPU types for session limit detection
+enum GPUClass {
+  GPU_CLASS_UNKNOWN = 0;
+  GPU_CLASS_CONSUMER = 1;       // GeForce, Radeon - limited encode sessions
+  GPU_CLASS_PROFESSIONAL = 2;   // Quadro, Pro - high/unlimited limits
+  GPU_CLASS_DATACENTER = 3;     // Tesla, A100 - no artificial limits
+  GPU_CLASS_INTEGRATED = 4;     // Intel iGPU, AMD APU - shared memory
+}
+
+message PerformanceMetrics {
+  double h264_1080p_fps = 1;   // Benchmark: H.264 1080p encode speed
+  double h265_1080p_fps = 2;   // Benchmark: H.265 1080p encode speed
+  double memory_gb = 3;        // Available memory
+  int32 cpu_cores = 4;         // CPU core count
+}
+
+// =============================================================================
+// System Statistics Messages
+// =============================================================================
+
+message SystemStats {
+  // Host identification
+  string hostname = 1;
+  string os = 2;                // linux, darwin, windows
+  string arch = 3;              // amd64, arm64
+  int64 uptime_seconds = 4;
+
+  // CPU metrics
+  int32 cpu_cores = 5;
+  double cpu_percent = 6;       // Overall CPU usage (0-100)
+  repeated double cpu_per_core = 7;
+  double load_avg_1m = 8;
+  double load_avg_5m = 9;
+  double load_avg_15m = 10;
+
+  // Memory metrics
+  uint64 memory_total_bytes = 11;
+  uint64 memory_used_bytes = 12;
+  uint64 memory_available_bytes = 13;
+  double memory_percent = 14;
+  uint64 swap_total_bytes = 15;
+  uint64 swap_used_bytes = 16;
+
+  // Disk metrics (work directory)
+  uint64 disk_total_bytes = 17;
+  uint64 disk_used_bytes = 18;
+  uint64 disk_available_bytes = 19;
+  double disk_percent = 20;
+
+  // Network metrics
+  uint64 network_bytes_sent = 21;
+  uint64 network_bytes_recv = 22;
+  double network_send_rate_bps = 23;
+  double network_recv_rate_bps = 24;
+
+  // GPU metrics (per GPU)
+  repeated GPUStats gpus = 25;
+
+  // Linux PSI pressure indicators
+  PressureStats cpu_pressure = 26;
+  PressureStats memory_pressure = 27;
+  PressureStats io_pressure = 28;
+}
+
+message GPUStats {
+  int32 index = 1;
+  string name = 2;
+  string driver_version = 3;
+  double utilization_percent = 4;
+  double memory_percent = 5;
+  uint64 memory_total_bytes = 6;
+  uint64 memory_used_bytes = 7;
+  int32 temperature_celsius = 8;
+  int32 power_watts = 9;
+  double encoder_utilization = 10;
+  double decoder_utilization = 11;
+
+  // Session tracking (updated in real-time)
+  int32 max_encode_sessions = 12;
+  int32 active_encode_sessions = 13;
+  int32 max_decode_sessions = 14;
+  int32 active_decode_sessions = 15;
+  GPUClass gpu_class = 16;
+}
+
+message PressureStats {
+  double avg10 = 1;    // 10-second average
+  double avg60 = 2;    // 60-second average
+  double avg300 = 3;   // 5-minute average
+  uint64 total_us = 4; // Total stall time in microseconds
+}
+
+// =============================================================================
+// Transcoding Messages
+// =============================================================================
+
+// TranscodeMessage is the bidirectional streaming message for transcoding.
+// Flow:
+//   1. Client sends TranscodeStart (config)
+//   2. Daemon sends TranscodeAck (acknowledged)
+//   3. Client sends ESSampleBatch (source samples, is_source=true)
+//   4. Daemon sends ESSampleBatch (transcoded samples, is_source=false)
+//   5. Daemon sends TranscodeStats periodically
+//   6. Client sends TranscodeStop when done
+message TranscodeMessage {
+  oneof payload {
+    TranscodeStart start = 1;      // Initial config (client -> daemon)
+    TranscodeAck ack = 2;          // Acknowledge start (daemon -> client)
+    ESSampleBatch samples = 3;     // ES samples (bidirectional)
+    TranscodeStats stats = 4;      // Periodic stats (daemon -> client)
+    TranscodeError error = 5;      // Error notification (daemon -> client)
+    TranscodeStop stop = 6;        // Stop signal (client -> daemon)
+  }
+}
+
+message TranscodeStart {
+  // Job identification
+  string job_id = 1;
+  string session_id = 2;
+  string channel_id = 3;
+  string channel_name = 4;
+
+  // Source codec information
+  string source_video_codec = 5;   // h264, hevc, vp9, av1
+  string source_audio_codec = 6;   // aac, ac3, eac3, mp3
+  bytes video_init_data = 7;       // SPS/PPS for H.264, VPS/SPS/PPS for HEVC
+  bytes audio_init_data = 8;       // AudioSpecificConfig
+
+  // Target codec configuration (from EncodingProfile)
+  string target_video_codec = 9;
+  string target_audio_codec = 10;
+  string video_encoder = 11;       // libx264, h264_nvenc, hevc_vaapi
+  string audio_encoder = 12;       // aac, libopus
+
+  // Encoding parameters
+  int32 video_bitrate_kbps = 13;
+  int32 audio_bitrate_kbps = 14;
+  string video_preset = 15;        // ultrafast, fast, medium, slow
+  int32 video_crf = 16;            // Quality-based encoding (0-51)
+  string video_profile = 17;       // baseline, main, high
+  string video_level = 18;         // 3.0, 4.0, 4.1, etc.
+
+  // Hardware acceleration preference
+  string preferred_hw_accel = 19;  // vaapi, cuda, qsv (empty = auto)
+  string hw_device = 20;           // /dev/dri/renderD128
+
+  // Resolution scaling (optional)
+  int32 scale_width = 21;          // 0 = no scaling
+  int32 scale_height = 22;
+
+  // Additional FFmpeg options (advanced)
+  map<string, string> extra_options = 23;
+}
+
+message TranscodeAck {
+  bool success = 1;
+  string error = 2;
+
+  // Actual configuration used (may differ from requested)
+  string actual_video_encoder = 3;
+  string actual_audio_encoder = 4;
+  string actual_hw_accel = 5;
+}
+
+// ESSampleBatch groups elementary stream samples for efficient transport
+message ESSampleBatch {
+  repeated ESSample video_samples = 1;
+  repeated ESSample audio_samples = 2;
+
+  // Direction indicator
+  bool is_source = 3;  // true = source samples from coordinator
+                       // false = transcoded samples from daemon
+
+  // Batch sequence for ordering
+  uint64 batch_sequence = 4;
+}
+
+// ESSample represents a single elementary stream sample
+message ESSample {
+  int64 pts = 1;           // Presentation timestamp (90kHz timescale)
+  int64 dts = 2;           // Decode timestamp (90kHz timescale)
+  bytes data = 3;          // NAL unit (video) or audio frame
+  bool is_keyframe = 4;    // True for IDR frames / sync points
+  uint64 sequence = 5;     // Sample sequence number for ordering
+}
+
+message TranscodeStats {
+  uint64 samples_in = 1;       // Total source samples received
+  uint64 samples_out = 2;      // Total transcoded samples produced
+  uint64 bytes_in = 3;         // Total source bytes
+  uint64 bytes_out = 4;        // Total transcoded bytes
+  double encoding_speed = 5;   // Speed relative to realtime (1.0 = realtime)
+  double cpu_percent = 6;      // FFmpeg process CPU usage
+  double memory_mb = 7;        // FFmpeg process memory
+  int32 ffmpeg_pid = 8;        // FFmpeg process ID
+  google.protobuf.Duration running_time = 9;
+}
+
+message TranscodeError {
+  enum ErrorCode {
+    ERROR_UNSPECIFIED = 0;
+    FFMPEG_START_FAILED = 1;
+    FFMPEG_CRASHED = 2;
+    CODEC_UNSUPPORTED = 3;
+    HW_ACCEL_FAILED = 4;
+    SESSION_LIMIT_REACHED = 5;
+    OUT_OF_MEMORY = 6;
+    TIMEOUT = 7;
+  }
+  ErrorCode code = 1;
+  string message = 2;
+  string ffmpeg_stderr = 3;  // Last N lines of FFmpeg stderr
+  bool recoverable = 4;      // Can retry with fallback?
+}
+
+message TranscodeStop {
+  string reason = 1;  // "session_ended", "client_disconnected", "cancelled"
+}
+
+// =============================================================================
+// Stats Request/Response Messages
+// =============================================================================
+
+message GetStatsRequest {
+  string daemon_id = 1;
+  bool include_job_details = 2;
+}
+
+message GetStatsResponse {
+  Capabilities capabilities = 1;
+  SystemStats system_stats = 2;
+  repeated JobStatus active_jobs = 3;
+
+  // Aggregate stats
+  uint64 total_jobs_completed = 4;
+  uint64 total_jobs_failed = 5;
+  uint64 total_bytes_processed = 6;
+  google.protobuf.Duration total_encoding_time = 7;
+}

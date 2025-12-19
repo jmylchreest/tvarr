@@ -1,0 +1,136 @@
+{{- if .Values.ffmpegd.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tvarr.fullname" . }}-ffmpegd
+  labels:
+    {{- include "tvarr.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ffmpegd
+spec:
+  replicas: {{ .Values.ffmpegd.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "tvarr.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ffmpegd
+  template:
+    metadata:
+      {{- with .Values.ffmpegd.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "tvarr.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ffmpegd
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "tvarr.serviceAccountName" . }}
+      {{- if and .Values.ffmpegd.gpu.enabled (eq .Values.ffmpegd.gpu.type "nvidia") }}
+      runtimeClassName: {{ .Values.ffmpegd.gpu.nvidia.runtimeClassName }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.ffmpegd.podSecurityContext | nindent 8 }}
+      containers:
+        - name: ffmpegd
+          securityContext:
+            {{- toYaml .Values.ffmpegd.securityContext | nindent 12 }}
+          image: "{{ .Values.ffmpegd.image.repository }}:{{ .Values.ffmpegd.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.ffmpegd.image.pullPolicy }}
+          env:
+            # Required: Coordinator URL
+            - name: TVARR_COORDINATOR_URL
+              value: "{{ include "tvarr.fullname" . }}:{{ .Values.service.grpcPort | default 9090 }}"
+            # User/Group for permissions
+            - name: PUID
+              value: {{ .Values.env.PUID | default "1000" | quote }}
+            - name: PGID
+              value: {{ .Values.env.PGID | default "1000" | quote }}
+            - name: TZ
+              value: {{ .Values.env.TZ | default "UTC" | quote }}
+            # Logging level
+            - name: TVARR_LOGGING_LEVEL
+              value: {{ .Values.env.TVARR_LOGGING_LEVEL | default "info" | quote }}
+            # ffmpegd-specific env vars
+            {{- range $key, $value := .Values.ffmpegd.env }}
+            {{- if $value }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- end }}
+            # Use pod name as daemon name if not explicitly set
+            {{- if not .Values.ffmpegd.env.TVARR_DAEMON_NAME }}
+            - name: TVARR_DAEMON_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            {{- end }}
+            {{- with .Values.ffmpegd.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- if or .Values.ffmpegd.resources (and .Values.ffmpegd.gpu.enabled (or (eq .Values.ffmpegd.gpu.type "nvidia") (eq .Values.ffmpegd.gpu.type "intel"))) }}
+            {{- $resources := .Values.ffmpegd.resources | default dict }}
+            {{- $limits := $resources.limits | default dict }}
+            {{- if and .Values.ffmpegd.gpu.enabled (eq .Values.ffmpegd.gpu.type "nvidia") }}
+            {{- $limits = merge $limits (dict "nvidia.com/gpu" 1) }}
+            {{- else if and .Values.ffmpegd.gpu.enabled (eq .Values.ffmpegd.gpu.type "intel") }}
+            {{- $limits = merge $limits (dict "gpu.intel.com/i915" 1) }}
+            {{- end }}
+            {{- if $limits }}
+            limits:
+              {{- toYaml $limits | nindent 14 }}
+            {{- end }}
+            {{- if $resources.requests }}
+            requests:
+              {{- toYaml $resources.requests | nindent 14 }}
+            {{- end }}
+            {{- else }}
+            {}
+            {{- end }}
+          {{- if and .Values.ffmpegd.gpu.enabled (or (eq .Values.ffmpegd.gpu.type "intel") (eq .Values.ffmpegd.gpu.type "amd")) }}
+          volumeMounts:
+            - name: dri
+              mountPath: /dev/dri
+          {{- end }}
+          # ffmpegd doesn't expose HTTP, just check process is running
+          livenessProbe:
+            exec:
+              command:
+                - pgrep
+                - -f
+                - tvarr-ffmpegd
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - pgrep
+                - -f
+                - tvarr-ffmpegd
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+      {{- if and .Values.ffmpegd.gpu.enabled (or (eq .Values.ffmpegd.gpu.type "intel") (eq .Values.ffmpegd.gpu.type "amd")) }}
+      volumes:
+        - name: dri
+          hostPath:
+            path: {{ .Values.ffmpegd.gpu.intel.devicePath | default "/dev/dri" }}
+      {{- end }}
+      {{- with .Values.ffmpegd.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.ffmpegd.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.ffmpegd.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

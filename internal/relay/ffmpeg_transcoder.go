@@ -1069,3 +1069,6 @@ func CreateTranscoderFromVariant(
 
 	return NewFFmpegTranscoder(id, buffer, config), nil
 }
+
+// Verify FFmpegTranscoder implements Transcoder interface.
+var _ Transcoder = (*FFmpegTranscoder)(nil)

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
+	"github.com/jmylchreest/tvarr/internal/observability"
 )
 
 // MPEG-TS Processor errors.
@@ -233,7 +234,7 @@ initMuxer:
 		p.patPmtHeaderMu.Lock()
 		p.patPmtHeader = patPmt
 		p.patPmtHeaderMu.Unlock()
-		p.config.Logger.Debug("Captured PAT/PMT header for new clients",
+		p.config.Logger.Log(p.ctx, observability.LevelTrace, "Captured PAT/PMT header for late-joining clients",
 			slog.Int("size_bytes", len(patPmt)))
 	}
 
@@ -369,9 +370,49 @@ func (p *MPEGTSProcessor) ServeStream(w http.ResponseWriter, r *http.Request, cl
 	// Set headers for streaming
 	p.SetStreamHeaders(w)
 	w.Header().Set("Content-Type", "video/mp2t")
-	w.Header().Set("Transfer-Encoding", "chunked")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Header().Set("Connection", "keep-alive")
+
+	// Wait for PAT/PMT to be available
+	var patPmtHeader []byte
+	waitStart := time.Now()
+	for time.Since(waitStart) < 5*time.Second {
+		p.patPmtHeaderMu.RLock()
+		patPmtHeader = p.patPmtHeader
+		p.patPmtHeaderMu.RUnlock()
+		if len(patPmtHeader) > 0 {
+			break
+		}
+		select {
+		case <-r.Context().Done():
+			return r.Context().Err()
+		case <-p.ctx.Done():
+			return p.ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+			// Continue waiting
+		}
+	}
+
+	if len(patPmtHeader) == 0 {
+		p.config.Logger.Warn("PAT/PMT not available for client, demux probe may fail",
+			slog.String("client_id", clientID))
+	}
+
+	// Send PAT/PMT header for late-joining clients
+	if len(patPmtHeader) > 0 {
+		if _, err := w.Write(patPmtHeader); err != nil {
+			p.config.Logger.Debug("Failed to send initial PAT/PMT to client",
+				slog.String("client_id", clientID),
+				slog.String("error", err.Error()))
+			return err
+		}
+		p.config.Logger.Log(p.ctx, observability.LevelTrace, "Sent initial PAT/PMT to client",
+			slog.String("client_id", clientID),
+			slog.Int("bytes", len(patPmtHeader)))
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+	}
 
 	// Get the client
 	p.streamClientsMu.RLock()
@@ -603,7 +644,7 @@ func (p *MPEGTSProcessor) broadcastToClients(data []byte, hasKeyframe bool) {
 				// Keyframe found - start sending data to this client
 				client.waitForKeyframe = false
 				needsPatPmt = true // New client needs PAT/PMT tables first
-				p.config.Logger.Debug("Client starting at keyframe",
+				p.config.Logger.Log(p.ctx, observability.LevelTrace, "Client starting at keyframe",
 					slog.String("client_id", client.id))
 			} else {
 				// No keyframe yet - skip this client
@@ -620,29 +661,32 @@ func (p *MPEGTSProcessor) broadcastToClients(data []byte, hasKeyframe bool) {
 			continue
 		}
 
-		// For new clients, send PAT/PMT header first so they can demux the stream
-		// MPEG-TS demuxers require these tables to understand the stream structure
-		if needsPatPmt && len(patPmtHeader) > 0 {
-			if _, err := writer.Write(patPmtHeader); err != nil {
-				p.config.Logger.Debug("Failed to send PAT/PMT to client",
-					slog.String("client_id", clientID),
-					slog.String("error", err.Error()))
-				p.UnregisterClient(clientID)
-				continue
-			}
-			if flusher != nil {
-				flusher.Flush()
-			}
-			p.config.Logger.Debug("Sent PAT/PMT header to new client",
+		// The muxer automatically writes PAT/PMT when outputting keyframes
+		// (RandomAccessIndicator=true triggers WriteTables internally).
+		// We only need to prepend our captured PAT/PMT if the data doesn't
+		// already start with PAT (which would cause continuity counter errors).
+		dataToWrite := data
+
+		// Check if data already starts with PAT (PID 0x0000)
+		// PAT header: sync(0x47) + flags/PID where PID 0 = 0x40 0x00 or 0x00 0x00
+		dataAlreadyHasPAT := len(data) >= 3 && data[0] == 0x47 && (data[1]&0x1F) == 0x00 && data[2] == 0x00
+
+		if needsPatPmt && len(patPmtHeader) > 0 && !dataAlreadyHasPAT {
+			// Data doesn't have PAT - prepend our captured PAT/PMT
+			combined := make([]byte, len(patPmtHeader)+len(data))
+			copy(combined, patPmtHeader)
+			copy(combined[len(patPmtHeader):], data)
+			dataToWrite = combined
+			p.config.Logger.Log(p.ctx, observability.LevelTrace, "Prepending PAT/PMT to new client data",
 				slog.String("client_id", clientID),
-				slog.Int("bytes", len(patPmtHeader)))
+				slog.Int("total_bytes", len(combined)))
 		}
 
 		// Perform HTTP I/O WITHOUT holding any locks
 		// Use a channel-based timeout to prevent blocking the processing loop
 		writeDone := make(chan error, 1)
 		go func() {
-			_, err := writer.Write(data)
+			_, err := writer.Write(dataToWrite)
 			writeDone <- err
 		}()
 
@@ -664,7 +708,7 @@ func (p *MPEGTSProcessor) broadcastToClients(data []byte, hasKeyframe bool) {
 				slog.String("processor_id", p.id),
 				slog.Uint64("bytes_written", client.bytesWritten.Load()),
 				slog.Duration("connected_duration", time.Since(client.startedAt)),
-				slog.Int("pending_write_bytes", len(data)))
+				slog.Int("pending_write_bytes", len(dataToWrite)))
 			p.UnregisterClient(clientID)
 			continue
 		}
@@ -673,10 +717,10 @@ func (p *MPEGTSProcessor) broadcastToClients(data []byte, hasKeyframe bool) {
 		}
 
 		// Update stats atomically (no lock needed)
-		client.bytesWritten.Add(uint64(len(data)))
+		client.bytesWritten.Add(uint64(len(dataToWrite)))
 
 		// Sync bytes to base processor client for stats reporting
-		p.UpdateClientBytes(clientID, uint64(len(data)))
+		p.UpdateClientBytes(clientID, uint64(len(dataToWrite)))
 	}
 
 	// Update stats

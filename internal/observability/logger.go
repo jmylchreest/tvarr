@@ -29,6 +29,10 @@ const (
 	CorrelationIDKey contextKey = "correlation_id"
 )
 
+// LevelTrace is a custom log level below Debug for very verbose tracing.
+// Use this for high-frequency events like heartbeats that would be too noisy at Debug level.
+const LevelTrace = slog.LevelDebug - 4
+
 // GlobalLogLevel is the shared log level that can be changed at runtime.
 // Use SetLogLevel and GetLogLevel to modify/read this value.
 var GlobalLogLevel = &slog.LevelVar{}
@@ -123,7 +127,7 @@ func NewLoggerWithWriter(cfg config.LoggingConfig, w io.Writer) *slog.Logger {
 func parseLevel(level string) slog.Level {
 	switch level {
 	case "trace":
-		return slog.LevelDebug - 4 // slog doesn't have trace, use lower than debug
+		return LevelTrace
 	case "debug":
 		return slog.LevelDebug
 	case "info":
@@ -267,6 +271,12 @@ func (l *LogAttrs) Info(ctx context.Context, msg string, attrs ...slog.Attr) {
 // Debug logs a debug message with the given attributes.
 func (l *LogAttrs) Debug(ctx context.Context, msg string, attrs ...slog.Attr) {
 	l.logger.LogAttrs(ctx, slog.LevelDebug, msg, attrs...)
+}
+
+// Trace logs a trace message with the given attributes.
+// Use for very verbose logging like heartbeats that would be too noisy at Debug level.
+func (l *LogAttrs) Trace(ctx context.Context, msg string, attrs ...slog.Attr) {
+	l.logger.LogAttrs(ctx, LevelTrace, msg, attrs...)
 }
 
 // Warn logs a warning message with the given attributes.

@@ -48,6 +48,12 @@ import {
   BackupScheduleInfo,
   BackupScheduleUpdateRequest,
   RestoreResult,
+  Daemon,
+  ListDaemonsResponse,
+  ClusterStats,
+  DrainDaemonResponse,
+  ActivateDaemonResponse,
+  DaemonState,
 } from '@/types/api';
 
 class ApiError extends Error {
@@ -1442,6 +1448,44 @@ class ApiClient {
       {
         method: 'PATCH',
         body: JSON.stringify({ protected: protected_ }),
+      }
+    );
+  }
+
+  // =============================================================================
+  // TRANSCODERS API (ffmpegd daemons)
+  // =============================================================================
+
+  async listTranscoders(state?: DaemonState, encoder?: string): Promise<ListDaemonsResponse> {
+    const params = new URLSearchParams();
+    if (state) params.append('state', state);
+    if (encoder) params.append('encoder', encoder);
+    const query = params.toString();
+    return this.request<ListDaemonsResponse>(`/api/v1/transcoders${query ? `?${query}` : ''}`);
+  }
+
+  async getTranscoder(id: string): Promise<Daemon> {
+    return this.request<Daemon>(`/api/v1/transcoders/${encodeURIComponent(id)}`);
+  }
+
+  async getClusterStats(): Promise<ClusterStats> {
+    return this.request<ClusterStats>('/api/v1/transcoders/stats');
+  }
+
+  async drainTranscoder(id: string): Promise<DrainDaemonResponse> {
+    return this.request<DrainDaemonResponse>(
+      `/api/v1/transcoders/${encodeURIComponent(id)}/drain`,
+      {
+        method: 'POST',
+      }
+    );
+  }
+
+  async activateTranscoder(id: string): Promise<ActivateDaemonResponse> {
+    return this.request<ActivateDaemonResponse>(
+      `/api/v1/transcoders/${encodeURIComponent(id)}/activate`,
+      {
+        method: 'POST',
       }
     );
   }

@@ -25,6 +25,7 @@ import (
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/observability"
 	"github.com/jmylchreest/tvarr/internal/pipeline"
+	"github.com/jmylchreest/tvarr/internal/relay"
 	"github.com/jmylchreest/tvarr/internal/repository"
 	"github.com/jmylchreest/tvarr/internal/scheduler"
 	"github.com/jmylchreest/tvarr/internal/service"
@@ -69,6 +70,11 @@ func init() {
 	serveCmd.Flags().String("logo-scan-schedule", scheduler.DefaultLogoScanSchedule, "Cron schedule for logo scan job (6-field: sec min hour dom month dow). 7-field with year also accepted for legacy. Empty to disable.")
 	serveCmd.Flags().Duration("job-history-retention", 14*24*time.Hour, "Retention period for job history records (older records are deleted on startup)")
 
+	// gRPC server flags (for ffmpegd daemon registration)
+	serveCmd.Flags().Bool("grpc-enabled", false, "Enable gRPC server for ffmpegd daemon registration")
+	serveCmd.Flags().Int("grpc-port", 9090, "Port for gRPC server")
+	serveCmd.Flags().String("grpc-auth-token", "", "Authentication token for ffmpegd daemons (optional)")
+
 	// Bind flags to viper
 	mustBindPFlag("server.host", serveCmd.Flags().Lookup("host"))
 	mustBindPFlag("server.port", serveCmd.Flags().Lookup("port"))
@@ -80,6 +86,9 @@ func init() {
 	mustBindPFlag("scheduler.workers", serveCmd.Flags().Lookup("scheduler-workers"))
 	mustBindPFlag("scheduler.logo_scan_schedule", serveCmd.Flags().Lookup("logo-scan-schedule"))
 	mustBindPFlag("scheduler.job_history_retention", serveCmd.Flags().Lookup("job-history-retention"))
+	mustBindPFlag("grpc.enabled", serveCmd.Flags().Lookup("grpc-enabled"))
+	mustBindPFlag("grpc.port", serveCmd.Flags().Lookup("grpc-port"))
+	mustBindPFlag("grpc.auth_token", serveCmd.Flags().Lookup("grpc-auth-token"))
 }
 
 func runServe(_ *cobra.Command, _ []string) error {
@@ -648,6 +657,36 @@ func runServe(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("starting runner: %w", err)
 	}
 	defer runner.Stop()
+
+	// Start gRPC server for ffmpegd daemon registration (if enabled)
+	var grpcServer *relay.GRPCServer
+	var daemonRegistry *relay.DaemonRegistry
+	if viper.GetBool("grpc.enabled") {
+		grpcPort := viper.GetInt("grpc.port")
+		grpcConfig := &relay.GRPCServerConfig{
+			ListenAddr:        fmt.Sprintf(":%d", grpcPort),
+			AuthToken:         viper.GetString("grpc.auth_token"),
+			HeartbeatInterval: 5 * time.Second,
+		}
+
+		// Create daemon registry and gRPC server
+		daemonRegistry = relay.NewDaemonRegistry(logger)
+		grpcServer = relay.NewGRPCServer(logger, grpcConfig, daemonRegistry)
+
+		if err := grpcServer.Start(ctx); err != nil {
+			return fmt.Errorf("starting gRPC server: %w", err)
+		}
+		defer grpcServer.Stop(ctx)
+
+		logger.Info("gRPC server started for ffmpegd daemon registration",
+			slog.Int("port", grpcPort),
+		)
+
+		// Register ffmpegd REST API handler for transcoder dashboard
+		ffmpegdService := service.NewFFmpegDService(daemonRegistry, logger)
+		ffmpegdHandler := handlers.NewFFmpegDHandler(ffmpegdService)
+		ffmpegdHandler.Register(server.API())
+	}
 
 	// Start server
 	logger.Info("starting tvarr server",

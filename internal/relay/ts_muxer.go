@@ -413,6 +413,10 @@ func (m *TSMuxer) Flush() error {
 // InitializeAndGetHeader forces initialization and returns the PAT/PMT header bytes.
 // This is useful for sending PAT/PMT to clients that connect after the muxer is started.
 // MPEG-TS demuxers require PAT/PMT tables to understand the stream structure.
+//
+// IMPORTANT: VLC's demuxer requires at least 3 consecutive TS packets to validate
+// the sync pattern (0x47 every 188 bytes). PAT+PMT is only 2 packets (376 bytes),
+// so we add null packets (PID 0x1FFF) to ensure clients can probe successfully.
 func (m *TSMuxer) InitializeAndGetHeader() ([]byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -423,24 +427,54 @@ func (m *TSMuxer) InitializeAndGetHeader() ([]byte, error) {
 		}
 	}
 
-	// The mediacommon writer writes PAT/PMT during Initialize().
-	// We need to create a fresh muxer writing to a separate buffer to capture just the PAT/PMT.
-	// This is because Initialize() only writes PAT/PMT once to whatever writer is attached.
+	// Create a temporary buffer to capture PAT/PMT output
+	var buf bytes.Buffer
 
-	// Create a buffer to capture PAT/PMT
-	var patPmtBuf bytes.Buffer
-
-	// Create a temporary muxer with same tracks to generate PAT/PMT
+	// Create a temporary muxer with the same track configuration to get PAT/PMT
 	tempMuxer := &mpegts.Writer{
-		W:      &patPmtBuf,
+		W:      &buf,
 		Tracks: m.tracks,
 	}
 
 	if err := tempMuxer.Initialize(); err != nil {
-		return nil, fmt.Errorf("generating PAT/PMT: %w", err)
+		return nil, fmt.Errorf("initializing temp muxer for PAT/PMT: %w", err)
 	}
 
-	return patPmtBuf.Bytes(), nil
+	// Explicitly write PAT/PMT tables using the mediacommon WriteTables() method
+	if _, err := tempMuxer.WriteTables(); err != nil {
+		return nil, fmt.Errorf("writing PAT/PMT tables: %w", err)
+	}
+
+	// Add null packets (PID 0x1FFF) to ensure demuxers can validate sync byte pattern.
+	// Most demuxers need 3+ consecutive sync bytes (0x47) at 188-byte intervals.
+	// PAT+PMT is only 2 packets (376 bytes), so we add 2 null packets for 4 total.
+	patPmt := buf.Bytes()
+	minPackets := 4 // PAT + PMT + 2 null = 752 bytes minimum
+	currentPackets := len(patPmt) / TSPacketSize
+	packetsNeeded := minPackets - currentPackets
+
+	if packetsNeeded > 0 {
+		// Create null packets for padding
+		// Null packet: sync(0x47) + PID 0x1FFF + no adaptation + CC=0 + stuffing(0xFF)
+		nullPacket := make([]byte, TSPacketSize)
+		nullPacket[0] = TSSyncByte      // 0x47
+		nullPacket[1] = 0x1F            // PID high bits (0x1FFF = null)
+		nullPacket[2] = 0xFF            // PID low bits
+		nullPacket[3] = 0x10            // No adaptation field, payload only, CC=0
+		for i := 4; i < TSPacketSize; i++ {
+			nullPacket[i] = 0xFF // Stuffing bytes
+		}
+
+		// Append null packets
+		result := make([]byte, len(patPmt)+packetsNeeded*TSPacketSize)
+		copy(result, patPmt)
+		for i := 0; i < packetsNeeded; i++ {
+			copy(result[len(patPmt)+i*TSPacketSize:], nullPacket)
+		}
+		return result, nil
+	}
+
+	return patPmt, nil
 }
 
 // Reset resets the muxer state for reuse.

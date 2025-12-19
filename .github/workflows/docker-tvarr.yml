@@ -8,8 +8,12 @@ on:
       - 'v[0-9]+.[0-9]+.[0-9]+'  # Only release tags (v1.2.3), not dev tags (v1.2.3-dev.N)
     paths-ignore:
       - 'deployment/docker/Dockerfile.ffmpeg'
+      - 'deployment/docker/Dockerfile.ffmpegd'
+      - 'deployment/docker/Dockerfile.coordinator'
       - 'deployment/docker/pkgbuild/**'
       - '.github/workflows/docker-ffmpeg.yml'
+      - '.github/workflows/docker-ffmpegd.yml'
+      - '.github/workflows/docker-coordinator.yml'
       - '.github/workflows/docker-tvarr.yml'
       - '.github/workflows/dependency-updates.yml'
       - '**.md'
@@ -18,8 +22,12 @@ on:
   pull_request:
     paths-ignore:
       - 'deployment/docker/Dockerfile.ffmpeg'
+      - 'deployment/docker/Dockerfile.ffmpegd'
+      - 'deployment/docker/Dockerfile.coordinator'
       - 'deployment/docker/pkgbuild/**'
       - '.github/workflows/docker-ffmpeg.yml'
+      - '.github/workflows/docker-ffmpegd.yml'
+      - '.github/workflows/docker-coordinator.yml'
       - '.github/workflows/docker-tvarr.yml'
       - '.github/workflows/dependency-updates.yml'
       - '**.md'
@@ -39,7 +47,6 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  FFMPEG_IMAGE: ghcr.io/${{ github.repository_owner }}/tvarr-ffmpeg
 
 jobs:
   build:
@@ -87,7 +94,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build tvarr image
-        run: task container:build:tvarr TAG=${{ matrix.arch }} FFMPEG_IMAGE=${{ env.FFMPEG_IMAGE }}:${{ matrix.arch }}
+        run: task container:build:tvarr TAG=${{ matrix.arch }}
         env:
           CONTAINER_RUNTIME: docker
 

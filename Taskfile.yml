@@ -116,6 +116,25 @@ tasks:
     generates:
       - "{{.DEBUG_DIR}}/{{.BINARY_NAME}}"
 
+  build:ffmpegd:
+    desc: Build the tvarr-ffmpegd daemon binary (debug, uncompressed)
+    preconditions:
+      - sh: command -v go
+        msg: |
+          Go not found. Install Go 1.23+ via:
+            https://go.dev/dl/
+            brew install go (macOS)
+            sudo apt install golang-go (Debian/Ubuntu)
+    cmds:
+      - mkdir -p {{.DEBUG_DIR}}
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.DEBUG_DIR}}/tvarr-ffmpegd ./cmd/tvarr-ffmpegd
+    sources:
+      - ./**/*.go
+      - go.mod
+      - go.sum
+    generates:
+      - "{{.DEBUG_DIR}}/tvarr-ffmpegd"
+
   build:linux:amd64:
     desc: Cross-compile for Linux amd64
     env:
@@ -191,9 +210,9 @@ tasks:
   # ============================================
 
   container:build:
-    desc: Build all container images (FFmpeg base + tvarr app)
+    desc: Build all container images (FFmpeg base + tvarr + ffmpegd + coordinator)
     summary: |
-      Builds both the FFmpeg base image and the tvarr application image.
+      Builds all container images: FFmpeg base, tvarr (full), ffmpegd daemon, and coordinator (slim).
       Auto-detects container runtime ({{.CONTAINER_RUNTIME}}) and platform ({{.LOCAL_ARCH}}).
 
       Options:
@@ -201,16 +220,55 @@ tasks:
         - TAG: Image tag (default: latest)
 
       For individual builds, use:
-        - task container:build:ffmpeg  (FFmpeg base image)
-        - task container:build:tvarr   (tvarr app image)
+        - task container:build:ffmpeg      (FFmpeg base image)
+        - task container:build:tvarr       (full tvarr with local FFmpeg)
+        - task container:build:ffmpegd     (distributed transcoding daemon)
+        - task container:build:coordinator (slim coordinator without FFmpeg)
     cmds:
       - task: container:build:ffmpeg
       - task: container:build:tvarr
+      - task: container:build:ffmpegd
+      - task: container:build:coordinator
 
   container:build:tvarr:
-    desc: Build tvarr application container image
+    desc: Build tvarr application container image (with FFmpeg)
     summary: |
-      Builds the tvarr container image using the local Dockerfile.
+      Builds the full tvarr container image based on tvarr-ffmpeg.
+      Includes FFmpeg with hardware acceleration for local transcoding.
+      Auto-detects container runtime ({{.CONTAINER_RUNTIME}}) and platform ({{.LOCAL_ARCH}}).
+
+      Options:
+        - PLATFORM: Target platform (default: auto-detected {{.LOCAL_ARCH}})
+        - TAG: Image tag (default: latest)
+        - FFMPEG_IMAGE: FFmpeg base image (default: ghcr.io/jmylchreest/tvarr-ffmpeg:latest)
+
+      Local builds also create a version-tagged image ({{.VERSION}}).
+
+      For a slim coordinator-only image (no local FFmpeg), use:
+        task container:build:coordinator
+    vars:
+      TAG: '{{.TAG | default "latest"}}'
+      PLATFORM: '{{.PLATFORM | default .LOCAL_ARCH}}'
+      FFMPEG_IMAGE: '{{.FFMPEG_IMAGE | default "ghcr.io/jmylchreest/tvarr-ffmpeg:latest"}}'
+    cmds:
+      - |
+        {{.CONTAINER_RUNTIME}} build \
+          -f deployment/docker/Dockerfile \
+          --platform {{.PLATFORM}} \
+          --build-arg FFMPEG_IMAGE={{.FFMPEG_IMAGE}} \
+          --build-arg VERSION={{.VERSION}} \
+          --build-arg COMMIT={{.COMMIT}} \
+          --build-arg BUILD_DATE={{.BUILD_DATE}} \
+          --build-arg BRANCH={{.BRANCH}} \
+          --build-arg TREE_STATE={{.TREE_STATE}} \
+          -t ghcr.io/jmylchreest/tvarr:{{.TAG}} \
+          -t ghcr.io/jmylchreest/tvarr:{{.VERSION_TAG}} \
+          .
+
+  container:build:ffmpegd:
+    desc: Build tvarr-ffmpegd daemon container image
+    summary: |
+      Builds the tvarr-ffmpegd distributed transcoding daemon container image.
       Requires the FFmpeg base image to exist (or will pull from GHCR).
       Auto-detects container runtime ({{.CONTAINER_RUNTIME}}) and platform ({{.LOCAL_ARCH}}).
 
@@ -229,7 +287,7 @@ tasks:
     cmds:
       - |
         {{.CONTAINER_RUNTIME}} build \
-          -f deployment/docker/Dockerfile \
+          -f deployment/docker/Dockerfile.ffmpegd \
           --platform {{.PLATFORM}} \
           --build-arg FFMPEG_IMAGE={{.FFMPEG_IMAGE}} \
           --build-arg VERSION={{.VERSION}} \
@@ -237,8 +295,41 @@ tasks:
           --build-arg BUILD_DATE={{.BUILD_DATE}} \
           --build-arg BRANCH={{.BRANCH}} \
           --build-arg TREE_STATE={{.TREE_STATE}} \
-          -t ghcr.io/jmylchreest/tvarr:{{.TAG}} \
-          -t ghcr.io/jmylchreest/tvarr:{{.VERSION_TAG}} \
+          -t ghcr.io/jmylchreest/tvarr-ffmpegd:{{.TAG}} \
+          -t ghcr.io/jmylchreest/tvarr-ffmpegd:{{.VERSION_TAG}} \
+          .
+
+  container:build:coordinator:
+    desc: Build tvarr-coordinator container image (slim, no FFmpeg)
+    summary: |
+      Builds the lightweight tvarr-coordinator container image without FFmpeg.
+      Use this for distributed-only deployments where all transcoding is done
+      by remote ffmpegd workers.
+      Auto-detects container runtime ({{.CONTAINER_RUNTIME}}) and platform ({{.LOCAL_ARCH}}).
+
+      Options:
+        - PLATFORM: Target platform (default: auto-detected {{.LOCAL_ARCH}})
+        - TAG: Image tag (default: latest)
+
+      Local builds also create a version-tagged image ({{.VERSION}}).
+
+      For full tvarr with local FFmpeg transcoding, use:
+        task container:build:tvarr
+    vars:
+      TAG: '{{.TAG | default "latest"}}'
+      PLATFORM: '{{.PLATFORM | default .LOCAL_ARCH}}'
+    cmds:
+      - |
+        {{.CONTAINER_RUNTIME}} build \
+          -f deployment/docker/Dockerfile.coordinator \
+          --platform {{.PLATFORM}} \
+          --build-arg VERSION={{.VERSION}} \
+          --build-arg COMMIT={{.COMMIT}} \
+          --build-arg BUILD_DATE={{.BUILD_DATE}} \
+          --build-arg BRANCH={{.BRANCH}} \
+          --build-arg TREE_STATE={{.TREE_STATE}} \
+          -t ghcr.io/jmylchreest/tvarr-coordinator:{{.TAG}} \
+          -t ghcr.io/jmylchreest/tvarr-coordinator:{{.VERSION_TAG}} \
           .
 
   container:build:ffmpeg:
@@ -740,31 +831,70 @@ tasks:
       - ./{{.DEBUG_DIR}}/{{.BINARY_NAME}} serve
 
   run:dev:
-    desc: Run Go backend with hot reload (API only, no frontend)
+    desc: Run Go backend + ffmpegd with hot reload
     summary: |
-      Runs the Go backend server with hot reload using air.
-      JSON logs are formatted with hl for readability.
+      Runs the Go backend server and ffmpegd daemon with hot reload using air.
+      Both processes are rebuilt and restarted when code changes.
+      JSON logs are formatted with hl, showing which process each line comes from.
 
       For full-stack development:
-        Terminal 1: task run:dev       (Go backend on :8080)
+        Terminal 1: task run:dev       (Go backend on :8080 + ffmpegd on :9090)
         Terminal 2: task frontend:dev  (Next.js on :3000)
 
       The frontend dev server proxies API requests to the backend.
       For production builds, use 'task frontend:embed' to embed the UI.
 
+      Options:
+        - LOG_LEVEL: Log level for both processes (default: debug, supports: trace, debug, info, warn, error)
+
+      Examples:
+        task run:dev                    # Default debug level
+        task run:dev LOG_LEVEL=trace    # Trace level (very verbose, includes heartbeats)
+
       Use 'task run:dev:json' for raw JSON log output.
     deps: [tools:hl, tools:air]
+    interactive: true
+    vars:
+      LOG_LEVEL: '{{.LOG_LEVEL | default "debug"}}'
     cmds:
-      - air 2>&1 | hl
+      - |
+        trap 'kill 0; rm -f tmp/air.tvarr.toml tmp/air.ffmpegd.toml' EXIT
+        mkdir -p tmp/tvarr tmp/ffmpegd
+        rm -f tvarr-dev-*.log
+
+        # Generate air configs with the specified log level
+        sed 's/--log-level", "debug"/--log-level", "{{.LOG_LEVEL}}"/' air.tvarr.toml > tmp/air.tvarr.toml
+        sed 's/--log-level", "debug"/--log-level", "{{.LOG_LEVEL}}"/' air.ffmpegd.toml > tmp/air.ffmpegd.toml
+
+        touch tvarr-dev-tvarr.log tvarr-dev-ffmpegd.log
+        stdbuf -oL air -c tmp/air.tvarr.toml >> tvarr-dev-tvarr.log 2>&1 &
+        stdbuf -oL air -c tmp/air.ffmpegd.toml >> tvarr-dev-ffmpegd.log 2>&1 &
+        hl -F --tail 0 --input-info full tvarr-dev-*.log
 
   run:dev:json:
-    desc: Run Go backend with hot reload (raw JSON logs)
+    desc: Run Go backend + ffmpegd with hot reload (raw JSON logs)
     summary: |
       Same as run:dev but outputs raw JSON logs without formatting.
       Useful for piping to other tools or debugging log parsing issues.
+
+      Options:
+        - LOG_LEVEL: Log level for both processes (default: debug, supports: trace, debug, info, warn, error)
     deps: [tools:air]
+    interactive: true
+    vars:
+      LOG_LEVEL: '{{.LOG_LEVEL | default "debug"}}'
     cmds:
-      - air
+      - |
+        trap 'kill 0; rm -f tmp/air.tvarr.toml tmp/air.ffmpegd.toml' EXIT
+        mkdir -p tmp/tvarr tmp/ffmpegd
+
+        # Generate air configs with the specified log level
+        sed 's/--log-level", "debug"/--log-level", "{{.LOG_LEVEL}}"/' air.tvarr.toml > tmp/air.tvarr.toml
+        sed 's/--log-level", "debug"/--log-level", "{{.LOG_LEVEL}}"/' air.ffmpegd.toml > tmp/air.ffmpegd.toml
+
+        air -c tmp/air.tvarr.toml &
+        air -c tmp/air.ffmpegd.toml &
+        wait
 
   run:prod:
     desc: Build with embedded frontend and run (production-like)
@@ -932,9 +1062,57 @@ tasks:
   # ============================================
 
   generate:
-    desc: Run go generate
+    desc: Run all code generation (go generate + protobuf)
     cmds:
+      - task: generate:proto
       - go generate ./...
+
+  generate:proto:
+    desc: Generate Go code from protobuf definitions
+    summary: |
+      Generates Go code from .proto files in pkg/ffmpegd/proto/.
+      Requires protoc and protoc-gen-go/protoc-gen-go-grpc installed.
+
+      Install protoc plugins:
+        go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+        go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+    preconditions:
+      - sh: command -v protoc
+        msg: |
+          protoc not found. Install via:
+            apt install protobuf-compiler (Debian/Ubuntu)
+            brew install protobuf (macOS)
+            pacman -S protobuf (Arch)
+      - sh: command -v protoc-gen-go
+        msg: |
+          protoc-gen-go not found. Install via:
+            go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+      - sh: command -v protoc-gen-go-grpc
+        msg: |
+          protoc-gen-go-grpc not found. Install via:
+            go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+    cmds:
+      - |
+        echo "Generating Go code from protobuf definitions..."
+        protoc \
+          --go_out=. \
+          --go-grpc_out=. \
+          --go_opt=paths=source_relative \
+          --go-grpc_opt=paths=source_relative \
+          pkg/ffmpegd/proto/ffmpegd.proto
+        echo "Generated: pkg/ffmpegd/proto/*.pb.go"
+
+  generate:proto:install:
+    desc: Install protobuf code generation tools
+    preconditions:
+      - sh: command -v go
+        msg: |
+          Go not found. Install Go 1.23+ via:
+            https://go.dev/dl/
+    cmds:
+      - go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+      - go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+      - echo "Protobuf Go plugins installed"
 
   # ============================================
   # Clean Tasks

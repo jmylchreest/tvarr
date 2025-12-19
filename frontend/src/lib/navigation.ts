@@ -16,6 +16,7 @@ import {
   Paintbrush,
   Users,
   Archive,
+  Cog,
   LucideIcon,
 } from 'lucide-react';
 
@@ -72,6 +73,11 @@ export const navigation: NavigationGroup[] = [
         url: '/proxies',
         icon: Play,
         operationType: 'proxy_regeneration',
+      },
+      {
+        title: 'Transcoders',
+        url: '/transcoders',
+        icon: Cog,
       },
     ],
   },

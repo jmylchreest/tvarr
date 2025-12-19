@@ -2,8 +2,8 @@ apiVersion: v2
 name: tvarr
 description: IPTV stream management with hardware-accelerated transcoding
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.2.0
+appVersion: "0.0.11"
 home: https://github.com/jmylchreest/tvarr
 sources:
   - https://github.com/jmylchreest/tvarr
@@ -15,8 +15,14 @@ keywords:
   - streaming
   - transcoding
   - ffmpeg
+  - ffmpegd
+  - distributed
   - m3u
   - epg
 annotations:
   artifacthub.io/license: MIT
   artifacthub.io/containsSecurityUpdates: "false"
+  artifacthub.io/changes: |
+    - Added ffmpegd distributed transcoding daemon support
+    - Added gRPC service for daemon coordination
+    - Added PodDisruptionBudget for ffmpegd stability

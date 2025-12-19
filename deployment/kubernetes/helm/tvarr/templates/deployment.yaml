@@ -40,6 +40,11 @@ spec:
             - name: http
               containerPort: {{ .Values.env.TVARR_SERVER_PORT | default 8080 }}
               protocol: TCP
+            {{- if .Values.ffmpegd.enabled }}
+            - name: grpc
+              containerPort: {{ .Values.env.TVARR_GRPC_PORT | default 9090 }}
+              protocol: TCP
+            {{- end }}
           env:
             {{- range $key, $value := .Values.env }}
             {{- if $value }}

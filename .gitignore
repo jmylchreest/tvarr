@@ -52,7 +52,8 @@ config.yml
 /data/
 /logs/
 /temp/
-/tmp/
+/tmp/*
+!/tmp/.gitkeep
 
 # Environment files
 .env
@@ -62,6 +63,7 @@ config.yml
 # Build artifacts
 *.log
 /tvarr
+/tvarr-ffmpegd
 /e2e-runner
 
 # Taskfile cache

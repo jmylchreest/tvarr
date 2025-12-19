@@ -4,6 +4,10 @@
 # Usage:
 #   kubectl apply -f manifests.yaml
 #
+# This manifest includes:
+#   - tvarr (coordinator/main application)
+#   - tvarr-ffmpegd (distributed transcoding daemon) - commented out by default
+#
 # Customize by editing values below or using kustomize overlays
 
 ---
@@ -37,7 +41,7 @@ spec:
   # storageClassName: "" # Uncomment and set if needed
 
 ---
-# ConfigMap
+# ConfigMap for tvarr
 # NOTE: TVARR_ env vars map to viper config using TVARR_<SECTION>_<KEY> format
 # Example: TVARR_SERVER_PORT maps to config server.port
 apiVersion: v1
@@ -54,6 +58,9 @@ data:
   # IMPORTANT: Set this to your external ingress URL for correct M3U playlist URLs
   # Example: https://tvarr.example.com
   # TVARR_SERVER_BASE_URL: ""
+  # gRPC server for ffmpegd connections
+  TVARR_GRPC_PORT: "9090"
+  TVARR_GRPC_ENABLED: "true"
   # Database configuration
   TVARR_DATABASE_DSN: "file:/data/tvarr.db"
   # Logging configuration
@@ -65,7 +72,7 @@ data:
   TVARR_FFMPEG_PROBE_PATH: "/usr/bin/ffprobe"
 
 ---
-# Deployment
+# tvarr Deployment (coordinator)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -74,12 +81,14 @@ metadata:
   labels:
     app.kubernetes.io/name: tvarr
     app.kubernetes.io/instance: tvarr
+    app.kubernetes.io/component: coordinator
 spec:
   replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: tvarr
       app.kubernetes.io/instance: tvarr
+      app.kubernetes.io/component: coordinator
   strategy:
     type: Recreate
   template:
@@ -87,6 +96,7 @@ spec:
       labels:
         app.kubernetes.io/name: tvarr
         app.kubernetes.io/instance: tvarr
+        app.kubernetes.io/component: coordinator
     spec:
       serviceAccountName: tvarr
       securityContext:
@@ -102,6 +112,9 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+              protocol: TCP
+            - name: grpc
+              containerPort: 9090
               protocol: TCP
           envFrom:
             - configMapRef:
@@ -145,7 +158,7 @@ spec:
         #     path: /dev/dri
 
 ---
-# Service
+# Service for tvarr
 apiVersion: v1
 kind: Service
 metadata:
@@ -161,9 +174,14 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
+    - port: 9090
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
   selector:
     app.kubernetes.io/name: tvarr
     app.kubernetes.io/instance: tvarr
+    app.kubernetes.io/component: coordinator
 
 ---
 # Ingress (optional - uncomment and customize)
@@ -195,3 +213,140 @@ spec:
 #                 name: tvarr
 #                 port:
 #                   name: http
+
+# =============================================================================
+# tvarr-ffmpegd - Distributed Transcoding Daemon
+# =============================================================================
+# Uncomment below to deploy ffmpegd alongside tvarr
+# For production, consider using the Helm chart for more configuration options
+
+# ---
+# # ConfigMap for ffmpegd
+# apiVersion: v1
+# kind: ConfigMap
+# metadata:
+#   name: tvarr-ffmpegd-config
+#   namespace: tvarr
+# data:
+#   PUID: "1000"
+#   PGID: "1000"
+#   TZ: "UTC"
+#   # Coordinator URL (use service DNS name)
+#   TVARR_COORDINATOR_URL: "tvarr:9090"
+#   # Maximum concurrent transcoding jobs
+#   TVARR_MAX_JOBS: "4"
+#   # Logging level
+#   TVARR_LOGGING_LEVEL: "info"
+#   # Authentication token (optional - leave empty if not using auth)
+#   # TVARR_AUTH_TOKEN: ""
+#
+# ---
+# # ffmpegd Deployment
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   name: tvarr-ffmpegd
+#   namespace: tvarr
+#   labels:
+#     app.kubernetes.io/name: tvarr
+#     app.kubernetes.io/instance: tvarr
+#     app.kubernetes.io/component: ffmpegd
+# spec:
+#   replicas: 1
+#   selector:
+#     matchLabels:
+#       app.kubernetes.io/name: tvarr
+#       app.kubernetes.io/instance: tvarr
+#       app.kubernetes.io/component: ffmpegd
+#   template:
+#     metadata:
+#       labels:
+#         app.kubernetes.io/name: tvarr
+#         app.kubernetes.io/instance: tvarr
+#         app.kubernetes.io/component: ffmpegd
+#     spec:
+#       serviceAccountName: tvarr
+#       # For NVIDIA GPU, uncomment:
+#       # runtimeClassName: nvidia
+#       securityContext:
+#         fsGroup: 1000
+#       containers:
+#         - name: ffmpegd
+#           image: ghcr.io/jmylchreest/tvarr-ffmpegd:latest
+#           imagePullPolicy: IfNotPresent
+#           securityContext:
+#             runAsNonRoot: true
+#             runAsUser: 1000
+#             runAsGroup: 1000
+#           envFrom:
+#             - configMapRef:
+#                 name: tvarr-ffmpegd-config
+#           env:
+#             # Use pod name as daemon identifier
+#             - name: TVARR_DAEMON_NAME
+#               valueFrom:
+#                 fieldRef:
+#                   fieldPath: metadata.name
+#           livenessProbe:
+#             exec:
+#               command:
+#                 - pgrep
+#                 - -f
+#                 - tvarr-ffmpegd
+#             initialDelaySeconds: 10
+#             periodSeconds: 30
+#             timeoutSeconds: 5
+#             failureThreshold: 3
+#           readinessProbe:
+#             exec:
+#               command:
+#                 - pgrep
+#                 - -f
+#                 - tvarr-ffmpegd
+#             initialDelaySeconds: 5
+#             periodSeconds: 10
+#             timeoutSeconds: 5
+#             failureThreshold: 3
+#           resources:
+#             requests:
+#               cpu: 1000m
+#               memory: 1Gi
+#             limits:
+#               cpu: 4000m
+#               memory: 4Gi
+#               # For NVIDIA GPU, uncomment:
+#               # nvidia.com/gpu: 1
+#               # For Intel GPU, uncomment:
+#               # gpu.intel.com/i915: 1
+#           # For Intel/AMD GPU, uncomment:
+#           # volumeMounts:
+#           #   - name: dri
+#           #     mountPath: /dev/dri
+#       # For Intel/AMD GPU, uncomment:
+#       # volumes:
+#       #   - name: dri
+#       #     hostPath:
+#       #       path: /dev/dri
+#       # Prefer scheduling on nodes with GPU hardware
+#       # nodeSelector:
+#       #   gpu: "true"
+#
+# ---
+# # PodDisruptionBudget for ffmpegd (optional but recommended)
+# # Helps prevent stream interruption during node maintenance
+# apiVersion: policy/v1
+# kind: PodDisruptionBudget
+# metadata:
+#   name: tvarr-ffmpegd
+#   namespace: tvarr
+#   labels:
+#     app.kubernetes.io/name: tvarr
+#     app.kubernetes.io/instance: tvarr
+#     app.kubernetes.io/component: ffmpegd
+# spec:
+#   minAvailable: 1
+#   selector:
+#     matchLabels:
+#       app.kubernetes.io/name: tvarr
+#       app.kubernetes.io/instance: tvarr
+#       app.kubernetes.io/component: ffmpegd

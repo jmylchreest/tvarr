@@ -28,6 +28,7 @@ import (
 // - 017: Remove is_enabled column from filters (filters are enabled/disabled at proxy level)
 // - 018: Add backup_settings table for user-configurable backup schedule
 // - 019: Fix duplicate "Exclude Adult Content" filters and upgrade expression
+// - 020: Add ffmpegd_config table for distributed transcoding configuration
 func AllMigrations() []Migration {
 	return []Migration{
 		migration001Schema(),
@@ -49,6 +50,7 @@ func AllMigrations() []Migration {
 		migration017RemoveFilterIsEnabled(),
 		migration018BackupSettings(),
 		migration019FixDuplicateFilters(),
+		migration020FFmpegdConfig(),
 	}
 }
 

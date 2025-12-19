@@ -1233,3 +1233,112 @@ export interface RestoreResult {
   pre_restore_backup?: string;
 }
 
+// =============================================================================
+// TRANSCODER TYPES (ffmpegd daemons)
+// =============================================================================
+
+export type DaemonState = 'connected' | 'draining' | 'unhealthy' | 'disconnected' | 'connecting';
+
+export interface GPUStats {
+  index: number;
+  name: string;
+  utilization: number;
+  memory_total: number;
+  memory_used: number;
+  memory_percent: number;
+  temperature: number;
+  encoder_utilization: number;
+  decoder_utilization: number;
+  active_encode_sessions: number;
+  max_encode_sessions: number;
+}
+
+export interface SystemStats {
+  hostname: string;
+  os?: string;
+  arch?: string;
+  cpu_cores: number;
+  cpu_percent: number;
+  memory_total: number;
+  memory_used: number;
+  memory_available: number;
+  memory_percent: number;
+  gpus?: GPUStats[];
+}
+
+export interface HWAccelInfo {
+  type: string;
+  device: string;
+  available: boolean;
+  encoders: string[];
+  decoders: string[];
+}
+
+export interface GPUInfo {
+  index: number;
+  name: string;
+  class: string;
+  driver?: string;
+  max_encode_sessions: number;
+  max_decode_sessions: number;
+  active_encode_sessions: number;
+  active_decode_sessions: number;
+  memory_total?: number;
+}
+
+export interface DaemonCapabilities {
+  video_encoders: string[];
+  video_decoders: string[];
+  audio_encoders: string[];
+  audio_decoders: string[];
+  max_concurrent_jobs: number;
+  hw_accels?: HWAccelInfo[];
+  gpus?: GPUInfo[];
+}
+
+export interface Daemon {
+  id: string;
+  name: string;
+  version: string;
+  address: string;
+  state: DaemonState;
+  connected_at: string;
+  last_heartbeat: string;
+  heartbeats_missed: number;
+  active_jobs: number;
+  total_jobs_completed: number;
+  total_jobs_failed: number;
+  capabilities?: DaemonCapabilities;
+  system_stats?: SystemStats;
+}
+
+export interface ListDaemonsResponse {
+  daemons: Daemon[];
+  total: number;
+}
+
+export interface ClusterStats {
+  total_daemons: number;
+  active_daemons: number;
+  unhealthy_daemons: number;
+  draining_daemons: number;
+  disconnected_daemons: number;
+  total_active_jobs: number;
+  total_gpus: number;
+  available_gpu_sessions: number;
+  total_gpu_sessions: number;
+  average_cpu_percent: number;
+  average_memory_percent: number;
+}
+
+export interface DrainDaemonResponse {
+  success: boolean;
+  message: string;
+  remaining_jobs: number;
+}
+
+export interface ActivateDaemonResponse {
+  success: boolean;
+  message: string;
+}
+

@@ -1,11 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Slider } from '@/components/ui/slider';
-import { Label } from '@/components/ui/label';
 import {
   Activity,
   Users,
@@ -16,6 +13,8 @@ import {
   MemoryStick,
   Monitor,
 } from 'lucide-react';
+import { RefreshControl } from '@/components/ui/refresh-control';
+import { useAutoRefresh } from '@/hooks/use-auto-refresh';
 import {
   AreaChart,
   Area,
@@ -143,12 +142,6 @@ export function Dashboard() {
     isLoaded: false,
   });
 
-  // Update interval management - same as debug page
-  const stepValues = [1, 5, 10, 15, 30, 45, 60, 90, 120]; // Update intervals in seconds
-  const [refreshInterval, setRefreshInterval] = useState(stepValues[3]); // Default 15 seconds (index 3)
-  const [isAutoRefresh, setIsAutoRefresh] = useState(true); // Start enabled
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
-
   // Centralized refresh function for all dashboard data
   const refreshDashboardData = useCallback(async () => {
     setIsLoading(true);
@@ -186,66 +179,20 @@ export function Dashboard() {
     }
   }, []);
 
-  // Auto-refresh management
-  const startAutoRefresh = useCallback(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-    }
+  // Auto-refresh using the shared hook
+  // Dashboard uses different step values: no "off" option, more granular intervals
+  const autoRefresh = useAutoRefresh({
+    onRefresh: refreshDashboardData,
+    stepValues: [0, 1, 5, 10, 15, 30, 60, 90, 120],
+    defaultStepIndex: 4, // 15 seconds
+    debugLabel: 'dashboard',
+    storageKey: 'dashboard',
+  });
 
-    Debug.log('Starting dashboard auto-refresh with interval:', refreshInterval, 'seconds');
-    intervalRef.current = setInterval(() => {
-      refreshDashboardData();
-    }, refreshInterval * 1000);
-
-    setIsAutoRefresh(true);
-  }, [refreshDashboardData, refreshInterval]);
-
-  const stopAutoRefresh = useCallback(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-    setIsAutoRefresh(false);
-  }, []);
-
-  const toggleAutoRefresh = useCallback(() => {
-    if (isAutoRefresh) {
-      stopAutoRefresh();
-    } else {
-      startAutoRefresh();
-    }
-  }, [isAutoRefresh, startAutoRefresh, stopAutoRefresh]);
-
-  const handleRefreshIntervalChange = useCallback(
-    (value: number[]) => {
-      const sliderIndex = value[0];
-      const newInterval = stepValues[sliderIndex];
-      Debug.log('Dashboard refresh interval changed:', { sliderIndex, newInterval, stepValues });
-      setRefreshInterval(newInterval);
-    },
-    [stepValues]
-  );
-
-  // Initial data load and auto-refresh setup
+  // Initial data load
   useEffect(() => {
-    refreshDashboardData(); // Initial load
-    startAutoRefresh(); // Start auto-refresh
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-    };
-  }, [refreshDashboardData, startAutoRefresh]);
-
-  // Update auto-refresh when refresh interval changes
-  useEffect(() => {
-    if (isAutoRefresh) {
-      Debug.log('Restarting dashboard auto-refresh due to interval change:', refreshInterval);
-      stopAutoRefresh();
-      startAutoRefresh();
-    }
-  }, [refreshInterval, isAutoRefresh, startAutoRefresh, stopAutoRefresh]);
+    refreshDashboardData();
+  }, [refreshDashboardData]);
 
   // Show setup wizard if any step is incomplete
   const showSetupWizard =
@@ -270,48 +217,8 @@ export function Dashboard() {
             Real-time system monitoring and relay process metrics
           </p>
         </div>
-        {/* Refresh Interval Slider */}
-        <Card className="p-4 min-w-[300px]">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex flex-col">
-                <Label htmlFor="refresh-interval" className="text-sm font-medium">
-                  Update Interval: {refreshInterval}s
-                </Label>
-                <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
-                  {isLoading && (
-                    <>
-                      <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-primary" />
-                      <span>Refreshing...</span>
-                    </>
-                  )}
-                  {isAutoRefresh && !isLoading && <span>Auto-refresh active</span>}
-                  {!isAutoRefresh && !isLoading && <span>Auto-refresh disabled</span>}
-                </div>
-              </div>
-              <Button
-                onClick={toggleAutoRefresh}
-                variant={isAutoRefresh ? 'default' : 'outline'}
-                size="sm"
-              >
-                {isAutoRefresh ? 'Stop' : 'Start'}
-              </Button>
-            </div>
-            <Slider
-              id="refresh-interval"
-              min={0}
-              max={stepValues.length - 1}
-              step={1}
-              value={[stepValues.indexOf(refreshInterval)]}
-              onValueChange={handleRefreshIntervalChange}
-              className="w-full"
-            />
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>{stepValues[0]}s</span>
-              <span>{stepValues[stepValues.length - 1]}s</span>
-            </div>
-          </div>
-        </Card>
+        {/* Refresh Controls */}
+        <RefreshControl autoRefresh={autoRefresh} isLoading={isLoading} variant="compact" />
       </div>
 
       {/* Overview Cards - REAL DATA */}
@@ -424,7 +331,7 @@ export function Dashboard() {
 
       {/* Relay Flow Visualization */}
       <RelayFlowDiagram
-        pollingInterval={refreshInterval * 1000}
+        pollingInterval={autoRefresh.refreshInterval * 1000}
         className="w-full"
       />
     </div>

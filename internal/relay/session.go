@@ -172,8 +172,9 @@ type RelaySession struct {
 	hlsFMP4Processors HLSfMP4ProcessorMap // HLS-fMP4 processors per variant
 	dashProcessors    DASHProcessorMap    // DASH processors per variant
 	mpegtsProcessors  MPEGTSProcessorMap  // MPEG-TS processors per variant
-	esTranscoders     []*FFmpegTranscoder // Active transcoders for codec variants
+	esTranscoders     []Transcoder        // Active transcoders for codec variants (interface)
 	esTranscodersMu   sync.RWMutex
+	transcoderFactory *TranscoderFactory // Factory for creating transcoders
 
 	// Legacy fields - set once during pipeline init, read-only afterward
 	// Protected by readyCh synchronization (readers wait for ready before accessing)
@@ -503,7 +504,7 @@ func (s *RelaySession) testUpstreamRecovery() bool {
 // This is the correct ES pipeline pattern:
 // 1. Origin -> TSDemuxer -> SharedESBuffer (source variant)
 // 2. Processors request target variant from profile
-// 3. If target != source, FFmpegTranscoder is spawned to read from source and write to target
+// 3. If target != source, a transcoder is spawned to read from source and write to target
 // 4. Processors read from appropriate variant
 
 // runHLSCollapsePipeline runs the HLS collapsing pipeline.
@@ -801,7 +802,7 @@ func (s *RelaySession) buildProxyBaseURL() string {
 // If the profile specifies transcoding, this returns the target variant (e.g., "h264/aac").
 // If no transcoding is needed, this returns VariantCopy which means use source codecs.
 // When processors request a variant that differs from the source, the on-demand
-// transcoding callback (handleVariantRequest) will spawn an FFmpegTranscoder.
+// transcoding callback (handleVariantRequest) will spawn a transcoder.
 func (s *RelaySession) getTargetVariant() CodecVariant {
 	if s.EncodingProfile == nil || !s.EncodingProfile.NeedsTranscode() {
 		return VariantCopy
@@ -845,8 +846,8 @@ func (s *RelaySession) getTargetVariant() CodecVariant {
 // Pipeline flow:
 // 1. Source stream → TSDemuxer → SharedESBuffer (source variant, "copy/copy")
 // 2. Processors request target variant from profile (e.g., "h264/aac")
-// 3. If target != source, handleVariantRequest spawns FFmpegTranscoder
-// 4. FFmpegTranscoder reads from source variant, writes to target variant
+// 3. If target != source, handleVariantRequest spawns a transcoder
+// 4. Transcoder reads from source variant, writes to target variant
 // 5. Processors read from target variant
 func (s *RelaySession) runESPipeline() error {
 	// Initialize the shared ES buffer
@@ -1243,7 +1244,7 @@ func (s *RelaySession) stopTranscodersForVariants(variants map[CodecVariant]bool
 	defer s.esTranscodersMu.Unlock()
 
 	// Find and stop transcoders for removed variants
-	var remaining []*FFmpegTranscoder
+	var remaining []Transcoder
 	for _, transcoder := range s.esTranscoders {
 		stats := transcoder.Stats()
 		if variants[stats.TargetVariant] {
@@ -1259,12 +1260,22 @@ func (s *RelaySession) stopTranscodersForVariants(variants map[CodecVariant]bool
 }
 
 // handleVariantRequest is called when a processor requests a codec variant that doesn't exist.
-// It spawns an FFmpeg transcoder to produce the requested variant from the source.
+// It spawns a transcoder (via ffmpegd or direct FFmpeg) to produce the requested variant from the source.
 func (s *RelaySession) handleVariantRequest(source, target CodecVariant) error {
-	// Detect FFmpeg
-	binInfo, err := s.manager.ffmpegBin.Detect(s.ctx)
-	if err != nil {
-		return fmt.Errorf("detecting ffmpeg: %w", err)
+	// Initialize transcoder factory if needed
+	if s.transcoderFactory == nil {
+		binInfo, err := s.manager.ffmpegBin.Detect(s.ctx)
+		if err != nil {
+			return fmt.Errorf("detecting ffmpeg: %w", err)
+		}
+
+		// Create factory with direct FFmpeg as fallback
+		// TODO: Add spawner configuration from manager when distributed mode is enabled
+		s.transcoderFactory = NewTranscoderFactory(TranscoderFactoryConfig{
+			FFmpegBin:  binInfo,
+			PreferGRPC: false, // For now, use direct FFmpeg; set true when ffmpegd is enabled
+			Logger:     slog.Default(),
+		})
 	}
 
 	// Check if source audio/video codec can be demuxed by mediacommon
@@ -1310,22 +1321,24 @@ func (s *RelaySession) handleVariantRequest(source, target CodecVariant) error {
 		useDirectInput = true
 	}
 
-	var transcoder *FFmpegTranscoder
+	opts := CreateTranscoderOptions{
+		SourceURL:      sourceURL,
+		UseDirectInput: useDirectInput,
+		ChannelName:    s.ChannelName,
+	}
+
+	var transcoder Transcoder
+	var err error
 
 	// Try to create transcoder from profile if available, otherwise use variant directly
 	if s.EncodingProfile != nil {
 		// Use profile for full configuration (bitrate, preset, hwaccel, etc.)
-		transcoder, err = CreateTranscoderFromProfile(
+		transcoder, err = s.transcoderFactory.CreateTranscoderFromProfile(
 			fmt.Sprintf("transcoder-%s-%s", s.ID.String(), target.String()),
 			s.esBuffer,
 			source,
 			s.EncodingProfile,
-			binInfo,
-			slog.Default(),
-			CreateTranscoderFromProfileOptions{
-				SourceURL:      sourceURL,
-				UseDirectInput: useDirectInput,
-			},
+			opts,
 		)
 		if err != nil {
 			return fmt.Errorf("creating transcoder from profile: %w", err)
@@ -1337,17 +1350,12 @@ func (s *RelaySession) handleVariantRequest(source, target CodecVariant) error {
 			slog.String("source", source.String()),
 			slog.String("target", target.String()))
 
-		transcoder, err = CreateTranscoderFromVariant(
+		transcoder, err = s.transcoderFactory.CreateTranscoderFromVariant(
 			fmt.Sprintf("transcoder-%s-%s", s.ID.String(), target.String()),
 			s.esBuffer,
 			source,
 			target,
-			binInfo,
-			slog.Default(),
-			CreateTranscoderFromVariantOptions{
-				SourceURL:      sourceURL,
-				UseDirectInput: useDirectInput,
-			},
+			opts,
 		)
 		if err != nil {
 			return fmt.Errorf("creating transcoder from variant: %w", err)
@@ -1802,7 +1810,7 @@ func (s *RelaySession) Close() {
 	// Collect transcoders to stop WITHOUT holding the lock during Stop calls
 	// This prevents blocking other goroutines that need the lock
 	s.esTranscodersMu.Lock()
-	transcodersToStop := make([]*FFmpegTranscoder, len(s.esTranscoders))
+	transcodersToStop := make([]Transcoder, len(s.esTranscoders))
 	copy(transcodersToStop, s.esTranscoders)
 	s.esTranscoders = nil
 	s.esTranscodersMu.Unlock()

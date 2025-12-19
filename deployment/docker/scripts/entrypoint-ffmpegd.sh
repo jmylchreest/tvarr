@@ -1,18 +1,21 @@
 #!/bin/bash
-# tvarr Docker Container Entrypoint
+# tvarr-ffmpegd Docker Container Entrypoint
 #
 # Features:
-# - PUID/PGID user mapping for volume permissions
+# - PUID/PGID user mapping for GPU device permissions
 # - TZ timezone configuration
 # - Pre-flight diagnostics mode (TVARR_PREFLIGHT=true)
-# - Graceful shutdown signal handling
+# - Graceful shutdown with coordinator unregistration
 #
 # Environment Variables:
 # - PUID: User ID (default: 1000)
 # - PGID: Group ID (default: 1000)
 # - TZ: Timezone (default: UTC)
+# - TVARR_COORDINATOR_URL: Coordinator gRPC address (required)
+# - TVARR_AUTH_TOKEN: Authentication token (optional)
+# - TVARR_DAEMON_NAME: Human-readable daemon name (optional, defaults to hostname)
+# - TVARR_MAX_JOBS: Maximum concurrent transcoding jobs (default: 4)
 # - TVARR_PREFLIGHT: Run diagnostics and exit (default: false)
-# - TVARR_*: Application-specific variables passed to tvarr
 
 set -e
 
@@ -57,16 +60,13 @@ PUID=${PUID:-1000}
 PGID=${PGID:-1000}
 TZ=${TZ:-UTC}
 
-# Ensure data directory exists
-mkdir -p /data
-
 # Configure timezone
 if [ -n "$TZ" ] && [ -f "/usr/share/zoneinfo/$TZ" ]; then
     ln -sf "/usr/share/zoneinfo/$TZ" /etc/localtime
     echo "$TZ" > /etc/timezone
 fi
 
-# Configure user/group
+# Configure user/group for GPU access
 setup_user() {
     log_info "Setting up user/group: PUID=$PUID PGID=$PGID"
 
@@ -80,20 +80,21 @@ setup_user() {
         usermod -o -u "$PUID" tvarr 2>/dev/null || true
     fi
 
-    # Fix ownership of data directory
-    chown -R tvarr:tvarr /data 2>/dev/null || log_warn "Could not chown /data (may be read-only)"
+    # Add tvarr user to video and render groups for GPU access
+    usermod -aG video tvarr 2>/dev/null || true
+    usermod -aG render tvarr 2>/dev/null || true
 }
 
 # Pre-flight diagnostics
 run_preflight() {
-    log_section "tvarr Pre-flight Diagnostics"
+    log_section "tvarr-ffmpegd Pre-flight Diagnostics"
 
     # Version info
     log_section "Version Information"
-    if command -v /app/tvarr &> /dev/null; then
-        echo "tvarr version: $(/app/tvarr version 2>/dev/null || echo 'unknown')"
+    if command -v /app/tvarr-ffmpegd &> /dev/null; then
+        echo "tvarr-ffmpegd version: $(/app/tvarr-ffmpegd version 2>/dev/null || echo 'unknown')"
     else
-        log_warn "tvarr binary not found at /app/tvarr"
+        log_warn "tvarr-ffmpegd binary not found at /app/tvarr-ffmpegd"
     fi
 
     echo ""
@@ -118,19 +119,6 @@ run_preflight() {
     echo "H.265/HEVC encoders:"
     ffmpeg -hide_banner -encoders 2>/dev/null | grep -E "265|hevc" | head -10 || true
 
-    echo ""
-    echo "VP9 encoders:"
-    ffmpeg -hide_banner -encoders 2>/dev/null | grep -i vp9 | head -10 || true
-
-    echo ""
-    echo "AV1 encoders:"
-    ffmpeg -hide_banner -encoders 2>/dev/null | grep -i av1 | head -10 || true
-
-    # Audio encoders
-    log_section "Audio Encoders"
-    echo "Audio encoders (aac, mp3, opus, ac3, eac3):"
-    ffmpeg -hide_banner -encoders 2>/dev/null | grep -E "aac|mp3|opus|ac3|eac3" | head -10 || true
-
     # GPU/DRI devices
     log_section "GPU Devices"
     echo "/dev/dri contents:"
@@ -151,19 +139,10 @@ run_preflight() {
         log_warn "/dev/dri not found - no GPU access"
     fi
 
-    # V4L2 devices (Raspberry Pi)
-    log_section "V4L2 Devices (Raspberry Pi)"
-    if ls /dev/video* 1> /dev/null 2>&1; then
-        echo "V4L2 devices found:"
-        ls -la /dev/video* 2>/dev/null || true
-    else
-        log_info "No /dev/video* devices found (normal if not on Raspberry Pi)"
-    fi
-
     # NVIDIA GPU
     log_section "NVIDIA GPU"
     if command -v nvidia-smi &> /dev/null; then
-        nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader 2>/dev/null || log_warn "nvidia-smi failed"
+        nvidia-smi --query-gpu=name,driver_version,memory.total,encoder.stats.sessionCount,encoder.stats.averageFps --format=csv,noheader 2>/dev/null || log_warn "nvidia-smi failed"
     else
         log_info "nvidia-smi not available (NVIDIA runtime not enabled or no GPU)"
     fi
@@ -176,40 +155,23 @@ run_preflight() {
         log_info "vainfo not available"
     fi
 
-    # Environment
-    log_section "Environment"
+    # Configuration
+    log_section "Configuration"
     echo "PUID: $PUID"
     echo "PGID: $PGID"
     echo "TZ: $TZ"
-    echo "TVARR_PORT: ${TVARR_PORT:-8080}"
-    echo "TVARR_LOG_LEVEL: ${TVARR_LOG_LEVEL:-info}"
-    echo "TVARR_DATABASE_DSN: ${TVARR_DATABASE_DSN:-file:/data/tvarr.db}"
-
-    # Data directory
-    log_section "Data Directory"
-    echo "/data contents:"
-    ls -la /data 2>/dev/null || log_warn "Cannot list /data"
+    echo "TVARR_COORDINATOR_URL: ${TVARR_COORDINATOR_URL:-<not set>}"
+    echo "TVARR_AUTH_TOKEN: ${TVARR_AUTH_TOKEN:+<set>}${TVARR_AUTH_TOKEN:-<not set>}"
+    echo "TVARR_DAEMON_NAME: ${TVARR_DAEMON_NAME:-<auto>}"
+    echo "TVARR_MAX_JOBS: ${TVARR_MAX_JOBS:-4}"
 
     log_section "Pre-flight Complete"
-    log_success "Diagnostics finished. Container is ready."
+    log_success "Diagnostics finished. Daemon is ready."
 }
-
-# Signal handler for graceful shutdown
-shutdown_handler() {
-    log_info "Received shutdown signal, stopping tvarr..."
-    if [ -n "$TVARR_PID" ]; then
-        kill -TERM "$TVARR_PID" 2>/dev/null
-        wait "$TVARR_PID" 2>/dev/null
-    fi
-    exit 0
-}
-
-# Set up signal handlers
-trap shutdown_handler SIGTERM SIGINT SIGQUIT
 
 # Main execution
 main() {
-    log_info "tvarr container starting..."
+    log_info "tvarr-ffmpegd container starting..."
     log_info "PUID: $PUID, PGID: $PGID, TZ: $TZ"
 
     # Set up user permissions
@@ -221,26 +183,35 @@ main() {
         exit 0
     fi
 
-    # Build tvarr command with environment variables
-    TVARR_CMD="/app/tvarr serve"
-
-    # Add port if specified
-    if [ -n "$TVARR_PORT" ]; then
-        TVARR_CMD="$TVARR_CMD --port $TVARR_PORT"
+    # Validate required configuration
+    if [ -z "$TVARR_COORDINATOR_URL" ]; then
+        log_error "TVARR_COORDINATOR_URL is required"
+        log_info "Set the coordinator URL, e.g.: TVARR_COORDINATOR_URL=tvarr:9090"
+        exit 1
     fi
 
-    # Add log level if specified
-    if [ -n "$TVARR_LOG_LEVEL" ]; then
-        TVARR_CMD="$TVARR_CMD --log-level $TVARR_LOG_LEVEL"
+    # Build daemon command
+    DAEMON_CMD="/app/tvarr-ffmpegd serve"
+
+    # Add daemon name only if explicitly set (daemon defaults to hostname)
+    if [ -n "$TVARR_DAEMON_NAME" ]; then
+        DAEMON_CMD="$DAEMON_CMD --name $TVARR_DAEMON_NAME"
     fi
 
-    log_info "Starting tvarr as user tvarr (uid=$PUID, gid=$PGID)"
-    log_info "Command: $TVARR_CMD"
+    # Add max jobs if specified
+    if [ -n "$TVARR_MAX_JOBS" ]; then
+        DAEMON_CMD="$DAEMON_CMD --max-jobs $TVARR_MAX_JOBS"
+    fi
 
-    # Execute tvarr as the configured user using gosu
+    log_info "Connecting to coordinator: $TVARR_COORDINATOR_URL"
+    log_info "Daemon name: ${TVARR_DAEMON_NAME:-$(hostname)} (container hostname)"
+    log_info "Starting tvarr-ffmpegd as user tvarr (uid=$PUID, gid=$PGID)"
+    log_info "Command: $DAEMON_CMD"
+
+    # Execute daemon as the configured user using gosu
     # gosu is designed for containers - simpler than su/sudo, proper signal handling
     # Use exec to replace shell process for proper signal handling
-    exec gosu tvarr $TVARR_CMD
+    exec gosu tvarr $DAEMON_CMD
 }
 
 # Run main function

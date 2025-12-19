@@ -13,6 +13,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/go-chi/chi/v5"
+	"github.com/jmylchreest/tvarr/internal/codec"
 	"github.com/jmylchreest/tvarr/internal/ffmpeg"
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/relay"
@@ -386,12 +387,13 @@ func (h *RelayStreamHandler) handleChannelPreview(w http.ResponseWriter, r *http
 		setStreamHeaders(w, "smart", "join-existing")
 
 		// Use the existing session's SharedESBuffer
+		// Preview mode doesn't use transcoding - pass VariantCopy for passthrough
 		switch clientFormat {
 		case relay.ClientFormatHLS, relay.ClientFormatDASH:
-			h.handleMultiFormatOutput(w, r, existingSession, previewInfo, clientFormat)
+			h.handleMultiFormatOutput(w, r, existingSession, previewInfo, clientFormat, relay.VariantCopy)
 		default:
 			// For MPEG-TS and auto format, use the MPEG-TS processor
-			h.streamMPEGTSFromRelay(w, r, existingSession, previewInfo)
+			h.streamMPEGTSFromRelay(w, r, existingSession, previewInfo, relay.VariantCopy)
 		}
 		return
 	}
@@ -413,6 +415,7 @@ func (h *RelayStreamHandler) handleChannelPreview(w http.ResponseWriter, r *http
 	// Dispatch based on delivery decision
 	// For preview mode, we allow HLS/DASH/MPEGTS format requests to use the ES pipeline
 	// to ensure consistent behavior with proxy routes and enable session sharing.
+	// Preview mode doesn't use transcoding - pass VariantCopy for passthrough
 	switch deliveryDecision {
 	case relay.DeliveryPassthrough:
 		// Check if client explicitly requested a format that benefits from ES pipeline
@@ -420,13 +423,13 @@ func (h *RelayStreamHandler) handleChannelPreview(w http.ResponseWriter, r *http
 			h.logger.Info("Channel preview: using ES pipeline for explicit MPEG-TS request",
 				"channel_id", channel.ID,
 			)
-			h.handleSmartTranscode(w, r, previewInfo, clientFormat)
+			h.handleSmartTranscode(w, r, previewInfo, clientFormat, relay.VariantCopy)
 		} else {
 			h.handleSmartPassthrough(w, r, previewInfo, &classification)
 		}
 
 	case relay.DeliveryRepackage:
-		h.handleSmartRepackage(w, r, previewInfo, &classification, clientFormat)
+		h.handleSmartRepackage(w, r, previewInfo, &classification, clientFormat, relay.VariantCopy)
 
 	case relay.DeliveryTranscode:
 		// For HLS/DASH/MPEGTS format requests, use the ES pipeline
@@ -435,7 +438,7 @@ func (h *RelayStreamHandler) handleChannelPreview(w http.ResponseWriter, r *http
 				"channel_id", channel.ID,
 				"client_format", clientFormat,
 			)
-			h.handleSmartTranscode(w, r, previewInfo, clientFormat)
+			h.handleSmartTranscode(w, r, previewInfo, clientFormat, relay.VariantCopy)
 		} else {
 			// For auto/unknown formats, fall back to passthrough to avoid FFmpeg overhead
 			h.logger.Info("Channel preview: transcoding requested but falling back to passthrough",
@@ -507,6 +510,10 @@ func (h *RelayStreamHandler) handleRawSmartMode(w http.ResponseWriter, r *http.R
 		"client_player", clientCaps.PlayerName,
 	)
 
+	// Compute target codec variant based on client detection or encoding profile
+	// This determines what codecs to transcode TO (if transcoding is needed)
+	targetVariant := h.computeTargetVariant(info, clientCaps, sourceVideoCodec, sourceAudioCodec)
+
 	// Dispatch based on delivery decision
 	switch deliveryDecision {
 	case relay.DeliveryPassthrough:
@@ -518,10 +525,10 @@ func (h *RelayStreamHandler) handleRawSmartMode(w http.ResponseWriter, r *http.R
 		// of info without the encoding profile.
 		infoNoTranscode := *info
 		infoNoTranscode.EncodingProfile = nil
-		h.handleSmartRepackage(w, r, &infoNoTranscode, &classification, clientFormat)
+		h.handleSmartRepackage(w, r, &infoNoTranscode, &classification, clientFormat, targetVariant)
 
 	case relay.DeliveryTranscode:
-		h.handleSmartTranscode(w, r, info, clientFormat)
+		h.handleSmartTranscode(w, r, info, clientFormat, targetVariant)
 	}
 }
 
@@ -653,6 +660,103 @@ func (h *RelayStreamHandler) capsToClientFormat(caps relay.ClientCapabilities) r
 	return relay.ClientFormatAuto
 }
 
+// computeTargetVariant determines the target codec variant for transcoding.
+// Logic:
+// - If client detection is enabled on the proxy:
+//   - Video: if source video NOT in accepted_video_codecs → use preferred_video_codec, else copy
+//   - Audio: if source audio NOT in accepted_audio_codecs → use preferred_audio_codec, else copy
+// - If client detection is disabled:
+//   - Use the encoding profile's target codecs
+func (h *RelayStreamHandler) computeTargetVariant(
+	info *service.StreamInfo,
+	clientCaps relay.ClientCapabilities,
+	sourceVideoCodec, sourceAudioCodec string,
+) relay.CodecVariant {
+	// Check if client detection is enabled on the proxy
+	clientDetectionEnabled := info != nil && info.Proxy != nil &&
+		info.Proxy.ClientDetectionEnabled != nil && *info.Proxy.ClientDetectionEnabled
+
+	if clientDetectionEnabled {
+		// Determine video codec: transcode if source not in accepted list
+		videoCodec := "copy"
+		if sourceVideoCodec != "" && !clientCaps.AcceptsVideoCodec(sourceVideoCodec) {
+			if clientCaps.PreferredVideoCodec != "" {
+				videoCodec = clientCaps.PreferredVideoCodec
+			}
+		}
+
+		// Determine audio codec: transcode if source not in accepted list
+		audioCodec := "copy"
+		if sourceAudioCodec != "" && !clientCaps.AcceptsAudioCodec(sourceAudioCodec) {
+			if clientCaps.PreferredAudioCodec != "" {
+				audioCodec = clientCaps.PreferredAudioCodec
+			}
+		}
+
+		// If both are copy, return VariantCopy
+		if videoCodec == "copy" && audioCodec == "copy" {
+			return relay.VariantCopy
+		}
+
+		variant := relay.MakeCodecVariant(videoCodec, audioCodec)
+		h.logger.Debug("Target variant from client detection",
+			"video_target", videoCodec,
+			"audio_target", audioCodec,
+			"source_video", sourceVideoCodec,
+			"source_audio", sourceAudioCodec,
+			"variant", variant.String(),
+			"detection_source", clientCaps.DetectionSource,
+			"matched_rule", clientCaps.MatchedRuleName,
+		)
+		return variant
+	}
+
+	// Client detection disabled - use encoding profile
+	if info != nil && info.EncodingProfile != nil && info.EncodingProfile.NeedsTranscode() {
+		encodingProfile := info.EncodingProfile
+		profileVideoCodec := string(encodingProfile.TargetVideoCodec)
+		profileAudioCodec := string(encodingProfile.TargetAudioCodec)
+
+		// Normalize empty/none to "copy"
+		if profileVideoCodec == "" || profileVideoCodec == "none" {
+			profileVideoCodec = "copy"
+		}
+		if profileAudioCodec == "" || profileAudioCodec == "none" {
+			profileAudioCodec = "copy"
+		}
+
+		// Check if source already matches target - no need to transcode if they match
+		videoCodec := profileVideoCodec
+		if sourceVideoCodec != "" && codec.Normalize(sourceVideoCodec) == codec.Normalize(profileVideoCodec) {
+			videoCodec = "copy"
+		}
+
+		audioCodec := profileAudioCodec
+		if sourceAudioCodec != "" && codec.Normalize(sourceAudioCodec) == codec.Normalize(profileAudioCodec) {
+			audioCodec = "copy"
+		}
+
+		// If both are copy, return VariantCopy
+		if videoCodec == "copy" && audioCodec == "copy" {
+			return relay.VariantCopy
+		}
+
+		variant := relay.MakeCodecVariant(videoCodec, audioCodec)
+		h.logger.Debug("Target variant from encoding profile",
+			"video_target", videoCodec,
+			"audio_target", audioCodec,
+			"source_video", sourceVideoCodec,
+			"source_audio", sourceAudioCodec,
+			"variant", variant.String(),
+			"profile_name", encodingProfile.Name,
+		)
+		return variant
+	}
+
+	// Default: no transcoding needed
+	return relay.VariantCopy
+}
+
 // getEncodingProfile returns the encoding profile from stream info.
 // EncodingProfile always has concrete target codecs (no auto-detection).
 // This is a simplified version that replaced the old resolveProfileWithAutoDetection.
@@ -678,7 +782,7 @@ func (h *RelayStreamHandler) handleSmartPassthrough(w http.ResponseWriter, r *ht
 //
 // Even when no format conversion is needed, we route through the ES buffer pipeline
 // to enable multiple clients sharing a single upstream connection.
-func (h *RelayStreamHandler) handleSmartRepackage(w http.ResponseWriter, r *http.Request, info *service.StreamInfo, classification *service.ClassificationResult, clientFormat relay.ClientFormat) {
+func (h *RelayStreamHandler) handleSmartRepackage(w http.ResponseWriter, r *http.Request, info *service.StreamInfo, classification *service.ClassificationResult, clientFormat relay.ClientFormat, targetVariant relay.CodecVariant) {
 	// Set common headers
 	setCORSHeaders(w)
 	setStreamHeaders(w, "smart", "repackage")
@@ -686,18 +790,21 @@ func (h *RelayStreamHandler) handleSmartRepackage(w http.ResponseWriter, r *http
 	// For MPEG-TS sources where client accepts codecs directly, use the ES buffer pipeline
 	// without transcoding. This enables connection sharing between multiple clients.
 	// The transcode handler will detect that no transcoding is needed and just remux.
-	h.handleSmartTranscode(w, r, info, clientFormat)
+	h.handleSmartTranscode(w, r, info, clientFormat, targetVariant)
 }
 
 // handleSmartTranscode transcodes the source stream using FFmpeg.
 // This is used when codec conversion is needed or when creating segments from raw TS.
 // For HLS/DASH requests, it serves playlists and segments using the format handlers.
-func (h *RelayStreamHandler) handleSmartTranscode(w http.ResponseWriter, r *http.Request, info *service.StreamInfo, clientFormat relay.ClientFormat) {
+func (h *RelayStreamHandler) handleSmartTranscode(w http.ResponseWriter, r *http.Request, info *service.StreamInfo, clientFormat relay.ClientFormat, targetVariant relay.CodecVariant) {
 	ctx := r.Context()
 
 	// Set common headers
 	setCORSHeaders(w)
-	setStreamHeaders(w, "smart", "transcode")
+	// Only set stream decision headers if not already set by caller (e.g., handleSmartRepackage)
+	if w.Header().Get("X-Stream-Decision") == "" {
+		setStreamHeaders(w, "smart", "transcode")
+	}
 
 	// Get the encoding profile (no auto-detection needed with EncodingProfile)
 	profile := h.getEncodingProfile(info)
@@ -724,54 +831,31 @@ func (h *RelayStreamHandler) handleSmartTranscode(w http.ResponseWriter, r *http
 	// For HLS/DASH formats, use the format router for output
 	// The ES pipeline initializes all output handlers during session startup
 	if needsMultiFormat {
-		h.handleMultiFormatOutput(w, r, session, info, clientFormat)
+		h.handleMultiFormatOutput(w, r, session, info, clientFormat, targetVariant)
 		return
 	}
 
 	// For MPEG-TS and other formats, stream directly
-	h.streamMPEGTSFromRelay(w, r, session, info)
+	h.streamMPEGTSFromRelay(w, r, session, info, targetVariant)
 }
 
 // handleMultiFormatOutput handles HLS/DASH output using on-demand processor creation.
 // It serves playlists on base requests and segments on segment requests.
 // Processors are only created when clients actually request their format.
-// Each client can have a different codec variant based on their profile.
-func (h *RelayStreamHandler) handleMultiFormatOutput(w http.ResponseWriter, r *http.Request, session *relay.RelaySession, info *service.StreamInfo, clientFormat relay.ClientFormat) {
+// Each client can have a different codec variant based on their profile or client detection.
+func (h *RelayStreamHandler) handleMultiFormatOutput(w http.ResponseWriter, r *http.Request, session *relay.RelaySession, info *service.StreamInfo, clientFormat relay.ClientFormat, targetVariant relay.CodecVariant) {
 	// Parse request parameters
 	segmentStr := r.URL.Query().Get(relay.QueryParamSegment)
 	initStr := r.URL.Query().Get(relay.QueryParamInit)
 	formatOverride := r.URL.Query().Get(relay.QueryParamFormat)
 
-	// Resolve the client's target codec variant from their profile
-	// This enables per-client codec variants - different clients can receive different codecs
-	clientVariant := relay.VariantCopy // Default to passthrough (copy)
-	if info != nil && info.EncodingProfile != nil {
-		encodingProfile := info.EncodingProfile
-		if encodingProfile.NeedsTranscode() {
-			// Build variant from encoding profile codecs
-			videoCodec := string(encodingProfile.TargetVideoCodec)
-			audioCodec := string(encodingProfile.TargetAudioCodec)
+	// Use the pre-computed target variant (determined by computeTargetVariant)
+	clientVariant := targetVariant
 
-			// Normalize empty/none to "copy"
-			if videoCodec == "" || videoCodec == "none" {
-				videoCodec = "copy"
-			}
-			if audioCodec == "" || audioCodec == "none" {
-				audioCodec = "copy"
-			}
-
-			// Create variant - MakeCodecVariant handles the "copy" values
-			clientVariant = relay.MakeCodecVariant(videoCodec, audioCodec)
-
-			h.logger.Info("Client requesting specific codec variant",
-				"session_id", session.ID,
-				"variant", clientVariant.String(),
-				"video_codec", videoCodec,
-				"audio_codec", audioCodec,
-				"needs_transcode", true,
-			)
-		}
-	}
+	h.logger.Debug("HLS/DASH client using target variant",
+		"session_id", session.ID,
+		"variant", clientVariant.String(),
+	)
 
 	// Generate a client ID for tracking HLS/DASH clients
 	// Use IP (without port) + User-Agent hash to identify unique clients
@@ -967,7 +1051,7 @@ func (h *RelayStreamHandler) buildBaseURL(r *http.Request) string {
 // streamMPEGTSFromRelay streams MPEG-TS data directly from a relay session.
 // This uses on-demand processor creation - the MPEG-TS processor is only started
 // when a client actually requests this format.
-func (h *RelayStreamHandler) streamMPEGTSFromRelay(w http.ResponseWriter, r *http.Request, session *relay.RelaySession, info *service.StreamInfo) {
+func (h *RelayStreamHandler) streamMPEGTSFromRelay(w http.ResponseWriter, r *http.Request, session *relay.RelaySession, info *service.StreamInfo, targetVariant relay.CodecVariant) {
 	connAttrs := []any{
 		"session_id", session.ID,
 		"channel_id", info.Channel.ID,
@@ -977,36 +1061,13 @@ func (h *RelayStreamHandler) streamMPEGTSFromRelay(w http.ResponseWriter, r *htt
 	}
 	h.logger.Debug("Client connecting for MPEG-TS stream", connAttrs...)
 
-	// Resolve the client's target codec variant from their profile
-	// This enables per-client codec variants - different clients can receive different codecs
-	clientVariant := relay.VariantCopy // Default to passthrough (copy)
-	if info != nil && info.EncodingProfile != nil {
-		encodingProfile := info.EncodingProfile
-		if encodingProfile.NeedsTranscode() {
-			// Build variant from encoding profile codecs
-			videoCodec := string(encodingProfile.TargetVideoCodec)
-			audioCodec := string(encodingProfile.TargetAudioCodec)
+	// Use the pre-computed target variant (determined by computeTargetVariant)
+	clientVariant := targetVariant
 
-			// Normalize empty/none to "copy"
-			if videoCodec == "" || videoCodec == "none" {
-				videoCodec = "copy"
-			}
-			if audioCodec == "" || audioCodec == "none" {
-				audioCodec = "copy"
-			}
-
-			// Create variant - MakeCodecVariant handles the "copy" values
-			clientVariant = relay.MakeCodecVariant(videoCodec, audioCodec)
-
-			h.logger.Debug("MPEG-TS client requesting specific codec variant",
-				"session_id", session.ID,
-				"variant", clientVariant.String(),
-				"video_codec", videoCodec,
-				"audio_codec", audioCodec,
-				"needs_transcode", true,
-			)
-		}
-	}
+	h.logger.Debug("MPEG-TS client using target variant",
+		"session_id", session.ID,
+		"variant", clientVariant.String(),
+	)
 
 	// Wait for the session pipeline to be ready before accessing processors
 	if err := session.WaitReady(r.Context()); err != nil {

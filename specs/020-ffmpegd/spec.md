@@ -157,7 +157,7 @@ A user deploys only tvarr-ffmpegd on a dedicated transcoding server, connecting 
 - **FR-016**: System MUST provide three container image variants: tvarr (default), tvarr-coordinator, tvarr-ffmpegd
 - **FR-017**: Default tvarr image MUST contain both tvarr and tvarr-ffmpegd binaries plus FFmpeg (also tagged as `ffmpeg-full`)
 - **FR-018**: Default tvarr image MUST use an entrypoint script that spawns and supervises both processes
-- **FR-019**: Entrypoint script MUST restart failed processes and forward termination signals to both processes
+- **FR-019**: Entrypoint script MUST restart failed processes (max 5 attempts with exponential backoff: 1s, 2s, 4s, 8s, 16s) and forward termination signals (SIGTERM, SIGINT) to both processes
 - **FR-020**: tvarr-coordinator image MUST NOT include FFmpeg or encoder libraries (minimal size)
 - **FR-021**: tvarr-ffmpegd image MUST be the same as default tvarr but with entrypoint that only starts ffmpegd process
 

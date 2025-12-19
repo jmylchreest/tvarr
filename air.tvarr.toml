@@ -1,22 +1,22 @@
-# Air configuration for hot-reloading development
+# Air configuration for tvarr (main server)
 # https://github.com/air-verse/air
 
 root = "."
-tmp_dir = "tmp"
+tmp_dir = "tmp/tvarr"
 
 [build]
-# Build command - injects version info similar to Taskfile
-# Uses shell command substitution to get git info dynamically
-cmd = """go build -ldflags "-s -w \
+# Build command with version info injection
+cmd = """
+mkdir -p ./tmp/tvarr
+LDFLAGS="-s -w \
   -X github.com/jmylchreest/tvarr/internal/version.Version=dev \
   -X github.com/jmylchreest/tvarr/internal/version.Commit=$(git rev-parse HEAD 2>/dev/null || echo unknown) \
   -X github.com/jmylchreest/tvarr/internal/version.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
   -X github.com/jmylchreest/tvarr/internal/version.Branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown) \
-  -X github.com/jmylchreest/tvarr/internal/version.TreeState=$(if git diff --quiet 2>/dev/null; then echo clean; else echo dirty; fi)" \
-  -o ./tmp/tvarr ./cmd/tvarr"""
-# Binary entrypoint with arguments (replaces deprecated bin/full_bin)
-# Default to debug logging for development visibility
-entrypoint = ["./tmp/tvarr", "serve", "--log-level", "debug"]
+  -X github.com/jmylchreest/tvarr/internal/version.TreeState=$(if git diff --quiet 2>/dev/null; then echo clean; else echo dirty; fi)"
+go build -ldflags "$LDFLAGS" -o ./tmp/tvarr/tvarr ./cmd/tvarr
+"""
+entrypoint = ["./tmp/tvarr/tvarr", "serve", "--log-level", "debug", "--grpc-enabled"]
 # Watch these file extensions
 include_ext = ["go", "tpl", "tmpl", "html", "yaml", "yml"]
 # Watch these directories
@@ -31,9 +31,7 @@ exclude_unchanged = true
 follow_symlink = true
 
 [log]
-# Log time in output
 time = true
-# Main log (shows what air is doing)
 main_only = false
 
 [color]
@@ -43,5 +41,4 @@ build = "yellow"
 runner = "green"
 
 [misc]
-# Delete tmp directory on exit
 clean_on_exit = true

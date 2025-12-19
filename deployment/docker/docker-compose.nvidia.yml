@@ -1,0 +1,25 @@
+# tvarr Docker Compose - NVIDIA GPU Override
+#
+# This override enables NVIDIA GPU support for the ffmpegd transcoding daemon.
+#
+# Usage:
+#   docker compose -f deployment/docker/docker-compose.yml \
+#                  -f deployment/docker/docker-compose.nvidia.yml up -d
+#
+# Prerequisites:
+#   - NVIDIA Container Toolkit installed
+#   - nvidia-docker2 or nvidia-container-runtime configured
+
+services:
+  ffmpegd:
+    # Remove Intel/AMD device mapping (overrides base config)
+    devices: []
+
+    # Enable NVIDIA runtime and GPU access
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, video, compute]
