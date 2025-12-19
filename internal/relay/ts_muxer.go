@@ -410,6 +410,39 @@ func (m *TSMuxer) Flush() error {
 	return nil
 }
 
+// InitializeAndGetHeader forces initialization and returns the PAT/PMT header bytes.
+// This is useful for sending PAT/PMT to clients that connect after the muxer is started.
+// MPEG-TS demuxers require PAT/PMT tables to understand the stream structure.
+func (m *TSMuxer) InitializeAndGetHeader() ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if !m.initialized {
+		if err := m.initialize(); err != nil {
+			return nil, err
+		}
+	}
+
+	// The mediacommon writer writes PAT/PMT during Initialize().
+	// We need to create a fresh muxer writing to a separate buffer to capture just the PAT/PMT.
+	// This is because Initialize() only writes PAT/PMT once to whatever writer is attached.
+
+	// Create a buffer to capture PAT/PMT
+	var patPmtBuf bytes.Buffer
+
+	// Create a temporary muxer with same tracks to generate PAT/PMT
+	tempMuxer := &mpegts.Writer{
+		W:      &patPmtBuf,
+		Tracks: m.tracks,
+	}
+
+	if err := tempMuxer.Initialize(); err != nil {
+		return nil, fmt.Errorf("generating PAT/PMT: %w", err)
+	}
+
+	return patPmtBuf.Bytes(), nil
+}
+
 // Reset resets the muxer state for reuse.
 func (m *TSMuxer) Reset() {
 	m.mu.Lock()

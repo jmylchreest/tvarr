@@ -59,6 +59,11 @@ type MPEGTSProcessor struct {
 	muxer    *TSMuxer
 	muxerBuf bytes.Buffer
 
+	// PAT/PMT header bytes to send to new clients
+	// MPEG-TS requires PAT/PMT tables for demuxing - clients joining late need these
+	patPmtHeader   []byte
+	patPmtHeaderMu sync.RWMutex
+
 	// ES reading state
 	lastVideoSeq uint64
 	lastAudioSeq uint64
@@ -217,6 +222,20 @@ initMuxer:
 		AudioCodec: audioCodec,
 		AACConfig:  aacConfig,
 	})
+
+	// Capture PAT/PMT header bytes for new clients
+	// MPEG-TS demuxers need these tables to understand the stream structure
+	patPmt, err := p.muxer.InitializeAndGetHeader()
+	if err != nil {
+		p.config.Logger.Warn("Failed to capture PAT/PMT header",
+			slog.String("error", err.Error()))
+	} else {
+		p.patPmtHeaderMu.Lock()
+		p.patPmtHeader = patPmt
+		p.patPmtHeaderMu.Unlock()
+		p.config.Logger.Debug("Captured PAT/PMT header for new clients",
+			slog.Int("size_bytes", len(patPmt)))
+	}
 
 	p.config.Logger.Debug("MPEG-TS muxer initialized",
 		slog.String("requested_variant", p.variant.String()),
@@ -562,6 +581,11 @@ func (p *MPEGTSProcessor) broadcastToClients(data []byte, hasKeyframe bool) {
 	}
 	p.streamClientsMu.RUnlock()
 
+	// Get PAT/PMT header for new clients (read once, share with all)
+	p.patPmtHeaderMu.RLock()
+	patPmtHeader := p.patPmtHeader
+	p.patPmtHeaderMu.RUnlock()
+
 	for _, client := range clients {
 		select {
 		case <-client.done:
@@ -573,10 +597,12 @@ func (p *MPEGTSProcessor) broadcastToClients(data []byte, hasKeyframe bool) {
 		// Check and update waitForKeyframe state under lock
 		client.mu.Lock()
 		shouldSkip := false
+		needsPatPmt := false
 		if client.waitForKeyframe {
 			if hasKeyframe {
 				// Keyframe found - start sending data to this client
 				client.waitForKeyframe = false
+				needsPatPmt = true // New client needs PAT/PMT tables first
 				p.config.Logger.Debug("Client starting at keyframe",
 					slog.String("client_id", client.id))
 			} else {
@@ -592,6 +618,24 @@ func (p *MPEGTSProcessor) broadcastToClients(data []byte, hasKeyframe bool) {
 
 		if shouldSkip {
 			continue
+		}
+
+		// For new clients, send PAT/PMT header first so they can demux the stream
+		// MPEG-TS demuxers require these tables to understand the stream structure
+		if needsPatPmt && len(patPmtHeader) > 0 {
+			if _, err := writer.Write(patPmtHeader); err != nil {
+				p.config.Logger.Debug("Failed to send PAT/PMT to client",
+					slog.String("client_id", clientID),
+					slog.String("error", err.Error()))
+				p.UnregisterClient(clientID)
+				continue
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+			p.config.Logger.Debug("Sent PAT/PMT header to new client",
+				slog.String("client_id", clientID),
+				slog.Int("bytes", len(patPmtHeader)))
 		}
 
 		// Perform HTTP I/O WITHOUT holding any locks
