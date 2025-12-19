@@ -120,6 +120,21 @@ message HWAccelInfo {
   repeated string decoders = 5;
 }
 
+// NOTE: tvarr-ffmpegd MUST use the same HWAccelDetector from internal/ffmpeg/hwaccel.go
+// that tvarr uses internally. This ensures consistent capability detection across:
+// - Local tvarr (when running without distributed daemons)
+// - Each tvarr-ffmpegd instance reporting its capabilities
+//
+// The Capabilities message should map directly to internal/ffmpeg.HWAccelInfo:
+// - type       -> HWAccelType (vaapi, cuda, qsv, videotoolbox, etc.)
+// - device     -> DeviceName (/dev/dri/renderD128, GPU name, etc.)
+// - available  -> Available (true if tested and working)
+// - encoders   -> Encoders (h264_nvenc, hevc_vaapi, etc.)
+// - decoders   -> Decoders (h264_cuvid, hevc_qsv, etc.)
+//
+// This allows the coordinator to make intelligent routing decisions based on
+// which encoders/decoders each daemon actually supports.
+
 message PerformanceMetrics {
   double h264_1080p_fps = 1;   // Frames/sec for H.264 1080p encode
   double h265_1080p_fps = 2;   // Frames/sec for H.265 1080p encode
@@ -930,9 +945,15 @@ Since backward compatibility is not required, implementation follows a clean-sla
 2. Implement `tvarr-ffmpegd` daemon with:
    - gRPC server
    - FFmpeg process management (reuse existing wrapper)
-   - Capability detection
+   - **Capability detection using `internal/ffmpeg.HWAccelDetector`** - same detection logic as tvarr
    - Coordinator registration
 3. Basic transcode flow (no streaming yet - request/response)
+
+**Important**: The capability detection MUST reuse `internal/ffmpeg/hwaccel.go`:
+- `HWAccelDetector.Detect()` runs `ffmpeg -hwaccels` and tests each accelerator
+- Tests actual encoder availability (h264_nvenc, hevc_vaapi, etc.)
+- Reports device names (/dev/dri/renderD128, GPU names, etc.)
+- This ensures consistent capability reporting between local tvarr and remote ffmpegd instances
 
 #### Phase 2: Streaming Integration
 1. Implement bidirectional ES sample streaming
