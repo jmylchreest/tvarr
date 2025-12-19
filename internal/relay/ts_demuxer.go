@@ -210,7 +210,21 @@ func (d *TSDemuxer) setupTrackCallback(track *mpegts.Track) {
 		d.audioFrameDuration = int64(1024 * 90000 / d.audioSampleRate)
 		// Only set source codec when NOT writing to a target variant
 		if d.buffer != nil && d.config.TargetVariant == "" {
-			d.buffer.SetAudioCodec("aac", nil)
+			// Marshal AudioSpecificConfig as initData for muxer to use correct params
+			// Use AAC-LC as the ObjectType since:
+			// 1. ADTS only supports profiles 0-3 (AAC Main, LC, SSR, LTP)
+			// 2. HE-AAC streams often have mislabeled headers (claim AAC Main but contain AAC-LC + SBR)
+			// 3. FFmpeg and other decoders detect actual codec from bitstream, not ADTS header
+			// 4. AAC-LC is the correct core codec for HE-AAC
+			aacConfig := codec.Config
+			aacConfig.Type = 2 // ObjectTypeAACLC - ensures correct decoding regardless of ADTS header
+			initData, err := aacConfig.Marshal()
+			if err != nil {
+				d.config.Logger.Debug("Failed to marshal AAC config, using nil initData",
+					slog.String("error", err.Error()))
+				initData = nil
+			}
+			d.buffer.SetAudioCodec("aac", initData)
 		}
 		d.reader.OnDataMPEG4Audio(track, func(pts int64, aus [][]byte) error {
 			return d.handleMPEG4Audio(pts, aus)

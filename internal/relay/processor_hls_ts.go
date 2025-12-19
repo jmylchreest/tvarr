@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
 )
 
 // HLS-TS Processor errors.
@@ -101,6 +103,9 @@ type HLSTSProcessor struct {
 	resolvedVideoCodec string
 	resolvedAudioCodec string
 
+	// AAC config for proper sample rate/channel count in ADTS headers
+	aacConfig *mpeg4audio.AudioSpecificConfig
+
 	// Video parameter helper - persists across segments to retain SPS/PPS
 	videoParams *VideoParamHelper
 
@@ -188,6 +193,47 @@ func (p *HLSTSProcessor) Start(ctx context.Context) error {
 	}
 
 initMuxer:
+	// Get AAC config from initData if available
+	// For AAC, we need the initData to get correct sample rate/channels
+	// Wait briefly for it since the demuxer may not have parsed the first ADTS packet yet
+	if p.resolvedAudioCodec == "aac" {
+		initData := esVariant.AudioTrack().GetInitData()
+		if initData == nil {
+			p.config.Logger.Debug("Waiting for AAC initData from demuxer")
+			waitCtx, waitCancel := context.WithTimeout(p.ctx, 2*time.Second)
+			ticker := time.NewTicker(50 * time.Millisecond)
+		waitLoop:
+			for {
+				select {
+				case <-waitCtx.Done():
+					p.config.Logger.Debug("AAC initData timeout, using defaults")
+					break waitLoop
+				case <-ticker.C:
+					initData = esVariant.AudioTrack().GetInitData()
+					if initData != nil {
+						break waitLoop
+					}
+				}
+			}
+			ticker.Stop()
+			waitCancel()
+		}
+
+		if initData != nil {
+			p.aacConfig = &mpeg4audio.AudioSpecificConfig{}
+			if err := p.aacConfig.Unmarshal(initData); err != nil {
+				p.config.Logger.Debug("Failed to unmarshal AAC config from initData, using defaults",
+					slog.String("error", err.Error()))
+				p.aacConfig = nil
+			} else {
+				p.config.Logger.Debug("AAC config from initData",
+					slog.Int("type", int(p.aacConfig.Type)),
+					slog.Int("sample_rate", p.aacConfig.SampleRate),
+					slog.Int("channel_count", p.aacConfig.ChannelCount))
+			}
+		}
+	}
+
 	// Initialize TS muxer for current segment
 	p.initNewSegment()
 
@@ -196,7 +242,8 @@ initMuxer:
 		slog.String("requested_variant", p.variant.String()),
 		slog.String("resolved_variant", esVariant.Variant().String()),
 		slog.String("video_codec", p.resolvedVideoCodec),
-		slog.String("audio_codec", p.resolvedAudioCodec))
+		slog.String("audio_codec", p.resolvedAudioCodec),
+		slog.Bool("has_aac_config", p.aacConfig != nil))
 
 	// Start processing loop
 	p.wg.Add(1)
@@ -440,6 +487,7 @@ func (p *HLSTSProcessor) initNewSegment() {
 			Logger:      p.config.Logger,
 			VideoCodec:  p.resolvedVideoCodec,
 			AudioCodec:  p.resolvedAudioCodec,
+			AACConfig:   p.aacConfig,
 			VideoParams: p.videoParams,
 		})
 	} else {

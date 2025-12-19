@@ -1253,6 +1253,11 @@ func (b *SharedESBuffer) SetVideoCodec(codec string, initData []byte) {
 			slog.String("old_variant", oldVariant.String()),
 			slog.String("new_variant", newVariant.String()))
 	}
+
+	// Set initData while still holding the lock to avoid race with GetInitData
+	if initData != nil {
+		source.videoTrack.SetInitData(initData)
+	}
 	b.variantsMu.Unlock()
 
 	// Signal that source variant is ready (at least video detected)
@@ -1263,10 +1268,6 @@ func (b *SharedESBuffer) SetVideoCodec(codec string, initData []byte) {
 				slog.String("channel_id", b.channelID),
 				slog.String("video_codec", codec))
 		})
-	}
-
-	if initData != nil {
-		source.videoTrack.SetInitData(initData)
 	}
 }
 
@@ -1298,6 +1299,11 @@ func (b *SharedESBuffer) SetAudioCodec(codec string, initData []byte) {
 			slog.String("old_variant", oldVariant.String()),
 			slog.String("new_variant", newVariant.String()))
 	}
+
+	// Set initData while still holding the lock to avoid race with GetInitData
+	if initData != nil {
+		source.audioTrack.SetInitData(initData)
+	}
 	b.variantsMu.Unlock()
 
 	// Signal that source variant is ready (at least audio detected)
@@ -1309,10 +1315,6 @@ func (b *SharedESBuffer) SetAudioCodec(codec string, initData []byte) {
 				slog.String("channel_id", b.channelID),
 				slog.String("audio_codec", codec))
 		})
-	}
-
-	if initData != nil {
-		source.audioTrack.SetInitData(initData)
 	}
 }
 

@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
 )
 
 // MPEG-TS Processor errors.
@@ -164,18 +166,64 @@ func (p *MPEGTSProcessor) Start(ctx context.Context) error {
 	}
 
 initMuxer:
+	// Get AAC config from initData if available
+	// For AAC, we need the initData to get correct sample rate/channels
+	// Wait briefly for it since the demuxer may not have parsed the first ADTS packet yet
+	var aacConfig *mpeg4audio.AudioSpecificConfig
+	if audioCodec == "aac" {
+		initData := esVariant.AudioTrack().GetInitData()
+		if initData == nil {
+			p.config.Logger.Debug("Waiting for AAC initData from demuxer")
+			waitCtx, waitCancel := context.WithTimeout(p.ctx, 2*time.Second)
+			ticker := time.NewTicker(50 * time.Millisecond)
+		waitLoop:
+			for {
+				select {
+				case <-waitCtx.Done():
+					p.config.Logger.Debug("AAC initData timeout, using defaults")
+					break waitLoop
+				case <-ticker.C:
+					initData = esVariant.AudioTrack().GetInitData()
+					if initData != nil {
+						break waitLoop
+					}
+				}
+			}
+			ticker.Stop()
+			waitCancel()
+		}
+
+		if initData != nil {
+			aacConfig = &mpeg4audio.AudioSpecificConfig{}
+			if err := aacConfig.Unmarshal(initData); err != nil {
+				p.config.Logger.Debug("Failed to unmarshal AAC config from initData, using defaults",
+					slog.String("error", err.Error()))
+				aacConfig = nil
+			} else {
+				p.config.Logger.Debug("AAC config from initData",
+					slog.Int("type", int(aacConfig.Type)),
+					slog.Int("sample_rate", aacConfig.SampleRate),
+					slog.Int("channel_count", aacConfig.ChannelCount))
+			}
+		} else {
+			p.config.Logger.Debug("No AAC initData available, using defaults")
+		}
+	}
+
 	// Initialize TS muxer with the correct codec types from the tracks
 	p.muxer = NewTSMuxer(&p.muxerBuf, TSMuxerConfig{
 		Logger:     p.config.Logger,
 		VideoCodec: videoCodec,
 		AudioCodec: audioCodec,
+		AACConfig:  aacConfig,
 	})
 
 	p.config.Logger.Debug("MPEG-TS muxer initialized",
 		slog.String("requested_variant", p.variant.String()),
 		slog.String("resolved_variant", esVariant.Variant().String()),
 		slog.String("video_codec", videoCodec),
-		slog.String("audio_codec", audioCodec))
+		slog.String("audio_codec", audioCodec),
+		slog.Bool("has_aac_config", aacConfig != nil))
 
 	p.config.Logger.Debug("Starting MPEG-TS processor",
 		slog.String("id", p.id),
