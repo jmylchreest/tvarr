@@ -544,7 +544,7 @@ func (p *MPEGTSProcessor) broadcastToExistingClients(data []byte) {
 				p.UnregisterClient(clientID)
 				continue
 			}
-		case <-time.After(5 * time.Second):
+		case <-time.After(30 * time.Second):
 			// Write timed out - client is too slow, disconnect them
 			p.config.Logger.Warn("Client write timeout (pre-keyframe), disconnecting slow client",
 				slog.String("client_id", clientID),
@@ -657,7 +657,7 @@ func (p *MPEGTSProcessor) broadcastToClients(data []byte, hasKeyframe bool) {
 				p.UnregisterClient(clientID)
 				continue
 			}
-		case <-time.After(5 * time.Second):
+		case <-time.After(30 * time.Second):
 			// Write timed out - client is too slow, disconnect them
 			p.config.Logger.Warn("Client write timeout, disconnecting slow client",
 				slog.String("client_id", clientID),
