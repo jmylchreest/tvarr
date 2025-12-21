@@ -9,17 +9,17 @@ export interface StatusColourConfig {
   border: string;
 }
 
-// Theme-aware status colour mappings
+// Theme-aware status colour mappings using semantic theme colors
 export const statusColors: Record<StatusType, StatusColourConfig> = {
   success: {
-    bg: 'bg-green-50 dark:bg-green-950/20',
-    text: 'text-green-700 dark:text-green-300',
-    border: 'border-green-200 dark:border-green-800',
+    bg: 'bg-success/10',
+    text: 'text-success',
+    border: 'border-success/20',
   },
   warning: {
-    bg: 'bg-amber-50 dark:bg-amber-950/20',
-    text: 'text-amber-700 dark:text-amber-300',
-    border: 'border-amber-200 dark:border-amber-800',
+    bg: 'bg-warning/10',
+    text: 'text-warning',
+    border: 'border-warning/20',
   },
   error: {
     bg: 'bg-destructive/10',
@@ -27,9 +27,9 @@ export const statusColors: Record<StatusType, StatusColourConfig> = {
     border: 'border-destructive/20',
   },
   info: {
-    bg: 'bg-blue-50 dark:bg-blue-950/20',
-    text: 'text-blue-700 dark:text-blue-300',
-    border: 'border-blue-200 dark:border-blue-800',
+    bg: 'bg-info/10',
+    text: 'text-info',
+    border: 'border-info/20',
   },
   neutral: {
     bg: 'bg-muted',
@@ -81,13 +81,13 @@ export function getStatusIndicatorClasses(status: string | undefined | null): st
 
   switch (statusType) {
     case 'success':
-      return 'bg-green-500';
+      return 'bg-success';
     case 'warning':
-      return 'bg-amber-500';
+      return 'bg-warning';
     case 'error':
       return 'bg-destructive';
     case 'info':
-      return 'bg-blue-500';
+      return 'bg-info';
     default:
       return 'bg-muted-foreground';
   }
@@ -137,9 +137,11 @@ export function getOperatorBadgeClasses(operator: string | undefined | null): st
         ' border'
       );
     case 'regex':
-      return 'bg-purple-50 dark:bg-purple-950/20 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800 border';
+      // Uses accent color for special operators
+      return 'bg-accent/10 text-accent-foreground border-accent/20 border';
     case 'in':
-      return 'bg-cyan-50 dark:bg-cyan-950/20 text-cyan-700 dark:text-cyan-300 border-cyan-200 dark:border-cyan-800 border';
+      // Uses info color for set operators
+      return statusColors.info.bg + ' ' + statusColors.info.text + ' ' + statusColors.info.border + ' border';
     case 'not_in':
       return (
         statusColors.error.bg +

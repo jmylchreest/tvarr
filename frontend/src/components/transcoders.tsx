@@ -35,22 +35,21 @@ function getStatePriority(state: DaemonState): BadgePriority {
   }
 }
 
-// Map daemon state to icon color
-// TODO: Add success/warning/info theme colors to globals.css for proper semantic styling
+// Map daemon state to icon color using semantic theme colors
 function getStateColor(state: DaemonState): string {
   switch (state) {
     case 'connected':
       return 'text-muted-foreground';
     case 'transcoding':
-      return 'text-primary'; // Active state - uses theme primary
+      return 'text-info';
     case 'draining':
-      return 'text-yellow-600 dark:text-yellow-400'; // TODO: needs --warning theme color
+      return 'text-warning';
     case 'unhealthy':
       return 'text-destructive';
     case 'disconnected':
       return 'text-destructive';
     case 'connecting':
-      return 'text-primary';
+      return 'text-info';
     default:
       return 'text-muted-foreground';
   }
