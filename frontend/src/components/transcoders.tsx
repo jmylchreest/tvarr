@@ -7,7 +7,7 @@ import { ClusterStats } from '@/components/transcoders/ClusterStats';
 import { ConnectTranscoderButton } from '@/components/transcoders/DaemonList';
 import { TranscoderDetailPanel } from '@/components/transcoders/TranscoderDetailPanel';
 import { RefreshControl } from '@/components/ui/refresh-control';
-import { MasterDetailLayout, MasterItem, DetailEmpty } from '@/components/shared/layouts/MasterDetailLayout';
+import { MasterDetailLayout, MasterItem, MasterItemStatus, DetailEmpty } from '@/components/shared/layouts/MasterDetailLayout';
 import { BadgeGroup, BadgeItem, BadgePriority } from '@/components/shared/BadgeGroup';
 import { apiClient } from '@/lib/api-client';
 import { Daemon, ClusterStats as ClusterStatsType, DaemonState } from '@/types/api';
@@ -48,6 +48,26 @@ function getStateColor(state: DaemonState): string {
       return 'text-blue-500';
     default:
       return 'text-muted-foreground';
+  }
+}
+
+// Map daemon state to collapsed item status
+function getItemStatus(daemon: Daemon): MasterItemStatus {
+  // If actively transcoding, show as active
+  if (daemon.active_jobs > 0) return 'active';
+  // Map state to status
+  switch (daemon.state) {
+    case 'connected':
+      return 'default';
+    case 'draining':
+      return 'warning';
+    case 'unhealthy':
+    case 'disconnected':
+      return 'error';
+    case 'connecting':
+      return 'active';
+    default:
+      return 'default';
   }
 }
 
@@ -145,6 +165,9 @@ export function Transcoders() {
           animate={isTranscoding ? 'sparkle' : 'none'}
         />
       ),
+      // Status and animate for collapsed view
+      status: getItemStatus(daemon),
+      animate: isTranscoding,
       daemon,
     };
   };
@@ -228,6 +251,7 @@ export function Transcoders() {
             searchPlaceholder="Search transcoders..."
             masterWidth={340}
             collapsible={true}
+            defaultCollapsed={true}
             filterFn={filterFn}
             emptyState={{
               title: 'No transcoders connected',

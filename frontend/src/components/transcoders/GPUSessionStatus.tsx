@@ -20,15 +20,15 @@ export function GPUSessionStatus({ gpu, stats }: GPUSessionStatusProps) {
   const encodePercent = maxEncode > 0 ? (activeEncode / maxEncode) * 100 : 0;
 
   const getStatusColor = () => {
-    if (encodePercent >= 100) return 'text-red-500';
-    if (encodePercent >= 80) return 'text-yellow-500';
-    return 'text-green-500';
+    if (encodePercent >= 100) return 'text-red-600 dark:text-red-400';
+    if (encodePercent >= 80) return 'text-yellow-600 dark:text-yellow-400';
+    return 'text-green-600 dark:text-green-400';
   };
 
   const getProgressColor = () => {
-    if (encodePercent >= 100) return 'bg-red-500';
-    if (encodePercent >= 80) return 'bg-yellow-500';
-    return 'bg-green-500';
+    if (encodePercent >= 100) return 'bg-red-600 dark:bg-red-500';
+    if (encodePercent >= 80) return 'bg-yellow-600 dark:bg-yellow-500';
+    return 'bg-green-600 dark:bg-green-500';
   };
 
   return (

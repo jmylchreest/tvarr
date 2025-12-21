@@ -139,7 +139,7 @@ export function ConnectTranscoderButton() {
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium">{cmd.label}</span>
                 {copiedCommand === cmd.id ? (
-                  <Check className="h-4 w-4 text-green-500" />
+                  <Check className="h-4 w-4 text-green-600 dark:text-green-400" />
                 ) : (
                   <Copy className="h-4 w-4 text-muted-foreground" />
                 )}

@@ -39,27 +39,27 @@ export function ClusterStats({ stats, isLoading }: ClusterStatsProps) {
       <StatCard
         title="Transcoders"
         value={`${stats?.active_daemons ?? 0}/${stats?.total_daemons ?? 0}`}
-        icon={<Server className="h-4 w-4 text-blue-500" />}
+        icon={<Server className="h-4 w-4 text-blue-600 dark:text-blue-400" />}
       />
       <StatCard
         title="Active Jobs"
         value={stats?.total_active_jobs ?? 0}
-        icon={<Activity className="h-4 w-4 text-green-500" />}
+        icon={<Activity className="h-4 w-4 text-green-600 dark:text-green-400" />}
       />
       <StatCard
         title="GPU Sessions"
         value={`${stats?.available_gpu_sessions ?? 0}/${stats?.total_gpu_sessions ?? 0}`}
-        icon={<Cog className="h-4 w-4 text-purple-500" />}
+        icon={<Cog className="h-4 w-4 text-purple-600 dark:text-purple-400" />}
       />
       <StatCard
         title="Avg CPU"
         value={`${(stats?.average_cpu_percent ?? 0).toFixed(0)}%`}
-        icon={<Cpu className="h-4 w-4 text-orange-500" />}
+        icon={<Cpu className="h-4 w-4 text-orange-600 dark:text-orange-400" />}
       />
       <StatCard
         title="Avg Memory"
         value={`${(stats?.average_memory_percent ?? 0).toFixed(0)}%`}
-        icon={<MemoryStick className="h-4 w-4 text-cyan-500" />}
+        icon={<MemoryStick className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />}
       />
     </div>
   );

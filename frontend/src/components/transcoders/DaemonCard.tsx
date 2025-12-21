@@ -18,6 +18,12 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import {
   Server,
   MoreVertical,
   Pause,
@@ -62,13 +68,13 @@ function getStateColor(state: DaemonState): string {
     case 'connected':
       return 'text-muted-foreground';
     case 'draining':
-      return 'text-yellow-500';
+      return 'text-yellow-600 dark:text-yellow-400';
     case 'unhealthy':
-      return 'text-red-500';
+      return 'text-red-600 dark:text-red-400';
     case 'disconnected':
-      return 'text-red-500';
+      return 'text-red-600 dark:text-red-400';
     case 'connecting':
-      return 'text-blue-500';
+      return 'text-blue-600 dark:text-blue-400';
     default:
       return 'text-muted-foreground';
   }
@@ -99,7 +105,6 @@ function formatBytes(bytes: number): string {
 export function DaemonCard({ daemon, onDrain, onActivate }: DaemonCardProps) {
   const [isHwAccelExpanded, setIsHwAccelExpanded] = useState(false);
   const [isCapabilitiesExpanded, setIsCapabilitiesExpanded] = useState(false);
-  const [isJobsExpanded, setIsJobsExpanded] = useState(false);
   const [isActioning, setIsActioning] = useState(false);
 
   const handleDrain = async () => {
@@ -229,41 +234,6 @@ export function DaemonCard({ daemon, onDrain, onActivate }: DaemonCardProps) {
           </div>
         )}
 
-        {/* Transcode Jobs Section */}
-        <Collapsible open={isJobsExpanded} onOpenChange={setIsJobsExpanded}>
-          <div className="rounded-lg border">
-            <CollapsibleTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-full justify-between h-9 px-3 rounded-lg hover:bg-muted/50"
-              >
-                <div className="flex items-center gap-2">
-                  <Activity className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="text-xs font-medium">Transcode Jobs</span>
-                </div>
-                {isJobsExpanded ? (
-                  <ChevronUp className="h-4 w-4 text-muted-foreground" />
-                ) : (
-                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                )}
-              </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent className="px-3 pb-3">
-              <div className="space-y-1 pt-1 text-xs">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Completed</span>
-                  <span className="text-green-500 font-medium">{daemon.total_jobs_completed}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Failed</span>
-                  <span className="text-red-500 font-medium">{daemon.total_jobs_failed}</span>
-                </div>
-              </div>
-            </CollapsibleContent>
-          </div>
-        </Collapsible>
-
         {/* Hardware Acceleration Section */}
         {(capabilities?.hw_accels?.length ?? 0) > 0 && (
           <Collapsible open={isHwAccelExpanded} onOpenChange={setIsHwAccelExpanded}>
@@ -286,17 +256,55 @@ export function DaemonCard({ daemon, onDrain, onActivate }: DaemonCardProps) {
                 </Button>
               </CollapsibleTrigger>
               <CollapsibleContent className="px-3 pb-3">
-                <div className="flex flex-wrap gap-1 pt-1">
+                <TooltipProvider delayDuration={100}>
                   {capabilities?.hw_accels?.map((hw) => (
-                    <Badge
-                      key={hw.type}
-                      variant={hw.available ? 'default' : 'outline'}
-                      className="text-xs"
-                    >
-                      {hw.type}
-                    </Badge>
+                    <div key={hw.type} className="pt-2 first:pt-1">
+                      <div className="text-xs font-medium text-muted-foreground mb-1.5">
+                        {hw.type.toUpperCase()} {hw.device && <span className="font-normal">({hw.device})</span>}
+                      </div>
+
+                      {/* HW Encoders */}
+                      {((hw.hw_encoders?.length ?? 0) > 0 || (hw.filtered_encoders?.length ?? 0) > 0) && (
+                        <div className="mb-2">
+                          <div className="text-xs text-muted-foreground mb-1">HW Encoders</div>
+                          <div className="flex flex-wrap gap-1">
+                            {hw.hw_encoders?.map((enc) => (
+                              <Badge key={enc} variant="default" className="text-xs">
+                                {enc}
+                              </Badge>
+                            ))}
+                            {hw.filtered_encoders?.map((fe) => (
+                              <Tooltip key={fe.name}>
+                                <TooltipTrigger asChild>
+                                  <Badge variant="destructive" className="text-xs opacity-70 cursor-help">
+                                    {fe.name}
+                                  </Badge>
+                                </TooltipTrigger>
+                                <TooltipContent side="top" className="max-w-xs">
+                                  <p className="text-xs">{fe.reason}</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* HW Decoders */}
+                      {hw.hw_decoders?.length > 0 && (
+                        <div>
+                          <div className="text-xs text-muted-foreground mb-1">HW Decoders</div>
+                          <div className="flex flex-wrap gap-1">
+                            {hw.hw_decoders.map((dec) => (
+                              <Badge key={dec} variant="secondary" className="text-xs">
+                                {dec}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   ))}
-                </div>
+                </TooltipProvider>
               </CollapsibleContent>
             </div>
           </Collapsible>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -17,6 +17,12 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import {
   Server,
   MoreVertical,
   Pause,
@@ -32,10 +38,12 @@ import {
   Copy,
   Check,
 } from 'lucide-react';
-import { Daemon, DaemonState } from '@/types/api';
+import { Daemon, DaemonState, EncoderOverride } from '@/types/api';
 import { GPUSessionStatus } from './GPUSessionStatus';
+import { ActiveJobStats } from './ActiveJobStats';
 import { BadgeGroup, BadgeItem, BadgePriority } from '@/components/shared/BadgeGroup';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { apiClient } from '@/lib/api-client';
 
 interface TranscoderDetailPanelProps {
   daemon: Daemon;
@@ -65,13 +73,13 @@ function getStateColor(state: DaemonState): string {
     case 'connected':
       return 'text-muted-foreground';
     case 'draining':
-      return 'text-yellow-500';
+      return 'text-yellow-600 dark:text-yellow-400';
     case 'unhealthy':
-      return 'text-red-500';
+      return 'text-red-600 dark:text-red-400';
     case 'disconnected':
-      return 'text-red-500';
+      return 'text-red-600 dark:text-red-400';
     case 'connecting':
-      return 'text-blue-500';
+      return 'text-blue-600 dark:text-blue-400';
     default:
       return 'text-muted-foreground';
   }
@@ -105,6 +113,29 @@ export function TranscoderDetailPanel({ daemon, onDrain, onActivate }: Transcode
   const [isJobsExpanded, setIsJobsExpanded] = useState(true);
   const [isActioning, setIsActioning] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
+  const [encoderOverrides, setEncoderOverrides] = useState<EncoderOverride[]>([]);
+
+  // Fetch enabled encoder overrides
+  useEffect(() => {
+    const fetchOverrides = async () => {
+      try {
+        const overrides = await apiClient.getEncoderOverrides();
+        // Only keep enabled overrides
+        setEncoderOverrides(overrides.filter(o => o.is_enabled));
+      } catch (error) {
+        console.error('Failed to fetch encoder overrides:', error);
+      }
+    };
+    fetchOverrides();
+  }, []);
+
+  // Helper to get matching overrides for a hwaccel type
+  const getMatchingOverrides = (hwType: string): EncoderOverride[] => {
+    return encoderOverrides.filter(o =>
+      o.codec_type === 'video' &&
+      (!o.hw_accel_match || o.hw_accel_match === hwType)
+    );
+  };
 
   const handleDrain = async () => {
     if (!onDrain) return;
@@ -178,7 +209,7 @@ export function TranscoderDetailPanel({ daemon, onDrain, onActivate }: Transcode
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleCopyId}>
                 {copiedId ? (
-                  <Check className="mr-2 h-4 w-4 text-green-500" />
+                  <Check className="mr-2 h-4 w-4 text-green-600 dark:text-green-400" />
                 ) : (
                   <Copy className="mr-2 h-4 w-4" />
                 )}
@@ -254,11 +285,12 @@ export function TranscoderDetailPanel({ daemon, onDrain, onActivate }: Transcode
               <h3 className="text-sm font-medium">GPU Sessions</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {gpus.map((gpu) => (
-                  <GPUSessionStatus
-                    key={gpu.index}
-                    gpu={gpu}
-                    stats={gpuStats.find((s) => s.index === gpu.index)}
-                  />
+                  <div key={gpu.index} className={gpus.length === 1 ? 'md:col-span-2' : ''}>
+                    <GPUSessionStatus
+                      gpu={gpu}
+                      stats={gpuStats.find((s) => s.index === gpu.index)}
+                    />
+                  </div>
                 ))}
               </div>
             </div>
@@ -276,6 +308,11 @@ export function TranscoderDetailPanel({ daemon, onDrain, onActivate }: Transcode
                   <div className="flex items-center gap-2">
                     <Activity className="h-4 w-4 text-muted-foreground" />
                     <span className="text-sm font-medium">Transcode Jobs</span>
+                    {daemon.active_jobs > 0 && (
+                      <Badge variant="secondary" className="h-5 px-1.5 text-xs">
+                        {daemon.active_jobs} active
+                      </Badge>
+                    )}
                   </div>
                   {isJobsExpanded ? (
                     <ChevronUp className="h-4 w-4 text-muted-foreground" />
@@ -285,16 +322,16 @@ export function TranscoderDetailPanel({ daemon, onDrain, onActivate }: Transcode
                 </Button>
               </CollapsibleTrigger>
               <CollapsibleContent className="px-4 pb-4">
-                <div className="grid grid-cols-2 gap-4 pt-2">
-                  <div className="rounded-lg bg-muted/50 p-3">
-                    <span className="text-muted-foreground text-sm">Completed</span>
-                    <p className="text-2xl font-bold text-green-500">{daemon.total_jobs_completed}</p>
+                {/* Active job details with stats */}
+                {daemon.active_job_details && daemon.active_job_details.length > 0 ? (
+                  <div className="pt-2">
+                    <ActiveJobStats jobs={daemon.active_job_details} />
                   </div>
-                  <div className="rounded-lg bg-muted/50 p-3">
-                    <span className="text-muted-foreground text-sm">Failed</span>
-                    <p className="text-2xl font-bold text-red-500">{daemon.total_jobs_failed}</p>
+                ) : (
+                  <div className="pt-2 text-sm text-muted-foreground">
+                    No active transcode jobs
                   </div>
-                </div>
+                )}
               </CollapsibleContent>
             </div>
           </Collapsible>
@@ -340,7 +377,8 @@ export function TranscoderDetailPanel({ daemon, onDrain, onActivate }: Transcode
           {/* Encoders */}
           {capabilities &&
             ((capabilities.video_encoders?.length ?? 0) > 0 ||
-              (capabilities.audio_encoders?.length ?? 0) > 0) && (
+              (capabilities.audio_encoders?.length ?? 0) > 0 ||
+              (capabilities.hw_accels?.length ?? 0) > 0) && (
               <Collapsible open={isCapabilitiesExpanded} onOpenChange={setIsCapabilitiesExpanded}>
                 <div className="rounded-lg border">
                   <CollapsibleTrigger asChild>
@@ -361,9 +399,82 @@ export function TranscoderDetailPanel({ daemon, onDrain, onActivate }: Transcode
                     </Button>
                   </CollapsibleTrigger>
                   <CollapsibleContent className="px-4 pb-4 space-y-4">
+                    {/* Hardware Accelerated Encoders */}
+                    <TooltipProvider delayDuration={100}>
+                      {capabilities.hw_accels?.filter(hw => hw.available).map((hw) => {
+                        const matchingOverrides = getMatchingOverrides(hw.type);
+                        return (
+                          <div key={hw.type} className="pt-2 first:pt-2">
+                            <p className="text-sm font-medium text-muted-foreground mb-2">
+                              {hw.type.toUpperCase()} {hw.device && <span className="font-normal text-xs">({hw.device})</span>}
+                            </p>
+
+                            {/* HW Encoders */}
+                            {((hw.hw_encoders?.length ?? 0) > 0 || (hw.filtered_encoders?.length ?? 0) > 0 || matchingOverrides.length > 0) && (
+                              <div className="mb-3">
+                                <p className="text-xs text-muted-foreground mb-1.5">HW Encoders</p>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {hw.hw_encoders?.map((enc) => (
+                                    <Badge key={enc} variant="default" className="text-xs">
+                                      {enc}
+                                    </Badge>
+                                  ))}
+                                  {hw.filtered_encoders?.map((fe) => (
+                                    <Tooltip key={fe.name}>
+                                      <TooltipTrigger asChild>
+                                        <Badge variant="destructive" className="text-xs opacity-70 cursor-help">
+                                          {fe.name}
+                                        </Badge>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="top" className="max-w-xs">
+                                        <p className="text-xs">{fe.reason}</p>
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  ))}
+                                  {matchingOverrides.map((override) => (
+                                    <Tooltip key={override.id}>
+                                      <TooltipTrigger asChild>
+                                        <Badge className="text-xs cursor-help bg-yellow-600 hover:bg-yellow-600/80 text-white">
+                                          {override.source_codec} → {override.target_encoder}
+                                        </Badge>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="top" className="max-w-xs">
+                                        <p className="text-xs font-medium">{override.name}</p>
+                                        {override.description && (
+                                          <p className="text-xs text-muted-foreground mt-1">{override.description}</p>
+                                        )}
+                                        {override.cpu_match && (
+                                          <p className="text-xs text-muted-foreground mt-1">CPU match: {override.cpu_match}</p>
+                                        )}
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* HW Decoders */}
+                            {(hw.hw_decoders?.length ?? 0) > 0 && (
+                              <div>
+                                <p className="text-xs text-muted-foreground mb-1.5">HW Decoders</p>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {hw.hw_decoders?.map((dec) => (
+                                    <Badge key={dec} variant="secondary" className="text-xs">
+                                      {dec}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </TooltipProvider>
+
+                    {/* Software Video Encoders */}
                     {capabilities.video_encoders?.length > 0 && (
-                      <div>
-                        <p className="text-sm font-medium text-muted-foreground mb-2 pt-2">Video</p>
+                      <div className="pt-2 border-t">
+                        <p className="text-sm font-medium text-muted-foreground mb-2">Software Video</p>
                         <div className="flex flex-wrap gap-2">
                           {capabilities.video_encoders.map((enc) => (
                             <Badge key={enc} variant="outline" className="text-sm">
@@ -373,9 +484,11 @@ export function TranscoderDetailPanel({ daemon, onDrain, onActivate }: Transcode
                         </div>
                       </div>
                     )}
+
+                    {/* Software Audio Encoders */}
                     {capabilities.audio_encoders?.length > 0 && (
-                      <div>
-                        <p className="text-sm font-medium text-muted-foreground mb-2">Audio</p>
+                      <div className="pt-2 border-t">
+                        <p className="text-sm font-medium text-muted-foreground mb-2">Software Audio</p>
                         <div className="flex flex-wrap gap-2">
                           {capabilities.audio_encoders.map((enc) => (
                             <Badge key={enc} variant="outline" className="text-sm">
