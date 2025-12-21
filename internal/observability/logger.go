@@ -90,6 +90,14 @@ func NewLoggerWithWriter(cfg config.LoggingConfig, w io.Writer) *slog.Logger {
 			// First apply sensitive data redaction (field-name based)
 			a = redactor(groups, a)
 
+			// Replace custom trace level with readable name
+			// slog displays LevelTrace as "DEBUG-4" by default, we want "TRACE"
+			if a.Key == slog.LevelKey {
+				if lvl, ok := a.Value.Any().(slog.Level); ok && lvl == LevelTrace {
+					return slog.String(slog.LevelKey, "TRACE")
+				}
+			}
+
 			// Then redact sensitive URL query parameters in string values
 			if a.Value.Kind() == slog.KindString {
 				str := a.Value.String()
