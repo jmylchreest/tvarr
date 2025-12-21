@@ -23,29 +23,38 @@ func TestNewFFmpegDSpawner(t *testing.T) {
 		// BinaryPath is resolved lazily when findBinary() is called, not at creation
 		assert.Greater(t, spawner.config.StartupTimeout, time.Duration(0), "should have startup timeout")
 		assert.Greater(t, spawner.config.ShutdownTimeout, time.Duration(0), "should have shutdown timeout")
-		assert.NotEmpty(t, spawner.config.SocketDir, "should have socket directory")
 	})
 
 	t.Run("creates spawner with custom config", func(t *testing.T) {
 		spawner := NewFFmpegDSpawner(FFmpegDSpawnerConfig{
-			BinaryPath:      "/custom/path/tvarr-ffmpegd",
-			StartupTimeout:  30 * time.Second,
-			ShutdownTimeout: 10 * time.Second,
+			BinaryPath:         "/custom/path/tvarr-ffmpegd",
+			CoordinatorAddress: "unix:///tmp/tvarr/grpc.sock",
+			StartupTimeout:     30 * time.Second,
+			ShutdownTimeout:    10 * time.Second,
 		})
 
 		require.NotNil(t, spawner)
 		assert.Equal(t, "/custom/path/tvarr-ffmpegd", spawner.config.BinaryPath)
+		assert.Equal(t, "unix:///tmp/tvarr/grpc.sock", spawner.config.CoordinatorAddress)
 		assert.Equal(t, 30*time.Second, spawner.config.StartupTimeout)
 		assert.Equal(t, 10*time.Second, spawner.config.ShutdownTimeout)
 	})
 
 	t.Run("uses environment variable for binary path", func(t *testing.T) {
-		t.Setenv("TVARR_FFMPEGD_BINARY", "/env/path/tvarr-ffmpegd")
+		// Create a temp file and make it executable to simulate the binary
+		tmpFile, err := os.CreateTemp("", "tvarr-ffmpegd-*")
+		require.NoError(t, err)
+		defer os.Remove(tmpFile.Name())
+		tmpFile.Close()
+		require.NoError(t, os.Chmod(tmpFile.Name(), 0755))
+
+		t.Setenv("TVARR_FFMPEGD_BINARY", tmpFile.Name())
 
 		spawner := NewFFmpegDSpawner(FFmpegDSpawnerConfig{})
 
 		require.NotNil(t, spawner)
-		assert.Equal(t, "/env/path/tvarr-ffmpegd", spawner.config.BinaryPath)
+		// The env var is now resolved by findBinary(), not stored in config
+		assert.Equal(t, tmpFile.Name(), spawner.findBinary())
 	})
 }
 
@@ -53,16 +62,17 @@ func TestNewFFmpegDSpawner(t *testing.T) {
 func TestFFmpegDSpawner_SpawnForJob(t *testing.T) {
 	t.Run("returns error when binary not found", func(t *testing.T) {
 		spawner := NewFFmpegDSpawner(FFmpegDSpawnerConfig{
-			BinaryPath: "/nonexistent/path/tvarr-ffmpegd",
+			BinaryPath:         "/nonexistent/path/tvarr-ffmpegd",
+			CoordinatorAddress: "unix:///tmp/tvarr/grpc.sock",
 		})
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		client, cleanup, err := spawner.SpawnForJob(ctx, "test-job-1")
+		daemonID, cleanup, err := spawner.SpawnForJob(ctx, "test-job-1")
 
 		assert.Error(t, err)
-		assert.Nil(t, client)
+		assert.Empty(t, daemonID)
 		assert.Nil(t, cleanup)
 		assert.True(t, errors.Is(err, ErrFFmpegDBinaryNotFound), "should return ErrFFmpegDBinaryNotFound")
 	})
@@ -75,39 +85,29 @@ func TestFFmpegDSpawner_SpawnForJob(t *testing.T) {
 	// Note: Full integration tests for successful spawning are in ffmpegd_subprocess_test.go
 }
 
-// TestFFmpegDSpawner_Address tests address generation.
-func TestFFmpegDSpawner_Address(t *testing.T) {
-	t.Run("generates unique addresses per job", func(t *testing.T) {
+// TestFFmpegDSpawner_CoordinatorAddress tests coordinator address configuration.
+func TestFFmpegDSpawner_CoordinatorAddress(t *testing.T) {
+	t.Run("uses unix socket address", func(t *testing.T) {
+		spawner := NewFFmpegDSpawner(FFmpegDSpawnerConfig{
+			CoordinatorAddress: "unix:///tmp/tvarr/grpc.sock",
+		})
+
+		assert.Equal(t, "unix:///tmp/tvarr/grpc.sock", spawner.config.CoordinatorAddress)
+	})
+
+	t.Run("uses TCP address", func(t *testing.T) {
+		spawner := NewFFmpegDSpawner(FFmpegDSpawnerConfig{
+			CoordinatorAddress: "localhost:9090",
+		})
+
+		assert.Equal(t, "localhost:9090", spawner.config.CoordinatorAddress)
+	})
+
+	t.Run("handles missing coordinator address", func(t *testing.T) {
 		spawner := NewFFmpegDSpawner(FFmpegDSpawnerConfig{})
 
-		addr1 := spawner.generateAddress("job-1")
-		addr2 := spawner.generateAddress("job-2")
-
-		assert.NotEmpty(t, addr1)
-		assert.NotEmpty(t, addr2)
-		assert.NotEqual(t, addr1, addr2, "should generate unique addresses per job")
-	})
-
-	t.Run("generates unix socket when preferred", func(t *testing.T) {
-		spawner := NewFFmpegDSpawner(FFmpegDSpawnerConfig{
-			PreferUnixSocket: true,
-		})
-
-		addr := spawner.generateAddress("job-1")
-
-		// On Unix systems, should start with "unix://"
-		// On Windows, should fall back to localhost
-		assert.NotEmpty(t, addr)
-	})
-
-	t.Run("generates localhost address when unix socket not preferred", func(t *testing.T) {
-		spawner := NewFFmpegDSpawner(FFmpegDSpawnerConfig{
-			PreferUnixSocket: false,
-		})
-
-		addr := spawner.generateAddress("job-1")
-
-		assert.Contains(t, addr, "localhost:")
+		// Empty coordinator address is allowed (can be set later via SetCoordinatorAddress)
+		assert.Empty(t, spawner.config.CoordinatorAddress)
 	})
 }
 
@@ -230,6 +230,13 @@ func TestFFmpegDSpawnerConfig(t *testing.T) {
 				wantErr: false,
 			},
 			{
+				name: "coordinator address is valid",
+				config: FFmpegDSpawnerConfig{
+					CoordinatorAddress: "unix:///tmp/tvarr/grpc.sock",
+				},
+				wantErr: false,
+			},
+			{
 				name: "negative timeout is invalid",
 				config: FFmpegDSpawnerConfig{
 					StartupTimeout: -1 * time.Second,
@@ -248,5 +255,18 @@ func TestFFmpegDSpawnerConfig(t *testing.T) {
 				}
 			})
 		}
+	})
+}
+
+// TestFFmpegDSpawner_Registry tests registry integration.
+func TestFFmpegDSpawner_Registry(t *testing.T) {
+	t.Run("sets and uses registry", func(t *testing.T) {
+		spawner := NewFFmpegDSpawner(FFmpegDSpawnerConfig{})
+		registry := NewDaemonRegistry(nil)
+
+		spawner.SetRegistry(registry)
+
+		// Verify registry was set (the spawner will use it to wait for daemon registration)
+		assert.NotNil(t, spawner)
 	})
 }

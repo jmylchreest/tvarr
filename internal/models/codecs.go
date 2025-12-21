@@ -154,13 +154,13 @@ var ValidPreferredFormats = map[string]string{
 	"hls-fmp4": "hls-fmp4",
 	"hls-ts":   "hls-ts",
 	"dash":     "dash",
+	"mpegts":   "mpegts", // Raw MPEG-TS stream (for VLC, mpv, etc.)
 	"fmp4":     "hls-fmp4", // Alias
-	"mpegts":   "hls-ts",   // Alias
-	"ts":       "hls-ts",   // Alias
+	"ts":       "hls-ts",   // Alias (HLS with TS segments, not raw TS)
 }
 
 // ParsePreferredFormat parses a string to a valid preferred format, returning the format and whether it's valid.
-// Handles common aliases (e.g., "fmp4" -> "hls-fmp4", "mpegts" -> "hls-ts").
+// Handles common aliases (e.g., "fmp4" -> "hls-fmp4", "ts" -> "hls-ts").
 func ParsePreferredFormat(s string) (string, bool) {
 	format, ok := ValidPreferredFormats[strings.ToLower(strings.TrimSpace(s))]
 	return format, ok

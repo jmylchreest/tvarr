@@ -47,6 +47,7 @@ func init() {
 
 	// Serve-specific flags
 	serveCmd.Flags().Bool("standalone", false, "run in standalone mode (don't connect to coordinator)")
+	serveCmd.Flags().String("daemon-id", "", "daemon ID (overrides auto-generated UUID)")
 	serveCmd.Flags().String("name", "", "daemon name (overrides TVARR_DAEMON_NAME)")
 	serveCmd.Flags().Int("max-jobs", 0, "max concurrent jobs (0 = use config/default)")
 	serveCmd.Flags().String("listen", "", "gRPC listen address (e.g., :9091)")
@@ -61,7 +62,9 @@ func runServe(cmd *cobra.Command, _ []string) error {
 
 	// Get daemon configuration
 	daemonID := v.GetString("daemon.id")
-	if daemonID == "" {
+	if id, _ := cmd.Flags().GetString("daemon-id"); id != "" {
+		daemonID = id
+	} else if daemonID == "" {
 		daemonID = uuid.New().String()
 	}
 
@@ -146,8 +149,9 @@ func runServe(cmd *cobra.Command, _ []string) error {
 			logger.Info("hardware acceleration available",
 				slog.String("type", hwaccel.Type),
 				slog.String("device", hwaccel.Device),
-				slog.Int("encoders", len(hwaccel.Encoders)),
-				slog.Int("decoders", len(hwaccel.Decoders)),
+				slog.Any("hw_encoders", hwaccel.HwEncoders),
+				slog.Any("hw_decoders", hwaccel.HwDecoders),
+				slog.Any("filtered_encoders", hwaccel.FilteredEncoders),
 			)
 		}
 	}
@@ -233,6 +237,11 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	// Connect and register with automatic retry
 	if err := regClient.ConnectAndRegister(ctx); err != nil {
 		return fmt.Errorf("connecting to coordinator: %w", err)
+	}
+
+	// Start the persistent transcode stream
+	if err := regClient.StartTranscodeStream(ctx, binInfo); err != nil {
+		logger.Warn("failed to start transcode stream", slog.String("error", err.Error()))
 	}
 
 	logger.Info("daemon registered and running",

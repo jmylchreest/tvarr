@@ -514,7 +514,9 @@ func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
 		case <-ticker.C:
 			// Read video samples
 			newVideoSamples := videoTrack.ReadFrom(p.lastVideoSeq, 100)
+			var bytesRead uint64
 			for _, sample := range newVideoSamples {
+				bytesRead += uint64(len(sample.Data))
 				// Check if this keyframe should trigger a new segment
 				if sample.IsKeyframe && len(videoSamples) > 0 && p.hasEnoughContent() {
 					p.flushSegment(videoSamples, audioSamples)
@@ -535,12 +537,18 @@ func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
 			// Read audio samples
 			newAudioSamples := audioTrack.ReadFrom(p.lastAudioSeq, 200)
 			for _, sample := range newAudioSamples {
+				bytesRead += uint64(len(sample.Data))
 				audioSamples = append(audioSamples, sample)
 				p.lastAudioSeq = sample.Sequence
 				p.currentSegment.hasAudio = true
 				if p.currentSegment.startPTS < 0 {
 					p.currentSegment.startPTS = sample.PTS
 				}
+			}
+
+			// Track bytes read from buffer for bandwidth stats
+			if bytesRead > 0 {
+				p.TrackBytesFromBuffer(bytesRead)
 			}
 
 			// Update consumer position to allow eviction of samples we've processed

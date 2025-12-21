@@ -59,13 +59,20 @@ func (c *Capabilities) HasHWAccel(hwType HWAccelType) bool {
 	return false
 }
 
+// FilteredEncoder describes an encoder that was filtered out and why.
+type FilteredEncoder struct {
+	Name   string `json:"name"`   // Encoder name (e.g., "vp9_vaapi")
+	Reason string `json:"reason"` // Reason it was filtered
+}
+
 // HWAccelInfo describes a hardware acceleration method.
 type HWAccelInfo struct {
-	Type      HWAccelType `json:"type"`      // vaapi, cuda, qsv, videotoolbox
-	Device    string      `json:"device"`    // /dev/dri/renderD128, etc.
-	Available bool        `json:"available"`
-	Encoders  []string    `json:"encoders"` // h264_nvenc, hevc_vaapi
-	Decoders  []string    `json:"decoders"` // h264_cuvid, hevc_qsv
+	Type             HWAccelType       `json:"type"`              // vaapi, cuda, qsv, videotoolbox
+	Device           string            `json:"device"`            // /dev/dri/renderD128, etc.
+	Available        bool              `json:"available"`
+	Encoders         []string          `json:"encoders"`          // Validated HW encoders: h264_nvenc, hevc_vaapi
+	Decoders         []string          `json:"decoders"`          // HW decoders: h264_cuvid, hevc_qsv
+	FilteredEncoders []FilteredEncoder `json:"filtered_encoders"` // Encoders filtered out with reasons
 }
 
 // HWAccelType enumerates hardware acceleration types.

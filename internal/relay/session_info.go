@@ -5,18 +5,6 @@ import (
 	"time"
 )
 
-// RouteType represents the type of route used for a relay session.
-type RouteType string
-
-const (
-	// RouteTypePassthrough indicates the stream is passed through without modification.
-	RouteTypePassthrough RouteType = "passthrough"
-	// RouteTypeRepackage indicates the stream is repackaged (container change without transcode).
-	RouteTypeRepackage RouteType = "repackage"
-	// RouteTypeTranscode indicates the stream is transcoded via FFmpeg.
-	RouteTypeTranscode RouteType = "transcode"
-)
-
 // RelaySessionInfo provides a view of relay session data optimized for flow visualization.
 // It aggregates information needed to render the relay flow diagram with nodes and edges.
 type RelaySessionInfo struct {
@@ -28,7 +16,7 @@ type RelaySessionInfo struct {
 	ProfileName      string `json:"profile_name"`
 
 	// Route type determines the processing path
-	RouteType RouteType `json:"route_type"`
+	RouteType RoutingDecision `json:"route_type"`
 
 	// Source information
 	SourceURL    string `json:"source_url"`
@@ -96,6 +84,9 @@ type RelaySessionInfo struct {
 	SegmentCount      *int                `json:"segment_count,omitempty"`
 	BufferVariants    []BufferVariantInfo `json:"buffer_variants,omitempty"` // Variants in shared buffer
 
+	// Edge bandwidth statistics (per-edge real-time tracking)
+	EdgeBandwidth *EdgeBandwidthStats `json:"edge_bandwidth,omitempty"`
+
 	// Status
 	InFallback bool   `json:"in_fallback"`
 	Error      string `json:"error,omitempty"`
@@ -161,9 +152,20 @@ func (s *SessionStats) ToSessionInfo() RelaySessionInfo {
 		durationSecs = time.Since(s.StartedAt).Seconds()
 		info.DurationSecs = durationSecs
 
-		// Calculate ingress/egress rates (bytes per second)
-		if durationSecs > 0 {
+		// Use edge bandwidth stats for real-time rates if available,
+		// otherwise fall back to calculating from totals (lifetime average)
+		if s.EdgeBandwidthStats != nil {
+			info.EdgeBandwidth = s.EdgeBandwidthStats
+			// Use the real-time ingress rate from edge tracking
+			info.IngressRateBps = s.EdgeBandwidthStats.OriginToBuffer.CurrentBps
+		} else if durationSecs > 0 {
+			// Fallback: calculate average rate from totals
 			info.IngressRateBps = uint64(float64(s.BytesFromUpstream) / durationSecs)
+		}
+
+		// Egress rate is harder to track per-edge since it goes to multiple clients
+		// For now, keep using the lifetime average for egress
+		if durationSecs > 0 {
 			info.EgressRateBps = uint64(float64(s.BytesWritten) / durationSecs)
 		}
 	}
@@ -178,17 +180,17 @@ func (s *SessionStats) ToSessionInfo() RelaySessionInfo {
 	// Determine route type from delivery decision
 	switch s.DeliveryDecision {
 	case "passthrough":
-		info.RouteType = RouteTypePassthrough
+		info.RouteType = RoutePassthrough
 	case "repackage":
-		info.RouteType = RouteTypeRepackage
+		info.RouteType = RouteRepackage
 	case "transcode":
-		info.RouteType = RouteTypeTranscode
+		info.RouteType = RouteTranscode
 	default:
 		// Infer from FFmpeg presence
 		if s.FFmpegStats != nil {
-			info.RouteType = RouteTypeTranscode
+			info.RouteType = RouteTranscode
 		} else {
-			info.RouteType = RouteTypePassthrough
+			info.RouteType = RoutePassthrough
 		}
 	}
 

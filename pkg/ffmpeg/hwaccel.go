@@ -6,6 +6,9 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
+
+	"github.com/jmylchreest/tvarr/internal/util"
 )
 
 // HWAccelType represents a hardware acceleration type.
@@ -24,19 +27,47 @@ const (
 	HWAccelOCL          HWAccelType = "opencl"       // OpenCL
 )
 
+// FilteredEncoder describes an encoder that was filtered out and why.
+type FilteredEncoder struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
+}
+
 // HWAccelInfo contains information about a hardware accelerator.
 type HWAccelInfo struct {
-	Type       HWAccelType `json:"type"`
-	Name       string      `json:"name"`
-	Available  bool        `json:"available"`
-	DeviceName string      `json:"device_name,omitempty"`
-	Encoders   []string    `json:"encoders,omitempty"`
-	Decoders   []string    `json:"decoders,omitempty"`
+	Type             HWAccelType       `json:"type"`
+	Name             string            `json:"name"`
+	Available        bool              `json:"available"`
+	DeviceName       string            `json:"device_name,omitempty"`
+	Encoders         []string          `json:"encoders,omitempty"`          // Validated HW encoders
+	Decoders         []string          `json:"decoders,omitempty"`          // HW decoders
+	FilteredEncoders []FilteredEncoder `json:"filtered_encoders,omitempty"` // Encoders filtered out with reasons
 }
 
 // HWAccelDetector detects available hardware acceleration.
 type HWAccelDetector struct {
 	ffmpegPath string
+}
+
+// vainfo path cache - found once and reused
+var (
+	vainfoPath     string
+	vainfoPathOnce sync.Once
+	vainfoFound    bool
+)
+
+// getVainfoPath returns the path to vainfo binary, or empty string if not found.
+// The result is cached for subsequent calls.
+// Can be overridden via TVARR_VAINFO_PATH environment variable.
+func getVainfoPath() string {
+	vainfoPathOnce.Do(func() {
+		path, err := util.FindBinary("vainfo", "TVARR_VAINFO_PATH")
+		if err == nil {
+			vainfoPath = path
+			vainfoFound = true
+		}
+	})
+	return vainfoPath
 }
 
 // NewHWAccelDetector creates a new hardware acceleration detector.
@@ -71,8 +102,8 @@ func (d *HWAccelDetector) Detect(ctx context.Context) ([]HWAccelInfo, error) {
 		info.DeviceName = deviceName
 
 		if available {
-			// Get encoders for this accelerator
-			info.Encoders = d.getAccelEncoders(ctx, accel)
+			// Get encoders for this accelerator (with filtering info)
+			info.Encoders, info.FilteredEncoders = d.getAccelEncoders(ctx, accel)
 			info.Decoders = d.getAccelDecoders(ctx, accel)
 		}
 
@@ -256,8 +287,11 @@ func (d *HWAccelDetector) testVulkan(ctx context.Context) (bool, string) {
 }
 
 // getAccelEncoders gets encoders associated with a hardware accelerator.
-func (d *HWAccelDetector) getAccelEncoders(ctx context.Context, accel string) []string {
+// For VAAPI, this validates against vainfo to ensure the GPU actually supports encoding.
+// Returns both valid encoders and filtered encoders (with reasons why they were excluded).
+func (d *HWAccelDetector) getAccelEncoders(ctx context.Context, accel string) ([]string, []FilteredEncoder) {
 	var encoders []string
+	var filtered []FilteredEncoder
 
 	// Map accelerator to encoder suffixes
 	suffixes := map[string][]string{
@@ -271,14 +305,14 @@ func (d *HWAccelDetector) getAccelEncoders(ctx context.Context, accel string) []
 
 	suffixList, ok := suffixes[accel]
 	if !ok {
-		return encoders
+		return encoders, filtered
 	}
 
 	// Get all encoders from ffmpeg
 	cmd := exec.CommandContext(ctx, d.ffmpegPath, "-encoders", "-hide_banner")
 	output, err := cmd.Output()
 	if err != nil {
-		return encoders
+		return encoders, filtered
 	}
 
 	lines := strings.Split(string(output), "\n")
@@ -293,19 +327,168 @@ func (d *HWAccelDetector) getAccelEncoders(ctx context.Context, accel string) []
 		}
 	}
 
-	return encoders
+	// For VAAPI, validate encoders against vainfo to ensure the GPU actually supports encoding
+	if accel == "vaapi" {
+		encoders, filtered = d.filterVaapiEncodersByCapability(ctx, encoders)
+	}
+
+	return encoders, filtered
+}
+
+// filterVaapiEncodersByCapability filters VAAPI encoders to only include those
+// that the GPU actually supports for encoding (has VAEntrypointEncSlice).
+// FFmpeg may list encoders like vp9_vaapi even when the GPU only supports VP9 decoding.
+// Returns valid encoders and filtered encoders with reasons.
+func (d *HWAccelDetector) filterVaapiEncodersByCapability(ctx context.Context, encoders []string) ([]string, []FilteredEncoder) {
+	// Get actual encoding profiles from vainfo
+	supportedCodecs := d.getVaapiEncodingProfiles(ctx)
+	if len(supportedCodecs) == 0 {
+		// If we can't determine capabilities, return original list
+		// (fallback to old behavior - no filtering info available)
+		return encoders, nil
+	}
+
+	// Filter encoders to only those the GPU can actually encode
+	var validEncoders []string
+	var filtered []FilteredEncoder
+	for _, enc := range encoders {
+		// Map encoder name to codec
+		codec := vaapiEncoderToCodec(enc)
+		if codec == "" {
+			continue
+		}
+
+		// Check if this codec is in the supported list
+		if supportedCodecs[codec] {
+			validEncoders = append(validEncoders, enc)
+		} else {
+			// Track filtered encoder with reason
+			filtered = append(filtered, FilteredEncoder{
+				Name:   enc,
+				Reason: fmt.Sprintf("GPU does not support %s encoding (no VAEntrypointEncSlice)", codec),
+			})
+		}
+	}
+
+	return validEncoders, filtered
+}
+
+// getVaapiEncodingProfiles parses vainfo output to determine which codecs
+// have encoding capability (VAEntrypointEncSlice).
+func (d *HWAccelDetector) getVaapiEncodingProfiles(ctx context.Context) map[string]bool {
+	return d.getVaapiProfiles(ctx, "VAEntrypointEncSlice")
+}
+
+// getVaapiDecodingProfiles parses vainfo output to determine which codecs
+// have decoding capability (VAEntrypointVLD).
+func (d *HWAccelDetector) getVaapiDecodingProfiles(ctx context.Context) map[string]bool {
+	return d.getVaapiProfiles(ctx, "VAEntrypointVLD")
+}
+
+// getVaapiProfiles parses vainfo output to determine which codecs
+// have the specified entrypoint capability.
+func (d *HWAccelDetector) getVaapiProfiles(ctx context.Context, entrypoint string) map[string]bool {
+	supported := make(map[string]bool)
+
+	// Find vainfo binary
+	vainfoCmd := getVainfoPath()
+	if vainfoCmd == "" {
+		// vainfo not available, skip filtering
+		return supported
+	}
+
+	// Run vainfo to get profile/entrypoint info
+	cmd := exec.CommandContext(ctx, vainfoCmd)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// vainfo failed to run
+		return supported
+	}
+
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// Look for lines like "VAProfileH264High: VAEntrypointEncSlice" or "VAEntrypointVLD"
+		if !strings.Contains(line, entrypoint) {
+			continue
+		}
+
+		// Extract the profile name
+		parts := strings.Split(line, ":")
+		if len(parts) < 2 {
+			continue
+		}
+
+		profile := strings.TrimSpace(parts[0])
+
+		// Map VA profile to codec name
+		switch {
+		case strings.HasPrefix(profile, "VAProfileH264"):
+			supported["h264"] = true
+		case strings.HasPrefix(profile, "VAProfileHEVC"), strings.HasPrefix(profile, "VAProfileH265"):
+			supported["hevc"] = true
+		case strings.HasPrefix(profile, "VAProfileVP9"):
+			supported["vp9"] = true
+		case strings.HasPrefix(profile, "VAProfileAV1"):
+			supported["av1"] = true
+		case strings.HasPrefix(profile, "VAProfileJPEG"):
+			supported["mjpeg"] = true
+		case strings.HasPrefix(profile, "VAProfileVP8"):
+			supported["vp8"] = true
+		case strings.HasPrefix(profile, "VAProfileMPEG2"):
+			supported["mpeg2"] = true
+		case strings.HasPrefix(profile, "VAProfileVC1"):
+			supported["vc1"] = true
+		}
+	}
+
+	return supported
+}
+
+// vaapiEncoderToCodec maps a VAAPI encoder name to its codec.
+func vaapiEncoderToCodec(encoder string) string {
+	switch encoder {
+	case "h264_vaapi":
+		return "h264"
+	case "hevc_vaapi":
+		return "hevc"
+	case "vp9_vaapi":
+		return "vp9"
+	case "av1_vaapi":
+		return "av1"
+	case "mjpeg_vaapi":
+		return "mjpeg"
+	case "vp8_vaapi":
+		return "vp8"
+	case "mpeg2_vaapi":
+		return "mpeg2"
+	default:
+		return ""
+	}
 }
 
 // getAccelDecoders gets decoders associated with a hardware accelerator.
+// For VAAPI, this returns the codecs that can be hardware-decoded (have VAEntrypointVLD).
 func (d *HWAccelDetector) getAccelDecoders(ctx context.Context, accel string) []string {
 	var decoders []string
+
+	// For VAAPI, return codecs that have hardware decode capability
+	// VAAPI uses hwaccel flag rather than specific decoder binaries,
+	// but we report the supported codecs for informational purposes
+	if accel == "vaapi" {
+		supportedCodecs := d.getVaapiDecodingProfiles(ctx)
+		for codec := range supportedCodecs {
+			decoders = append(decoders, codec)
+		}
+		return decoders
+	}
 
 	// Map accelerator to decoder suffixes/names
 	patterns := map[string][]string{
 		"cuda":         {"_cuvid"},
 		"nvdec":        {"_cuvid"},
 		"qsv":          {"_qsv"},
-		"vaapi":        {}, // VAAPI uses hwaccel, not specific decoders
 		"videotoolbox": {}, // VideoToolbox uses hwaccel
 	}
 

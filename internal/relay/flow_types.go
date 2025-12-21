@@ -96,7 +96,7 @@ type FlowNodeData struct {
 	TranscoderMemHistory []float64 `json:"transcoderMemHistory,omitempty"` // Historical memory usage in MB
 
 	// Processor node fields
-	RouteType        RouteType `json:"routeType,omitempty"` // passthrough, repackage, transcode
+	RouteType        RoutingDecision `json:"routeType,omitempty"` // passthrough, repackage, transcode
 	ProfileName      string    `json:"profileName,omitempty"`
 	OutputFormat     string    `json:"outputFormat,omitempty"`     // hls, dash, mpegts
 	OutputVideoCodec string    `json:"outputVideoCodec,omitempty"` // Output video codec (same as input for passthrough/repackage)

@@ -74,7 +74,7 @@ func TestBackupService_CreateBackup(t *testing.T) {
 	// Verify metadata
 	assert.NotEmpty(t, meta.Filename)
 	assert.Contains(t, meta.Filename, "tvarr-backup-")
-	assert.Contains(t, meta.Filename, ".db.gz")
+	assert.Contains(t, meta.Filename, ".tar.gz")
 	assert.Equal(t, backupDir, filepath.Dir(meta.FilePath))
 	assert.NotZero(t, meta.FileSize)
 	assert.NotEmpty(t, meta.Checksum)
@@ -87,10 +87,8 @@ func TestBackupService_CreateBackup(t *testing.T) {
 	_, err = os.Stat(meta.FilePath)
 	require.NoError(t, err, "backup file should exist")
 
-	// Verify metadata file exists
-	metaPath := meta.FilePath[:len(meta.FilePath)-6] + ".meta.json"
-	_, err = os.Stat(metaPath)
-	require.NoError(t, err, "metadata file should exist")
+	// Note: new .tar.gz format embeds metadata inside the archive,
+	// not as a companion .meta.json file
 
 	// Verify table counts in metadata (TableCounts is a struct)
 	assert.Equal(t, 1, meta.TableCounts.Filters, "should have 1 filter")
@@ -431,7 +429,7 @@ func TestBackupService_RestoreBackup(t *testing.T) {
 	assert.Equal(t, backup.DatabaseSize, retrieved.DatabaseSize)
 }
 
-func TestBackupService_RestoreBackup_InvalidChecksum(t *testing.T) {
+func TestBackupService_RestoreBackup_CorruptedArchive(t *testing.T) {
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
 	backupDir := filepath.Join(tempDir, "backups")
@@ -457,16 +455,19 @@ func TestBackupService_RestoreBackup_InvalidChecksum(t *testing.T) {
 	backup, err := service.CreateBackup(ctx)
 	require.NoError(t, err)
 
-	// Corrupt the backup file
-	f, err := os.OpenFile(backup.FilePath, os.O_WRONLY|os.O_APPEND, 0644)
+	// Corrupt the backup file by overwriting bytes in the middle
+	// (appending doesn't work because gzip ignores trailing data)
+	f, err := os.OpenFile(backup.FilePath, os.O_WRONLY, 0644)
 	require.NoError(t, err)
-	f.WriteString("corruption")
+	f.Seek(100, 0) // Seek to middle of file
+	f.WriteString("CORRUPTED")
 	f.Close()
 
-	// Attempt restore - should fail due to checksum mismatch
+	// Attempt restore - should fail due to archive corruption
+	// Note: .tar.gz format skips checksum verification (checksum is self-referential),
+	// but corruption is detected during gzip/tar extraction
 	err = service.RestoreBackup(ctx, backup.Filename)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "checksum mismatch")
+	assert.Error(t, err, "restore should fail on corrupted archive")
 }
 
 func TestBackupService_RestoreBackup_PathTraversal(t *testing.T) {

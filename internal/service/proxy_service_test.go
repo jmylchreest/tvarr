@@ -207,6 +207,33 @@ func (m *mockProxyRepo) GetByEncodingProfileID(ctx context.Context, profileID mo
 	return nil, nil
 }
 
+func (m *mockProxyRepo) CountByEpgSourceID(ctx context.Context, epgSourceID models.ULID) (int64, error) {
+	return 0, nil
+}
+
+func (m *mockProxyRepo) CountByFilterID(ctx context.Context, filterID models.ULID) (int64, error) {
+	return 0, nil
+}
+
+func (m *mockProxyRepo) CountByStreamSourceID(ctx context.Context, sourceID models.ULID) (int64, error) {
+	return 0, nil
+}
+
+func (m *mockProxyRepo) GetProxyNamesByEncodingProfileID(ctx context.Context, profileID models.ULID) ([]string, error) {
+	return nil, nil
+}
+
+func (m *mockProxyRepo) GetProxyNamesByEpgSourceID(ctx context.Context, epgSourceID models.ULID) ([]string, error) {
+	return nil, nil
+}
+
+func (m *mockProxyRepo) GetProxyNamesByFilterID(ctx context.Context, filterID models.ULID) ([]string, error) {
+	return nil, nil
+}
+
+func (m *mockProxyRepo) GetProxyNamesByStreamSourceID(ctx context.Context, sourceID models.ULID) ([]string, error) {
+	return nil, nil
+}
 
 func TestProxyService_Create(t *testing.T) {
 	repo := newMockProxyRepo()

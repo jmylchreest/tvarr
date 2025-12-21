@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jmylchreest/tvarr/internal/observability"
 	"github.com/jmylchreest/tvarr/internal/version"
 	"github.com/jmylchreest/tvarr/pkg/ffmpeg"
 	"github.com/jmylchreest/tvarr/pkg/ffmpegd/proto"
@@ -266,7 +267,7 @@ func (s *Server) Transcode(stream grpc.BidiStreamingServer[proto.TranscodeMessag
 	s.logger.Info("transcode job started",
 		slog.String("job_id", jobID),
 		slog.String("channel", startMsg.Start.ChannelName),
-		slog.String("video_encoder", startMsg.Start.VideoEncoder),
+		slog.String("target_video_codec", startMsg.Start.TargetVideoCodec),
 	)
 
 	// Track the job for stats
@@ -282,8 +283,6 @@ func (s *Server) Transcode(stream grpc.BidiStreamingServer[proto.TranscodeMessag
 			SourceAudioCodec: startMsg.Start.SourceAudioCodec,
 			TargetVideoCodec: startMsg.Start.TargetVideoCodec,
 			TargetAudioCodec: startMsg.Start.TargetAudioCodec,
-			VideoEncoder:     startMsg.Start.VideoEncoder,
-			AudioEncoder:     startMsg.Start.AudioEncoder,
 			VideoBitrateKbps: int(startMsg.Start.VideoBitrateKbps),
 			AudioBitrateKbps: int(startMsg.Start.AudioBitrateKbps),
 			VideoPreset:      startMsg.Start.VideoPreset,
@@ -448,16 +447,55 @@ func (s *Server) Transcode(stream grpc.BidiStreamingServer[proto.TranscodeMessag
 
 // forwardTranscodedOutput reads transcoded samples from FFmpeg and sends them to the stream.
 func (s *Server) forwardTranscodedOutput(stream grpc.BidiStreamingServer[proto.TranscodeMessage, proto.TranscodeMessage], job *TranscodeJob) error {
-	for batch := range job.OutputChannel() {
-		if err := stream.Send(&proto.TranscodeMessage{
-			Payload: &proto.TranscodeMessage_Samples{
-				Samples: batch,
-			},
-		}); err != nil {
-			return fmt.Errorf("sending samples: %w", err)
+	var batchCount uint64
+	var bytesSent uint64
+	logTicker := time.NewTicker(5 * time.Second)
+	defer logTicker.Stop()
+
+	lastBatchCount := uint64(0)
+	lastBytesSent := uint64(0)
+
+	for {
+		select {
+		case <-logTicker.C:
+			batchDelta := batchCount - lastBatchCount
+			bytesDelta := bytesSent - lastBytesSent
+			s.logger.Log(context.Background(), observability.LevelTrace, "gRPC forward throughput",
+				slog.Uint64("batches_sent_5s", batchDelta),
+				slog.Float64("kbps", float64(bytesDelta)/5.0/1024),
+				slog.Int("output_ch_len", len(job.OutputChannel())))
+			lastBatchCount = batchCount
+			lastBytesSent = bytesSent
+		case batch, ok := <-job.OutputChannel():
+			if !ok {
+				s.logger.Debug("forwardTranscodedOutput exiting: output channel closed",
+					slog.Uint64("total_batches", batchCount),
+					slog.Uint64("total_bytes", bytesSent))
+				return nil
+			}
+
+			batchBytes := uint64(0)
+			for _, sample := range batch.VideoSamples {
+				batchBytes += uint64(len(sample.Data))
+			}
+			for _, sample := range batch.AudioSamples {
+				batchBytes += uint64(len(sample.Data))
+			}
+
+			if err := stream.Send(&proto.TranscodeMessage{
+				Payload: &proto.TranscodeMessage_Samples{
+					Samples: batch,
+				},
+			}); err != nil {
+				s.logger.Debug("forwardTranscodedOutput exiting: gRPC send error",
+					slog.String("error", err.Error()),
+					slog.Uint64("total_batches", batchCount))
+				return fmt.Errorf("sending samples: %w", err)
+			}
+			batchCount++
+			bytesSent += batchBytes
 		}
 	}
-	return nil
 }
 
 // sendStatsLoop periodically sends transcode stats over the stream.

@@ -372,22 +372,22 @@ func TestTranscoderStats(t *testing.T) {
 	})
 }
 
-// TestMakeCodecVariant tests the codec variant creation function.
-func TestMakeCodecVariant(t *testing.T) {
+// TestNewCodecVariant tests the codec variant creation function.
+func TestNewCodecVariant(t *testing.T) {
 	t.Run("creates variant from codec names", func(t *testing.T) {
-		variant := MakeCodecVariant("h264", "aac")
+		variant := NewCodecVariant("h264", "aac")
 		assert.Equal(t, CodecVariant("h264/aac"), variant)
 		assert.Equal(t, "h264", variant.VideoCodec())
 		assert.Equal(t, "aac", variant.AudioCodec())
 	})
 
 	t.Run("handles empty codec names", func(t *testing.T) {
-		variant := MakeCodecVariant("", "")
+		variant := NewCodecVariant("", "")
 		assert.Equal(t, CodecVariant("copy/copy"), variant)
 	})
 
 	t.Run("handles copy values", func(t *testing.T) {
-		variant := MakeCodecVariant("copy", "copy")
+		variant := NewCodecVariant("copy", "copy")
 		assert.Equal(t, CodecVariant("copy/copy"), variant)
 	})
 }

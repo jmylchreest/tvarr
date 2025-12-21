@@ -24,6 +24,25 @@ func NewFFmpegDHandler(service *service.FFmpegDService) *FFmpegDHandler {
 
 // --- DTO Types ---
 
+// ActiveJobDTO is the API representation of an active transcode job.
+type ActiveJobDTO struct {
+	ID            string  `json:"id"`
+	SessionID     string  `json:"session_id"`
+	ChannelID     string  `json:"channel_id"`
+	ChannelName   string  `json:"channel_name"`
+	CPUPercent    float64 `json:"cpu_percent"`
+	MemoryMB      float64 `json:"memory_mb"`
+	EncodingSpeed float64 `json:"encoding_speed"`
+	SamplesIn     uint64  `json:"samples_in"`
+	SamplesOut    uint64  `json:"samples_out"`
+	BytesIn       uint64  `json:"bytes_in"`
+	BytesOut      uint64  `json:"bytes_out"`
+	RunningTimeMs int64   `json:"running_time_ms"`
+	HWAccel       string  `json:"hw_accel,omitempty"`
+	HWDevice      string  `json:"hw_device,omitempty"`
+	FFmpegCommand string  `json:"ffmpeg_command,omitempty"`
+}
+
 // DaemonDTO is the API representation of a daemon.
 type DaemonDTO struct {
 	ID                 string            `json:"id"`
@@ -35,6 +54,7 @@ type DaemonDTO struct {
 	LastHeartbeat      string            `json:"last_heartbeat"`
 	HeartbeatsMissed   int               `json:"heartbeats_missed"`
 	ActiveJobs         int               `json:"active_jobs"`
+	ActiveJobDetails   []ActiveJobDTO    `json:"active_job_details,omitempty"`
 	TotalJobsCompleted uint64            `json:"total_jobs_completed"`
 	TotalJobsFailed    uint64            `json:"total_jobs_failed"`
 	Capabilities       *CapabilitiesDTO  `json:"capabilities,omitempty"`
@@ -52,13 +72,20 @@ type CapabilitiesDTO struct {
 	GPUs              []GPUInfoDTO   `json:"gpus,omitempty"`
 }
 
+// FilteredEncoderDTO represents an encoder that was filtered out.
+type FilteredEncoderDTO struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
+}
+
 // HWAccelDTO is the API representation of hardware acceleration info.
 type HWAccelDTO struct {
-	Type      string   `json:"type"`
-	Device    string   `json:"device"`
-	Available bool     `json:"available"`
-	Encoders  []string `json:"encoders"`
-	Decoders  []string `json:"decoders"`
+	Type             string               `json:"type"`
+	Device           string               `json:"device"`
+	Available        bool                 `json:"available"`
+	Encoders         []string             `json:"hw_encoders"`
+	Decoders         []string             `json:"hw_decoders"`
+	FilteredEncoders []FilteredEncoderDTO `json:"filtered_encoders,omitempty"`
 }
 
 // GPUInfoDTO is the API representation of GPU info.
@@ -204,6 +231,35 @@ func daemonToDTO(d *types.Daemon) DaemonDTO {
 	return dto
 }
 
+func daemonToDTOWithJobs(d *types.Daemon, jobs []service.ActiveJobInfo) DaemonDTO {
+	dto := daemonToDTO(d)
+
+	if len(jobs) > 0 {
+		dto.ActiveJobDetails = make([]ActiveJobDTO, 0, len(jobs))
+		for _, job := range jobs {
+			dto.ActiveJobDetails = append(dto.ActiveJobDetails, ActiveJobDTO{
+				ID:            job.ID,
+				SessionID:     job.SessionID,
+				ChannelID:     job.ChannelID,
+				ChannelName:   job.ChannelName,
+				CPUPercent:    job.CPUPercent,
+				MemoryMB:      job.MemoryMB,
+				EncodingSpeed: job.EncodingSpeed,
+				SamplesIn:     job.SamplesIn,
+				SamplesOut:    job.SamplesOut,
+				BytesIn:       job.BytesIn,
+				BytesOut:      job.BytesOut,
+				RunningTimeMs: job.RunningTimeMs,
+				HWAccel:       job.HWAccel,
+				HWDevice:      job.HWDevice,
+				FFmpegCommand: job.FFmpegCommand,
+			})
+		}
+	}
+
+	return dto
+}
+
 func capabilitiesToDTO(c *types.Capabilities) *CapabilitiesDTO {
 	dto := &CapabilitiesDTO{
 		VideoEncoders:     c.VideoEncoders,
@@ -214,12 +270,22 @@ func capabilitiesToDTO(c *types.Capabilities) *CapabilitiesDTO {
 	}
 
 	for _, hw := range c.HWAccels {
+		// Convert filtered encoders
+		var filteredEncoders []FilteredEncoderDTO
+		for _, fe := range hw.FilteredEncoders {
+			filteredEncoders = append(filteredEncoders, FilteredEncoderDTO{
+				Name:   fe.Name,
+				Reason: fe.Reason,
+			})
+		}
+
 		dto.HWAccels = append(dto.HWAccels, HWAccelDTO{
-			Type:      string(hw.Type),
-			Device:    hw.Device,
-			Available: hw.Available,
-			Encoders:  hw.Encoders,
-			Decoders:  hw.Decoders,
+			Type:             string(hw.Type),
+			Device:           hw.Device,
+			Available:        hw.Available,
+			Encoders:         hw.Encoders,
+			Decoders:         hw.Decoders,
+			FilteredEncoders: filteredEncoders,
 		})
 	}
 
@@ -356,7 +422,9 @@ func (h *FFmpegDHandler) ListDaemons(ctx context.Context, input *ListDaemonsInpu
 	output := &ListDaemonsOutput{}
 	output.Body.Daemons = make([]DaemonDTO, 0, len(daemons))
 	for _, d := range daemons {
-		output.Body.Daemons = append(output.Body.Daemons, daemonToDTO(d))
+		// Get active job details for each daemon
+		jobs, _ := h.service.GetDaemonActiveJobs(d.ID)
+		output.Body.Daemons = append(output.Body.Daemons, daemonToDTOWithJobs(d, jobs))
 	}
 	output.Body.Total = len(output.Body.Daemons)
 
@@ -370,8 +438,11 @@ func (h *FFmpegDHandler) GetDaemon(ctx context.Context, input *GetDaemonInput) (
 		return nil, huma.Error404NotFound("daemon not found")
 	}
 
+	// Get active job details
+	jobs, _ := h.service.GetDaemonActiveJobs(daemon.ID)
+
 	return &GetDaemonOutput{
-		Body: daemonToDTO(daemon),
+		Body: daemonToDTOWithJobs(daemon, jobs),
 	}, nil
 }
 

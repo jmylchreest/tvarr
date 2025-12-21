@@ -66,8 +66,8 @@ func TestImportService_ImportFiltersPreview(t *testing.T) {
 			name:  "preview with no conflicts",
 			setup: func(db *gorm.DB) {},
 			items: []models.FilterExportItem{
-				{Name: "New Filter 1", Expression: "test1", SourceType: "stream", Action: "include", IsEnabled: true},
-				{Name: "New Filter 2", Expression: "test2", SourceType: "epg", Action: "exclude", IsEnabled: true},
+				{Name: "New Filter 1", Expression: "test1", SourceType: "stream", Action: "include"},
+				{Name: "New Filter 2", Expression: "test2", SourceType: "epg", Action: "exclude"},
 			},
 			wantNewCount:   2,
 			wantConflicts:  0,
@@ -80,8 +80,8 @@ func TestImportService_ImportFiltersPreview(t *testing.T) {
 				require.NoError(t, db.Create(filter).Error)
 			},
 			items: []models.FilterExportItem{
-				{Name: "Existing Filter", Expression: "new", SourceType: "stream", Action: "include", IsEnabled: true},
-				{Name: "New Filter", Expression: "test", SourceType: "stream", Action: "include", IsEnabled: true},
+				{Name: "Existing Filter", Expression: "new", SourceType: "stream", Action: "include"},
+				{Name: "New Filter", Expression: "test", SourceType: "stream", Action: "include"},
 			},
 			wantNewCount:   1,
 			wantConflicts:  1,
@@ -91,8 +91,8 @@ func TestImportService_ImportFiltersPreview(t *testing.T) {
 			name:  "preview reports validation errors",
 			setup: func(db *gorm.DB) {},
 			items: []models.FilterExportItem{
-				{Name: "Missing Expression", Expression: "", SourceType: "stream", Action: "include", IsEnabled: true},
-				{Name: "Valid Filter", Expression: "test", SourceType: "stream", Action: "include", IsEnabled: true},
+				{Name: "Missing Expression", Expression: "", SourceType: "stream", Action: "include"},
+				{Name: "Valid Filter", Expression: "test", SourceType: "stream", Action: "include"},
 			},
 			wantNewCount:   1,
 			wantConflicts:  0,
@@ -128,8 +128,8 @@ func TestImportService_ImportFilters_SkipResolution(t *testing.T) {
 
 	// Try to import with skip resolution
 	items := []models.FilterExportItem{
-		{Name: "Existing Filter", Expression: "new expression", SourceType: "stream", Action: "include", IsEnabled: true},
-		{Name: "New Filter", Expression: "test", SourceType: "stream", Action: "include", IsEnabled: true},
+		{Name: "Existing Filter", Expression: "new expression", SourceType: "stream", Action: "include"},
+		{Name: "New Filter", Expression: "test", SourceType: "stream", Action: "include"},
 	}
 	resolutions := map[string]models.ConflictResolution{
 		"Existing Filter": models.ConflictResolutionSkip,
@@ -168,7 +168,7 @@ func TestImportService_ImportFilters_RenameResolution(t *testing.T) {
 
 	// Import with rename resolution
 	items := []models.FilterExportItem{
-		{Name: "Existing Filter", Expression: "new expression", SourceType: "stream", Action: "include", IsEnabled: true},
+		{Name: "Existing Filter", Expression: "new expression", SourceType: "stream", Action: "include"},
 	}
 	resolutions := map[string]models.ConflictResolution{
 		"Existing Filter": models.ConflictResolutionRename,
@@ -217,7 +217,7 @@ func TestImportService_ImportFilters_OverwriteResolution(t *testing.T) {
 
 	// Import with overwrite resolution
 	items := []models.FilterExportItem{
-		{Name: "Existing Filter", Expression: "new expression", SourceType: "epg", Action: "exclude", IsEnabled: false},
+		{Name: "Existing Filter", Expression: "new expression", SourceType: "epg", Action: "exclude"},
 	}
 	resolutions := map[string]models.ConflictResolution{
 		"Existing Filter": models.ConflictResolutionOverwrite,
@@ -243,7 +243,6 @@ func TestImportService_ImportFilters_OverwriteResolution(t *testing.T) {
 	assert.Equal(t, "new expression", updated.Expression)
 	assert.Equal(t, models.FilterSourceTypeEPG, updated.SourceType)
 	assert.Equal(t, models.FilterActionExclude, updated.Action)
-	assert.False(t, models.BoolVal(updated.IsEnabled))
 
 	// Verify only one filter exists
 	var count int64
@@ -264,10 +263,10 @@ func TestImportService_ImportFilters_BulkResolution(t *testing.T) {
 
 	// Import multiple items with bulk overwrite
 	items := []models.FilterExportItem{
-		{Name: "Existing A", Expression: "new A", SourceType: "stream", Action: "include", IsEnabled: true},
-		{Name: "Existing B", Expression: "new B", SourceType: "stream", Action: "include", IsEnabled: true},
-		{Name: "Existing C", Expression: "new C", SourceType: "stream", Action: "include", IsEnabled: true},
-		{Name: "New Filter", Expression: "new", SourceType: "stream", Action: "include", IsEnabled: true},
+		{Name: "Existing A", Expression: "new A", SourceType: "stream", Action: "include"},
+		{Name: "Existing B", Expression: "new B", SourceType: "stream", Action: "include"},
+		{Name: "Existing C", Expression: "new C", SourceType: "stream", Action: "include"},
+		{Name: "New Filter", Expression: "new", SourceType: "stream", Action: "include"},
 	}
 	opts := &ImportOptions{
 		BulkResolution: models.ConflictResolutionOverwrite,
@@ -296,9 +295,9 @@ func TestImportService_ImportFilters_BulkSkip(t *testing.T) {
 
 	// Import with bulk skip
 	items := []models.FilterExportItem{
-		{Name: "Conflict 1", Expression: "new", SourceType: "stream", Action: "include", IsEnabled: true},
-		{Name: "Conflict 2", Expression: "new", SourceType: "stream", Action: "include", IsEnabled: true},
-		{Name: "New Filter", Expression: "new", SourceType: "stream", Action: "include", IsEnabled: true},
+		{Name: "Conflict 1", Expression: "new", SourceType: "stream", Action: "include"},
+		{Name: "Conflict 2", Expression: "new", SourceType: "stream", Action: "include"},
+		{Name: "New Filter", Expression: "new", SourceType: "stream", Action: "include"},
 	}
 	opts := &ImportOptions{
 		BulkResolution: models.ConflictResolutionSkip,
@@ -322,7 +321,7 @@ func TestImportService_ImportFilters_BulkRename(t *testing.T) {
 
 	// Import with bulk rename
 	items := []models.FilterExportItem{
-		{Name: "My Filter", Expression: "new 1", SourceType: "stream", Action: "include", IsEnabled: true},
+		{Name: "My Filter", Expression: "new 1", SourceType: "stream", Action: "include"},
 	}
 	opts := &ImportOptions{
 		BulkResolution: models.ConflictResolutionRename,
@@ -354,9 +353,9 @@ func TestImportService_ImportFilters_MixedResolutions(t *testing.T) {
 
 	// Import with mixed resolutions (per-item overrides bulk)
 	items := []models.FilterExportItem{
-		{Name: "Filter A", Expression: "new A", SourceType: "stream", Action: "include", IsEnabled: true},
-		{Name: "Filter B", Expression: "new B", SourceType: "stream", Action: "include", IsEnabled: true},
-		{Name: "Filter C", Expression: "new C", SourceType: "stream", Action: "include", IsEnabled: true},
+		{Name: "Filter A", Expression: "new A", SourceType: "stream", Action: "include"},
+		{Name: "Filter B", Expression: "new B", SourceType: "stream", Action: "include"},
+		{Name: "Filter C", Expression: "new C", SourceType: "stream", Action: "include"},
 	}
 	opts := &ImportOptions{
 		BulkResolution: models.ConflictResolutionSkip, // Default
@@ -651,8 +650,8 @@ func TestImportService_AtomicTransaction(t *testing.T) {
 	// Try to import two items where one has a conflict with overwrite but will fail
 	// due to expression validation (empty expression causes error)
 	items := []models.FilterExportItem{
-		{Name: "New Valid Filter", Expression: "test", SourceType: "stream", Action: "include", IsEnabled: true},
-		{Name: "Invalid Filter", Expression: "", SourceType: "stream", Action: "include", IsEnabled: true}, // Empty expression causes error in preview flow
+		{Name: "New Valid Filter", Expression: "test", SourceType: "stream", Action: "include"},
+		{Name: "Invalid Filter", Expression: "", SourceType: "stream", Action: "include"}, // Empty expression causes error in preview flow
 	}
 
 	// Use preview to detect the error

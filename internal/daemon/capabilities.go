@@ -147,12 +147,22 @@ func filterAudioDecoders(decoders []string) []string {
 func convertHWAccels(accels []ffmpeg.HWAccelInfo) []*proto.HWAccelInfo {
 	var result []*proto.HWAccelInfo
 	for _, accel := range accels {
+		// Convert filtered encoders to proto format
+		var filteredEncoders []*proto.FilteredEncoder
+		for _, fe := range accel.FilteredEncoders {
+			filteredEncoders = append(filteredEncoders, &proto.FilteredEncoder{
+				Name:   fe.Name,
+				Reason: fe.Reason,
+			})
+		}
+
 		result = append(result, &proto.HWAccelInfo{
-			Type:      string(accel.Type),
-			Device:    accel.DeviceName,
-			Available: accel.Available,
-			Encoders:  accel.Encoders,
-			Decoders:  accel.Decoders,
+			Type:             string(accel.Type),
+			Device:           accel.DeviceName,
+			Available:        accel.Available,
+			HwEncoders:       accel.Encoders,
+			HwDecoders:       accel.Decoders,
+			FilteredEncoders: filteredEncoders,
 		})
 	}
 	return result
@@ -162,12 +172,22 @@ func convertHWAccels(accels []ffmpeg.HWAccelInfo) []*proto.HWAccelInfo {
 func convertHWAccelsToTypes(accels []ffmpeg.HWAccelInfo) []types.HWAccelInfo {
 	var result []types.HWAccelInfo
 	for _, accel := range accels {
+		// Convert filtered encoders to types format
+		var filteredEncoders []types.FilteredEncoder
+		for _, fe := range accel.FilteredEncoders {
+			filteredEncoders = append(filteredEncoders, types.FilteredEncoder{
+				Name:   fe.Name,
+				Reason: fe.Reason,
+			})
+		}
+
 		result = append(result, types.HWAccelInfo{
-			Type:      types.HWAccelType(accel.Type),
-			Device:    accel.DeviceName,
-			Available: accel.Available,
-			Encoders:  accel.Encoders,
-			Decoders:  accel.Decoders,
+			Type:             types.HWAccelType(accel.Type),
+			Device:           accel.DeviceName,
+			Available:        accel.Available,
+			Encoders:         accel.Encoders,
+			Decoders:         accel.Decoders,
+			FilteredEncoders: filteredEncoders,
 		})
 	}
 	return result

@@ -418,3 +418,35 @@ type ClientDetectionRuleRepository interface {
 	// Reorder updates priorities for multiple rules in a single transaction.
 	Reorder(ctx context.Context, reorders []ReorderRequest) error
 }
+
+// EncoderOverrideRepository defines operations for encoder override persistence.
+// Encoder overrides allow forcing specific encoders when conditions match,
+// working around hardware encoder bugs (like AMD's hevc_vaapi with Mesa 21.1+).
+type EncoderOverrideRepository interface {
+	// Create creates a new encoder override.
+	Create(ctx context.Context, override *models.EncoderOverride) error
+	// GetByID retrieves an encoder override by ID.
+	GetByID(ctx context.Context, id models.ULID) (*models.EncoderOverride, error)
+	// GetAll retrieves all encoder overrides ordered by priority (highest first).
+	GetAll(ctx context.Context) ([]*models.EncoderOverride, error)
+	// GetEnabled retrieves all enabled overrides ordered by priority (highest first).
+	GetEnabled(ctx context.Context) ([]*models.EncoderOverride, error)
+	// GetByCodecType retrieves overrides for a specific codec type (video/audio).
+	GetByCodecType(ctx context.Context, codecType models.EncoderOverrideCodecType) ([]*models.EncoderOverride, error)
+	// GetUserCreated retrieves all user-created encoder overrides (IsSystem=false).
+	GetUserCreated(ctx context.Context) ([]*models.EncoderOverride, error)
+	// GetByName retrieves an override by name.
+	GetByName(ctx context.Context, name string) (*models.EncoderOverride, error)
+	// GetSystem retrieves all system overrides.
+	GetSystem(ctx context.Context) ([]*models.EncoderOverride, error)
+	// Update updates an existing override.
+	Update(ctx context.Context, override *models.EncoderOverride) error
+	// Delete deletes an override by ID.
+	Delete(ctx context.Context, id models.ULID) error
+	// Count returns the total number of overrides.
+	Count(ctx context.Context) (int64, error)
+	// CountEnabled returns the number of enabled overrides.
+	CountEnabled(ctx context.Context) (int64, error)
+	// Reorder updates priorities for multiple overrides in a single transaction.
+	Reorder(ctx context.Context, reorders []ReorderRequest) error
+}

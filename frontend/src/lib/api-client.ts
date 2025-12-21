@@ -54,6 +54,11 @@ import {
   DrainDaemonResponse,
   ActivateDaemonResponse,
   DaemonState,
+  EncoderOverride,
+  EncoderOverridesResponse,
+  EncoderOverrideCreateRequest,
+  EncoderOverrideUpdateRequest,
+  EncoderOverrideReorderRequest,
 } from '@/types/api';
 
 class ApiError extends Error {
@@ -251,8 +256,6 @@ class ApiClient {
       payload.cron_schedule = payload.update_cron;
       delete payload.update_cron;
     }
-    // Backend doesn't have max_concurrent_streams on source
-    delete payload.max_concurrent_streams;
 
     const response = await this.request<any>(API_CONFIG.endpoints.streamSources, {
       method: 'POST',
@@ -294,8 +297,6 @@ class ApiClient {
       payload.cron_schedule = payload.update_cron;
       delete payload.update_cron;
     }
-    // Backend doesn't have max_concurrent_streams on source
-    delete payload.max_concurrent_streams;
 
     const response = await this.request<any>(
       `${API_CONFIG.endpoints.streamSources}/${id}`,
@@ -1486,6 +1487,71 @@ class ApiClient {
       `/api/v1/transcoders/${encodeURIComponent(id)}/activate`,
       {
         method: 'POST',
+      }
+    );
+  }
+
+  // =============================================================================
+  // ENCODER OVERRIDES API
+  // =============================================================================
+
+  async getEncoderOverrides(): Promise<EncoderOverride[]> {
+    const response = await this.request<EncoderOverridesResponse>(
+      '/api/v1/encoder-overrides'
+    );
+    return response.overrides || [];
+  }
+
+  async getEncoderOverride(id: string): Promise<EncoderOverride> {
+    return this.request<EncoderOverride>(
+      `/api/v1/encoder-overrides/${encodeURIComponent(id)}`
+    );
+  }
+
+  async createEncoderOverride(override: EncoderOverrideCreateRequest): Promise<EncoderOverride> {
+    return this.request<EncoderOverride>(
+      '/api/v1/encoder-overrides',
+      {
+        method: 'POST',
+        body: JSON.stringify(override),
+      }
+    );
+  }
+
+  async updateEncoderOverride(id: string, override: EncoderOverrideUpdateRequest): Promise<EncoderOverride> {
+    return this.request<EncoderOverride>(
+      `/api/v1/encoder-overrides/${encodeURIComponent(id)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(override),
+      }
+    );
+  }
+
+  async deleteEncoderOverride(id: string): Promise<void> {
+    await this.request<void>(
+      `/api/v1/encoder-overrides/${encodeURIComponent(id)}`,
+      {
+        method: 'DELETE',
+      }
+    );
+  }
+
+  async toggleEncoderOverride(id: string): Promise<EncoderOverride> {
+    return this.request<EncoderOverride>(
+      `/api/v1/encoder-overrides/${encodeURIComponent(id)}/toggle`,
+      {
+        method: 'PATCH',
+      }
+    );
+  }
+
+  async reorderEncoderOverrides(reorders: Array<{ id: string; priority: number }>): Promise<void> {
+    await this.request<void>(
+      '/api/v1/encoder-overrides/reorder',
+      {
+        method: 'POST',
+        body: JSON.stringify({ reorders }),
       }
     );
   }

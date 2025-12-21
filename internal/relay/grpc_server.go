@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -28,14 +30,31 @@ type GRPCServer struct {
 	server   *grpc.Server
 	registry *DaemonRegistry
 
+	// Stream and job management for distributed transcoding
+	streamMgr *DaemonStreamManager
+	jobMgr    *ActiveJobManager
+
+	// Listeners
+	internalListener net.Listener // Unix socket for local subprocess connections (always available)
+	externalListener net.Listener // TCP listener for remote daemon connections (optional)
+	internalAddr     string       // Full address for internal connections (e.g., "unix:///tmp/tvarr/grpc.sock")
+
 	mu      sync.RWMutex
 	started bool
 }
 
+// DefaultInternalSocketPath is the default path for the internal Unix socket.
+const DefaultInternalSocketPath = "/tmp/tvarr/grpc.sock"
+
 // GRPCServerConfig holds configuration for the coordinator gRPC server.
 type GRPCServerConfig struct {
-	// ListenAddr is the address to listen on (e.g., ":9090")
-	ListenAddr string
+	// InternalSocketPath is the path for the internal Unix socket (always created).
+	// Defaults to DefaultInternalSocketPath if empty.
+	InternalSocketPath string
+
+	// ExternalListenAddr is the optional TCP address for remote daemon connections (e.g., ":9090").
+	// If empty, only the internal Unix socket is available.
+	ExternalListenAddr string
 
 	// AuthToken is the optional authentication token daemons must provide
 	AuthToken string
@@ -49,15 +68,24 @@ func NewGRPCServer(logger *slog.Logger, cfg *GRPCServerConfig, registry *DaemonR
 	if cfg.HeartbeatInterval == 0 {
 		cfg.HeartbeatInterval = 5 * time.Second
 	}
+	if cfg.InternalSocketPath == "" {
+		cfg.InternalSocketPath = DefaultInternalSocketPath
+	}
+
+	// Build internal address (gRPC dial format)
+	internalAddr := "unix://" + cfg.InternalSocketPath
 
 	return &GRPCServer{
-		logger:   logger,
-		config:   cfg,
-		registry: registry,
+		logger:       logger,
+		config:       cfg,
+		registry:     registry,
+		streamMgr:    NewDaemonStreamManager(logger),
+		jobMgr:       NewActiveJobManager(logger),
+		internalAddr: internalAddr,
 	}
 }
 
-// Start starts the gRPC server.
+// Start starts the gRPC server with internal Unix socket (always) and optional external TCP listener.
 func (s *GRPCServer) Start(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -66,11 +94,35 @@ func (s *GRPCServer) Start(ctx context.Context) error {
 		return fmt.Errorf("server already started")
 	}
 
-	listener, err := net.Listen("tcp", s.config.ListenAddr)
-	if err != nil {
-		return fmt.Errorf("creating listener: %w", err)
+	// Ensure socket directory exists
+	socketDir := filepath.Dir(s.config.InternalSocketPath)
+	if err := os.MkdirAll(socketDir, 0755); err != nil {
+		return fmt.Errorf("creating socket directory: %w", err)
 	}
 
+	// Remove stale socket file if exists
+	if err := os.Remove(s.config.InternalSocketPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing stale socket: %w", err)
+	}
+
+	// Create internal Unix socket listener (always)
+	internalListener, err := net.Listen("unix", s.config.InternalSocketPath)
+	if err != nil {
+		return fmt.Errorf("creating internal Unix socket listener: %w", err)
+	}
+	s.internalListener = internalListener
+
+	// Create external TCP listener (optional)
+	if s.config.ExternalListenAddr != "" {
+		externalListener, err := net.Listen("tcp", s.config.ExternalListenAddr)
+		if err != nil {
+			s.internalListener.Close()
+			return fmt.Errorf("creating external TCP listener: %w", err)
+		}
+		s.externalListener = externalListener
+	}
+
+	// Create gRPC server
 	s.server = grpc.NewServer(
 		grpc.UnaryInterceptor(s.unaryInterceptor),
 		grpc.StreamInterceptor(s.streamInterceptor),
@@ -79,15 +131,33 @@ func (s *GRPCServer) Start(ctx context.Context) error {
 
 	s.started = true
 
+	// Log listener information
 	s.logger.Info("starting coordinator gRPC server",
-		slog.String("address", s.config.ListenAddr),
+		slog.String("internal_socket", s.config.InternalSocketPath),
+		slog.String("internal_addr", s.internalAddr),
 	)
 
+	if s.externalListener != nil {
+		s.logger.Info("external gRPC listener enabled",
+			slog.String("address", s.config.ExternalListenAddr),
+		)
+	}
+
+	// Start serving on internal socket
 	go func() {
-		if err := s.server.Serve(listener); err != nil {
-			s.logger.Error("gRPC server error", slog.String("error", err.Error()))
+		if err := s.server.Serve(s.internalListener); err != nil {
+			s.logger.Error("gRPC internal server error", slog.String("error", err.Error()))
 		}
 	}()
+
+	// Start serving on external listener if enabled
+	if s.externalListener != nil {
+		go func() {
+			if err := s.server.Serve(s.externalListener); err != nil {
+				s.logger.Error("gRPC external server error", slog.String("error", err.Error()))
+			}
+		}()
+	}
 
 	// Start registry cleanup goroutine
 	s.registry.Start(ctx)
@@ -150,8 +220,19 @@ func (s *GRPCServer) Stop(ctx context.Context) error {
 		}
 	}
 
+	// Clean up socket file
+	if s.config.InternalSocketPath != "" {
+		_ = os.Remove(s.config.InternalSocketPath)
+	}
+
 	s.started = false
 	return nil
+}
+
+// InternalAddress returns the gRPC dial address for the internal Unix socket.
+// Format: "unix:///tmp/tvarr/grpc.sock"
+func (s *GRPCServer) InternalAddress() string {
+	return s.internalAddr
 }
 
 // Register handles daemon registration requests.
@@ -239,11 +320,161 @@ func (s *GRPCServer) Unregister(ctx context.Context, req *proto.UnregisterReques
 }
 
 // Transcode handles bidirectional ES sample streaming for transcoding.
-// This is a placeholder - full implementation will be in Phase 4 (US2).
+// Daemons open this stream after registration and keep it open.
+// The coordinator pushes TranscodeStart messages when it needs transcoding done,
+// and receives transcoded ESSampleBatch messages back.
 func (s *GRPCServer) Transcode(stream grpc.BidiStreamingServer[proto.TranscodeMessage, proto.TranscodeMessage]) error {
-	// Phase 4 implementation: The coordinator will stream ES samples to daemons
-	// and receive transcoded samples back. For now, return unimplemented.
-	return status.Errorf(codes.Unimplemented, "transcode streaming not yet implemented")
+	// First message must identify the daemon
+	msg, err := stream.Recv()
+	if err != nil {
+		return status.Errorf(codes.Internal, "receiving initial message: %v", err)
+	}
+
+	// Expect a "ready" message with daemon ID in the start payload
+	// For now, we'll accept a TranscodeStart with empty job_id as a "ready" signal
+	var daemonID types.DaemonID
+
+	switch payload := msg.Payload.(type) {
+	case *proto.TranscodeMessage_Start:
+		// Daemon sends TranscodeStart with daemon_id in session_id field as "ready" signal
+		if payload.Start.SessionId == "" {
+			return status.Errorf(codes.InvalidArgument, "daemon must identify itself with session_id containing daemon_id")
+		}
+		daemonID = types.DaemonID(payload.Start.SessionId)
+
+		// Verify daemon is registered
+		if _, ok := s.registry.Get(daemonID); !ok {
+			return status.Errorf(codes.NotFound, "daemon not registered: %s", daemonID)
+		}
+
+	default:
+		return status.Errorf(codes.InvalidArgument, "expected TranscodeStart as first message, got %T", msg.Payload)
+	}
+
+	// Register this stream with the stream manager
+	daemonStream := s.streamMgr.RegisterStream(daemonID, stream)
+	defer s.streamMgr.UnregisterStream(daemonID)
+
+	s.logger.Info("Daemon transcode stream connected",
+		slog.String("daemon_id", string(daemonID)),
+	)
+
+	// Main loop: receive messages from daemon
+	for {
+		msg, err := stream.Recv()
+		if err != nil {
+			s.logger.Debug("Daemon transcode stream ended",
+				slog.String("daemon_id", string(daemonID)),
+				slog.String("error", err.Error()),
+			)
+			return err
+		}
+
+		switch payload := msg.Payload.(type) {
+		case *proto.TranscodeMessage_Samples:
+			// Transcoded samples from daemon - route to the active job
+			daemonStream.mu.Lock()
+			jobID := daemonStream.activeJob
+			daemonStream.mu.Unlock()
+
+			if jobID == "" {
+				s.logger.Warn("Received samples but no active job",
+					slog.String("daemon_id", string(daemonID)),
+				)
+				continue
+			}
+
+			job, ok := s.jobMgr.GetJob(jobID)
+			if !ok {
+				s.logger.Warn("Received samples for unknown job",
+					slog.String("daemon_id", string(daemonID)),
+					slog.String("job_id", jobID),
+				)
+				continue
+			}
+
+			job.SendSamples(payload.Samples)
+
+		case *proto.TranscodeMessage_Stats:
+			// Stats from daemon - update the active job
+			daemonStream.mu.Lock()
+			jobID := daemonStream.activeJob
+			daemonStream.mu.Unlock()
+
+			if jobID != "" {
+				if job, ok := s.jobMgr.GetJob(jobID); ok {
+					// Convert proto stats to types.TranscodeStats
+					var runningTime time.Duration
+					if payload.Stats.RunningTime != nil {
+						runningTime = payload.Stats.RunningTime.AsDuration()
+					}
+					job.Stats = &types.TranscodeStats{
+						SamplesIn:     payload.Stats.SamplesIn,
+						SamplesOut:    payload.Stats.SamplesOut,
+						BytesIn:       payload.Stats.BytesIn,
+						BytesOut:      payload.Stats.BytesOut,
+						EncodingSpeed: payload.Stats.EncodingSpeed,
+						CPUPercent:    payload.Stats.CpuPercent,
+						MemoryMB:      payload.Stats.MemoryMb,
+						FFmpegPID:     int(payload.Stats.FfmpegPid),
+						RunningTime:   runningTime,
+						HWAccel:       payload.Stats.HwAccel,
+						HWDevice:      payload.Stats.HwDevice,
+						FFmpegCommand: payload.Stats.FfmpegCommand,
+					}
+				}
+			}
+
+			s.logger.Log(stream.Context(), observability.LevelTrace, "Transcode stats from daemon",
+				slog.String("daemon_id", string(daemonID)),
+				slog.Uint64("samples_in", payload.Stats.SamplesIn),
+				slog.Uint64("samples_out", payload.Stats.SamplesOut),
+				slog.Float64("encoding_speed", payload.Stats.EncodingSpeed),
+			)
+
+		case *proto.TranscodeMessage_Ack:
+			// Acknowledgment from daemon (e.g., job started)
+			s.logger.Debug("Transcode ack from daemon",
+				slog.String("daemon_id", string(daemonID)),
+				slog.Bool("success", payload.Ack.Success),
+				slog.String("actual_video_encoder", payload.Ack.ActualVideoEncoder),
+			)
+
+		case *proto.TranscodeMessage_Error:
+			// Error from daemon
+			s.logger.Error("Transcode error from daemon",
+				slog.String("daemon_id", string(daemonID)),
+				slog.String("message", payload.Error.Message),
+				slog.Int("code", int(payload.Error.Code)),
+			)
+
+			// If there's an active job, signal the error
+			daemonStream.mu.Lock()
+			jobID := daemonStream.activeJob
+			daemonStream.mu.Unlock()
+
+			if jobID != "" {
+				if job, ok := s.jobMgr.GetJob(jobID); ok {
+					job.SetError(fmt.Errorf("daemon error: %s", payload.Error.Message))
+				}
+			}
+
+		case *proto.TranscodeMessage_Stop:
+			// Daemon signaling job completion
+			s.logger.Debug("Transcode stop from daemon",
+				slog.String("daemon_id", string(daemonID)),
+				slog.String("reason", payload.Stop.Reason),
+			)
+
+			daemonStream.mu.Lock()
+			jobID := daemonStream.activeJob
+			daemonStream.mu.Unlock()
+
+			if jobID != "" {
+				s.jobMgr.RemoveJob(jobID)
+			}
+		}
+	}
 }
 
 // GetStats returns current daemon statistics.
@@ -308,4 +539,14 @@ func (s *GRPCServer) streamInterceptor(srv interface{}, ss grpc.ServerStream, in
 // GetRegistry returns the daemon registry.
 func (s *GRPCServer) GetRegistry() *DaemonRegistry {
 	return s.registry
+}
+
+// GetStreamManager returns the daemon stream manager.
+func (s *GRPCServer) GetStreamManager() *DaemonStreamManager {
+	return s.streamMgr
+}
+
+// GetJobManager returns the active job manager.
+func (s *GRPCServer) GetJobManager() *ActiveJobManager {
+	return s.jobMgr
 }

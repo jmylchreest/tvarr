@@ -110,12 +110,35 @@ interface RuleFormData {
 
 const VIDEO_CODECS = ['h264', 'h265', 'vp9', 'av1'];
 const AUDIO_CODECS = ['aac', 'opus', 'ac3', 'eac3', 'mp3'];
+// Codecs that require fMP4 container (not compatible with MPEG-TS)
+const FMP4_ONLY_VIDEO_CODECS = ['vp9', 'av1'];
+const FMP4_ONLY_AUDIO_CODECS = ['opus'];
 const FORMAT_OPTIONS = [
   { value: 'auto', label: 'Auto' },
   { value: 'hls-fmp4', label: 'HLS (fMP4)' },
-  { value: 'hls-ts', label: 'HLS (MPEG-TS)' },
+  { value: 'hls-ts', label: 'HLS (MPEG-TS segments)' },
+  { value: 'mpegts', label: 'MPEG-TS' },
   { value: 'dash', label: 'DASH' },
 ];
+
+// Check if selected codecs are compatible with the selected format
+const isFormatCompatibleWithCodecs = (
+  format: string,
+  videoCodec: string,
+  audioCodec: string
+): boolean => {
+  // Auto, HLS (fMP4), and DASH support all codecs
+  if (['auto', 'hls-fmp4', 'dash'].includes(format)) {
+    return true;
+  }
+  // MPEG-TS formats (hls-ts, mpegts) don't support VP9/AV1/Opus
+  if (['hls-ts', 'mpegts'].includes(format)) {
+    const hasIncompatibleVideoCodec = FMP4_ONLY_VIDEO_CODECS.includes(videoCodec);
+    const hasIncompatibleAudioCodec = FMP4_ONLY_AUDIO_CODECS.includes(audioCodec);
+    return !hasIncompatibleVideoCodec && !hasIncompatibleAudioCodec;
+  }
+  return true;
+};
 
 // Helper to display codec value or {dynamic} for SET-based rules
 const formatCodec = (codec: string): string => {

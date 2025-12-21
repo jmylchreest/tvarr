@@ -130,6 +130,9 @@ func (p *MPEGTSProcessor) Start(ctx context.Context) error {
 
 	// Get or create the variant we'll read from
 	// This will wait for the source variant to be ready if requesting VariantCopy
+	p.config.Logger.Info("MPEG-TS processor requesting variant from buffer",
+		slog.String("processor_id", p.id),
+		slog.String("requested_variant", p.variant.String()))
 	esVariant, err := p.esBuffer.GetOrCreateVariantWithContext(p.ctx, p.variant)
 	if err != nil {
 		return fmt.Errorf("getting variant: %w", err)
@@ -487,7 +490,9 @@ func (p *MPEGTSProcessor) processAvailableSamples(videoTrack, audioTrack *ESTrac
 
 	// Read video samples
 	videoSamples := videoTrack.ReadFrom(p.lastVideoSeq, 100)
+	var bytesRead uint64
 	for _, sample := range videoSamples {
+		bytesRead += uint64(len(sample.Data))
 		if sample.IsKeyframe {
 			// Before writing the keyframe, flush any buffered data to EXISTING clients only.
 			// This ensures new clients start exactly at the keyframe boundary.
@@ -515,6 +520,7 @@ func (p *MPEGTSProcessor) processAvailableSamples(videoTrack, audioTrack *ESTrac
 	// Read audio samples
 	audioSamples := audioTrack.ReadFrom(p.lastAudioSeq, 200)
 	for _, sample := range audioSamples {
+		bytesRead += uint64(len(sample.Data))
 		// Log muxer errors for debugging but continue streaming
 		if err := p.muxer.WriteAudio(sample.PTS, sample.Data); err != nil {
 			p.config.Logger.Debug("WriteAudio error",
@@ -523,6 +529,11 @@ func (p *MPEGTSProcessor) processAvailableSamples(videoTrack, audioTrack *ESTrac
 				slog.Int("data_len", len(sample.Data)))
 		}
 		p.lastAudioSeq = sample.Sequence
+	}
+
+	// Track bytes read from buffer for bandwidth stats
+	if bytesRead > 0 {
+		p.TrackBytesFromBuffer(bytesRead)
 	}
 
 	// Update consumer position to allow eviction of samples we've processed

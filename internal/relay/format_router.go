@@ -2,11 +2,9 @@
 package relay
 
 import (
-	"context"
 	"errors"
 	"io"
 	"log/slog"
-	"net/http"
 	"strings"
 
 	"github.com/jmylchreest/tvarr/internal/models"
@@ -79,34 +77,10 @@ func (r *OutputRequest) GetHeader(name string) string {
 	return ""
 }
 
-// PassthroughHandler is the interface for passthrough proxy handlers.
-type PassthroughHandler interface {
-	GetUpstreamURL() string
-}
-
-// HLSPassthrough is the interface for HLS passthrough handlers.
-type HLSPassthrough interface {
-	PassthroughHandler
-	ServePlaylist(ctx context.Context, w http.ResponseWriter) error
-	ServeSegment(ctx context.Context, w http.ResponseWriter, segmentIndex int) error
-}
-
-// DASHPassthrough is the interface for DASH passthrough handlers.
-type DASHPassthrough interface {
-	PassthroughHandler
-	ServeManifest(ctx context.Context, w http.ResponseWriter) error
-	ServeSegment(ctx context.Context, w http.ResponseWriter, segmentID string) error
-	ServeInitSegment(ctx context.Context, w http.ResponseWriter, initID string) error
-}
-
 // FormatRouter routes requests to appropriate output handlers.
 type FormatRouter struct {
 	defaultFormat models.ContainerFormat
 	handlers      map[string]OutputHandler
-
-	// Passthrough handlers for HLS/DASH sources
-	hlsPassthrough  HLSPassthrough
-	dashPassthrough DASHPassthrough
 
 	// Logger for structured logging
 	logger *slog.Logger
@@ -135,48 +109,6 @@ func (r *FormatRouter) RegisterHandler(format string, handler OutputHandler) {
 	r.logger.Debug("registered output handler",
 		slog.String("format", format),
 	)
-}
-
-// RegisterPassthroughHandler registers a passthrough handler for HLS or DASH.
-func (r *FormatRouter) RegisterPassthroughHandler(format string, handler PassthroughHandler) {
-	switch format {
-	case FormatValueHLS:
-		if h, ok := handler.(HLSPassthrough); ok {
-			r.hlsPassthrough = h
-			r.logger.Debug("registered HLS passthrough handler",
-				slog.String("upstream_url", h.GetUpstreamURL()),
-			)
-		}
-	case FormatValueDASH:
-		if h, ok := handler.(DASHPassthrough); ok {
-			r.dashPassthrough = h
-			r.logger.Debug("registered DASH passthrough handler",
-				slog.String("upstream_url", h.GetUpstreamURL()),
-			)
-		}
-	}
-}
-
-// GetHLSPassthrough returns the HLS passthrough handler if registered.
-func (r *FormatRouter) GetHLSPassthrough() HLSPassthrough {
-	return r.hlsPassthrough
-}
-
-// GetDASHPassthrough returns the DASH passthrough handler if registered.
-func (r *FormatRouter) GetDASHPassthrough() DASHPassthrough {
-	return r.dashPassthrough
-}
-
-// IsPassthroughMode returns true if passthrough handlers are registered.
-func (r *FormatRouter) IsPassthroughMode(format string) bool {
-	switch format {
-	case FormatValueHLS:
-		return r.hlsPassthrough != nil
-	case FormatValueDASH:
-		return r.dashPassthrough != nil
-	default:
-		return false
-	}
 }
 
 // GetHandler returns the handler for the requested format.

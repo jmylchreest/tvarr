@@ -469,3 +469,47 @@ func bytesEqual(a, b []byte) bool {
 	}
 	return true
 }
+
+// ForceKeyframePrependNALUs prepends parameter sets to NAL units without checking
+// if they contain a keyframe NAL. This is used when the caller already knows
+// this is a keyframe (e.g., from demuxer metadata or gRPC message).
+func (h *VideoParamHelper) ForceKeyframePrependNALUs(nalus [][]byte, isH265 bool) [][]byte {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	if isH265 {
+		if h.h265VPS == nil || h.h265SPS == nil || h.h265PPS == nil {
+			return nalus
+		}
+
+		// Check if NALUs already have VPS/SPS/PPS
+		if h.nalusHaveH265Params(nalus) {
+			return nalus
+		}
+
+		// Prepend VPS, SPS, PPS
+		result := make([][]byte, 0, len(nalus)+3)
+		result = append(result, copyBytes(h.h265VPS))
+		result = append(result, copyBytes(h.h265SPS))
+		result = append(result, copyBytes(h.h265PPS))
+		result = append(result, nalus...)
+		return result
+	}
+
+	// H.264
+	if h.h264SPS == nil || h.h264PPS == nil {
+		return nalus
+	}
+
+	// Check if NALUs already have SPS/PPS
+	if h.nalusHaveH264Params(nalus) {
+		return nalus
+	}
+
+	// Prepend SPS, PPS
+	result := make([][]byte, 0, len(nalus)+2)
+	result = append(result, copyBytes(h.h264SPS))
+	result = append(result, copyBytes(h.h264PPS))
+	result = append(result, nalus...)
+	return result
+}

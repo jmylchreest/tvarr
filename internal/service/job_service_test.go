@@ -436,6 +436,34 @@ func (m *jobMockProxyRepo) GetByEncodingProfileID(ctx context.Context, profileID
 	return nil, nil
 }
 
+func (m *jobMockProxyRepo) CountByEpgSourceID(ctx context.Context, epgSourceID models.ULID) (int64, error) {
+	return 0, nil
+}
+
+func (m *jobMockProxyRepo) CountByFilterID(ctx context.Context, filterID models.ULID) (int64, error) {
+	return 0, nil
+}
+
+func (m *jobMockProxyRepo) CountByStreamSourceID(ctx context.Context, sourceID models.ULID) (int64, error) {
+	return 0, nil
+}
+
+func (m *jobMockProxyRepo) GetProxyNamesByEncodingProfileID(ctx context.Context, profileID models.ULID) ([]string, error) {
+	return nil, nil
+}
+
+func (m *jobMockProxyRepo) GetProxyNamesByEpgSourceID(ctx context.Context, epgSourceID models.ULID) ([]string, error) {
+	return nil, nil
+}
+
+func (m *jobMockProxyRepo) GetProxyNamesByFilterID(ctx context.Context, filterID models.ULID) ([]string, error) {
+	return nil, nil
+}
+
+func (m *jobMockProxyRepo) GetProxyNamesByStreamSourceID(ctx context.Context, sourceID models.ULID) ([]string, error) {
+	return nil, nil
+}
+
 func TestJobService_GetByID(t *testing.T) {
 	jobRepo := newJobMockJobRepo()
 	svc := NewJobService(jobRepo, newJobMockStreamSourceRepo(), newJobMockEpgSourceRepo(), newJobMockProxyRepo())

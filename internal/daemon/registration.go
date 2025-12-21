@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jmylchreest/tvarr/internal/version"
+	"github.com/jmylchreest/tvarr/pkg/ffmpeg"
 	"github.com/jmylchreest/tvarr/pkg/ffmpegd/proto"
 	"github.com/jmylchreest/tvarr/pkg/ffmpegd/types"
 	"google.golang.org/grpc"
@@ -533,4 +534,371 @@ func (c *RegistrationClient) UntrackJob(jobID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.activeJobs, jobID)
+}
+
+// TranscodeStreamHandler handles the persistent transcode stream to the coordinator.
+type TranscodeStreamHandler struct {
+	logger   *slog.Logger
+	client   proto.FFmpegDaemonClient
+	daemonID string
+	binInfo  *ffmpeg.BinaryInfo
+
+	mu         sync.RWMutex
+	stream     proto.FFmpegDaemon_TranscodeClient
+	activeJob  *TranscodeJob
+	cancelFunc context.CancelFunc
+
+	// sendMu protects stream.Send() calls - gRPC streams are not thread-safe for concurrent sends
+	sendMu sync.Mutex
+}
+
+// NewTranscodeStreamHandler creates a new transcode stream handler.
+func NewTranscodeStreamHandler(
+	logger *slog.Logger,
+	client proto.FFmpegDaemonClient,
+	daemonID string,
+	binInfo *ffmpeg.BinaryInfo,
+) *TranscodeStreamHandler {
+	return &TranscodeStreamHandler{
+		logger:   logger,
+		client:   client,
+		daemonID: daemonID,
+		binInfo:  binInfo,
+	}
+}
+
+// Start opens the persistent transcode stream and begins processing jobs.
+func (h *TranscodeStreamHandler) Start(ctx context.Context) error {
+	streamCtx, cancel := context.WithCancel(ctx)
+	h.cancelFunc = cancel
+
+	// Open the transcode stream
+	stream, err := h.client.Transcode(streamCtx)
+	if err != nil {
+		cancel()
+		return fmt.Errorf("opening transcode stream: %w", err)
+	}
+
+	h.mu.Lock()
+	h.stream = stream
+	h.mu.Unlock()
+
+	// Send the "ready" message identifying this daemon
+	readyMsg := &proto.TranscodeMessage{
+		Payload: &proto.TranscodeMessage_Start{
+			Start: &proto.TranscodeStart{
+				SessionId: h.daemonID, // Coordinator expects daemon_id in session_id field
+				JobId:     "",         // Empty job_id signals "ready" state
+			},
+		},
+	}
+
+	if err := stream.Send(readyMsg); err != nil {
+		cancel()
+		return fmt.Errorf("sending ready message: %w", err)
+	}
+
+	h.logger.Info("Transcode stream connected to coordinator",
+		slog.String("daemon_id", h.daemonID),
+	)
+
+	// Start the message processing loop in a goroutine
+	go h.processMessages(streamCtx)
+
+	return nil
+}
+
+// Stop closes the transcode stream.
+func (h *TranscodeStreamHandler) Stop() {
+	h.mu.Lock()
+	if h.cancelFunc != nil {
+		h.cancelFunc()
+	}
+	if h.activeJob != nil {
+		h.activeJob.Stop()
+		h.activeJob = nil
+	}
+	h.mu.Unlock()
+}
+
+// processMessages handles incoming messages from the coordinator.
+func (h *TranscodeStreamHandler) processMessages(ctx context.Context) {
+	defer func() {
+		h.mu.Lock()
+		if h.activeJob != nil {
+			h.activeJob.Stop()
+			h.activeJob = nil
+		}
+		h.mu.Unlock()
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		h.mu.RLock()
+		stream := h.stream
+		h.mu.RUnlock()
+
+		if stream == nil {
+			return
+		}
+
+		msg, err := stream.Recv()
+		if err != nil {
+			h.logger.Debug("Transcode stream ended",
+				slog.String("daemon_id", h.daemonID),
+				slog.String("error", err.Error()),
+			)
+			return
+		}
+
+		switch payload := msg.Payload.(type) {
+		case *proto.TranscodeMessage_Start:
+			// Coordinator is starting a new transcode job
+			h.handleTranscodeStart(ctx, payload.Start)
+
+		case *proto.TranscodeMessage_Samples:
+			// Source samples from coordinator - feed to active job
+			h.handleSourceSamples(payload.Samples)
+
+		case *proto.TranscodeMessage_Stop:
+			// Coordinator signaling to stop current job
+			h.handleStop(payload.Stop)
+		}
+	}
+}
+
+// handleTranscodeStart starts a new transcode job.
+func (h *TranscodeStreamHandler) handleTranscodeStart(ctx context.Context, start *proto.TranscodeStart) {
+	h.logger.Info("Received transcode job from coordinator",
+		slog.String("job_id", start.JobId),
+		slog.String("channel", start.ChannelName),
+		slog.String("target_video", start.TargetVideoCodec),
+		slog.String("target_audio", start.TargetAudioCodec),
+	)
+
+	h.mu.Lock()
+	// Stop any existing job
+	if h.activeJob != nil {
+		h.activeJob.Stop()
+	}
+
+	// Create new transcode job with proper binInfo
+	h.activeJob = NewTranscodeJob(start.JobId, start, h.binInfo, h.logger)
+	h.mu.Unlock()
+
+	// Start the job
+	ack, err := h.activeJob.Start(ctx)
+	if err != nil {
+		h.logger.Error("Failed to start transcode job",
+			slog.String("job_id", start.JobId),
+			slog.String("error", err.Error()),
+		)
+		// Send error back to coordinator
+		h.sendError(proto.TranscodeError_FFMPEG_START_FAILED, err.Error())
+		return
+	}
+
+	// Send acknowledgment to coordinator
+	h.mu.RLock()
+	stream := h.stream
+	h.mu.RUnlock()
+
+	if stream != nil {
+		h.sendMu.Lock()
+		err := stream.Send(&proto.TranscodeMessage{
+			Payload: &proto.TranscodeMessage_Ack{
+				Ack: ack,
+			},
+		})
+		h.sendMu.Unlock()
+		if err != nil {
+			h.logger.Error("Failed to send ack",
+				slog.String("job_id", start.JobId),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+
+	// Start forwarding transcoded output to coordinator
+	go h.forwardTranscodedOutput(ctx, start.JobId)
+
+	// Start sending stats to coordinator
+	go h.sendStatsLoop(ctx, start.JobId)
+}
+
+// handleSourceSamples feeds source samples to the active transcode job.
+func (h *TranscodeStreamHandler) handleSourceSamples(samples *proto.ESSampleBatch) {
+	h.mu.RLock()
+	job := h.activeJob
+	h.mu.RUnlock()
+
+	if job == nil {
+		h.logger.Warn("Received samples but no active job")
+		return
+	}
+
+	if err := job.ProcessSamples(samples); err != nil {
+		h.logger.Warn("Error processing samples",
+			slog.String("error", err.Error()),
+		)
+	}
+}
+
+// handleStop stops the current transcode job.
+func (h *TranscodeStreamHandler) handleStop(stop *proto.TranscodeStop) {
+	h.logger.Info("Received stop signal from coordinator",
+		slog.String("reason", stop.Reason),
+	)
+
+	h.mu.Lock()
+	if h.activeJob != nil {
+		h.activeJob.Stop()
+		h.activeJob = nil
+	}
+	h.mu.Unlock()
+}
+
+// forwardTranscodedOutput reads transcoded samples from the job and sends them to coordinator.
+func (h *TranscodeStreamHandler) forwardTranscodedOutput(ctx context.Context, jobID string) {
+	h.mu.RLock()
+	job := h.activeJob
+	stream := h.stream
+	h.mu.RUnlock()
+
+	if job == nil || stream == nil {
+		return
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case batch, ok := <-job.OutputChannel():
+			if !ok {
+				// Job output channel closed, job is done
+				h.sendStop("job_completed")
+				return
+			}
+
+			h.sendMu.Lock()
+			err := stream.Send(&proto.TranscodeMessage{
+				Payload: &proto.TranscodeMessage_Samples{
+					Samples: batch,
+				},
+			})
+			h.sendMu.Unlock()
+			if err != nil {
+				h.logger.Error("Failed to send transcoded samples",
+					slog.String("job_id", jobID),
+					slog.String("error", err.Error()),
+				)
+				return
+			}
+		}
+	}
+}
+
+// sendError sends an error message to the coordinator.
+func (h *TranscodeStreamHandler) sendError(code proto.TranscodeError_ErrorCode, message string) {
+	h.mu.RLock()
+	stream := h.stream
+	h.mu.RUnlock()
+
+	if stream != nil {
+		h.sendMu.Lock()
+		_ = stream.Send(&proto.TranscodeMessage{
+			Payload: &proto.TranscodeMessage_Error{
+				Error: &proto.TranscodeError{
+					Code:    code,
+					Message: message,
+				},
+			},
+		})
+		h.sendMu.Unlock()
+	}
+}
+
+// sendStop sends a stop message to the coordinator.
+func (h *TranscodeStreamHandler) sendStop(reason string) {
+	h.mu.RLock()
+	stream := h.stream
+	h.mu.RUnlock()
+
+	if stream != nil {
+		h.sendMu.Lock()
+		_ = stream.Send(&proto.TranscodeMessage{
+			Payload: &proto.TranscodeMessage_Stop{
+				Stop: &proto.TranscodeStop{
+					Reason: reason,
+				},
+			},
+		})
+		h.sendMu.Unlock()
+	}
+}
+
+// sendStatsLoop periodically sends transcode stats to the coordinator.
+func (h *TranscodeStreamHandler) sendStatsLoop(ctx context.Context, jobID string) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	startTime := time.Now()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			h.mu.RLock()
+			job := h.activeJob
+			stream := h.stream
+			h.mu.RUnlock()
+
+			if job == nil || stream == nil {
+				return
+			}
+
+			if job.IsClosed() {
+				return
+			}
+
+			stats := job.Stats()
+			stats.RunningTime = durationpb.New(time.Since(startTime))
+
+			h.sendMu.Lock()
+			err := stream.Send(&proto.TranscodeMessage{
+				Payload: &proto.TranscodeMessage_Stats{
+					Stats: stats,
+				},
+			})
+			h.sendMu.Unlock()
+			if err != nil {
+				h.logger.Debug("failed to send stats",
+					slog.String("job_id", jobID),
+					slog.String("error", err.Error()),
+				)
+				return
+			}
+		}
+	}
+}
+
+// StartTranscodeStream starts the persistent transcode stream after registration.
+// Call this after ConnectAndRegister succeeds.
+func (c *RegistrationClient) StartTranscodeStream(ctx context.Context, binInfo *ffmpeg.BinaryInfo) error {
+	c.mu.RLock()
+	client := c.client
+	c.mu.RUnlock()
+
+	if client == nil {
+		return fmt.Errorf("not connected to coordinator")
+	}
+
+	handler := NewTranscodeStreamHandler(c.logger, client, c.config.DaemonID, binInfo)
+	return handler.Start(ctx)
 }

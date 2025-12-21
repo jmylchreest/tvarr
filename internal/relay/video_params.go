@@ -2,6 +2,8 @@
 package relay
 
 import (
+	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -468,4 +470,175 @@ func bytesEqual(a, b []byte) bool {
 		}
 	}
 	return true
+}
+
+// ForceKeyframePrepend prepends parameter sets to a keyframe without checking
+// if the data contains an IDR/keyframe NAL. This is used when the caller
+// already knows this is a keyframe (e.g., from demuxer metadata).
+func (h *VideoParamHelper) ForceKeyframePrepend(data []byte, isH265 bool) []byte {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	if isH265 {
+		if h.h265VPS == nil || h.h265SPS == nil || h.h265PPS == nil {
+			return data
+		}
+
+		// Check if data already has VPS/SPS/PPS
+		if h.dataHasH265Params(data) {
+			return data
+		}
+
+		// Prepend VPS, SPS, PPS with Annex B start codes
+		return h.buildAnnexBWithParams([][]byte{h.h265VPS, h.h265SPS, h.h265PPS}, data)
+	}
+
+	// H.264
+	if h.h264SPS == nil || h.h264PPS == nil {
+		return data
+	}
+
+	// Check if data already has SPS/PPS
+	if h.dataHasH264Params(data) {
+		return data
+	}
+
+	// Prepend SPS, PPS with Annex B start codes
+	return h.buildAnnexBWithParams([][]byte{h.h264SPS, h.h264PPS}, data)
+}
+
+// ReorderNALUnits reorders NAL units to ensure parameter sets come first.
+// This fixes issues where IPTV sources send NALs in wrong order (e.g., SEI before SPS/PPS).
+// FFmpeg's decoder expects: VPS, SPS, PPS, AUD, SEI, slices (for H.265)
+// or: SPS, PPS, AUD, SEI, slices (for H.264)
+// The SEI messages often reference parameter sets, so they must come after.
+func ReorderNALUnits(nalus [][]byte, isH265 bool) [][]byte {
+	if len(nalus) <= 1 {
+		return nalus
+	}
+
+	// Categorize NAL units
+	var paramSets [][]byte  // VPS, SPS, PPS
+	var audNALs [][]byte    // Access Unit Delimiter
+	var seiNALs [][]byte    // Supplemental Enhancement Information
+	var sliceNALs [][]byte  // Picture data (IDR, non-IDR slices)
+	var otherNALs [][]byte  // Everything else
+
+	for _, nalu := range nalus {
+		if len(nalu) == 0 {
+			continue
+		}
+
+		if isH265 {
+			// H.265: NAL type is in bits 1-6 of first byte
+			naluType := (nalu[0] >> 1) & 0x3F
+			switch naluType {
+			case H265NALTypeVPS, H265NALTypeSPS, H265NALTypePPS:
+				paramSets = append(paramSets, nalu)
+			case H265NALTypeAUD:
+				audNALs = append(audNALs, nalu)
+			case H265NALTypePrefixSEI, H265NALTypeSuffixSEI:
+				seiNALs = append(seiNALs, nalu)
+			case H265NALTypeBLAWLP, H265NALTypeBLAWRADL, H265NALTypeBLANLP,
+				H265NALTypeIDRWRADL, H265NALTypeIDRNLP, H265NALTypeCRANUT:
+				// IDR/CRA/BLA keyframe NALs
+				sliceNALs = append(sliceNALs, nalu)
+			default:
+				if naluType <= 31 {
+					// VCL NAL units (video coding layer - slice data)
+					sliceNALs = append(sliceNALs, nalu)
+				} else {
+					otherNALs = append(otherNALs, nalu)
+				}
+			}
+		} else {
+			// H.264: NAL type is in bits 0-4 of first byte
+			naluType := nalu[0] & 0x1F
+			switch naluType {
+			case H264NALTypeSPS, H264NALTypePPS:
+				paramSets = append(paramSets, nalu)
+			case H264NALTypeAUD:
+				audNALs = append(audNALs, nalu)
+			case H264NALTypeSEI:
+				seiNALs = append(seiNALs, nalu)
+			case H264NALTypeIDR, H264NALTypeSlice:
+				sliceNALs = append(sliceNALs, nalu)
+			default:
+				otherNALs = append(otherNALs, nalu)
+			}
+		}
+	}
+
+	// Rebuild in correct order: AUD, param sets, SEI, slices, other
+	// Note: AUD should technically come first if present, but it's optional
+	result := make([][]byte, 0, len(nalus))
+	result = append(result, audNALs...)     // AUD first (if present)
+	result = append(result, paramSets...)   // VPS/SPS/PPS
+	result = append(result, seiNALs...)     // SEI (now after SPS/PPS so references work)
+	result = append(result, sliceNALs...)   // IDR/slice data
+	result = append(result, otherNALs...)   // Anything else
+
+	return result
+}
+
+// analyzeNALTypes returns a string describing the NAL unit types in the data.
+// Used for debugging keyframe issues.
+func analyzeNALTypes(data []byte, isH265 bool) string {
+	nalus := ParseAnnexBNALUs(data)
+	if len(nalus) == 0 {
+		return "no NALUs found"
+	}
+
+	types := make([]string, 0, len(nalus))
+	for _, nalu := range nalus {
+		if len(nalu) == 0 {
+			continue
+		}
+
+		var typeName string
+		if isH265 {
+			naluType := (nalu[0] >> 1) & 0x3F
+			switch naluType {
+			case H265NALTypeVPS:
+				typeName = "VPS(32)"
+			case H265NALTypeSPS:
+				typeName = "SPS(33)"
+			case H265NALTypePPS:
+				typeName = "PPS(34)"
+			case H265NALTypeIDRWRADL:
+				typeName = "IDR_W_RADL(19)"
+			case H265NALTypeIDRNLP:
+				typeName = "IDR_N_LP(20)"
+			case H265NALTypeCRANUT:
+				typeName = "CRA(21)"
+			case H265NALTypeAUD:
+				typeName = "AUD(35)"
+			case H265NALTypePrefixSEI:
+				typeName = "SEI(39)"
+			default:
+				typeName = fmt.Sprintf("type(%d)", naluType)
+			}
+		} else {
+			naluType := nalu[0] & 0x1F
+			switch naluType {
+			case H264NALTypeSPS:
+				typeName = "SPS(7)"
+			case H264NALTypePPS:
+				typeName = "PPS(8)"
+			case H264NALTypeIDR:
+				typeName = "IDR(5)"
+			case H264NALTypeSlice:
+				typeName = "Slice(1)"
+			case H264NALTypeSEI:
+				typeName = "SEI(6)"
+			case H264NALTypeAUD:
+				typeName = "AUD(9)"
+			default:
+				typeName = fmt.Sprintf("type(%d)", naluType)
+			}
+		}
+		types = append(types, typeName)
+	}
+
+	return strings.Join(types, ",")
 }

@@ -421,12 +421,22 @@ func convertProtoCapabilities(caps *proto.Capabilities) *types.Capabilities {
 
 	// Convert HW accels
 	for _, hw := range caps.HwAccels {
+		// Convert filtered encoders from proto to types
+		var filteredEncoders []types.FilteredEncoder
+		for _, fe := range hw.FilteredEncoders {
+			filteredEncoders = append(filteredEncoders, types.FilteredEncoder{
+				Name:   fe.Name,
+				Reason: fe.Reason,
+			})
+		}
+
 		result.HWAccels = append(result.HWAccels, types.HWAccelInfo{
-			Type:      types.HWAccelType(hw.Type),
-			Device:    hw.Device,
-			Available: hw.Available,
-			Encoders:  hw.Encoders,
-			Decoders:  hw.Decoders,
+			Type:             types.HWAccelType(hw.Type),
+			Device:           hw.Device,
+			Available:        hw.Available,
+			Encoders:         hw.HwEncoders,
+			Decoders:         hw.HwDecoders,
+			FilteredEncoders: filteredEncoders,
 		})
 	}
 

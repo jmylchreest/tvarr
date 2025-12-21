@@ -274,8 +274,6 @@ func TestTranscodeConfig_JSONRoundTrip(t *testing.T) {
 		SourceAudioCodec:   "aac",
 		TargetVideoCodec:   "hevc",
 		TargetAudioCodec:   "aac",
-		VideoEncoder:       "hevc_nvenc",
-		AudioEncoder:       "aac",
 		VideoBitrateKbps:   5000,
 		AudioBitrateKbps:   192,
 		VideoPreset:        "fast",
@@ -297,7 +295,7 @@ func TestTranscodeConfig_JSONRoundTrip(t *testing.T) {
 
 	// Verify fields
 	assert.Equal(t, config.SourceVideoCodec, decoded.SourceVideoCodec)
-	assert.Equal(t, config.VideoEncoder, decoded.VideoEncoder)
+	assert.Equal(t, config.TargetVideoCodec, decoded.TargetVideoCodec)
 	assert.Equal(t, config.VideoBitrateKbps, decoded.VideoBitrateKbps)
 	assert.Equal(t, config.GPUExhaustedPolicy, decoded.GPUExhaustedPolicy)
 	assert.Equal(t, config.ExtraOptions["profile"], decoded.ExtraOptions["profile"])

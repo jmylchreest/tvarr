@@ -391,6 +391,34 @@ func (m *mockProxyRepoForJob) GetByEncodingProfileID(ctx context.Context, profil
 	return nil, nil
 }
 
+func (m *mockProxyRepoForJob) CountByEpgSourceID(ctx context.Context, epgSourceID models.ULID) (int64, error) {
+	return 0, nil
+}
+
+func (m *mockProxyRepoForJob) CountByFilterID(ctx context.Context, filterID models.ULID) (int64, error) {
+	return 0, nil
+}
+
+func (m *mockProxyRepoForJob) CountByStreamSourceID(ctx context.Context, sourceID models.ULID) (int64, error) {
+	return 0, nil
+}
+
+func (m *mockProxyRepoForJob) GetProxyNamesByEncodingProfileID(ctx context.Context, profileID models.ULID) ([]string, error) {
+	return nil, nil
+}
+
+func (m *mockProxyRepoForJob) GetProxyNamesByEpgSourceID(ctx context.Context, epgSourceID models.ULID) ([]string, error) {
+	return nil, nil
+}
+
+func (m *mockProxyRepoForJob) GetProxyNamesByFilterID(ctx context.Context, filterID models.ULID) ([]string, error) {
+	return nil, nil
+}
+
+func (m *mockProxyRepoForJob) GetProxyNamesByStreamSourceID(ctx context.Context, sourceID models.ULID) ([]string, error) {
+	return nil, nil
+}
+
 func createTestJobService(jobRepo repository.JobRepository, streamRepo repository.StreamSourceRepository, epgRepo repository.EpgSourceRepository, proxyRepo repository.StreamProxyRepository) *service.JobService {
 	svc := service.NewJobService(jobRepo, streamRepo, epgRepo, proxyRepo)
 	sched := scheduler.NewScheduler(jobRepo, streamRepo, epgRepo, proxyRepo)

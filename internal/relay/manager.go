@@ -63,6 +63,20 @@ type ManagerConfig struct {
 	CodecCacheTTL time.Duration
 	// BufferConfig for elementary stream buffer settings.
 	BufferConfig SharedESBufferConfig
+	// DaemonRegistry for distributed transcoding.
+	// If set, sessions can use remote ffmpegd daemons for transcoding.
+	DaemonRegistry *DaemonRegistry
+	// DaemonStreamManager manages persistent streams from remote daemons.
+	DaemonStreamManager *DaemonStreamManager
+	// ActiveJobManager manages active transcode jobs on remote daemons.
+	ActiveJobManager *ActiveJobManager
+	// FFmpegDSpawner for spawning local ffmpegd subprocesses.
+	// Used when transcoding is needed but no remote daemons are available.
+	FFmpegDSpawner *FFmpegDSpawner
+	// PreferRemote indicates whether to prefer remote daemons over local FFmpeg.
+	PreferRemote bool
+	// EncoderOverridesProvider fetches enabled encoder overrides for transcoding.
+	EncoderOverridesProvider EncoderOverridesProvider
 }
 
 // DefaultManagerConfig returns sensible defaults for the relay manager.
@@ -100,7 +114,7 @@ func DefaultManagerConfig() ManagerConfig {
 // Manager manages relay sessions and their lifecycles.
 type Manager struct {
 	config     ManagerConfig
-	ffmpegBin  *ffmpeg.BinaryDetector
+	ffmpegBin  *ffmpeg.BinaryDetector // Used for ffprobe detection (stream probing)
 	prober     *ffmpeg.Prober
 	classifier *StreamClassifier
 	logger     *slog.Logger
@@ -110,10 +124,14 @@ type Manager struct {
 	// channelSessions maps channel IDs to session IDs for reuse
 	channelSessions map[models.ULID]models.ULID
 
-	circuitBreakers    *CircuitBreakerRegistry
-	connectionPool     *ConnectionPool
-	fallbackGenerator  *FallbackGenerator
-	passthroughTracker *PassthroughTracker
+	circuitBreakers          *CircuitBreakerRegistry
+	connectionPool           *ConnectionPool
+	fallbackGenerator        *FallbackGenerator
+	daemonRegistry           *DaemonRegistry
+	daemonStreamMgr          *DaemonStreamManager
+	activeJobMgr             *ActiveJobManager
+	ffmpegDSpawner           *FFmpegDSpawner // For local transcoding via tvarr-ffmpegd subprocess
+	encoderOverridesProvider EncoderOverridesProvider
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -128,26 +146,54 @@ func NewManager(config ManagerConfig) *Manager {
 
 	ffmpegBin := ffmpeg.NewBinaryDetector()
 
-	// Initialize prober with detected ffprobe path
+	// Initialize prober with detected ffprobe path (for stream probing, not transcoding)
 	var prober *ffmpeg.Prober
 	if binInfo, err := ffmpegBin.Detect(ctx); err == nil && binInfo.FFprobePath != "" {
 		prober = ffmpeg.NewProber(binInfo.FFprobePath).WithTimeout(10 * time.Second)
 	}
 
+	// Use spawner from config if provided, otherwise create a basic one
+	// Note: When using distributed transcoding via serve.go, the spawner is configured
+	// with the coordinator address. This fallback is for standalone manager usage.
+	spawner := config.FFmpegDSpawner
+	if spawner == nil {
+		spawner = NewFFmpegDSpawner(FFmpegDSpawnerConfig{
+			Logger: logger.With(slog.String("subcomponent", "ffmpegd-spawner")),
+		})
+	}
+
+	if spawner.IsAvailable() {
+		version := spawner.GetVersion()
+		if version != "" {
+			logger.Info("Local tvarr-ffmpegd binary found for transcoding",
+				slog.String("version", version),
+				slog.String("path", spawner.BinaryPath()))
+		} else {
+			logger.Info("Local tvarr-ffmpegd binary found for transcoding",
+				slog.String("path", spawner.BinaryPath()))
+		}
+	} else {
+		logger.Debug("tvarr-ffmpegd binary not found - local subprocess transcoding unavailable")
+	}
+
 	m := &Manager{
-		config:             config,
-		ffmpegBin:          ffmpegBin,
-		prober:             prober,
-		classifier:         NewStreamClassifier(config.HTTPClient),
-		logger:             logger,
-		sessions:           make(map[models.ULID]*RelaySession),
-		channelSessions:    make(map[models.ULID]models.ULID),
-		circuitBreakers:    NewCircuitBreakerRegistry(config.CircuitBreakerConfig),
-		connectionPool:     NewConnectionPool(config.ConnectionPoolConfig),
-		fallbackGenerator:  NewFallbackGenerator(config.FallbackConfig, logger),
-		passthroughTracker: NewPassthroughTracker(),
-		ctx:                ctx,
-		cancel:             cancel,
+		config:                   config,
+		ffmpegBin:                ffmpegBin,
+		prober:                   prober,
+		classifier:               NewStreamClassifier(config.HTTPClient),
+		logger:                   logger,
+		sessions:                 make(map[models.ULID]*RelaySession),
+		channelSessions:          make(map[models.ULID]models.ULID),
+		circuitBreakers:          NewCircuitBreakerRegistry(config.CircuitBreakerConfig),
+		connectionPool:           NewConnectionPool(config.ConnectionPoolConfig),
+		fallbackGenerator:        NewFallbackGenerator(config.FallbackConfig, logger),
+		daemonRegistry:           config.DaemonRegistry,
+		daemonStreamMgr:          config.DaemonStreamManager,
+		activeJobMgr:             config.ActiveJobManager,
+		ffmpegDSpawner:           spawner,
+		encoderOverridesProvider: config.EncoderOverridesProvider,
+		ctx:                      ctx,
+		cancel:                   cancel,
 	}
 
 	// Start cleanup goroutine
@@ -167,9 +213,34 @@ func (m *Manager) FallbackGenerator() *FallbackGenerator {
 	return m.fallbackGenerator
 }
 
-// PassthroughTracker returns the manager's passthrough connection tracker.
-func (m *Manager) PassthroughTracker() *PassthroughTracker {
-	return m.passthroughTracker
+// DaemonRegistry returns the manager's daemon registry for distributed transcoding.
+func (m *Manager) DaemonRegistry() *DaemonRegistry {
+	return m.daemonRegistry
+}
+
+// DaemonStreamManager returns the manager's daemon stream manager for remote transcoding.
+func (m *Manager) DaemonStreamManager() *DaemonStreamManager {
+	return m.daemonStreamMgr
+}
+
+// ActiveJobManager returns the manager's active job manager for remote transcoding.
+func (m *Manager) ActiveJobManager() *ActiveJobManager {
+	return m.activeJobMgr
+}
+
+// PreferRemote returns whether remote daemons should be preferred over local subprocess.
+func (m *Manager) PreferRemote() bool {
+	return m.config.PreferRemote
+}
+
+// FFmpegDSpawner returns the manager's ffmpegd spawner for local transcoding.
+func (m *Manager) FFmpegDSpawner() *FFmpegDSpawner {
+	return m.ffmpegDSpawner
+}
+
+// EncoderOverridesProvider returns the manager's encoder overrides provider.
+func (m *Manager) EncoderOverridesProvider() EncoderOverridesProvider {
+	return m.encoderOverridesProvider
 }
 
 // GetOrCreateSession gets an existing session for the channel or creates a new one.
@@ -177,7 +248,7 @@ func (m *Manager) PassthroughTracker() *PassthroughTracker {
 // This function is carefully designed to avoid holding the manager lock during slow
 // operations (stream classification, codec probing) to prevent blocking API requests
 // like /api/v1/relay/sessions while a new session is being created.
-func (m *Manager) GetOrCreateSession(ctx context.Context, channelID models.ULID, channelName string, streamSourceName string, streamURL string, profile *models.EncodingProfile) (*RelaySession, error) {
+func (m *Manager) GetOrCreateSession(ctx context.Context, channelID models.ULID, channelName string, sourceID models.ULID, streamSourceName string, streamURL string, sourceMaxConcurrentStreams int, profile *models.EncodingProfile) (*RelaySession, error) {
 	// First, check if session already exists (fast path with read lock)
 	m.mu.RLock()
 	if sessionID, ok := m.channelSessions[channelID]; ok {
@@ -202,7 +273,7 @@ func (m *Manager) GetOrCreateSession(ctx context.Context, channelID models.ULID,
 
 	// Perform slow operations (classify, probe) WITHOUT holding the manager lock
 	// This prevents blocking Stats() and other operations during session creation
-	session, err := m.createSession(ctx, channelID, channelName, streamSourceName, streamURL, profile)
+	session, err := m.createSession(ctx, channelID, channelName, sourceID, streamSourceName, streamURL, sourceMaxConcurrentStreams, profile)
 	if err != nil {
 		return nil, err
 	}
@@ -273,6 +344,25 @@ func (m *Manager) GetSessionForChannel(channelID models.ULID) *RelaySession {
 // HasSessionForChannel checks if an active session exists for the given channel.
 func (m *Manager) HasSessionForChannel(channelID models.ULID) bool {
 	return m.GetSessionForChannel(channelID) != nil
+}
+
+// CountActiveSessionsForSource counts how many active (non-closed) sessions are
+// connected to a given source. This is used to check if a new connection would
+// exceed the source's max_concurrent_streams limit.
+func (m *Manager) CountActiveSessionsForSource(sourceID models.ULID) int {
+	if sourceID.IsZero() {
+		return 0
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	count := 0
+	for _, session := range m.sessions {
+		if !session.closed.Load() && session.SourceID == sourceID {
+			count++
+		}
+	}
+	return count
 }
 
 // CloseSession closes a specific session.
@@ -535,7 +625,7 @@ func (m *Manager) getCachedCodecInfo(ctx context.Context, streamURL string) *mod
 }
 
 // createSession creates a new relay session.
-func (m *Manager) createSession(ctx context.Context, channelID models.ULID, channelName string, streamSourceName string, streamURL string, profile *models.EncodingProfile) (*RelaySession, error) {
+func (m *Manager) createSession(ctx context.Context, channelID models.ULID, channelName string, sourceID models.ULID, streamSourceName string, streamURL string, sourceMaxConcurrentStreams int, profile *models.EncodingProfile) (*RelaySession, error) {
 	// Check circuit breaker
 	cb := m.circuitBreakers.Get(streamURL)
 	if !cb.Allow() {
@@ -582,20 +672,23 @@ func (m *Manager) createSession(ctx context.Context, channelID models.ULID, chan
 	sessionCtx, sessionCancel := context.WithCancel(m.ctx)
 
 	session := &RelaySession{
-		ID:               models.NewULID(),
-		ChannelID:        channelID,
-		ChannelName:      channelName,
-		StreamSourceName: streamSourceName,
-		StreamURL:        streamURL,
-		EncodingProfile:  profile,
-		Classification:   classification,
-		CachedCodecInfo:  codecInfo,
-		StartedAt:        time.Now(),
-		manager:          m,
-		ctx:              sessionCtx,
-		cancel:           sessionCancel,
-		readyCh:          make(chan struct{}),
-		resourceHistory:  NewResourceHistory(),
+		ID:                        models.NewULID(),
+		ChannelID:                 channelID,
+		ChannelName:               channelName,
+		SourceID:                  sourceID,
+		StreamSourceName:          streamSourceName,
+		StreamURL:                 streamURL,
+		SourceMaxConcurrentStreams: sourceMaxConcurrentStreams,
+		EncodingProfile:           profile,
+		Classification:            classification,
+		CachedCodecInfo:           codecInfo,
+		StartedAt:                 time.Now(),
+		manager:                   m,
+		ctx:                       sessionCtx,
+		cancel:                    sessionCancel,
+		readyCh:                   make(chan struct{}),
+		resourceHistory:           NewResourceHistory(),
+		edgeBandwidth:             NewEdgeBandwidthTrackers(),
 	}
 
 	// Initialize atomic values for frequently updated fields

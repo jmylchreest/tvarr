@@ -402,6 +402,8 @@ type TranscoderStats struct {
 	HWAccelDevice string
 	// Encoding speed (1.0 = realtime, 2.0 = 2x realtime, 0.5 = half realtime)
 	EncodingSpeed float64
+	// FFmpeg command for debugging
+	FFmpegCommand string
 }
 
 // ProcessStats returns CPU and memory stats for the FFmpeg process.
@@ -914,7 +916,7 @@ func CreateTranscoderFromProfile(
 	}
 
 	// Determine target variant from profile codecs
-	targetVariant := MakeCodecVariant(
+	targetVariant := NewCodecVariant(
 		string(profile.TargetVideoCodec),
 		string(profile.TargetAudioCodec),
 	)
@@ -941,33 +943,6 @@ func CreateTranscoderFromProfile(
 	return NewFFmpegTranscoder(id, buffer, config), nil
 }
 
-// MakeCodecVariant creates a CodecVariant from video and audio codec names.
-// Codec names should be like "h264", "h265", "aac" - NOT encoder names like "libx265".
-func MakeCodecVariant(videoCodec, audioCodec string) CodecVariant {
-	// Warn if encoder names are passed instead of codec names - this indicates a bug
-	if IsEncoderName(videoCodec) {
-		slog.Warn("MakeCodecVariant called with encoder name instead of codec name",
-			slog.String("video_codec", videoCodec),
-			slog.String("expected", "codec name like h264, h265, vp9"),
-			slog.String("stack", getCallerInfo()))
-	}
-	if IsEncoderName(audioCodec) {
-		slog.Warn("MakeCodecVariant called with encoder name instead of codec name",
-			slog.String("audio_codec", audioCodec),
-			slog.String("expected", "codec name like aac, opus, mp3"),
-			slog.String("stack", getCallerInfo()))
-	}
-
-	// Handle empty/copy values
-	if videoCodec == "" || videoCodec == "copy" {
-		videoCodec = "copy"
-	}
-	if audioCodec == "" || audioCodec == "copy" {
-		audioCodec = "copy"
-	}
-
-	return CodecVariant(fmt.Sprintf("%s/%s", videoCodec, audioCodec))
-}
 
 // getCallerInfo returns a string with caller information for debugging
 func getCallerInfo() string {

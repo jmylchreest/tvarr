@@ -2,22 +2,20 @@
 package relay
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
-	"os"
 	"os/exec"
-	"path/filepath"
-	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/jmylchreest/tvarr/pkg/ffmpegd/proto"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"github.com/jmylchreest/tvarr/internal/util"
+	"github.com/jmylchreest/tvarr/pkg/ffmpegd/types"
 )
 
 // FFmpegDSpawner errors.
@@ -33,6 +31,9 @@ var (
 
 	// ErrSpawnFailed indicates the subprocess failed to start.
 	ErrSpawnFailed = errors.New("tvarr-ffmpegd subprocess failed to start")
+
+	// ErrRegistrationTimeout indicates the daemon didn't register in time.
+	ErrRegistrationTimeout = errors.New("tvarr-ffmpegd daemon registration timeout")
 )
 
 // FFmpegDSpawnerConfig configures the subprocess spawner.
@@ -41,16 +42,15 @@ type FFmpegDSpawnerConfig struct {
 	// If empty, searches PATH and common locations.
 	BinaryPath string
 
-	// PreferUnixSocket uses Unix domain sockets instead of TCP localhost.
-	// More efficient on Unix systems, automatically falls back to TCP on Windows.
-	PreferUnixSocket bool
+	// CoordinatorAddress is the gRPC address subprocesses should connect to.
+	// Example: "localhost:9090" or "unix:///tmp/tvarr/grpc.sock"
+	CoordinatorAddress string
 
-	// SocketDir is the directory for Unix domain sockets.
-	// Defaults to os.TempDir()/tvarr-ffmpegd.
-	SocketDir string
+	// AuthToken is the optional authentication token for gRPC.
+	AuthToken string
 
 	// StartupTimeout is how long to wait for subprocess to become ready.
-	// Defaults to 10 seconds.
+	// Defaults to 15 seconds.
 	StartupTimeout time.Duration
 
 	// ShutdownTimeout is how long to wait for graceful subprocess shutdown.
@@ -77,10 +77,12 @@ func (c *FFmpegDSpawnerConfig) Validate() error {
 }
 
 // FFmpegDSpawner spawns tvarr-ffmpegd subprocesses for local transcoding.
-// Each transcoding job gets its own subprocess, which is terminated when done.
+// Subprocesses connect back to the coordinator via gRPC and are managed
+// through the normal daemon registry and stream management.
 type FFmpegDSpawner struct {
-	config FFmpegDSpawnerConfig
-	logger *slog.Logger
+	config   FFmpegDSpawnerConfig
+	logger   *slog.Logger
+	registry *DaemonRegistry
 
 	// Active spawns tracking
 	mu           sync.RWMutex
@@ -90,41 +92,74 @@ type FFmpegDSpawner struct {
 	// Cached binary path (resolved on first use)
 	binaryPath     string
 	binaryPathOnce sync.Once
+
+	// Cached capabilities from detect command
+	capabilities     *DetectedCapabilities
+	capabilitiesOnce sync.Once
 }
 
 // spawnedProcess tracks a spawned subprocess.
 type spawnedProcess struct {
-	jobID      string
-	cmd        *exec.Cmd
-	conn       *grpc.ClientConn
-	client     proto.FFmpegDaemonClient
-	address    string
-	socketPath string // Unix socket path (for cleanup)
-	startedAt  time.Time
-	cancel     context.CancelFunc
+	jobID     string
+	daemonID  types.DaemonID
+	cmd       *exec.Cmd
+	startedAt time.Time
+	cancel    context.CancelFunc
+}
+
+// DetectedCapabilities contains capabilities from the detect command.
+type DetectedCapabilities struct {
+	FFmpeg       FFmpegInfo       `json:"ffmpeg"`
+	Capabilities CapabilitiesInfo `json:"capabilities"`
+}
+
+// FFmpegInfo contains FFmpeg binary information.
+type FFmpegInfo struct {
+	Version     string `json:"version"`
+	FFmpegPath  string `json:"ffmpeg_path"`
+	FFprobePath string `json:"ffprobe_path"`
+}
+
+// CapabilitiesInfo contains detected capabilities.
+type CapabilitiesInfo struct {
+	VideoEncoders     []string      `json:"video_encoders"`
+	VideoDecoders     []string      `json:"video_decoders"`
+	AudioEncoders     []string      `json:"audio_encoders"`
+	AudioDecoders     []string      `json:"audio_decoders"`
+	HardwareAccels    []HWAccelInfo `json:"hardware_accels"`
+	GPUs              []GPUInfo     `json:"gpus"`
+	MaxConcurrentJobs int           `json:"max_concurrent_jobs"`
+}
+
+// HWAccelInfo contains hardware accelerator information.
+type HWAccelInfo struct {
+	Type      string   `json:"type"`
+	Device    string   `json:"device,omitempty"`
+	Available bool     `json:"available"`
+	Encoders  []string `json:"encoders,omitempty"`
+	Decoders  []string `json:"decoders,omitempty"`
+}
+
+// GPUInfo contains GPU information.
+type GPUInfo struct {
+	Index             int    `json:"index"`
+	Name              string `json:"name"`
+	Class             string `json:"class"`
+	MaxEncodeSessions int    `json:"max_encode_sessions"`
+	MaxDecodeSessions int    `json:"max_decode_sessions,omitempty"`
 }
 
 // NewFFmpegDSpawner creates a new subprocess spawner.
 func NewFFmpegDSpawner(config FFmpegDSpawnerConfig) *FFmpegDSpawner {
 	// Apply defaults
 	if config.StartupTimeout == 0 {
-		config.StartupTimeout = 10 * time.Second
+		config.StartupTimeout = 15 * time.Second
 	}
 	if config.ShutdownTimeout == 0 {
 		config.ShutdownTimeout = 5 * time.Second
 	}
-	if config.SocketDir == "" {
-		config.SocketDir = filepath.Join(os.TempDir(), "tvarr-ffmpegd")
-	}
 	if config.Logger == nil {
 		config.Logger = slog.Default()
-	}
-
-	// Check environment variable for binary path
-	if config.BinaryPath == "" {
-		if envPath := os.Getenv("TVARR_FFMPEGD_BINARY"); envPath != "" {
-			config.BinaryPath = envPath
-		}
 	}
 
 	return &FFmpegDSpawner{
@@ -134,30 +169,52 @@ func NewFFmpegDSpawner(config FFmpegDSpawnerConfig) *FFmpegDSpawner {
 	}
 }
 
+// SetRegistry sets the daemon registry for waiting on registrations.
+func (s *FFmpegDSpawner) SetRegistry(registry *DaemonRegistry) {
+	s.registry = registry
+}
+
+// SetCoordinatorAddress sets the coordinator address for subprocess connections.
+func (s *FFmpegDSpawner) SetCoordinatorAddress(addr string) {
+	s.config.CoordinatorAddress = addr
+}
+
 // SpawnForJob spawns a tvarr-ffmpegd subprocess for a specific transcoding job.
-// Returns a gRPC client connected to the subprocess and a cleanup function.
+// The subprocess connects to the coordinator and registers as a daemon.
+// Returns the daemon ID and a cleanup function.
 // The cleanup function MUST be called when the job completes to terminate the subprocess.
-func (s *FFmpegDSpawner) SpawnForJob(ctx context.Context, jobID string) (proto.FFmpegDaemonClient, func(), error) {
+func (s *FFmpegDSpawner) SpawnForJob(ctx context.Context, jobID string) (types.DaemonID, func(), error) {
 	// Check binary availability
 	binaryPath := s.findBinary()
 	if binaryPath == "" {
-		return nil, nil, fmt.Errorf("%w: searched PATH and common locations", ErrFFmpegDBinaryNotFound)
+		return "", nil, fmt.Errorf("%w: searched PATH and common locations", ErrFFmpegDBinaryNotFound)
+	}
+
+	// Check coordinator address
+	if s.config.CoordinatorAddress == "" {
+		return "", nil, errors.New("coordinator address not configured")
+	}
+
+	// Check registry is set
+	if s.registry == nil {
+		return "", nil, errors.New("daemon registry not configured")
 	}
 
 	// Check max concurrent spawns
 	if s.config.MaxConcurrentSpawns > 0 {
 		if int(s.spawnCount.Load()) >= s.config.MaxConcurrentSpawns {
-			return nil, nil, ErrMaxSpawnsReached
+			return "", nil, ErrMaxSpawnsReached
 		}
 	}
 
-	// Generate address for this job
-	address, socketPath := s.generateAddressAndSocket(jobID)
+	// Generate unique daemon ID for this spawn
+	daemonID := types.DaemonID(fmt.Sprintf("local-%s", jobID))
 
 	s.logger.Debug("spawning ffmpegd subprocess",
 		slog.String("job_id", jobID),
+		slog.String("daemon_id", string(daemonID)),
 		slog.String("binary", binaryPath),
-		slog.String("address", address))
+		slog.String("coordinator", s.config.CoordinatorAddress))
 
 	// Create subprocess context
 	processCtx, processCancel := context.WithCancel(context.Background())
@@ -165,8 +222,15 @@ func (s *FFmpegDSpawner) SpawnForJob(ctx context.Context, jobID string) (proto.F
 	// Build command arguments
 	args := []string{
 		"serve",
-		"--address", address,
+		"--coordinator-url", s.config.CoordinatorAddress,
+		"--daemon-id", string(daemonID),
+		"--name", string(daemonID),
 		"--log-level", "warn",
+	}
+
+	// Add auth token if configured
+	if s.config.AuthToken != "" {
+		args = append(args, "--auth-token", s.config.AuthToken)
 	}
 
 	cmd := exec.CommandContext(processCtx, binaryPath, args...)
@@ -180,39 +244,30 @@ func (s *FFmpegDSpawner) SpawnForJob(ctx context.Context, jobID string) (proto.F
 	// Start the subprocess
 	if err := cmd.Start(); err != nil {
 		processCancel()
-		if socketPath != "" {
-			os.Remove(socketPath)
-		}
-		return nil, nil, fmt.Errorf("%w: %v", ErrSpawnFailed, err)
+		return "", nil, fmt.Errorf("%w: %v", ErrSpawnFailed, err)
 	}
 
 	s.logger.Debug("ffmpegd subprocess started",
 		slog.String("job_id", jobID),
+		slog.String("daemon_id", string(daemonID)),
 		slog.Int("pid", cmd.Process.Pid))
 
-	// Wait for subprocess to become ready
-	conn, client, err := s.waitForReady(ctx, address, jobID)
-	if err != nil {
-		// Kill the process if we couldn't connect
+	// Wait for daemon to register
+	if err := s.waitForRegistration(ctx, daemonID); err != nil {
+		// Kill the process if registration failed
 		processCancel()
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
-		if socketPath != "" {
-			os.Remove(socketPath)
-		}
-		return nil, nil, err
+		return "", nil, err
 	}
 
 	// Track the spawned process
 	spawned := &spawnedProcess{
-		jobID:      jobID,
-		cmd:        cmd,
-		conn:       conn,
-		client:     client,
-		address:    address,
-		socketPath: socketPath,
-		startedAt:  time.Now(),
-		cancel:     processCancel,
+		jobID:     jobID,
+		daemonID:  daemonID,
+		cmd:       cmd,
+		startedAt: time.Now(),
+		cancel:    processCancel,
 	}
 
 	s.mu.Lock()
@@ -227,62 +282,34 @@ func (s *FFmpegDSpawner) SpawnForJob(ctx context.Context, jobID string) (proto.F
 
 	s.logger.Info("ffmpegd subprocess ready",
 		slog.String("job_id", jobID),
-		slog.Int("pid", cmd.Process.Pid),
-		slog.String("address", address))
+		slog.String("daemon_id", string(daemonID)),
+		slog.Int("pid", cmd.Process.Pid))
 
-	return client, cleanup, nil
+	return daemonID, cleanup, nil
 }
 
-// waitForReady waits for the subprocess to become ready and connects to it.
-func (s *FFmpegDSpawner) waitForReady(ctx context.Context, address, jobID string) (*grpc.ClientConn, proto.FFmpegDaemonClient, error) {
+// waitForRegistration waits for the daemon to appear in the registry.
+func (s *FFmpegDSpawner) waitForRegistration(ctx context.Context, daemonID types.DaemonID) error {
 	// Create timeout context for startup
 	startupCtx, cancel := context.WithTimeout(ctx, s.config.StartupTimeout)
 	defer cancel()
 
-	// Determine the dial target based on address scheme
-	dialTarget := address
-	var dialOpts []grpc.DialOption
-	dialOpts = append(dialOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-
-	// Retry connection until ready or timeout
+	// Poll registry until daemon appears
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
-	var lastErr error
 	for {
 		select {
 		case <-startupCtx.Done():
-			if lastErr != nil {
-				return nil, nil, fmt.Errorf("%w: %v (last error: %v)", ErrSpawnTimeout, startupCtx.Err(), lastErr)
-			}
-			return nil, nil, fmt.Errorf("%w: %v", ErrSpawnTimeout, startupCtx.Err())
+			return fmt.Errorf("%w: daemon %s did not register", ErrRegistrationTimeout, daemonID)
 		case <-ticker.C:
-			// Try to connect
-			conn, err := grpc.NewClient(dialTarget, dialOpts...)
-			if err != nil {
-				lastErr = err
-				continue
+			if daemon, ok := s.registry.Get(daemonID); ok {
+				if daemon.State == types.DaemonStateConnected {
+					s.logger.Debug("ffmpegd subprocess registered",
+						slog.String("daemon_id", string(daemonID)))
+					return nil
+				}
 			}
-
-			// Create client and test connection
-			client := proto.NewFFmpegDaemonClient(conn)
-
-			// Try a simple RPC to verify connection
-			statsCtx, statsCancel := context.WithTimeout(startupCtx, 2*time.Second)
-			_, err = client.GetStats(statsCtx, &proto.GetStatsRequest{})
-			statsCancel()
-
-			if err != nil {
-				conn.Close()
-				lastErr = err
-				continue
-			}
-
-			s.logger.Debug("ffmpegd subprocess connection established",
-				slog.String("job_id", jobID),
-				slog.String("address", address))
-
-			return conn, client, nil
 		}
 	}
 }
@@ -300,12 +327,8 @@ func (s *FFmpegDSpawner) cleanupSpawn(jobID string, spawned *spawnedProcess) {
 	s.mu.Unlock()
 
 	s.logger.Debug("cleaning up ffmpegd subprocess",
-		slog.String("job_id", jobID))
-
-	// Close gRPC connection first
-	if spawned.conn != nil {
-		spawned.conn.Close()
-	}
+		slog.String("job_id", jobID),
+		slog.String("daemon_id", string(spawned.daemonID)))
 
 	// Cancel process context (signals graceful shutdown)
 	if spawned.cancel != nil {
@@ -332,87 +355,137 @@ func (s *FFmpegDSpawner) cleanupSpawn(jobID string, spawned *spawnedProcess) {
 		}
 	}
 
-	// Clean up Unix socket if used
-	if spawned.socketPath != "" {
-		os.Remove(spawned.socketPath)
+	// Unregister daemon from registry
+	if s.registry != nil {
+		s.registry.Unregister(spawned.daemonID, "subprocess terminated")
 	}
 
 	s.logger.Info("ffmpegd subprocess cleaned up",
 		slog.String("job_id", jobID),
+		slog.String("daemon_id", string(spawned.daemonID)),
 		slog.Duration("runtime", time.Since(spawned.startedAt)))
 }
 
-// generateAddress generates a gRPC address for a job.
-// Exported for testing.
-func (s *FFmpegDSpawner) generateAddress(jobID string) string {
-	addr, _ := s.generateAddressAndSocket(jobID)
-	return addr
-}
+// DetectCapabilities runs the detect command and returns capabilities.
+// Results are cached after the first call.
+func (s *FFmpegDSpawner) DetectCapabilities(ctx context.Context) (*DetectedCapabilities, error) {
+	var detectErr error
 
-// generateAddressAndSocket generates a gRPC address and optional socket path for a job.
-func (s *FFmpegDSpawner) generateAddressAndSocket(jobID string) (address string, socketPath string) {
-	if s.config.PreferUnixSocket && runtime.GOOS != "windows" {
-		// Use Unix domain socket
-		socketPath = filepath.Join(s.config.SocketDir, fmt.Sprintf("ffmpegd-%s.sock", jobID))
-
-		// Ensure socket directory exists
-		os.MkdirAll(s.config.SocketDir, 0755)
-
-		// Remove existing socket if present
-		os.Remove(socketPath)
-
-		return "unix://" + socketPath, socketPath
-	}
-
-	// Use TCP localhost with random port
-	// Find an available port
-	listener, err := net.Listen("tcp", "localhost:0")
-	if err != nil {
-		// Fall back to a predictable port based on job ID hash
-		// This shouldn't happen in practice
-		return fmt.Sprintf("localhost:5%04d", hashJobID(jobID)%10000), ""
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
-
-	return fmt.Sprintf("localhost:%d", port), ""
-}
-
-// findBinary locates the tvarr-ffmpegd binary.
-func (s *FFmpegDSpawner) findBinary() string {
-	s.binaryPathOnce.Do(func() {
-		// Check explicit config first
-		if s.config.BinaryPath != "" {
-			if _, err := os.Stat(s.config.BinaryPath); err == nil {
-				s.binaryPath = s.config.BinaryPath
-				return
-			}
-		}
-
-		// Try to find in PATH
-		if path, err := exec.LookPath("tvarr-ffmpegd"); err == nil {
-			s.binaryPath = path
+	s.capabilitiesOnce.Do(func() {
+		binaryPath := s.findBinary()
+		if binaryPath == "" {
+			detectErr = ErrFFmpegDBinaryNotFound
 			return
 		}
 
-		// Check common locations
-		commonPaths := []string{
-			"/usr/local/bin/tvarr-ffmpegd",
-			"/usr/bin/tvarr-ffmpegd",
-			"./tvarr-ffmpegd",
-			"./dist/debug/tvarr-ffmpegd",
-			"./dist/release/tvarr-ffmpegd",
+		// Run detect command with timeout
+		detectCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+
+		cmd := exec.CommandContext(detectCtx, binaryPath, "detect")
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+
+		if err := cmd.Run(); err != nil {
+			detectErr = fmt.Errorf("detect command failed: %w (stderr: %s)", err, stderr.String())
+			return
 		}
 
-		for _, path := range commonPaths {
-			if _, err := os.Stat(path); err == nil {
-				s.binaryPath = path
-				return
+		// Parse JSON output
+		var caps DetectedCapabilities
+		if err := json.Unmarshal(stdout.Bytes(), &caps); err != nil {
+			detectErr = fmt.Errorf("parsing detect output: %w", err)
+			return
+		}
+
+		s.capabilities = &caps
+	})
+
+	if detectErr != nil {
+		return nil, detectErr
+	}
+
+	return s.capabilities, nil
+}
+
+// LogCapabilities runs detection and logs the results.
+func (s *FFmpegDSpawner) LogCapabilities(ctx context.Context) {
+	caps, err := s.DetectCapabilities(ctx)
+	if err != nil {
+		s.logger.Warn("failed to detect local ffmpegd capabilities",
+			slog.String("error", err.Error()))
+		return
+	}
+
+	// Log FFmpeg info
+	s.logger.Info("local ffmpegd detected",
+		slog.String("ffmpeg_version", caps.FFmpeg.Version),
+		slog.String("ffmpeg_path", caps.FFmpeg.FFmpegPath),
+		slog.String("ffprobe_path", caps.FFmpeg.FFprobePath))
+
+	// Log hardware accels with encoder/decoder details
+	var availableAccels []string
+	for _, hw := range caps.Capabilities.HardwareAccels {
+		if hw.Available {
+			name := hw.Type
+			if hw.Device != "" {
+				name = fmt.Sprintf("%s (%s)", hw.Type, hw.Device)
 			}
-		}
+			availableAccels = append(availableAccels, name)
 
-		// Not found
-		s.binaryPath = ""
+			// Log per-hwaccel encoder/decoder details
+			s.logger.Info("local hwaccel details",
+				slog.String("type", hw.Type),
+				slog.String("device", hw.Device),
+				slog.Any("encoders", hw.Encoders),
+				slog.Any("decoders", hw.Decoders))
+		}
+	}
+
+	if len(availableAccels) > 0 {
+		s.logger.Info("local hardware acceleration available",
+			slog.Any("hw_accels", availableAccels))
+	}
+
+	// Log GPUs
+	for _, gpu := range caps.Capabilities.GPUs {
+		s.logger.Info("local GPU detected",
+			slog.Int("index", gpu.Index),
+			slog.String("name", gpu.Name),
+			slog.String("class", gpu.Class),
+			slog.Int("max_encode_sessions", gpu.MaxEncodeSessions))
+	}
+
+	// Log encoder summary
+	s.logger.Info("local ffmpegd encoder summary",
+		slog.Int("video_encoders", len(caps.Capabilities.VideoEncoders)),
+		slog.Int("audio_encoders", len(caps.Capabilities.AudioEncoders)),
+		slog.Int("max_concurrent_jobs", caps.Capabilities.MaxConcurrentJobs))
+}
+
+// GetSpawnedDaemonID returns the daemon ID for a job if it was spawned locally.
+func (s *FFmpegDSpawner) GetSpawnedDaemonID(jobID string) (types.DaemonID, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if spawned, ok := s.activeSpawns[jobID]; ok {
+		return spawned.daemonID, true
+	}
+	return "", false
+}
+
+// findBinary locates the tvarr-ffmpegd binary using the shared FindBinary utility.
+// Search order:
+//  1. TVARR_FFMPEGD_BINARY env var
+//  2. ./tvarr-ffmpegd (local development)
+//  3. tvarr-ffmpegd on PATH
+func (s *FFmpegDSpawner) findBinary() string {
+	s.binaryPathOnce.Do(func() {
+		path, err := util.FindBinary("tvarr-ffmpegd", "TVARR_FFMPEGD_BINARY")
+		if err == nil {
+			s.binaryPath = path
+		}
 	})
 
 	return s.binaryPath
@@ -421,6 +494,38 @@ func (s *FFmpegDSpawner) findBinary() string {
 // IsAvailable returns whether the tvarr-ffmpegd binary is available.
 func (s *FFmpegDSpawner) IsAvailable() bool {
 	return s.findBinary() != ""
+}
+
+// BinaryPath returns the path to the tvarr-ffmpegd binary.
+func (s *FFmpegDSpawner) BinaryPath() string {
+	return s.findBinary()
+}
+
+// GetVersion returns the version string of the tvarr-ffmpegd binary.
+// Returns empty string if the binary is not available or version cannot be determined.
+func (s *FFmpegDSpawner) GetVersion() string {
+	binaryPath := s.findBinary()
+	if binaryPath == "" {
+		return ""
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, binaryPath, "--version")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	// Parse version from output like "tvarr-ffmpegd version dev (7d124c1d*)"
+	// Extract just the version part after "version "
+	line := strings.TrimSpace(string(output))
+	if idx := strings.Index(line, "version "); idx != -1 {
+		return strings.TrimSpace(line[idx+8:])
+	}
+
+	return line
 }
 
 // ActiveSpawns returns the number of active subprocess spawns.
@@ -471,16 +576,4 @@ func (w *logWriter) Write(p []byte) (n int, err error) {
 			slog.String("line", line))
 	}
 	return len(p), nil
-}
-
-// hashJobID creates a simple hash of the job ID for port generation fallback.
-func hashJobID(jobID string) int {
-	h := 0
-	for _, c := range jobID {
-		h = h*31 + int(c)
-	}
-	if h < 0 {
-		h = -h
-	}
-	return h
 }

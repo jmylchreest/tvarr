@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jmylchreest/tvarr/internal/util"
 )
 
 // BinaryInfo contains information about the FFmpeg/FFprobe installation.
@@ -55,32 +57,18 @@ type BinaryDetector struct {
 	info         *BinaryInfo
 	lastDetected time.Time
 	cacheTTL     time.Duration
-	searchPaths  []string
 }
 
 // NewBinaryDetector creates a new binary detector.
 func NewBinaryDetector() *BinaryDetector {
 	return &BinaryDetector{
 		cacheTTL: 5 * time.Minute,
-		searchPaths: []string{
-			// Common installation paths
-			"/usr/bin",
-			"/usr/local/bin",
-			"/opt/homebrew/bin",
-			"/opt/local/bin",
-		},
 	}
 }
 
 // WithCacheTTL sets the cache TTL for binary detection.
 func (d *BinaryDetector) WithCacheTTL(ttl time.Duration) *BinaryDetector {
 	d.cacheTTL = ttl
-	return d
-}
-
-// WithSearchPaths adds additional search paths for binaries.
-func (d *BinaryDetector) WithSearchPaths(paths []string) *BinaryDetector {
-	d.searchPaths = append(d.searchPaths, paths...)
 	return d
 }
 
@@ -124,15 +112,17 @@ func (d *BinaryDetector) detect(ctx context.Context) (*BinaryInfo, error) {
 	info := &BinaryInfo{}
 
 	// Find ffmpeg binary (required)
-	ffmpegPath, err := d.findBinary(ctx, "ffmpeg")
+	// Search order: TVARR_FFMPEG_BINARY env var -> ./ffmpeg -> PATH
+	ffmpegPath, err := util.FindBinary("ffmpeg", "TVARR_FFMPEG_BINARY")
 	if err != nil {
 		return nil, fmt.Errorf("ffmpeg not found: %w", err)
 	}
 	info.FFmpegPath = ffmpegPath
 
 	// Find ffprobe binary (optional - used for codec pre-detection)
+	// Search order: TVARR_FFPROBE_BINARY env var -> ./ffprobe -> PATH
 	// If not found, relay will still work but without codec caching optimization
-	ffprobePath, err := d.findBinary(ctx, "ffprobe")
+	ffprobePath, err := util.FindBinary("ffprobe", "TVARR_FFPROBE_BINARY")
 	if err == nil {
 		info.FFprobePath = ffprobePath
 	}
@@ -180,26 +170,6 @@ func (d *BinaryDetector) detect(ctx context.Context) (*BinaryInfo, error) {
 	}
 
 	return info, nil
-}
-
-// findBinary searches for a binary in PATH and search paths.
-func (d *BinaryDetector) findBinary(ctx context.Context, name string) (string, error) {
-	// First try PATH
-	path, err := exec.LookPath(name)
-	if err == nil {
-		return path, nil
-	}
-
-	// Try search paths
-	for _, searchPath := range d.searchPaths {
-		fullPath := searchPath + "/" + name
-		cmd := exec.CommandContext(ctx, fullPath, "-version")
-		if err := cmd.Run(); err == nil {
-			return fullPath, nil
-		}
-	}
-
-	return "", fmt.Errorf("binary %s not found in PATH or search paths", name)
 }
 
 // versionInfo holds parsed version information.

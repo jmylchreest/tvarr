@@ -10,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/jmylchreest/tvarr/internal/codec"
 )
 
 // Errors for shared buffer operations.
@@ -409,20 +411,30 @@ const (
 
 // NewCodecVariant creates a CodecVariant from video and audio codec names.
 // Codec names should be like "h264", "h265", "aac" - NOT encoder names like "libx265".
+// Empty or "copy" values are normalized to "copy".
 func NewCodecVariant(videoCodec, audioCodec string) CodecVariant {
 	// Warn if encoder names are passed instead of codec names - this indicates a bug
-	if IsEncoderName(videoCodec) {
+	if codec.IsEncoder(videoCodec) {
 		slog.Warn("NewCodecVariant called with encoder name instead of codec name",
 			slog.String("video_codec", videoCodec),
 			slog.String("expected", "codec name like h264, h265, vp9"),
 			slog.String("caller", getSharedBufferCallerInfo()))
 	}
-	if IsEncoderName(audioCodec) {
+	if codec.IsEncoder(audioCodec) {
 		slog.Warn("NewCodecVariant called with encoder name instead of codec name",
 			slog.String("audio_codec", audioCodec),
 			slog.String("expected", "codec name like aac, opus, mp3"),
 			slog.String("caller", getSharedBufferCallerInfo()))
 	}
+
+	// Handle empty/copy values
+	if videoCodec == "" || videoCodec == "copy" {
+		videoCodec = "copy"
+	}
+	if audioCodec == "" || audioCodec == "copy" {
+		audioCodec = "copy"
+	}
+
 	return CodecVariant(fmt.Sprintf("%s/%s", videoCodec, audioCodec))
 }
 
@@ -1163,19 +1175,29 @@ func (b *SharedESBuffer) GetOrCreateVariantWithContext(ctx context.Context, vari
 	b.variants[variant] = v
 	b.variantsMu.Unlock()
 
-	b.config.Logger.Debug("Created new codec variant",
+	b.config.Logger.Info("Created new codec variant - triggering transcoding callback",
 		slog.String("channel_id", b.channelID),
 		slog.String("variant", variant.String()),
-		slog.String("source", source.String()))
+		slog.String("source", source.String()),
+		slog.Bool("has_callback", callback != nil))
 
 	// Trigger transcoding if callback is set
 	if callback != nil {
+		b.config.Logger.Info("Invoking variant request callback to start transcoder",
+			slog.String("source", source.String()),
+			slog.String("target", variant.String()))
 		if err := callback(source, variant); err != nil {
 			b.config.Logger.Error("Failed to start transcoder for variant",
 				slog.String("variant", variant.String()),
 				slog.String("error", err.Error()))
 			// Don't remove the variant - let it exist but be empty until transcoder starts
+		} else {
+			b.config.Logger.Info("Transcoder started successfully for variant",
+				slog.String("variant", variant.String()))
 		}
+	} else {
+		b.config.Logger.Warn("No variant request callback set - cannot start transcoder",
+			slog.String("variant", variant.String()))
 	}
 
 	return v, nil
@@ -1447,12 +1469,37 @@ func (b *SharedESBuffer) Stats() ESBufferStats {
 	}
 	b.variantsMu.RUnlock()
 
+	// Get source variant's codecs to resolve "copy" references
+	var sourceVideoCodec, sourceAudioCodec string
+	for _, v := range variantList {
+		if v.isSource {
+			sourceVideoCodec = v.videoTrack.Codec()
+			sourceAudioCodec = v.audioTrack.Codec()
+			// Fallback to variant name if track codec is empty
+			if sourceVideoCodec == "" {
+				sourceVideoCodec = v.variant.VideoCodec()
+			}
+			if sourceAudioCodec == "" {
+				sourceAudioCodec = v.variant.AudioCodec()
+			}
+			break
+		}
+	}
+
 	// Collect stats from each variant WITHOUT holding the variants lock.
 	// Each variant.Stats() call acquires its own locks internally.
 	var totalBytes uint64
 	variantStats := make([]ESVariantStats, 0, variantCount)
 	for _, v := range variantList {
 		vs := v.Stats()
+		// Resolve "copy" to actual source codec for display purposes
+		// "copy" means passthrough - the actual codec is the source codec
+		if vs.VideoCodec == "copy" && sourceVideoCodec != "" {
+			vs.VideoCodec = sourceVideoCodec
+		}
+		if vs.AudioCodec == "copy" && sourceAudioCodec != "" {
+			vs.AudioCodec = sourceAudioCodec
+		}
 		variantStats = append(variantStats, vs)
 		totalBytes += vs.BytesIngested
 	}
@@ -1491,7 +1538,9 @@ func (b *SharedESBuffer) Duration() time.Duration {
 	return time.Since(b.startTime)
 }
 
-// CleanupUnusedVariants removes transcoded variants that haven't been accessed recently.
+// CleanupUnusedVariants removes transcoded variants that haven't been accessed recently
+// and have no active consumers. Variants with registered consumers are never removed,
+// even if idle, because doing so would break active streams.
 func (b *SharedESBuffer) CleanupUnusedVariants(maxIdle time.Duration) int {
 	b.variantsMu.Lock()
 	defer b.variantsMu.Unlock()
@@ -1502,6 +1551,12 @@ func (b *SharedESBuffer) CleanupUnusedVariants(maxIdle time.Duration) int {
 	for variant, v := range b.variants {
 		// Never remove source variant
 		if v.isSource {
+			continue
+		}
+
+		// Never remove variants with active consumers - this would break streams
+		consumerCount := v.ConsumerCount()
+		if consumerCount > 0 {
 			continue
 		}
 

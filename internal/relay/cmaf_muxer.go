@@ -8,12 +8,14 @@ import (
 	"io"
 	"sync"
 
+	"github.com/bluenviron/mediacommon/v2/pkg/codecs/av1"
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h264"
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h265"
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/fmp4"
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/fmp4/seekablebuffer"
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/mp4"
+	// Note: vp9 codec package is imported in fmp4_adapter.go for header parsing
 )
 
 // CMAF/fMP4 box types (ISO Base Media File Format)
@@ -279,7 +281,7 @@ func (m *CMAFMuxer) parseInitSegment() error {
 		m.initSegment.TrackTimescales[uint32(track.ID)] = track.TimeScale
 
 		switch track.Codec.(type) {
-		case *mp4.CodecH264, *mp4.CodecH265:
+		case *mp4.CodecH264, *mp4.CodecH265, *mp4.CodecAV1, *mp4.CodecVP9:
 			m.initSegment.HasVideo = true
 			m.initSegment.VideoTrackID = uint32(track.ID)
 			if m.initSegment.Timescale == 0 {
@@ -920,12 +922,21 @@ type FMP4Writer struct {
 	audioTrack *fmp4.InitTrack
 
 	// Codec params
-	h264SPS []byte
-	h264PPS []byte
-	h265VPS []byte
-	h265SPS []byte
-	h265PPS []byte
-	aacConf *mpeg4audio.AudioSpecificConfig
+	h264SPS       []byte
+	h264PPS       []byte
+	h265VPS       []byte
+	h265SPS       []byte
+	h265PPS       []byte
+	av1SeqHeader  []byte
+	// VP9 params
+	vp9Width             int
+	vp9Height            int
+	vp9Profile           uint8
+	vp9BitDepth          uint8
+	vp9ChromaSubsampling uint8
+	vp9ColorRange        bool
+	vp9Configured        bool
+	aacConf              *mpeg4audio.AudioSpecificConfig
 
 	// State
 	seqNum      uint32
@@ -956,6 +967,28 @@ func (w *FMP4Writer) SetH265Params(vps, sps, pps []byte) {
 	w.h265VPS = vps
 	w.h265SPS = sps
 	w.h265PPS = pps
+}
+
+// SetAV1Params sets AV1 codec parameters.
+func (w *FMP4Writer) SetAV1Params(seqHeader []byte) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.av1SeqHeader = seqHeader
+}
+
+// SetVP9Params sets VP9 codec parameters.
+func (w *FMP4Writer) SetVP9Params(width, height int, profile, bitDepth, chromaSubsampling uint8, colorRange bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.vp9Width = width
+	w.vp9Height = height
+	w.vp9Profile = profile
+	w.vp9BitDepth = bitDepth
+	w.vp9ChromaSubsampling = chromaSubsampling
+	w.vp9ColorRange = colorRange
+	w.vp9Configured = true
 }
 
 // SetAACConfig sets AAC codec configuration.
@@ -996,6 +1029,24 @@ func (w *FMP4Writer) GenerateInit(hasVideo, hasAudio bool, videoTimescale, audio
 					SPS: w.h265SPS,
 					PPS: w.h265PPS,
 				}
+			}
+		} else if w.av1SeqHeader != nil {
+			// AV1 codec - verify sequence header is valid
+			var seqHdr av1.SequenceHeader
+			if err := seqHdr.Unmarshal(w.av1SeqHeader); err == nil {
+				codec = &mp4.CodecAV1{
+					SequenceHeader: w.av1SeqHeader,
+				}
+			}
+		} else if w.vp9Configured {
+			// VP9 codec
+			codec = &mp4.CodecVP9{
+				Width:             w.vp9Width,
+				Height:            w.vp9Height,
+				Profile:           w.vp9Profile,
+				BitDepth:          w.vp9BitDepth,
+				ChromaSubsampling: w.vp9ChromaSubsampling,
+				ColorRange:        w.vp9ColorRange,
 			}
 		}
 

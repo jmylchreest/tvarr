@@ -7,13 +7,14 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jmylchreest/tvarr/internal/ffmpeg"
 	"github.com/jmylchreest/tvarr/internal/models"
+	"github.com/jmylchreest/tvarr/internal/observability"
+	"github.com/jmylchreest/tvarr/pkg/ffmpegd/proto"
 	"github.com/jmylchreest/tvarr/pkg/ffmpegd/types"
 )
 
 // Transcoder is the interface for codec transcoding.
-// Both FFmpegTranscoder (direct FFmpeg) and GRPCTranscoder (via ffmpegd) implement this.
+// ESTranscoder implements this using ffmpegd (either local subprocess or remote daemon).
 type Transcoder interface {
 	// Start begins the transcoding process.
 	Start(ctx context.Context) error
@@ -35,32 +36,43 @@ type Transcoder interface {
 	ClosedChan() <-chan struct{}
 }
 
+// EncoderOverridesProvider is a function that returns the current enabled encoder overrides.
+// This allows the transcoder factory to fetch overrides from the service layer without
+// having a direct dependency on it.
+type EncoderOverridesProvider func() []*proto.EncoderOverride
+
 // TranscoderFactory creates transcoders based on configuration and availability.
+// All transcoding is done via ffmpegd (either remote daemon or local subprocess).
+// Direct FFmpeg transcoding has been removed to simplify the codebase.
 type TranscoderFactory struct {
 	// Spawner for creating ffmpegd subprocesses.
-	// If nil, falls back to direct FFmpeg transcoding.
+	// Required for local transcoding when no remote daemons are available.
 	Spawner *FFmpegDSpawner
 
 	// DaemonRegistry for remote daemon selection (distributed mode).
-	// If nil, only local subprocess or direct FFmpeg is available.
+	// If nil, only local subprocess is available.
 	DaemonRegistry *DaemonRegistry
+
+	// DaemonStreamManager manages persistent streams from remote daemons.
+	// Required for remote transcoding via connected daemons.
+	DaemonStreamManager *DaemonStreamManager
+
+	// ActiveJobManager manages active transcode jobs on remote daemons.
+	// Required for remote transcoding via connected daemons.
+	ActiveJobManager *ActiveJobManager
 
 	// SelectionStrategy for choosing remote daemons.
 	// Defaults to DefaultSelectionStrategy() if nil.
 	SelectionStrategy SelectionStrategy
 
-	// PreferGRPC indicates whether to prefer gRPC (ffmpegd) over direct FFmpeg.
-	// When true and Spawner is available, uses GRPCTranscoder.
-	// When false or Spawner unavailable, uses FFmpegTranscoder.
-	PreferGRPC bool
-
 	// PreferRemote indicates whether to prefer remote daemons over local subprocess.
 	// When true and suitable remote daemons are available, routes to remote.
-	// When false or no suitable remote available, falls back to local.
+	// When false or no suitable remote available, falls back to local subprocess.
 	PreferRemote bool
 
-	// FFmpegBin is the FFmpeg binary info for direct transcoding.
-	FFmpegBin *ffmpeg.BinaryInfo
+	// EncoderOverridesProvider fetches enabled encoder overrides.
+	// If nil, no overrides are applied.
+	EncoderOverridesProvider EncoderOverridesProvider
 
 	// Logger for structured logging.
 	Logger *slog.Logger
@@ -68,23 +80,26 @@ type TranscoderFactory struct {
 
 // TranscoderFactoryConfig configures the transcoder factory.
 type TranscoderFactoryConfig struct {
-	// Spawner for ffmpegd subprocesses. If nil, only direct FFmpeg is available.
+	// Spawner for ffmpegd subprocesses. Required for local transcoding.
 	Spawner *FFmpegDSpawner
 
 	// DaemonRegistry for remote daemon selection (distributed mode).
 	DaemonRegistry *DaemonRegistry
 
+	// DaemonStreamManager manages persistent streams from remote daemons.
+	DaemonStreamManager *DaemonStreamManager
+
+	// ActiveJobManager manages active transcode jobs on remote daemons.
+	ActiveJobManager *ActiveJobManager
+
 	// SelectionStrategy for choosing remote daemons.
 	SelectionStrategy SelectionStrategy
-
-	// PreferGRPC indicates preference for gRPC transcoding when available.
-	PreferGRPC bool
 
 	// PreferRemote indicates preference for remote daemons over local subprocess.
 	PreferRemote bool
 
-	// FFmpegBin is required for direct FFmpeg transcoding.
-	FFmpegBin *ffmpeg.BinaryInfo
+	// EncoderOverridesProvider fetches enabled encoder overrides.
+	EncoderOverridesProvider EncoderOverridesProvider
 
 	// Logger for logging. Defaults to slog.Default() if nil.
 	Logger *slog.Logger
@@ -103,35 +118,30 @@ func NewTranscoderFactory(config TranscoderFactoryConfig) *TranscoderFactory {
 	}
 
 	return &TranscoderFactory{
-		Spawner:           config.Spawner,
-		DaemonRegistry:    config.DaemonRegistry,
-		SelectionStrategy: strategy,
-		PreferGRPC:        config.PreferGRPC,
-		PreferRemote:      config.PreferRemote,
-		FFmpegBin:         config.FFmpegBin,
-		Logger:            logger,
+		Spawner:                  config.Spawner,
+		DaemonRegistry:           config.DaemonRegistry,
+		DaemonStreamManager:      config.DaemonStreamManager,
+		ActiveJobManager:         config.ActiveJobManager,
+		SelectionStrategy:        strategy,
+		PreferRemote:             config.PreferRemote,
+		EncoderOverridesProvider: config.EncoderOverridesProvider,
+		Logger:                   logger,
 	}
 }
 
-// CanCreateGRPCTranscoder returns whether gRPC transcoders can be created.
-func (f *TranscoderFactory) CanCreateGRPCTranscoder() bool {
+// CanCreateLocalTranscoder returns whether local ffmpegd subprocess transcoders can be created.
+func (f *TranscoderFactory) CanCreateLocalTranscoder() bool {
 	return f.Spawner != nil && f.Spawner.IsAvailable()
 }
 
 // CanCreateRemoteTranscoder returns whether remote daemon transcoders are available.
+// Requires both the daemon registry (for selection) and stream manager (for communication).
 func (f *TranscoderFactory) CanCreateRemoteTranscoder() bool {
-	return f.DaemonRegistry != nil && f.DaemonRegistry.CountActive() > 0
-}
-
-// CanCreateDirectTranscoder returns whether direct FFmpeg transcoders can be created.
-func (f *TranscoderFactory) CanCreateDirectTranscoder() bool {
-	return f.FFmpegBin != nil && f.FFmpegBin.FFmpegPath != ""
-}
-
-// ShouldUseGRPC returns whether gRPC transcoding should be used.
-// This checks for local subprocess availability.
-func (f *TranscoderFactory) ShouldUseGRPC() bool {
-	return f.PreferGRPC && f.CanCreateGRPCTranscoder()
+	return f.DaemonRegistry != nil &&
+		f.DaemonStreamManager != nil &&
+		f.ActiveJobManager != nil &&
+		f.DaemonRegistry.CountActive() > 0 &&
+		f.DaemonStreamManager.Count() > 0
 }
 
 // ShouldUseRemote returns whether remote daemon transcoding should be used.
@@ -164,17 +174,28 @@ type CreateTranscoderOptions struct {
 
 	// ChannelName for job identification (used in gRPC mode).
 	ChannelName string
+
+	// Custom FFmpeg flags from encoding profile.
+	GlobalFlags string // Flags placed at the start of the command
+	InputFlags  string // Flags placed before -i input
+	OutputFlags string // Flags placed after -i input
+
+	// OutputFormat specifies the container format for daemon FFmpeg output.
+	// Values: "fmp4", "mpegts". If empty, auto-selected based on target codec.
+	OutputFormat string
 }
 
 // CreateTranscoderFromProfile creates a transcoder from an encoding profile.
+// The targetVariant parameter can override the profile's target codecs (e.g., from client detection).
+// If targetVariant is VariantCopy, the profile's target codecs are used.
 // Priority order:
 // 1. Remote daemon (if PreferRemote and suitable daemon available)
-// 2. Local gRPC subprocess (if PreferGRPC and spawner available)
-// 3. Direct FFmpeg (fallback)
+// 2. Local ffmpegd subprocess (fallback)
 func (f *TranscoderFactory) CreateTranscoderFromProfile(
 	id string,
 	buffer *SharedESBuffer,
 	sourceVariant CodecVariant,
+	targetVariant CodecVariant,
 	profile *models.EncodingProfile,
 	opts CreateTranscoderOptions,
 ) (Transcoder, error) {
@@ -182,20 +203,62 @@ func (f *TranscoderFactory) CreateTranscoderFromProfile(
 		return nil, fmt.Errorf("profile is required")
 	}
 
-	// Determine target variant from profile codecs
-	targetVariant := MakeCodecVariant(
+	f.Logger.Log(context.Background(), observability.LevelTrace, "CreateTranscoderFromProfile called",
+		slog.String("id", id),
+		slog.String("source_variant", sourceVariant.String()),
+		slog.String("target_variant", targetVariant.String()),
+		slog.String("profile_video_codec", string(profile.TargetVideoCodec)),
+		slog.String("profile_audio_codec", string(profile.TargetAudioCodec)))
+
+	// If targetVariant is VariantCopy or empty, use profile's target codecs
+	profileVariant := NewCodecVariant(
 		string(profile.TargetVideoCodec),
 		string(profile.TargetAudioCodec),
 	)
+	if targetVariant == VariantCopy || (targetVariant.VideoCodec() == "" && targetVariant.AudioCodec() == "") || targetVariant == "" {
+		f.Logger.Log(context.Background(), observability.LevelTrace, "Target variant was copy/empty, using profile variant",
+			slog.String("old_target", targetVariant.String()),
+			slog.String("new_target", profileVariant.String()))
+		targetVariant = profileVariant
+	}
 
 	// Get encoding parameters from quality preset
 	encodingParams := profile.GetEncodingParams()
-	videoEncoder := profile.GetVideoEncoder()
-	audioEncoder := profile.GetAudioEncoder()
 	videoBitrate := profile.GetVideoBitrate()
 	audioBitrate := profile.GetAudioBitrate()
 	videoPreset := encodingParams.VideoPreset
 	hwAccel := string(profile.HWAccel)
+
+	// Populate custom FFmpeg flags from profile (if not already set in opts)
+	if opts.GlobalFlags == "" {
+		opts.GlobalFlags = profile.GlobalFlags
+	}
+	if opts.InputFlags == "" {
+		opts.InputFlags = profile.InputFlags
+	}
+	if opts.OutputFlags == "" {
+		opts.OutputFlags = profile.OutputFlags
+	}
+
+	// Determine encoders based on target variant
+	// If target differs from profile, we need to map the target codecs to encoders
+	var videoEncoder, audioEncoder string
+	if targetVariant == profileVariant {
+		// Use profile's encoders (may include hardware encoder preferences)
+		videoEncoder = profile.GetVideoEncoder()
+		audioEncoder = profile.GetAudioEncoder()
+	} else {
+		// Target variant was overridden (e.g., by client detection)
+		// Map the target codecs to appropriate software encoders
+		videoEncoder, audioEncoder = mapVariantToEncoders(targetVariant)
+		f.Logger.Log(context.Background(), observability.LevelTrace, "Using override target variant with mapped encoders",
+			slog.String("id", id),
+			slog.String("target_variant", targetVariant.String()),
+			slog.String("profile_variant", profileVariant.String()),
+			slog.String("video_encoder", videoEncoder),
+			slog.String("audio_encoder", audioEncoder),
+		)
+	}
 
 	// Determine if HW encoding is requested
 	requireGPU := isHardwareEncoder(videoEncoder)
@@ -204,7 +267,7 @@ func (f *TranscoderFactory) CreateTranscoderFromProfile(
 	if f.ShouldUseRemote() {
 		daemon := f.SelectRemoteDaemon(videoEncoder, requireGPU)
 		if daemon != nil {
-			f.Logger.Debug("Selected remote daemon for transcoding",
+			f.Logger.Log(context.Background(), observability.LevelTrace, "Selected remote daemon for transcoding",
 				slog.String("id", id),
 				slog.String("daemon_id", string(daemon.ID)),
 				slog.String("daemon_name", daemon.Name),
@@ -214,35 +277,27 @@ func (f *TranscoderFactory) CreateTranscoderFromProfile(
 				videoEncoder, audioEncoder, videoBitrate, audioBitrate,
 				videoPreset, hwAccel, "", daemon, opts)
 		}
-		f.Logger.Debug("No suitable remote daemon found, falling back to local",
+		f.Logger.Log(context.Background(), observability.LevelTrace, "No suitable remote daemon found, falling back to local subprocess",
 			slog.String("id", id),
 			slog.String("video_encoder", videoEncoder),
 		)
 	}
 
-	// 2. Try local gRPC subprocess
-	if f.ShouldUseGRPC() {
-		return f.createGRPCTranscoder(id, buffer, sourceVariant, targetVariant,
+	// 2. Fall back to local ffmpegd subprocess
+	if f.CanCreateLocalTranscoder() {
+		return f.createLocalTranscoder(id, buffer, sourceVariant, targetVariant,
 			videoEncoder, audioEncoder, videoBitrate, audioBitrate,
 			videoPreset, hwAccel, "", opts)
 	}
 
-	// 3. Fall back to direct FFmpeg
-	if f.CanCreateDirectTranscoder() {
-		return f.createDirectTranscoder(id, buffer, sourceVariant, targetVariant,
-			videoEncoder, audioEncoder, videoBitrate, audioBitrate,
-			videoPreset, hwAccel, "", opts)
-	}
-
-	return nil, fmt.Errorf("no transcoding backend available")
+	return nil, fmt.Errorf("no transcoding backend available: tvarr-ffmpegd binary not found")
 }
 
 // CreateTranscoderFromVariant creates a transcoder from source and target variants.
 // Uses default settings for bitrate, preset, etc.
 // Priority order:
 // 1. Remote daemon (if PreferRemote and suitable daemon available)
-// 2. Local gRPC subprocess (if PreferGRPC and spawner available)
-// 3. Direct FFmpeg (fallback)
+// 2. Local ffmpegd subprocess (fallback)
 func (f *TranscoderFactory) CreateTranscoderFromVariant(
 	id string,
 	buffer *SharedESBuffer,
@@ -258,7 +313,7 @@ func (f *TranscoderFactory) CreateTranscoderFromVariant(
 	if f.ShouldUseRemote() {
 		daemon := f.SelectRemoteDaemon(videoEncoder, requireGPU)
 		if daemon != nil {
-			f.Logger.Debug("Selected remote daemon for transcoding",
+			f.Logger.Log(context.Background(), observability.LevelTrace, "Selected remote daemon for transcoding",
 				slog.String("id", id),
 				slog.String("daemon_id", string(daemon.ID)),
 				slog.String("video_encoder", videoEncoder),
@@ -268,23 +323,17 @@ func (f *TranscoderFactory) CreateTranscoderFromVariant(
 		}
 	}
 
-	// 2. Try local gRPC subprocess
-	if f.ShouldUseGRPC() {
-		return f.createGRPCTranscoder(id, buffer, sourceVariant, targetVariant,
+	// 2. Fall back to local ffmpegd subprocess
+	if f.CanCreateLocalTranscoder() {
+		return f.createLocalTranscoder(id, buffer, sourceVariant, targetVariant,
 			videoEncoder, audioEncoder, 0, 0, "medium", "", "", opts)
 	}
 
-	// 3. Fall back to direct FFmpeg
-	if f.CanCreateDirectTranscoder() {
-		return f.createDirectTranscoder(id, buffer, sourceVariant, targetVariant,
-			videoEncoder, audioEncoder, 0, 0, "medium", "", "", opts)
-	}
-
-	return nil, fmt.Errorf("no transcoding backend available")
+	return nil, fmt.Errorf("no transcoding backend available: tvarr-ffmpegd binary not found")
 }
 
-// createGRPCTranscoder creates a gRPC-based transcoder.
-func (f *TranscoderFactory) createGRPCTranscoder(
+// createLocalTranscoder creates a local ffmpegd subprocess transcoder.
+func (f *TranscoderFactory) createLocalTranscoder(
 	id string,
 	buffer *SharedESBuffer,
 	sourceVariant, targetVariant CodecVariant,
@@ -293,72 +342,57 @@ func (f *TranscoderFactory) createGRPCTranscoder(
 	videoPreset, hwAccel, hwAccelDevice string,
 	opts CreateTranscoderOptions,
 ) (Transcoder, error) {
-	config := GRPCTranscoderConfig{
-		SourceVariant:  sourceVariant,
-		TargetVariant:  targetVariant,
-		VideoEncoder:   videoEncoder,
-		AudioEncoder:   audioEncoder,
-		VideoBitrate:   videoBitrate,
-		AudioBitrate:   audioBitrate,
-		VideoPreset:    videoPreset,
-		HWAccel:        hwAccel,
-		HWAccelDevice:  hwAccelDevice,
-		SourceURL:      opts.SourceURL,
-		UseDirectInput: opts.UseDirectInput,
-		ChannelName:    opts.ChannelName,
-		Logger:         f.Logger,
+	// Fetch encoder overrides from provider if available
+	var encoderOverrides []*proto.EncoderOverride
+	if f.EncoderOverridesProvider != nil {
+		encoderOverrides = f.EncoderOverridesProvider()
 	}
 
-	f.Logger.Debug("Creating gRPC transcoder",
+	// Note: VideoEncoder/AudioEncoder are no longer used - the daemon auto-selects
+	// the best encoder based on target codec and available hardware capabilities.
+
+	// Compute output format if not specified
+	outputFormat := opts.OutputFormat
+	if outputFormat == "" {
+		// Create StreamTarget to compute format based on codec requirements
+		target := NewStreamTarget(targetVariant.VideoCodec(), targetVariant.AudioCodec(), "")
+		outputFormat = target.DaemonOutputFormat()
+	}
+
+	config := ESTranscoderConfig{
+		SourceVariant:    sourceVariant,
+		TargetVariant:    targetVariant,
+		VideoBitrate:     videoBitrate,
+		AudioBitrate:     audioBitrate,
+		VideoPreset:      videoPreset,
+		HWAccel:          hwAccel,
+		HWAccelDevice:    hwAccelDevice,
+		SourceURL:        opts.SourceURL,
+		UseDirectInput:   opts.UseDirectInput,
+		ChannelName:      opts.ChannelName,
+		GlobalFlags:      opts.GlobalFlags,
+		InputFlags:       opts.InputFlags,
+		OutputFlags:      opts.OutputFlags,
+		OutputFormat:     outputFormat,
+		EncoderOverrides: encoderOverrides,
+		Logger:           f.Logger,
+	}
+
+	f.Logger.Log(context.Background(), observability.LevelTrace, "Creating local ES transcoder",
 		slog.String("id", id),
 		slog.String("source", sourceVariant.String()),
 		slog.String("target", targetVariant.String()),
-		slog.String("video_encoder", videoEncoder),
-		slog.String("audio_encoder", audioEncoder),
-		slog.Bool("direct_input", opts.UseDirectInput))
+		slog.String("output_format", outputFormat),
+		slog.Bool("direct_input", opts.UseDirectInput),
+		slog.Int("encoder_overrides", len(encoderOverrides)))
 
-	return NewGRPCTranscoder(id, buffer, f.Spawner, config), nil
-}
-
-// createDirectTranscoder creates a direct FFmpeg transcoder.
-func (f *TranscoderFactory) createDirectTranscoder(
-	id string,
-	buffer *SharedESBuffer,
-	sourceVariant, targetVariant CodecVariant,
-	videoEncoder, audioEncoder string,
-	videoBitrate, audioBitrate int,
-	videoPreset, hwAccel, hwAccelDevice string,
-	opts CreateTranscoderOptions,
-) (Transcoder, error) {
-	config := FFmpegTranscoderConfig{
-		FFmpegPath:     f.FFmpegBin.FFmpegPath,
-		SourceVariant:  sourceVariant,
-		TargetVariant:  targetVariant,
-		VideoCodec:     videoEncoder,
-		AudioCodec:     audioEncoder,
-		VideoBitrate:   videoBitrate,
-		AudioBitrate:   audioBitrate,
-		VideoPreset:    videoPreset,
-		HWAccel:        hwAccel,
-		HWAccelDevice:  hwAccelDevice,
-		SourceURL:      opts.SourceURL,
-		UseDirectInput: opts.UseDirectInput,
-		Logger:         f.Logger,
-	}
-
-	f.Logger.Debug("Creating direct FFmpeg transcoder",
-		slog.String("id", id),
-		slog.String("source", sourceVariant.String()),
-		slog.String("target", targetVariant.String()),
-		slog.String("video_encoder", videoEncoder),
-		slog.String("audio_encoder", audioEncoder),
-		slog.Bool("direct_input", opts.UseDirectInput))
-
-	return NewFFmpegTranscoder(id, buffer, config), nil
+	return NewLocalESTranscoder(id, buffer, f.Spawner, f.DaemonStreamManager, f.ActiveJobManager, config), nil
 }
 
 // createRemoteTranscoder creates a transcoder that uses a remote ffmpegd daemon.
 // This is for distributed transcoding where the work is offloaded to remote workers.
+// The daemon maintains a persistent bidirectional gRPC stream with the coordinator,
+// and we push transcoding work through that stream.
 func (f *TranscoderFactory) createRemoteTranscoder(
 	id string,
 	buffer *SharedESBuffer,
@@ -369,29 +403,87 @@ func (f *TranscoderFactory) createRemoteTranscoder(
 	daemon *types.Daemon,
 	opts CreateTranscoderOptions,
 ) (Transcoder, error) {
-	// For now, remote transcoding uses the same GRPCTranscoder but will connect
-	// to the remote daemon's gRPC server instead of spawning a local subprocess.
-	// The daemon's address is used to establish the connection.
-	//
-	// TODO: Implement RemoteGRPCTranscoder that connects to daemon.Address
-	// For the initial implementation, we fall back to local gRPC if remote
-	// is selected but true remote connection is not yet implemented.
+	// Check if we have the required managers
+	if f.DaemonStreamManager == nil || f.ActiveJobManager == nil {
+		f.Logger.Log(context.Background(), observability.LevelTrace, "Stream/job managers not available, falling back to local subprocess",
+			slog.String("id", id),
+			slog.String("daemon_id", string(daemon.ID)),
+		)
+		// Fall back to local ffmpegd subprocess
+		if f.CanCreateLocalTranscoder() {
+			return f.createLocalTranscoder(id, buffer, sourceVariant, targetVariant,
+				videoEncoder, audioEncoder, videoBitrate, audioBitrate,
+				videoPreset, hwAccel, hwAccelDevice, opts)
+		}
+		return nil, fmt.Errorf("no transcoding backend available: tvarr-ffmpegd binary not found")
+	}
 
-	f.Logger.Info("Remote transcoder requested (falling back to local for now)",
+	// Check if the daemon has an active stream
+	if _, ok := f.DaemonStreamManager.GetIdleStream(daemon.ID); !ok {
+		f.Logger.Log(context.Background(), observability.LevelTrace, "Daemon has no idle stream, falling back to local subprocess",
+			slog.String("id", id),
+			slog.String("daemon_id", string(daemon.ID)),
+			slog.String("daemon_name", daemon.Name),
+		)
+		// Fall back to local ffmpegd subprocess
+		if f.CanCreateLocalTranscoder() {
+			return f.createLocalTranscoder(id, buffer, sourceVariant, targetVariant,
+				videoEncoder, audioEncoder, videoBitrate, audioBitrate,
+				videoPreset, hwAccel, hwAccelDevice, opts)
+		}
+		return nil, fmt.Errorf("no transcoding backend available: tvarr-ffmpegd binary not found")
+	}
+
+	// Fetch encoder overrides from provider if available
+	var encoderOverrides []*proto.EncoderOverride
+	if f.EncoderOverridesProvider != nil {
+		encoderOverrides = f.EncoderOverridesProvider()
+	}
+
+	// Note: VideoEncoder/AudioEncoder are no longer used - the daemon auto-selects
+	// the best encoder based on target codec and available hardware capabilities.
+
+	// Compute output format if not specified
+	outputFormat := opts.OutputFormat
+	if outputFormat == "" {
+		// Create StreamTarget to compute format based on codec requirements
+		target := NewStreamTarget(targetVariant.VideoCodec(), targetVariant.AudioCodec(), "")
+		outputFormat = target.DaemonOutputFormat()
+	}
+
+	config := ESTranscoderConfig{
+		SourceVariant:    sourceVariant,
+		TargetVariant:    targetVariant,
+		VideoBitrate:     videoBitrate,
+		AudioBitrate:     audioBitrate,
+		VideoPreset:      videoPreset,
+		HWAccel:          hwAccel,
+		HWAccelDevice:    hwAccelDevice,
+		ChannelName:      opts.ChannelName,
+		SessionID:        id, // Use transcoder ID as session ID for now
+		SourceURL:        opts.SourceURL,
+		UseDirectInput:   opts.UseDirectInput,
+		GlobalFlags:      opts.GlobalFlags,
+		InputFlags:       opts.InputFlags,
+		OutputFlags:      opts.OutputFlags,
+		OutputFormat:     outputFormat,
+		EncoderOverrides: encoderOverrides,
+		Logger:           f.Logger,
+	}
+
+	f.Logger.Info("Creating remote ES transcoder via daemon stream",
 		slog.String("id", id),
 		slog.String("daemon_id", string(daemon.ID)),
-		slog.String("daemon_address", daemon.Address),
+		slog.String("daemon_name", daemon.Name),
 		slog.String("source", sourceVariant.String()),
 		slog.String("target", targetVariant.String()),
+		slog.String("output_format", outputFormat),
 		slog.String("video_encoder", videoEncoder),
 		slog.String("audio_encoder", audioEncoder),
+		slog.Int("encoder_overrides", len(encoderOverrides)),
 	)
 
-	// Fall back to local gRPC transcoding for now
-	// The remote transcoder implementation will be added in a follow-up
-	return f.createGRPCTranscoder(id, buffer, sourceVariant, targetVariant,
-		videoEncoder, audioEncoder, videoBitrate, audioBitrate,
-		videoPreset, hwAccel, hwAccelDevice, opts)
+	return NewRemoteESTranscoder(id, buffer, daemon, f.DaemonStreamManager, f.ActiveJobManager, config), nil
 }
 
 // isHardwareEncoder returns true if the encoder name indicates hardware encoding.

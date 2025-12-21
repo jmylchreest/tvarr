@@ -117,10 +117,32 @@ message DaemonCommand {
     RESUME = 2;          // Resume accepting jobs
     CANCEL_JOB = 3;      // Cancel specific job
     UPDATE_CONFIG = 4;   // Update configuration
+    START_JOB = 5;       // Start a transcode job (daemon initiates stream to coordinator)
   }
   CommandType type = 1;
-  string job_id = 2;     // For CANCEL_JOB
-  bytes payload = 3;     // For UPDATE_CONFIG (JSON)
+  string job_id = 2;     // For CANCEL_JOB and START_JOB
+  bytes payload = 3;     // For UPDATE_CONFIG (JSON) or START_JOB (TranscodeJobConfig JSON)
+}
+
+// TranscodeJobConfig is sent as JSON payload in START_JOB command.
+// The daemon uses this to know which job to start and connect back to coordinator.
+message TranscodeJobConfig {
+  string job_id = 1;
+  string session_id = 2;
+  string channel_id = 3;
+  string channel_name = 4;
+
+  // Target codec (daemon picks best encoder based on its capabilities)
+  string target_video_codec = 5;   // vp9, h264, hevc, av1
+  string target_audio_codec = 6;   // opus, aac, ac3
+
+  // Encoding parameters
+  int32 video_bitrate_kbps = 7;
+  int32 audio_bitrate_kbps = 8;
+  string video_preset = 9;         // ultrafast, fast, medium, slow
+
+  // Hardware acceleration preference (empty = auto)
+  string preferred_hw_accel = 10;
 }
 
 message JobStatus {
@@ -173,11 +195,24 @@ message HWAccelInfo {
   // Whether this accelerator is available and tested
   bool available = 3;
 
-  // Hardware encoders available through this accelerator
-  repeated string encoders = 4;
+  // Hardware encoders available and validated for this accelerator
+  repeated string hw_encoders = 4;
 
-  // Hardware decoders available through this accelerator
-  repeated string decoders = 5;
+  // Hardware decoders available for this accelerator
+  repeated string hw_decoders = 5;
+
+  // Hardware encoders that were filtered out (e.g., GPU doesn't support encoding)
+  repeated FilteredEncoder filtered_encoders = 6;
+}
+
+// FilteredEncoder describes an encoder that was filtered out and why.
+// Used by the UI to show which encoders are unavailable with explanations.
+message FilteredEncoder {
+  // Encoder name (e.g., "vp9_vaapi", "hevc_vaapi")
+  string name = 1;
+
+  // Reason the encoder was filtered out
+  string reason = 2;
 }
 
 // GPUInfo describes a GPU and its session tracking
@@ -339,10 +374,13 @@ message TranscodeStart {
   bytes audio_init_data = 8;       // AudioSpecificConfig
 
   // Target codec configuration (from EncodingProfile)
-  string target_video_codec = 9;
-  string target_audio_codec = 10;
-  string video_encoder = 11;       // libx264, h264_nvenc, hevc_vaapi
-  string audio_encoder = 12;       // aac, libopus
+  string target_video_codec = 9;   // Required: h264, hevc, vp9, av1
+  string target_audio_codec = 10;  // Required: aac, ac3, opus, mp3
+
+  // Note: Encoder selection is done locally by the daemon based on target codec
+  // and available hardware capabilities. The coordinator only specifies target codecs.
+  // Field numbers 11 and 12 are reserved for removed fields.
+  reserved 11, 12;
 
   // Encoding parameters
   int32 video_bitrate_kbps = 13;
@@ -362,6 +400,45 @@ message TranscodeStart {
 
   // Additional FFmpeg options (advanced)
   map<string, string> extra_options = 23;
+
+  // Custom FFmpeg flags from encoding profile
+  string input_flags = 24;         // Flags placed before -i input
+  string output_flags = 25;        // Flags placed after -i input
+  string global_flags = 26;        // Global FFmpeg flags
+
+  // Encoder override rules (from coordinator database)
+  // Applied by daemon to force specific encoders when conditions match
+  repeated EncoderOverride encoder_overrides = 27;
+
+  // Output container format for FFmpeg
+  // Values: "fmp4" (fragmented MP4), "mpegts" (MPEG Transport Stream)
+  // Default: auto-select based on target codec (fmp4 for av1/vp9, mpegts for h264/h265)
+  // This determines the daemon's FFmpeg output format and demuxer selection.
+  string output_container_format = 28;
+}
+
+// EncoderOverride allows forcing specific encoders when conditions match.
+// This is used to work around hardware encoder bugs (e.g., AMD hevc_vaapi with Mesa 21.1+).
+message EncoderOverride {
+  // Codec type: "video" or "audio"
+  string codec_type = 1;
+
+  // Source codec to match (e.g., "h265", "aac")
+  string source_codec = 2;
+
+  // Encoder to use when this override matches (e.g., "libx265", "libopus")
+  string target_encoder = 3;
+
+  // Optional: Hardware accelerator to match (e.g., "vaapi", "cuda")
+  // Empty string matches all hardware accelerators
+  string hw_accel_match = 4;
+
+  // Optional: CPU regex pattern to match (e.g., "AMD")
+  // Empty string matches all CPUs
+  string cpu_match = 5;
+
+  // Priority for ordering (higher = evaluated first)
+  int32 priority = 6;
 }
 
 message TranscodeAck {
@@ -406,6 +483,13 @@ message TranscodeStats {
   double memory_mb = 7;        // FFmpeg process memory
   int32 ffmpeg_pid = 8;        // FFmpeg process ID
   google.protobuf.Duration running_time = 9;
+
+  // Hardware acceleration info for this job
+  string hw_accel = 10;        // vaapi, cuda, qsv, videotoolbox (empty = software)
+  string hw_device = 11;       // Device path: /dev/dri/renderD128, cuda:0, etc.
+
+  // FFmpeg command for debugging
+  string ffmpeg_command = 12;  // Full FFmpeg command line being executed
 }
 
 message TranscodeError {

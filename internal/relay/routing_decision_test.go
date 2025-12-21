@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/jmylchreest/tvarr/internal/models"
@@ -23,6 +24,69 @@ func TestRoutingDecision_String(t *testing.T) {
 			assert.Equal(t, tt.expected, tt.decision.String())
 		})
 	}
+}
+
+func TestRoutingDecision_JSONMarshal(t *testing.T) {
+	tests := []struct {
+		decision     RoutingDecision
+		expectedJSON string
+	}{
+		{RoutePassthrough, `"passthrough"`},
+		{RouteRepackage, `"repackage"`},
+		{RouteTranscode, `"transcode"`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.decision.String(), func(t *testing.T) {
+			data, err := json.Marshal(tt.decision)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expectedJSON, string(data))
+		})
+	}
+}
+
+func TestRoutingDecision_JSONUnmarshal(t *testing.T) {
+	tests := []struct {
+		jsonData string
+		expected RoutingDecision
+	}{
+		{`"passthrough"`, RoutePassthrough},
+		{`"repackage"`, RouteRepackage},
+		{`"transcode"`, RouteTranscode},
+		{`"unknown"`, RoutePassthrough}, // Unknown defaults to passthrough
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.jsonData, func(t *testing.T) {
+			var decision RoutingDecision
+			err := json.Unmarshal([]byte(tt.jsonData), &decision)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, decision)
+		})
+	}
+}
+
+func TestRoutingDecision_JSONRoundTrip(t *testing.T) {
+	// Test that a struct with RoutingDecision serializes correctly
+	type TestStruct struct {
+		RouteType RoutingDecision `json:"route_type"`
+		Name      string          `json:"name"`
+	}
+
+	original := TestStruct{
+		RouteType: RouteTranscode,
+		Name:      "test",
+	}
+
+	data, err := json.Marshal(original)
+	assert.NoError(t, err)
+	assert.Contains(t, string(data), `"route_type":"transcode"`)
+
+	var decoded TestStruct
+	err = json.Unmarshal(data, &decoded)
+	assert.NoError(t, err)
+	assert.Equal(t, original.RouteType, decoded.RouteType)
+	assert.Equal(t, original.Name, decoded.Name)
 }
 
 func TestDefaultRoutingDecider_DecideWithTranscodingProfile(t *testing.T) {

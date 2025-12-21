@@ -39,6 +39,33 @@ func (d RoutingDecision) String() string {
 	}
 }
 
+// MarshalJSON implements json.Marshaler for RoutingDecision.
+// This allows RoutingDecision to serialize as a string in JSON.
+func (d RoutingDecision) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + d.String() + `"`), nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler for RoutingDecision.
+// This allows RoutingDecision to deserialize from a string in JSON.
+func (d *RoutingDecision) UnmarshalJSON(data []byte) error {
+	// Remove quotes from JSON string
+	str := string(data)
+	if len(str) >= 2 && str[0] == '"' && str[len(str)-1] == '"' {
+		str = str[1 : len(str)-1]
+	}
+	switch str {
+	case "passthrough":
+		*d = RoutePassthrough
+	case "repackage":
+		*d = RouteRepackage
+	case "transcode":
+		*d = RouteTranscode
+	default:
+		*d = RoutePassthrough // Default to passthrough for unknown values
+	}
+	return nil
+}
+
 // RoutingResult contains the full routing decision with context.
 type RoutingResult struct {
 	// Decision is the chosen routing path.
@@ -226,4 +253,34 @@ func (d *DefaultRoutingDecider) logRoutingDecision(
 		)
 	}
 	d.logger.Info("routing decision made", logFields...)
+}
+
+// SelectRoute is a convenience function that determines the routing decision
+// for a stream based on classification and client format. This replaces the
+// deprecated SelectDelivery function.
+//
+// For preview mode (nil profile), it uses passthrough or repackage when possible.
+// For regular streams with a profile, it checks if transcoding is needed.
+func SelectRoute(
+	classification ClassificationResult,
+	clientFormat string,
+	profile *models.EncodingProfile,
+) RoutingDecision {
+	// Create client capabilities from the format string
+	caps := ClientCapabilities{
+		PreferredFormat: clientFormat,
+		SupportsFMP4:    true,
+		SupportsMPEGTS:  true,
+	}
+
+	// Use the decider for consistent logic
+	decider := NewDefaultRoutingDecider(nil)
+	result := decider.Decide(
+		classification.SourceFormat,
+		nil, // No specific codecs needed for this decision
+		caps,
+		profile,
+	)
+
+	return result.Decision
 }

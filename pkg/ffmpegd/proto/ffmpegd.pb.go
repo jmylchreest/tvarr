@@ -95,6 +95,7 @@ const (
 	DaemonCommand_RESUME              DaemonCommand_CommandType = 2 // Resume accepting jobs
 	DaemonCommand_CANCEL_JOB          DaemonCommand_CommandType = 3 // Cancel specific job
 	DaemonCommand_UPDATE_CONFIG       DaemonCommand_CommandType = 4 // Update configuration
+	DaemonCommand_START_JOB           DaemonCommand_CommandType = 5 // Start a transcode job (daemon initiates stream to coordinator)
 )
 
 // Enum value maps for DaemonCommand_CommandType.
@@ -105,6 +106,7 @@ var (
 		2: "RESUME",
 		3: "CANCEL_JOB",
 		4: "UPDATE_CONFIG",
+		5: "START_JOB",
 	}
 	DaemonCommand_CommandType_value = map[string]int32{
 		"COMMAND_UNSPECIFIED": 0,
@@ -112,6 +114,7 @@ var (
 		"RESUME":              2,
 		"CANCEL_JOB":          3,
 		"UPDATE_CONFIG":       4,
+		"START_JOB":           5,
 	}
 )
 
@@ -203,7 +206,7 @@ func (x TranscodeError_ErrorCode) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use TranscodeError_ErrorCode.Descriptor instead.
 func (TranscodeError_ErrorCode) EnumDescriptor() ([]byte, []int) {
-	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{21, 0}
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{24, 0}
 }
 
 type RegisterRequest struct {
@@ -574,8 +577,8 @@ func (x *HeartbeatResponse) GetCommands() []*DaemonCommand {
 type DaemonCommand struct {
 	state         protoimpl.MessageState    `protogen:"open.v1"`
 	Type          DaemonCommand_CommandType `protobuf:"varint,1,opt,name=type,proto3,enum=ffmpegd.DaemonCommand_CommandType" json:"type,omitempty"`
-	JobId         string                    `protobuf:"bytes,2,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"` // For CANCEL_JOB
-	Payload       []byte                    `protobuf:"bytes,3,opt,name=payload,proto3" json:"payload,omitempty"`          // For UPDATE_CONFIG (JSON)
+	JobId         string                    `protobuf:"bytes,2,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"` // For CANCEL_JOB and START_JOB
+	Payload       []byte                    `protobuf:"bytes,3,opt,name=payload,proto3" json:"payload,omitempty"`          // For UPDATE_CONFIG (JSON) or START_JOB (TranscodeJobConfig JSON)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -631,6 +634,127 @@ func (x *DaemonCommand) GetPayload() []byte {
 	return nil
 }
 
+// TranscodeJobConfig is sent as JSON payload in START_JOB command.
+// The daemon uses this to know which job to start and connect back to coordinator.
+type TranscodeJobConfig struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	JobId       string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	SessionId   string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	ChannelId   string                 `protobuf:"bytes,3,opt,name=channel_id,json=channelId,proto3" json:"channel_id,omitempty"`
+	ChannelName string                 `protobuf:"bytes,4,opt,name=channel_name,json=channelName,proto3" json:"channel_name,omitempty"`
+	// Target codec (daemon picks best encoder based on its capabilities)
+	TargetVideoCodec string `protobuf:"bytes,5,opt,name=target_video_codec,json=targetVideoCodec,proto3" json:"target_video_codec,omitempty"` // vp9, h264, hevc, av1
+	TargetAudioCodec string `protobuf:"bytes,6,opt,name=target_audio_codec,json=targetAudioCodec,proto3" json:"target_audio_codec,omitempty"` // opus, aac, ac3
+	// Encoding parameters
+	VideoBitrateKbps int32  `protobuf:"varint,7,opt,name=video_bitrate_kbps,json=videoBitrateKbps,proto3" json:"video_bitrate_kbps,omitempty"`
+	AudioBitrateKbps int32  `protobuf:"varint,8,opt,name=audio_bitrate_kbps,json=audioBitrateKbps,proto3" json:"audio_bitrate_kbps,omitempty"`
+	VideoPreset      string `protobuf:"bytes,9,opt,name=video_preset,json=videoPreset,proto3" json:"video_preset,omitempty"` // ultrafast, fast, medium, slow
+	// Hardware acceleration preference (empty = auto)
+	PreferredHwAccel string `protobuf:"bytes,10,opt,name=preferred_hw_accel,json=preferredHwAccel,proto3" json:"preferred_hw_accel,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *TranscodeJobConfig) Reset() {
+	*x = TranscodeJobConfig{}
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TranscodeJobConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TranscodeJobConfig) ProtoMessage() {}
+
+func (x *TranscodeJobConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TranscodeJobConfig.ProtoReflect.Descriptor instead.
+func (*TranscodeJobConfig) Descriptor() ([]byte, []int) {
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *TranscodeJobConfig) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *TranscodeJobConfig) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *TranscodeJobConfig) GetChannelId() string {
+	if x != nil {
+		return x.ChannelId
+	}
+	return ""
+}
+
+func (x *TranscodeJobConfig) GetChannelName() string {
+	if x != nil {
+		return x.ChannelName
+	}
+	return ""
+}
+
+func (x *TranscodeJobConfig) GetTargetVideoCodec() string {
+	if x != nil {
+		return x.TargetVideoCodec
+	}
+	return ""
+}
+
+func (x *TranscodeJobConfig) GetTargetAudioCodec() string {
+	if x != nil {
+		return x.TargetAudioCodec
+	}
+	return ""
+}
+
+func (x *TranscodeJobConfig) GetVideoBitrateKbps() int32 {
+	if x != nil {
+		return x.VideoBitrateKbps
+	}
+	return 0
+}
+
+func (x *TranscodeJobConfig) GetAudioBitrateKbps() int32 {
+	if x != nil {
+		return x.AudioBitrateKbps
+	}
+	return 0
+}
+
+func (x *TranscodeJobConfig) GetVideoPreset() string {
+	if x != nil {
+		return x.VideoPreset
+	}
+	return ""
+}
+
+func (x *TranscodeJobConfig) GetPreferredHwAccel() string {
+	if x != nil {
+		return x.PreferredHwAccel
+	}
+	return ""
+}
+
 type JobStatus struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
@@ -644,7 +768,7 @@ type JobStatus struct {
 
 func (x *JobStatus) Reset() {
 	*x = JobStatus{}
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[7]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -656,7 +780,7 @@ func (x *JobStatus) String() string {
 func (*JobStatus) ProtoMessage() {}
 
 func (x *JobStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[7]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -669,7 +793,7 @@ func (x *JobStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JobStatus.ProtoReflect.Descriptor instead.
 func (*JobStatus) Descriptor() ([]byte, []int) {
-	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{7}
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *JobStatus) GetJobId() string {
@@ -731,7 +855,7 @@ type Capabilities struct {
 
 func (x *Capabilities) Reset() {
 	*x = Capabilities{}
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[8]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -743,7 +867,7 @@ func (x *Capabilities) String() string {
 func (*Capabilities) ProtoMessage() {}
 
 func (x *Capabilities) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[8]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -756,7 +880,7 @@ func (x *Capabilities) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Capabilities.ProtoReflect.Descriptor instead.
 func (*Capabilities) Descriptor() ([]byte, []int) {
-	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{8}
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Capabilities) GetHwAccels() []*HWAccelInfo {
@@ -825,17 +949,19 @@ type HWAccelInfo struct {
 	Device string `protobuf:"bytes,2,opt,name=device,proto3" json:"device,omitempty"`
 	// Whether this accelerator is available and tested
 	Available bool `protobuf:"varint,3,opt,name=available,proto3" json:"available,omitempty"`
-	// Hardware encoders available through this accelerator
-	Encoders []string `protobuf:"bytes,4,rep,name=encoders,proto3" json:"encoders,omitempty"`
-	// Hardware decoders available through this accelerator
-	Decoders      []string `protobuf:"bytes,5,rep,name=decoders,proto3" json:"decoders,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// Hardware encoders available and validated for this accelerator
+	HwEncoders []string `protobuf:"bytes,4,rep,name=hw_encoders,json=hwEncoders,proto3" json:"hw_encoders,omitempty"`
+	// Hardware decoders available for this accelerator
+	HwDecoders []string `protobuf:"bytes,5,rep,name=hw_decoders,json=hwDecoders,proto3" json:"hw_decoders,omitempty"`
+	// Hardware encoders that were filtered out (e.g., GPU doesn't support encoding)
+	FilteredEncoders []*FilteredEncoder `protobuf:"bytes,6,rep,name=filtered_encoders,json=filteredEncoders,proto3" json:"filtered_encoders,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *HWAccelInfo) Reset() {
 	*x = HWAccelInfo{}
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[9]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -847,7 +973,7 @@ func (x *HWAccelInfo) String() string {
 func (*HWAccelInfo) ProtoMessage() {}
 
 func (x *HWAccelInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[9]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -860,7 +986,7 @@ func (x *HWAccelInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HWAccelInfo.ProtoReflect.Descriptor instead.
 func (*HWAccelInfo) Descriptor() ([]byte, []int) {
-	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{9}
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *HWAccelInfo) GetType() string {
@@ -884,18 +1010,81 @@ func (x *HWAccelInfo) GetAvailable() bool {
 	return false
 }
 
-func (x *HWAccelInfo) GetEncoders() []string {
+func (x *HWAccelInfo) GetHwEncoders() []string {
 	if x != nil {
-		return x.Encoders
+		return x.HwEncoders
 	}
 	return nil
 }
 
-func (x *HWAccelInfo) GetDecoders() []string {
+func (x *HWAccelInfo) GetHwDecoders() []string {
 	if x != nil {
-		return x.Decoders
+		return x.HwDecoders
 	}
 	return nil
+}
+
+func (x *HWAccelInfo) GetFilteredEncoders() []*FilteredEncoder {
+	if x != nil {
+		return x.FilteredEncoders
+	}
+	return nil
+}
+
+// FilteredEncoder describes an encoder that was filtered out and why.
+// Used by the UI to show which encoders are unavailable with explanations.
+type FilteredEncoder struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Encoder name (e.g., "vp9_vaapi", "hevc_vaapi")
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// Reason the encoder was filtered out
+	Reason        string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FilteredEncoder) Reset() {
+	*x = FilteredEncoder{}
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilteredEncoder) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilteredEncoder) ProtoMessage() {}
+
+func (x *FilteredEncoder) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilteredEncoder.ProtoReflect.Descriptor instead.
+func (*FilteredEncoder) Descriptor() ([]byte, []int) {
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *FilteredEncoder) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *FilteredEncoder) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
 }
 
 // GPUInfo describes a GPU and its session tracking
@@ -928,7 +1117,7 @@ type GPUInfo struct {
 
 func (x *GPUInfo) Reset() {
 	*x = GPUInfo{}
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[10]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -940,7 +1129,7 @@ func (x *GPUInfo) String() string {
 func (*GPUInfo) ProtoMessage() {}
 
 func (x *GPUInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[10]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -953,7 +1142,7 @@ func (x *GPUInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GPUInfo.ProtoReflect.Descriptor instead.
 func (*GPUInfo) Descriptor() ([]byte, []int) {
-	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{10}
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *GPUInfo) GetIndex() int32 {
@@ -1073,7 +1262,7 @@ type PerformanceMetrics struct {
 
 func (x *PerformanceMetrics) Reset() {
 	*x = PerformanceMetrics{}
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[11]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1085,7 +1274,7 @@ func (x *PerformanceMetrics) String() string {
 func (*PerformanceMetrics) ProtoMessage() {}
 
 func (x *PerformanceMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[11]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1098,7 +1287,7 @@ func (x *PerformanceMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PerformanceMetrics.ProtoReflect.Descriptor instead.
 func (*PerformanceMetrics) Descriptor() ([]byte, []int) {
-	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{11}
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *PerformanceMetrics) GetH264_1080PFps() float64 {
@@ -1172,7 +1361,7 @@ type SystemStats struct {
 
 func (x *SystemStats) Reset() {
 	*x = SystemStats{}
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[12]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1184,7 +1373,7 @@ func (x *SystemStats) String() string {
 func (*SystemStats) ProtoMessage() {}
 
 func (x *SystemStats) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[12]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1197,7 +1386,7 @@ func (x *SystemStats) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SystemStats.ProtoReflect.Descriptor instead.
 func (*SystemStats) Descriptor() ([]byte, []int) {
-	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{12}
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *SystemStats) GetHostname() string {
@@ -1421,7 +1610,7 @@ type GPUStats struct {
 
 func (x *GPUStats) Reset() {
 	*x = GPUStats{}
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[13]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1433,7 +1622,7 @@ func (x *GPUStats) String() string {
 func (*GPUStats) ProtoMessage() {}
 
 func (x *GPUStats) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[13]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1446,7 +1635,7 @@ func (x *GPUStats) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GPUStats.ProtoReflect.Descriptor instead.
 func (*GPUStats) Descriptor() ([]byte, []int) {
-	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{13}
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *GPUStats) GetIndex() int32 {
@@ -1573,7 +1762,7 @@ type PressureStats struct {
 
 func (x *PressureStats) Reset() {
 	*x = PressureStats{}
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[14]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1585,7 +1774,7 @@ func (x *PressureStats) String() string {
 func (*PressureStats) ProtoMessage() {}
 
 func (x *PressureStats) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[14]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1598,7 +1787,7 @@ func (x *PressureStats) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PressureStats.ProtoReflect.Descriptor instead.
 func (*PressureStats) Descriptor() ([]byte, []int) {
-	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{14}
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *PressureStats) GetAvg10() float64 {
@@ -1654,7 +1843,7 @@ type TranscodeMessage struct {
 
 func (x *TranscodeMessage) Reset() {
 	*x = TranscodeMessage{}
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[15]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1666,7 +1855,7 @@ func (x *TranscodeMessage) String() string {
 func (*TranscodeMessage) ProtoMessage() {}
 
 func (x *TranscodeMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[15]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1679,7 +1868,7 @@ func (x *TranscodeMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TranscodeMessage.ProtoReflect.Descriptor instead.
 func (*TranscodeMessage) Descriptor() ([]byte, []int) {
-	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{15}
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *TranscodeMessage) GetPayload() isTranscodeMessage_Payload {
@@ -1796,10 +1985,8 @@ type TranscodeStart struct {
 	VideoInitData    []byte `protobuf:"bytes,7,opt,name=video_init_data,json=videoInitData,proto3" json:"video_init_data,omitempty"`          // SPS/PPS for H.264, VPS/SPS/PPS for HEVC
 	AudioInitData    []byte `protobuf:"bytes,8,opt,name=audio_init_data,json=audioInitData,proto3" json:"audio_init_data,omitempty"`          // AudioSpecificConfig
 	// Target codec configuration (from EncodingProfile)
-	TargetVideoCodec string `protobuf:"bytes,9,opt,name=target_video_codec,json=targetVideoCodec,proto3" json:"target_video_codec,omitempty"`
-	TargetAudioCodec string `protobuf:"bytes,10,opt,name=target_audio_codec,json=targetAudioCodec,proto3" json:"target_audio_codec,omitempty"`
-	VideoEncoder     string `protobuf:"bytes,11,opt,name=video_encoder,json=videoEncoder,proto3" json:"video_encoder,omitempty"` // libx264, h264_nvenc, hevc_vaapi
-	AudioEncoder     string `protobuf:"bytes,12,opt,name=audio_encoder,json=audioEncoder,proto3" json:"audio_encoder,omitempty"` // aac, libopus
+	TargetVideoCodec string `protobuf:"bytes,9,opt,name=target_video_codec,json=targetVideoCodec,proto3" json:"target_video_codec,omitempty"`  // Required: h264, hevc, vp9, av1
+	TargetAudioCodec string `protobuf:"bytes,10,opt,name=target_audio_codec,json=targetAudioCodec,proto3" json:"target_audio_codec,omitempty"` // Required: aac, ac3, opus, mp3
 	// Encoding parameters
 	VideoBitrateKbps int32  `protobuf:"varint,13,opt,name=video_bitrate_kbps,json=videoBitrateKbps,proto3" json:"video_bitrate_kbps,omitempty"`
 	AudioBitrateKbps int32  `protobuf:"varint,14,opt,name=audio_bitrate_kbps,json=audioBitrateKbps,proto3" json:"audio_bitrate_kbps,omitempty"`
@@ -1814,14 +2001,26 @@ type TranscodeStart struct {
 	ScaleWidth  int32 `protobuf:"varint,21,opt,name=scale_width,json=scaleWidth,proto3" json:"scale_width,omitempty"` // 0 = no scaling
 	ScaleHeight int32 `protobuf:"varint,22,opt,name=scale_height,json=scaleHeight,proto3" json:"scale_height,omitempty"`
 	// Additional FFmpeg options (advanced)
-	ExtraOptions  map[string]string `protobuf:"bytes,23,rep,name=extra_options,json=extraOptions,proto3" json:"extra_options,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ExtraOptions map[string]string `protobuf:"bytes,23,rep,name=extra_options,json=extraOptions,proto3" json:"extra_options,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Custom FFmpeg flags from encoding profile
+	InputFlags  string `protobuf:"bytes,24,opt,name=input_flags,json=inputFlags,proto3" json:"input_flags,omitempty"`    // Flags placed before -i input
+	OutputFlags string `protobuf:"bytes,25,opt,name=output_flags,json=outputFlags,proto3" json:"output_flags,omitempty"` // Flags placed after -i input
+	GlobalFlags string `protobuf:"bytes,26,opt,name=global_flags,json=globalFlags,proto3" json:"global_flags,omitempty"` // Global FFmpeg flags
+	// Encoder override rules (from coordinator database)
+	// Applied by daemon to force specific encoders when conditions match
+	EncoderOverrides []*EncoderOverride `protobuf:"bytes,27,rep,name=encoder_overrides,json=encoderOverrides,proto3" json:"encoder_overrides,omitempty"`
+	// Output container format for FFmpeg
+	// Values: "fmp4" (fragmented MP4), "mpegts" (MPEG Transport Stream)
+	// Default: auto-select based on target codec (fmp4 for av1/vp9, mpegts for h264/h265)
+	// This determines the daemon's FFmpeg output format and demuxer selection.
+	OutputContainerFormat string `protobuf:"bytes,28,opt,name=output_container_format,json=outputContainerFormat,proto3" json:"output_container_format,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *TranscodeStart) Reset() {
 	*x = TranscodeStart{}
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[16]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1833,7 +2032,7 @@ func (x *TranscodeStart) String() string {
 func (*TranscodeStart) ProtoMessage() {}
 
 func (x *TranscodeStart) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[16]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1846,7 +2045,7 @@ func (x *TranscodeStart) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TranscodeStart.ProtoReflect.Descriptor instead.
 func (*TranscodeStart) Descriptor() ([]byte, []int) {
-	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{16}
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *TranscodeStart) GetJobId() string {
@@ -1915,20 +2114,6 @@ func (x *TranscodeStart) GetTargetVideoCodec() string {
 func (x *TranscodeStart) GetTargetAudioCodec() string {
 	if x != nil {
 		return x.TargetAudioCodec
-	}
-	return ""
-}
-
-func (x *TranscodeStart) GetVideoEncoder() string {
-	if x != nil {
-		return x.VideoEncoder
-	}
-	return ""
-}
-
-func (x *TranscodeStart) GetAudioEncoder() string {
-	if x != nil {
-		return x.AudioEncoder
 	}
 	return ""
 }
@@ -2010,6 +2195,135 @@ func (x *TranscodeStart) GetExtraOptions() map[string]string {
 	return nil
 }
 
+func (x *TranscodeStart) GetInputFlags() string {
+	if x != nil {
+		return x.InputFlags
+	}
+	return ""
+}
+
+func (x *TranscodeStart) GetOutputFlags() string {
+	if x != nil {
+		return x.OutputFlags
+	}
+	return ""
+}
+
+func (x *TranscodeStart) GetGlobalFlags() string {
+	if x != nil {
+		return x.GlobalFlags
+	}
+	return ""
+}
+
+func (x *TranscodeStart) GetEncoderOverrides() []*EncoderOverride {
+	if x != nil {
+		return x.EncoderOverrides
+	}
+	return nil
+}
+
+func (x *TranscodeStart) GetOutputContainerFormat() string {
+	if x != nil {
+		return x.OutputContainerFormat
+	}
+	return ""
+}
+
+// EncoderOverride allows forcing specific encoders when conditions match.
+// This is used to work around hardware encoder bugs (e.g., AMD hevc_vaapi with Mesa 21.1+).
+type EncoderOverride struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Codec type: "video" or "audio"
+	CodecType string `protobuf:"bytes,1,opt,name=codec_type,json=codecType,proto3" json:"codec_type,omitempty"`
+	// Source codec to match (e.g., "h265", "aac")
+	SourceCodec string `protobuf:"bytes,2,opt,name=source_codec,json=sourceCodec,proto3" json:"source_codec,omitempty"`
+	// Encoder to use when this override matches (e.g., "libx265", "libopus")
+	TargetEncoder string `protobuf:"bytes,3,opt,name=target_encoder,json=targetEncoder,proto3" json:"target_encoder,omitempty"`
+	// Optional: Hardware accelerator to match (e.g., "vaapi", "cuda")
+	// Empty string matches all hardware accelerators
+	HwAccelMatch string `protobuf:"bytes,4,opt,name=hw_accel_match,json=hwAccelMatch,proto3" json:"hw_accel_match,omitempty"`
+	// Optional: CPU regex pattern to match (e.g., "AMD")
+	// Empty string matches all CPUs
+	CpuMatch string `protobuf:"bytes,5,opt,name=cpu_match,json=cpuMatch,proto3" json:"cpu_match,omitempty"`
+	// Priority for ordering (higher = evaluated first)
+	Priority      int32 `protobuf:"varint,6,opt,name=priority,proto3" json:"priority,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EncoderOverride) Reset() {
+	*x = EncoderOverride{}
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EncoderOverride) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EncoderOverride) ProtoMessage() {}
+
+func (x *EncoderOverride) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EncoderOverride.ProtoReflect.Descriptor instead.
+func (*EncoderOverride) Descriptor() ([]byte, []int) {
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *EncoderOverride) GetCodecType() string {
+	if x != nil {
+		return x.CodecType
+	}
+	return ""
+}
+
+func (x *EncoderOverride) GetSourceCodec() string {
+	if x != nil {
+		return x.SourceCodec
+	}
+	return ""
+}
+
+func (x *EncoderOverride) GetTargetEncoder() string {
+	if x != nil {
+		return x.TargetEncoder
+	}
+	return ""
+}
+
+func (x *EncoderOverride) GetHwAccelMatch() string {
+	if x != nil {
+		return x.HwAccelMatch
+	}
+	return ""
+}
+
+func (x *EncoderOverride) GetCpuMatch() string {
+	if x != nil {
+		return x.CpuMatch
+	}
+	return ""
+}
+
+func (x *EncoderOverride) GetPriority() int32 {
+	if x != nil {
+		return x.Priority
+	}
+	return 0
+}
+
 type TranscodeAck struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Success bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
@@ -2024,7 +2338,7 @@ type TranscodeAck struct {
 
 func (x *TranscodeAck) Reset() {
 	*x = TranscodeAck{}
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[17]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2036,7 +2350,7 @@ func (x *TranscodeAck) String() string {
 func (*TranscodeAck) ProtoMessage() {}
 
 func (x *TranscodeAck) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[17]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2049,7 +2363,7 @@ func (x *TranscodeAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TranscodeAck.ProtoReflect.Descriptor instead.
 func (*TranscodeAck) Descriptor() ([]byte, []int) {
-	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{17}
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *TranscodeAck) GetSuccess() bool {
@@ -2102,7 +2416,7 @@ type ESSampleBatch struct {
 
 func (x *ESSampleBatch) Reset() {
 	*x = ESSampleBatch{}
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[18]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2114,7 +2428,7 @@ func (x *ESSampleBatch) String() string {
 func (*ESSampleBatch) ProtoMessage() {}
 
 func (x *ESSampleBatch) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[18]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2127,7 +2441,7 @@ func (x *ESSampleBatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ESSampleBatch.ProtoReflect.Descriptor instead.
 func (*ESSampleBatch) Descriptor() ([]byte, []int) {
-	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{18}
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ESSampleBatch) GetVideoSamples() []*ESSample {
@@ -2172,7 +2486,7 @@ type ESSample struct {
 
 func (x *ESSample) Reset() {
 	*x = ESSample{}
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[19]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2184,7 +2498,7 @@ func (x *ESSample) String() string {
 func (*ESSample) ProtoMessage() {}
 
 func (x *ESSample) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[19]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2197,7 +2511,7 @@ func (x *ESSample) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ESSample.ProtoReflect.Descriptor instead.
 func (*ESSample) Descriptor() ([]byte, []int) {
-	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{19}
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ESSample) GetPts() int64 {
@@ -2246,13 +2560,18 @@ type TranscodeStats struct {
 	MemoryMb      float64                `protobuf:"fixed64,7,opt,name=memory_mb,json=memoryMb,proto3" json:"memory_mb,omitempty"`                // FFmpeg process memory
 	FfmpegPid     int32                  `protobuf:"varint,8,opt,name=ffmpeg_pid,json=ffmpegPid,proto3" json:"ffmpeg_pid,omitempty"`              // FFmpeg process ID
 	RunningTime   *durationpb.Duration   `protobuf:"bytes,9,opt,name=running_time,json=runningTime,proto3" json:"running_time,omitempty"`
+	// Hardware acceleration info for this job
+	HwAccel  string `protobuf:"bytes,10,opt,name=hw_accel,json=hwAccel,proto3" json:"hw_accel,omitempty"`    // vaapi, cuda, qsv, videotoolbox (empty = software)
+	HwDevice string `protobuf:"bytes,11,opt,name=hw_device,json=hwDevice,proto3" json:"hw_device,omitempty"` // Device path: /dev/dri/renderD128, cuda:0, etc.
+	// FFmpeg command for debugging
+	FfmpegCommand string `protobuf:"bytes,12,opt,name=ffmpeg_command,json=ffmpegCommand,proto3" json:"ffmpeg_command,omitempty"` // Full FFmpeg command line being executed
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *TranscodeStats) Reset() {
 	*x = TranscodeStats{}
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[20]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2264,7 +2583,7 @@ func (x *TranscodeStats) String() string {
 func (*TranscodeStats) ProtoMessage() {}
 
 func (x *TranscodeStats) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[20]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2277,7 +2596,7 @@ func (x *TranscodeStats) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TranscodeStats.ProtoReflect.Descriptor instead.
 func (*TranscodeStats) Descriptor() ([]byte, []int) {
-	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{20}
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *TranscodeStats) GetSamplesIn() uint64 {
@@ -2343,6 +2662,27 @@ func (x *TranscodeStats) GetRunningTime() *durationpb.Duration {
 	return nil
 }
 
+func (x *TranscodeStats) GetHwAccel() string {
+	if x != nil {
+		return x.HwAccel
+	}
+	return ""
+}
+
+func (x *TranscodeStats) GetHwDevice() string {
+	if x != nil {
+		return x.HwDevice
+	}
+	return ""
+}
+
+func (x *TranscodeStats) GetFfmpegCommand() string {
+	if x != nil {
+		return x.FfmpegCommand
+	}
+	return ""
+}
+
 type TranscodeError struct {
 	state         protoimpl.MessageState   `protogen:"open.v1"`
 	Code          TranscodeError_ErrorCode `protobuf:"varint,1,opt,name=code,proto3,enum=ffmpegd.TranscodeError_ErrorCode" json:"code,omitempty"`
@@ -2355,7 +2695,7 @@ type TranscodeError struct {
 
 func (x *TranscodeError) Reset() {
 	*x = TranscodeError{}
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[21]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2367,7 +2707,7 @@ func (x *TranscodeError) String() string {
 func (*TranscodeError) ProtoMessage() {}
 
 func (x *TranscodeError) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[21]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2380,7 +2720,7 @@ func (x *TranscodeError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TranscodeError.ProtoReflect.Descriptor instead.
 func (*TranscodeError) Descriptor() ([]byte, []int) {
-	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{21}
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *TranscodeError) GetCode() TranscodeError_ErrorCode {
@@ -2420,7 +2760,7 @@ type TranscodeStop struct {
 
 func (x *TranscodeStop) Reset() {
 	*x = TranscodeStop{}
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[22]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2432,7 +2772,7 @@ func (x *TranscodeStop) String() string {
 func (*TranscodeStop) ProtoMessage() {}
 
 func (x *TranscodeStop) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[22]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2445,7 +2785,7 @@ func (x *TranscodeStop) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TranscodeStop.ProtoReflect.Descriptor instead.
 func (*TranscodeStop) Descriptor() ([]byte, []int) {
-	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{22}
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *TranscodeStop) GetReason() string {
@@ -2465,7 +2805,7 @@ type GetStatsRequest struct {
 
 func (x *GetStatsRequest) Reset() {
 	*x = GetStatsRequest{}
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[23]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2477,7 +2817,7 @@ func (x *GetStatsRequest) String() string {
 func (*GetStatsRequest) ProtoMessage() {}
 
 func (x *GetStatsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[23]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2490,7 +2830,7 @@ func (x *GetStatsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetStatsRequest.ProtoReflect.Descriptor instead.
 func (*GetStatsRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{23}
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *GetStatsRequest) GetDaemonId() string {
@@ -2523,7 +2863,7 @@ type GetStatsResponse struct {
 
 func (x *GetStatsResponse) Reset() {
 	*x = GetStatsResponse{}
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[24]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2535,7 +2875,7 @@ func (x *GetStatsResponse) String() string {
 func (*GetStatsResponse) ProtoMessage() {}
 
 func (x *GetStatsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[24]
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2548,7 +2888,7 @@ func (x *GetStatsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetStatsResponse.ProtoReflect.Descriptor instead.
 func (*GetStatsResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{24}
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *GetStatsResponse) GetCapabilities() *Capabilities {
@@ -2630,11 +2970,11 @@ const file_pkg_ffmpegd_proto_ffmpegd_proto_rawDesc = "" +
 	"activeJobs\"a\n" +
 	"\x11HeartbeatResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x122\n" +
-	"\bcommands\x18\x02 \x03(\v2\x16.ffmpegd.DaemonCommandR\bcommands\"\xda\x01\n" +
+	"\bcommands\x18\x02 \x03(\v2\x16.ffmpegd.DaemonCommandR\bcommands\"\xe9\x01\n" +
 	"\rDaemonCommand\x126\n" +
 	"\x04type\x18\x01 \x01(\x0e2\".ffmpegd.DaemonCommand.CommandTypeR\x04type\x12\x15\n" +
 	"\x06job_id\x18\x02 \x01(\tR\x05jobId\x12\x18\n" +
-	"\apayload\x18\x03 \x01(\fR\apayload\"`\n" +
+	"\apayload\x18\x03 \x01(\fR\apayload\"o\n" +
 	"\vCommandType\x12\x17\n" +
 	"\x13COMMAND_UNSPECIFIED\x10\x00\x12\t\n" +
 	"\x05DRAIN\x10\x01\x12\n" +
@@ -2642,7 +2982,22 @@ const file_pkg_ffmpegd_proto_ffmpegd_proto_rawDesc = "" +
 	"\x06RESUME\x10\x02\x12\x0e\n" +
 	"\n" +
 	"CANCEL_JOB\x10\x03\x12\x11\n" +
-	"\rUPDATE_CONFIG\x10\x04\"\xd1\x01\n" +
+	"\rUPDATE_CONFIG\x10\x04\x12\r\n" +
+	"\tSTART_JOB\x10\x05\"\x95\x03\n" +
+	"\x12TranscodeJobConfig\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x1d\n" +
+	"\n" +
+	"channel_id\x18\x03 \x01(\tR\tchannelId\x12!\n" +
+	"\fchannel_name\x18\x04 \x01(\tR\vchannelName\x12,\n" +
+	"\x12target_video_codec\x18\x05 \x01(\tR\x10targetVideoCodec\x12,\n" +
+	"\x12target_audio_codec\x18\x06 \x01(\tR\x10targetAudioCodec\x12,\n" +
+	"\x12video_bitrate_kbps\x18\a \x01(\x05R\x10videoBitrateKbps\x12,\n" +
+	"\x12audio_bitrate_kbps\x18\b \x01(\x05R\x10audioBitrateKbps\x12!\n" +
+	"\fvideo_preset\x18\t \x01(\tR\vvideoPreset\x12,\n" +
+	"\x12preferred_hw_accel\x18\n" +
+	" \x01(\tR\x10preferredHwAccel\"\xd1\x01\n" +
 	"\tJobStatus\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x1d\n" +
 	"\n" +
@@ -2658,13 +3013,19 @@ const file_pkg_ffmpegd_proto_ffmpegd_proto_rawDesc = "" +
 	"\x0eaudio_encoders\x18\x05 \x03(\tR\raudioEncoders\x12%\n" +
 	"\x0eaudio_decoders\x18\x06 \x03(\tR\raudioDecoders\x12.\n" +
 	"\x13max_concurrent_jobs\x18\a \x01(\x05R\x11maxConcurrentJobs\x12=\n" +
-	"\vperformance\x18\b \x01(\v2\x1b.ffmpegd.PerformanceMetricsR\vperformance\"\x8f\x01\n" +
+	"\vperformance\x18\b \x01(\v2\x1b.ffmpegd.PerformanceMetricsR\vperformance\"\xe0\x01\n" +
 	"\vHWAccelInfo\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x16\n" +
 	"\x06device\x18\x02 \x01(\tR\x06device\x12\x1c\n" +
-	"\tavailable\x18\x03 \x01(\bR\tavailable\x12\x1a\n" +
-	"\bencoders\x18\x04 \x03(\tR\bencoders\x12\x1a\n" +
-	"\bdecoders\x18\x05 \x03(\tR\bdecoders\"\x95\x05\n" +
+	"\tavailable\x18\x03 \x01(\bR\tavailable\x12\x1f\n" +
+	"\vhw_encoders\x18\x04 \x03(\tR\n" +
+	"hwEncoders\x12\x1f\n" +
+	"\vhw_decoders\x18\x05 \x03(\tR\n" +
+	"hwDecoders\x12E\n" +
+	"\x11filtered_encoders\x18\x06 \x03(\v2\x18.ffmpegd.FilteredEncoderR\x10filteredEncoders\"=\n" +
+	"\x0fFilteredEncoder\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x95\x05\n" +
 	"\aGPUInfo\x12\x14\n" +
 	"\x05index\x18\x01 \x01(\x05R\x05index\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12.\n" +
@@ -2753,7 +3114,7 @@ const file_pkg_ffmpegd_proto_ffmpegd_proto_rawDesc = "" +
 	"\x05stats\x18\x04 \x01(\v2\x17.ffmpegd.TranscodeStatsH\x00R\x05stats\x12/\n" +
 	"\x05error\x18\x05 \x01(\v2\x17.ffmpegd.TranscodeErrorH\x00R\x05error\x12,\n" +
 	"\x04stop\x18\x06 \x01(\v2\x16.ffmpegd.TranscodeStopH\x00R\x04stopB\t\n" +
-	"\apayload\"\xdc\a\n" +
+	"\apayload\"\x84\t\n" +
 	"\x0eTranscodeStart\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x1d\n" +
 	"\n" +
@@ -2767,9 +3128,7 @@ const file_pkg_ffmpegd_proto_ffmpegd_proto_rawDesc = "" +
 	"\x0faudio_init_data\x18\b \x01(\fR\raudioInitData\x12,\n" +
 	"\x12target_video_codec\x18\t \x01(\tR\x10targetVideoCodec\x12,\n" +
 	"\x12target_audio_codec\x18\n" +
-	" \x01(\tR\x10targetAudioCodec\x12#\n" +
-	"\rvideo_encoder\x18\v \x01(\tR\fvideoEncoder\x12#\n" +
-	"\raudio_encoder\x18\f \x01(\tR\faudioEncoder\x12,\n" +
+	" \x01(\tR\x10targetAudioCodec\x12,\n" +
 	"\x12video_bitrate_kbps\x18\r \x01(\x05R\x10videoBitrateKbps\x12,\n" +
 	"\x12audio_bitrate_kbps\x18\x0e \x01(\x05R\x10audioBitrateKbps\x12!\n" +
 	"\fvideo_preset\x18\x0f \x01(\tR\vvideoPreset\x12\x1b\n" +
@@ -2782,10 +3141,24 @@ const file_pkg_ffmpegd_proto_ffmpegd_proto_rawDesc = "" +
 	"\vscale_width\x18\x15 \x01(\x05R\n" +
 	"scaleWidth\x12!\n" +
 	"\fscale_height\x18\x16 \x01(\x05R\vscaleHeight\x12N\n" +
-	"\rextra_options\x18\x17 \x03(\v2).ffmpegd.TranscodeStart.ExtraOptionsEntryR\fextraOptions\x1a?\n" +
+	"\rextra_options\x18\x17 \x03(\v2).ffmpegd.TranscodeStart.ExtraOptionsEntryR\fextraOptions\x12\x1f\n" +
+	"\vinput_flags\x18\x18 \x01(\tR\n" +
+	"inputFlags\x12!\n" +
+	"\foutput_flags\x18\x19 \x01(\tR\voutputFlags\x12!\n" +
+	"\fglobal_flags\x18\x1a \x01(\tR\vglobalFlags\x12E\n" +
+	"\x11encoder_overrides\x18\x1b \x03(\v2\x18.ffmpegd.EncoderOverrideR\x10encoderOverrides\x126\n" +
+	"\x17output_container_format\x18\x1c \x01(\tR\x15outputContainerFormat\x1a?\n" +
 	"\x11ExtraOptionsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xca\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\v\x10\fJ\x04\b\f\x10\r\"\xd9\x01\n" +
+	"\x0fEncoderOverride\x12\x1d\n" +
+	"\n" +
+	"codec_type\x18\x01 \x01(\tR\tcodecType\x12!\n" +
+	"\fsource_codec\x18\x02 \x01(\tR\vsourceCodec\x12%\n" +
+	"\x0etarget_encoder\x18\x03 \x01(\tR\rtargetEncoder\x12$\n" +
+	"\x0ehw_accel_match\x18\x04 \x01(\tR\fhwAccelMatch\x12\x1b\n" +
+	"\tcpu_match\x18\x05 \x01(\tR\bcpuMatch\x12\x1a\n" +
+	"\bpriority\x18\x06 \x01(\x05R\bpriority\"\xca\x01\n" +
 	"\fTranscodeAck\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x120\n" +
@@ -2803,7 +3176,7 @@ const file_pkg_ffmpegd_proto_ffmpegd_proto_rawDesc = "" +
 	"\x04data\x18\x03 \x01(\fR\x04data\x12\x1f\n" +
 	"\vis_keyframe\x18\x04 \x01(\bR\n" +
 	"isKeyframe\x12\x1a\n" +
-	"\bsequence\x18\x05 \x01(\x04R\bsequence\"\xca\x02\n" +
+	"\bsequence\x18\x05 \x01(\x04R\bsequence\"\xa9\x03\n" +
 	"\x0eTranscodeStats\x12\x1d\n" +
 	"\n" +
 	"samples_in\x18\x01 \x01(\x04R\tsamplesIn\x12\x1f\n" +
@@ -2817,7 +3190,11 @@ const file_pkg_ffmpegd_proto_ffmpegd_proto_rawDesc = "" +
 	"\tmemory_mb\x18\a \x01(\x01R\bmemoryMb\x12\x1d\n" +
 	"\n" +
 	"ffmpeg_pid\x18\b \x01(\x05R\tffmpegPid\x12<\n" +
-	"\frunning_time\x18\t \x01(\v2\x19.google.protobuf.DurationR\vrunningTime\"\xe1\x02\n" +
+	"\frunning_time\x18\t \x01(\v2\x19.google.protobuf.DurationR\vrunningTime\x12\x19\n" +
+	"\bhw_accel\x18\n" +
+	" \x01(\tR\ahwAccel\x12\x1b\n" +
+	"\thw_device\x18\v \x01(\tR\bhwDevice\x12%\n" +
+	"\x0effmpeg_command\x18\f \x01(\tR\rffmpegCommand\"\xe1\x02\n" +
 	"\x0eTranscodeError\x125\n" +
 	"\x04code\x18\x01 \x01(\x0e2!.ffmpegd.TranscodeError.ErrorCodeR\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12#\n" +
@@ -2873,7 +3250,7 @@ func file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP() []byte {
 }
 
 var file_pkg_ffmpegd_proto_ffmpegd_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
 var file_pkg_ffmpegd_proto_ffmpegd_proto_goTypes = []any{
 	(GPUClass)(0),                  // 0: ffmpegd.GPUClass
 	(DaemonCommand_CommandType)(0), // 1: ffmpegd.DaemonCommand.CommandType
@@ -2885,75 +3262,80 @@ var file_pkg_ffmpegd_proto_ffmpegd_proto_goTypes = []any{
 	(*HeartbeatRequest)(nil),       // 7: ffmpegd.HeartbeatRequest
 	(*HeartbeatResponse)(nil),      // 8: ffmpegd.HeartbeatResponse
 	(*DaemonCommand)(nil),          // 9: ffmpegd.DaemonCommand
-	(*JobStatus)(nil),              // 10: ffmpegd.JobStatus
-	(*Capabilities)(nil),           // 11: ffmpegd.Capabilities
-	(*HWAccelInfo)(nil),            // 12: ffmpegd.HWAccelInfo
-	(*GPUInfo)(nil),                // 13: ffmpegd.GPUInfo
-	(*PerformanceMetrics)(nil),     // 14: ffmpegd.PerformanceMetrics
-	(*SystemStats)(nil),            // 15: ffmpegd.SystemStats
-	(*GPUStats)(nil),               // 16: ffmpegd.GPUStats
-	(*PressureStats)(nil),          // 17: ffmpegd.PressureStats
-	(*TranscodeMessage)(nil),       // 18: ffmpegd.TranscodeMessage
-	(*TranscodeStart)(nil),         // 19: ffmpegd.TranscodeStart
-	(*TranscodeAck)(nil),           // 20: ffmpegd.TranscodeAck
-	(*ESSampleBatch)(nil),          // 21: ffmpegd.ESSampleBatch
-	(*ESSample)(nil),               // 22: ffmpegd.ESSample
-	(*TranscodeStats)(nil),         // 23: ffmpegd.TranscodeStats
-	(*TranscodeError)(nil),         // 24: ffmpegd.TranscodeError
-	(*TranscodeStop)(nil),          // 25: ffmpegd.TranscodeStop
-	(*GetStatsRequest)(nil),        // 26: ffmpegd.GetStatsRequest
-	(*GetStatsResponse)(nil),       // 27: ffmpegd.GetStatsResponse
-	nil,                            // 28: ffmpegd.TranscodeStart.ExtraOptionsEntry
-	(*durationpb.Duration)(nil),    // 29: google.protobuf.Duration
+	(*TranscodeJobConfig)(nil),     // 10: ffmpegd.TranscodeJobConfig
+	(*JobStatus)(nil),              // 11: ffmpegd.JobStatus
+	(*Capabilities)(nil),           // 12: ffmpegd.Capabilities
+	(*HWAccelInfo)(nil),            // 13: ffmpegd.HWAccelInfo
+	(*FilteredEncoder)(nil),        // 14: ffmpegd.FilteredEncoder
+	(*GPUInfo)(nil),                // 15: ffmpegd.GPUInfo
+	(*PerformanceMetrics)(nil),     // 16: ffmpegd.PerformanceMetrics
+	(*SystemStats)(nil),            // 17: ffmpegd.SystemStats
+	(*GPUStats)(nil),               // 18: ffmpegd.GPUStats
+	(*PressureStats)(nil),          // 19: ffmpegd.PressureStats
+	(*TranscodeMessage)(nil),       // 20: ffmpegd.TranscodeMessage
+	(*TranscodeStart)(nil),         // 21: ffmpegd.TranscodeStart
+	(*EncoderOverride)(nil),        // 22: ffmpegd.EncoderOverride
+	(*TranscodeAck)(nil),           // 23: ffmpegd.TranscodeAck
+	(*ESSampleBatch)(nil),          // 24: ffmpegd.ESSampleBatch
+	(*ESSample)(nil),               // 25: ffmpegd.ESSample
+	(*TranscodeStats)(nil),         // 26: ffmpegd.TranscodeStats
+	(*TranscodeError)(nil),         // 27: ffmpegd.TranscodeError
+	(*TranscodeStop)(nil),          // 28: ffmpegd.TranscodeStop
+	(*GetStatsRequest)(nil),        // 29: ffmpegd.GetStatsRequest
+	(*GetStatsResponse)(nil),       // 30: ffmpegd.GetStatsResponse
+	nil,                            // 31: ffmpegd.TranscodeStart.ExtraOptionsEntry
+	(*durationpb.Duration)(nil),    // 32: google.protobuf.Duration
 }
 var file_pkg_ffmpegd_proto_ffmpegd_proto_depIdxs = []int32{
-	11, // 0: ffmpegd.RegisterRequest.capabilities:type_name -> ffmpegd.Capabilities
-	29, // 1: ffmpegd.RegisterResponse.heartbeat_interval:type_name -> google.protobuf.Duration
-	15, // 2: ffmpegd.HeartbeatRequest.system_stats:type_name -> ffmpegd.SystemStats
-	10, // 3: ffmpegd.HeartbeatRequest.active_jobs:type_name -> ffmpegd.JobStatus
+	12, // 0: ffmpegd.RegisterRequest.capabilities:type_name -> ffmpegd.Capabilities
+	32, // 1: ffmpegd.RegisterResponse.heartbeat_interval:type_name -> google.protobuf.Duration
+	17, // 2: ffmpegd.HeartbeatRequest.system_stats:type_name -> ffmpegd.SystemStats
+	11, // 3: ffmpegd.HeartbeatRequest.active_jobs:type_name -> ffmpegd.JobStatus
 	9,  // 4: ffmpegd.HeartbeatResponse.commands:type_name -> ffmpegd.DaemonCommand
 	1,  // 5: ffmpegd.DaemonCommand.type:type_name -> ffmpegd.DaemonCommand.CommandType
-	23, // 6: ffmpegd.JobStatus.stats:type_name -> ffmpegd.TranscodeStats
-	29, // 7: ffmpegd.JobStatus.running_time:type_name -> google.protobuf.Duration
-	12, // 8: ffmpegd.Capabilities.hw_accels:type_name -> ffmpegd.HWAccelInfo
-	13, // 9: ffmpegd.Capabilities.gpus:type_name -> ffmpegd.GPUInfo
-	14, // 10: ffmpegd.Capabilities.performance:type_name -> ffmpegd.PerformanceMetrics
-	0,  // 11: ffmpegd.GPUInfo.gpu_class:type_name -> ffmpegd.GPUClass
-	16, // 12: ffmpegd.SystemStats.gpus:type_name -> ffmpegd.GPUStats
-	17, // 13: ffmpegd.SystemStats.cpu_pressure:type_name -> ffmpegd.PressureStats
-	17, // 14: ffmpegd.SystemStats.memory_pressure:type_name -> ffmpegd.PressureStats
-	17, // 15: ffmpegd.SystemStats.io_pressure:type_name -> ffmpegd.PressureStats
-	0,  // 16: ffmpegd.GPUStats.gpu_class:type_name -> ffmpegd.GPUClass
-	19, // 17: ffmpegd.TranscodeMessage.start:type_name -> ffmpegd.TranscodeStart
-	20, // 18: ffmpegd.TranscodeMessage.ack:type_name -> ffmpegd.TranscodeAck
-	21, // 19: ffmpegd.TranscodeMessage.samples:type_name -> ffmpegd.ESSampleBatch
-	23, // 20: ffmpegd.TranscodeMessage.stats:type_name -> ffmpegd.TranscodeStats
-	24, // 21: ffmpegd.TranscodeMessage.error:type_name -> ffmpegd.TranscodeError
-	25, // 22: ffmpegd.TranscodeMessage.stop:type_name -> ffmpegd.TranscodeStop
-	28, // 23: ffmpegd.TranscodeStart.extra_options:type_name -> ffmpegd.TranscodeStart.ExtraOptionsEntry
-	22, // 24: ffmpegd.ESSampleBatch.video_samples:type_name -> ffmpegd.ESSample
-	22, // 25: ffmpegd.ESSampleBatch.audio_samples:type_name -> ffmpegd.ESSample
-	29, // 26: ffmpegd.TranscodeStats.running_time:type_name -> google.protobuf.Duration
-	2,  // 27: ffmpegd.TranscodeError.code:type_name -> ffmpegd.TranscodeError.ErrorCode
-	11, // 28: ffmpegd.GetStatsResponse.capabilities:type_name -> ffmpegd.Capabilities
-	15, // 29: ffmpegd.GetStatsResponse.system_stats:type_name -> ffmpegd.SystemStats
-	10, // 30: ffmpegd.GetStatsResponse.active_jobs:type_name -> ffmpegd.JobStatus
-	29, // 31: ffmpegd.GetStatsResponse.total_encoding_time:type_name -> google.protobuf.Duration
-	3,  // 32: ffmpegd.FFmpegDaemon.Register:input_type -> ffmpegd.RegisterRequest
-	7,  // 33: ffmpegd.FFmpegDaemon.Heartbeat:input_type -> ffmpegd.HeartbeatRequest
-	5,  // 34: ffmpegd.FFmpegDaemon.Unregister:input_type -> ffmpegd.UnregisterRequest
-	18, // 35: ffmpegd.FFmpegDaemon.Transcode:input_type -> ffmpegd.TranscodeMessage
-	26, // 36: ffmpegd.FFmpegDaemon.GetStats:input_type -> ffmpegd.GetStatsRequest
-	4,  // 37: ffmpegd.FFmpegDaemon.Register:output_type -> ffmpegd.RegisterResponse
-	8,  // 38: ffmpegd.FFmpegDaemon.Heartbeat:output_type -> ffmpegd.HeartbeatResponse
-	6,  // 39: ffmpegd.FFmpegDaemon.Unregister:output_type -> ffmpegd.UnregisterResponse
-	18, // 40: ffmpegd.FFmpegDaemon.Transcode:output_type -> ffmpegd.TranscodeMessage
-	27, // 41: ffmpegd.FFmpegDaemon.GetStats:output_type -> ffmpegd.GetStatsResponse
-	37, // [37:42] is the sub-list for method output_type
-	32, // [32:37] is the sub-list for method input_type
-	32, // [32:32] is the sub-list for extension type_name
-	32, // [32:32] is the sub-list for extension extendee
-	0,  // [0:32] is the sub-list for field type_name
+	26, // 6: ffmpegd.JobStatus.stats:type_name -> ffmpegd.TranscodeStats
+	32, // 7: ffmpegd.JobStatus.running_time:type_name -> google.protobuf.Duration
+	13, // 8: ffmpegd.Capabilities.hw_accels:type_name -> ffmpegd.HWAccelInfo
+	15, // 9: ffmpegd.Capabilities.gpus:type_name -> ffmpegd.GPUInfo
+	16, // 10: ffmpegd.Capabilities.performance:type_name -> ffmpegd.PerformanceMetrics
+	14, // 11: ffmpegd.HWAccelInfo.filtered_encoders:type_name -> ffmpegd.FilteredEncoder
+	0,  // 12: ffmpegd.GPUInfo.gpu_class:type_name -> ffmpegd.GPUClass
+	18, // 13: ffmpegd.SystemStats.gpus:type_name -> ffmpegd.GPUStats
+	19, // 14: ffmpegd.SystemStats.cpu_pressure:type_name -> ffmpegd.PressureStats
+	19, // 15: ffmpegd.SystemStats.memory_pressure:type_name -> ffmpegd.PressureStats
+	19, // 16: ffmpegd.SystemStats.io_pressure:type_name -> ffmpegd.PressureStats
+	0,  // 17: ffmpegd.GPUStats.gpu_class:type_name -> ffmpegd.GPUClass
+	21, // 18: ffmpegd.TranscodeMessage.start:type_name -> ffmpegd.TranscodeStart
+	23, // 19: ffmpegd.TranscodeMessage.ack:type_name -> ffmpegd.TranscodeAck
+	24, // 20: ffmpegd.TranscodeMessage.samples:type_name -> ffmpegd.ESSampleBatch
+	26, // 21: ffmpegd.TranscodeMessage.stats:type_name -> ffmpegd.TranscodeStats
+	27, // 22: ffmpegd.TranscodeMessage.error:type_name -> ffmpegd.TranscodeError
+	28, // 23: ffmpegd.TranscodeMessage.stop:type_name -> ffmpegd.TranscodeStop
+	31, // 24: ffmpegd.TranscodeStart.extra_options:type_name -> ffmpegd.TranscodeStart.ExtraOptionsEntry
+	22, // 25: ffmpegd.TranscodeStart.encoder_overrides:type_name -> ffmpegd.EncoderOverride
+	25, // 26: ffmpegd.ESSampleBatch.video_samples:type_name -> ffmpegd.ESSample
+	25, // 27: ffmpegd.ESSampleBatch.audio_samples:type_name -> ffmpegd.ESSample
+	32, // 28: ffmpegd.TranscodeStats.running_time:type_name -> google.protobuf.Duration
+	2,  // 29: ffmpegd.TranscodeError.code:type_name -> ffmpegd.TranscodeError.ErrorCode
+	12, // 30: ffmpegd.GetStatsResponse.capabilities:type_name -> ffmpegd.Capabilities
+	17, // 31: ffmpegd.GetStatsResponse.system_stats:type_name -> ffmpegd.SystemStats
+	11, // 32: ffmpegd.GetStatsResponse.active_jobs:type_name -> ffmpegd.JobStatus
+	32, // 33: ffmpegd.GetStatsResponse.total_encoding_time:type_name -> google.protobuf.Duration
+	3,  // 34: ffmpegd.FFmpegDaemon.Register:input_type -> ffmpegd.RegisterRequest
+	7,  // 35: ffmpegd.FFmpegDaemon.Heartbeat:input_type -> ffmpegd.HeartbeatRequest
+	5,  // 36: ffmpegd.FFmpegDaemon.Unregister:input_type -> ffmpegd.UnregisterRequest
+	20, // 37: ffmpegd.FFmpegDaemon.Transcode:input_type -> ffmpegd.TranscodeMessage
+	29, // 38: ffmpegd.FFmpegDaemon.GetStats:input_type -> ffmpegd.GetStatsRequest
+	4,  // 39: ffmpegd.FFmpegDaemon.Register:output_type -> ffmpegd.RegisterResponse
+	8,  // 40: ffmpegd.FFmpegDaemon.Heartbeat:output_type -> ffmpegd.HeartbeatResponse
+	6,  // 41: ffmpegd.FFmpegDaemon.Unregister:output_type -> ffmpegd.UnregisterResponse
+	20, // 42: ffmpegd.FFmpegDaemon.Transcode:output_type -> ffmpegd.TranscodeMessage
+	30, // 43: ffmpegd.FFmpegDaemon.GetStats:output_type -> ffmpegd.GetStatsResponse
+	39, // [39:44] is the sub-list for method output_type
+	34, // [34:39] is the sub-list for method input_type
+	34, // [34:34] is the sub-list for extension type_name
+	34, // [34:34] is the sub-list for extension extendee
+	0,  // [0:34] is the sub-list for field type_name
 }
 
 func init() { file_pkg_ffmpegd_proto_ffmpegd_proto_init() }
@@ -2961,7 +3343,7 @@ func file_pkg_ffmpegd_proto_ffmpegd_proto_init() {
 	if File_pkg_ffmpegd_proto_ffmpegd_proto != nil {
 		return
 	}
-	file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[15].OneofWrappers = []any{
+	file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[17].OneofWrappers = []any{
 		(*TranscodeMessage_Start)(nil),
 		(*TranscodeMessage_Ack)(nil),
 		(*TranscodeMessage_Samples)(nil),
@@ -2975,7 +3357,7 @@ func file_pkg_ffmpegd_proto_ffmpegd_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_ffmpegd_proto_ffmpegd_proto_rawDesc), len(file_pkg_ffmpegd_proto_ffmpegd_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   26,
+			NumMessages:   29,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

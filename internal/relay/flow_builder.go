@@ -24,13 +24,6 @@ func NewFlowBuilder() *FlowBuilder {
 // Positions are set to zero - the frontend calculates actual layout using
 // measured node dimensions.
 func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph {
-	return b.BuildFlowGraphWithPassthrough(sessions, nil)
-}
-
-// BuildFlowGraphWithPassthrough builds a complete flow graph from session and passthrough information.
-// Positions are set to zero - the frontend calculates actual layout using
-// measured node dimensions.
-func (b *FlowBuilder) BuildFlowGraphWithPassthrough(sessions []RelaySessionInfo, passthroughConns []*PassthroughConnection) RelayFlowGraph {
 	graph := RelayFlowGraph{
 		Nodes: make([]RelayFlowNode, 0),
 		Edges: make([]RelayFlowEdge, 0),
@@ -44,18 +37,6 @@ func (b *FlowBuilder) BuildFlowGraphWithPassthrough(sessions []RelaySessionInfo,
 
 	var totalIngressBps, totalEgressBps uint64
 
-	// Build passthrough connection nodes first
-	for _, conn := range passthroughConns {
-		passthroughNode := b.buildPassthroughNode(conn)
-		graph.Nodes = append(graph.Nodes, passthroughNode)
-
-		// Passthrough counts as both a session and a client
-		graph.Metadata.TotalSessions++
-		graph.Metadata.TotalClients++
-		totalIngressBps += conn.IngressBps()
-		totalEgressBps += conn.EgressBps()
-	}
-
 	for _, session := range sessions {
 		// Create origin node
 		originNode := b.buildOriginNode(session)
@@ -65,11 +46,18 @@ func (b *FlowBuilder) BuildFlowGraphWithPassthrough(sessions []RelaySessionInfo,
 		bufferNode := b.buildBufferNode(session)
 		graph.Nodes = append(graph.Nodes, bufferNode)
 
+		// Determine bandwidth for origin -> buffer edge
+		// Use real-time tracking if available, otherwise fall back to average rate
+		originToBufferBps := session.IngressRateBps
+		if session.EdgeBandwidth != nil {
+			originToBufferBps = session.EdgeBandwidth.OriginToBuffer.CurrentBps
+		}
+
 		// Create edge from origin to buffer
 		originToBuffer := b.buildEdge(
 			originNode.ID,
 			bufferNode.ID,
-			session.IngressRateBps,
+			originToBufferBps,
 			session.VideoCodec,
 			session.AudioCodec,
 			session.SourceFormat,
@@ -77,15 +65,23 @@ func (b *FlowBuilder) BuildFlowGraphWithPassthrough(sessions []RelaySessionInfo,
 		graph.Edges = append(graph.Edges, originToBuffer)
 
 		// Check if there's a transcoder (for transcode mode)
-		if session.RouteType == RouteTypeTranscode && session.FFmpegStats != nil {
+		if session.RouteType == RouteTranscode && session.FFmpegStats != nil {
 			transcoderNode := b.buildTranscoderNode(session)
 			graph.Nodes = append(graph.Nodes, transcoderNode)
+
+			// Determine bandwidth for buffer <-> transcoder edges
+			bufferToTranscoderBps := session.IngressRateBps
+			transcoderToBufferBps := session.EgressRateBps
+			if session.EdgeBandwidth != nil {
+				bufferToTranscoderBps = session.EdgeBandwidth.BufferToTranscoder.CurrentBps
+				transcoderToBufferBps = session.EdgeBandwidth.TranscoderToBuffer.CurrentBps
+			}
 
 			// Create bidirectional edges: buffer <-> transcoder
 			bufferToTranscoder := b.buildEdge(
 				bufferNode.ID,
 				transcoderNode.ID,
-				session.IngressRateBps,
+				bufferToTranscoderBps,
 				session.VideoCodec,
 				session.AudioCodec,
 				"es",
@@ -93,19 +89,20 @@ func (b *FlowBuilder) BuildFlowGraphWithPassthrough(sessions []RelaySessionInfo,
 			graph.Edges = append(graph.Edges, bufferToTranscoder)
 
 			// Transcoder back to buffer (transcoded data)
+			// Resolve target codecs - "copy" means use source codec, so display source codec instead
 			targetVideoCodec := session.VideoCodec
 			targetAudioCodec := session.AudioCodec
-			if session.TargetVideoCodec != "" {
+			if session.TargetVideoCodec != "" && session.TargetVideoCodec != "copy" {
 				targetVideoCodec = session.TargetVideoCodec
 			}
-			if session.TargetAudioCodec != "" {
+			if session.TargetAudioCodec != "" && session.TargetAudioCodec != "copy" {
 				targetAudioCodec = session.TargetAudioCodec
 			}
 
 			transcoderToBuffer := b.buildEdge(
 				transcoderNode.ID,
 				bufferNode.ID,
-				session.EgressRateBps,
+				transcoderToBufferBps,
 				targetVideoCodec,
 				targetAudioCodec,
 				"es",
@@ -133,21 +130,31 @@ func (b *FlowBuilder) BuildFlowGraphWithPassthrough(sessions []RelaySessionInfo,
 			graph.Nodes = append(graph.Nodes, processorNode)
 
 			// Create edge from buffer to processor
+			// Resolve target codecs - "copy" means use source codec, so display source codec instead
 			edgeVideoCodec := session.VideoCodec
 			edgeAudioCodec := session.AudioCodec
-			if session.RouteType == RouteTypeTranscode {
-				if session.TargetVideoCodec != "" {
+			if session.RouteType == RouteTranscode {
+				if session.TargetVideoCodec != "" && session.TargetVideoCodec != "copy" {
 					edgeVideoCodec = session.TargetVideoCodec
 				}
-				if session.TargetAudioCodec != "" {
+				if session.TargetAudioCodec != "" && session.TargetAudioCodec != "copy" {
 					edgeAudioCodec = session.TargetAudioCodec
+				}
+			}
+
+			// Determine bandwidth for buffer -> processor edge
+			// Use real-time per-processor tracking if available
+			bufferToProcessorBps := session.EgressRateBps / uint64(max(len(activeFormats), 1))
+			if session.EdgeBandwidth != nil && session.EdgeBandwidth.BufferToProcessor != nil {
+				if processorInfo, ok := session.EdgeBandwidth.BufferToProcessor[format]; ok {
+					bufferToProcessorBps = processorInfo.CurrentBps
 				}
 			}
 
 			bufferToProcessor := b.buildEdge(
 				bufferNode.ID,
 				processorNode.ID,
-				session.EgressRateBps/uint64(max(len(activeFormats), 1)),
+				bufferToProcessorBps,
 				edgeVideoCodec,
 				edgeAudioCodec,
 				format,
@@ -312,12 +319,13 @@ func (b *FlowBuilder) buildTranscoderNode(session RelaySessionInfo) RelayFlowNod
 	data.SourceVideoCodec = session.VideoCodec
 	data.SourceAudioCodec = session.AudioCodec
 
-	if session.TargetVideoCodec != "" {
+	// Resolve target codecs - "copy" means use source codec, so display source codec instead
+	if session.TargetVideoCodec != "" && session.TargetVideoCodec != "copy" {
 		data.TargetVideoCodec = session.TargetVideoCodec
 	} else {
 		data.TargetVideoCodec = session.VideoCodec
 	}
-	if session.TargetAudioCodec != "" {
+	if session.TargetAudioCodec != "" && session.TargetAudioCodec != "copy" {
 		data.TargetAudioCodec = session.TargetAudioCodec
 	} else {
 		data.TargetAudioCodec = session.AudioCodec
@@ -339,11 +347,12 @@ func (b *FlowBuilder) buildTranscoderNode(session RelaySessionInfo) RelayFlowNod
 func (b *FlowBuilder) buildProcessorNode(session RelaySessionInfo, format string) RelayFlowNode {
 	outputVideoCodec := session.VideoCodec
 	outputAudioCodec := session.AudioCodec
-	if session.RouteType == RouteTypeTranscode {
-		if session.TargetVideoCodec != "" {
+	if session.RouteType == RouteTranscode {
+		// Resolve target codecs - "copy" means use source codec, so display source codec instead
+		if session.TargetVideoCodec != "" && session.TargetVideoCodec != "copy" {
 			outputVideoCodec = session.TargetVideoCodec
 		}
-		if session.TargetAudioCodec != "" {
+		if session.TargetAudioCodec != "" && session.TargetAudioCodec != "copy" {
 			outputAudioCodec = session.TargetAudioCodec
 		}
 	}
@@ -451,40 +460,4 @@ func truncateURL(url string, maxLen int) string {
 		return url
 	}
 	return url[:maxLen-3] + "..."
-}
-
-// buildPassthroughNode creates a node for a passthrough connection.
-// Passthrough connections are direct HTTP proxies without transcoding/buffering.
-func (b *FlowBuilder) buildPassthroughNode(conn *PassthroughConnection) RelayFlowNode {
-	// Extract a readable label from the channel name or remote addr
-	label := conn.ChannelName
-	if label == "" {
-		label = truncateString(conn.RemoteAddr, 20)
-	}
-
-	return RelayFlowNode{
-		ID:       fmt.Sprintf("passthrough-%s", conn.ID),
-		Type:     FlowNodeTypePassthrough,
-		Position: FlowPosition{X: 0, Y: 0}, // Frontend calculates layout
-		Data: FlowNodeData{
-			Label:          label,
-			ChannelID:      conn.ChannelID.String(),
-			ChannelName:    conn.ChannelName,
-			SourceURL:      truncateURL(conn.StreamURL, 60),
-			SourceFormat:   conn.SourceFormat,
-			VideoCodec:     conn.VideoCodec,
-			AudioCodec:     conn.AudioCodec,
-			RemoteAddr:     conn.RemoteAddr,
-			UserAgent:      conn.UserAgent,
-			IngressBps:     conn.IngressBps(),
-			EgressBps:      conn.EgressBps(),
-			TotalBytesIn:   conn.BytesIn(),
-			TotalBytesOut:  conn.BytesOut(),
-			DurationSecs:   conn.DurationSecs(),
-			IngressHistory: conn.IngressHistory(),
-			EgressHistory:  conn.EgressHistory(),
-			RouteType:      RouteTypePassthrough,
-			OutputFormat:   conn.SourceFormat,
-		},
-	}
 }

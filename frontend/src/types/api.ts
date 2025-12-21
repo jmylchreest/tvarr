@@ -1266,12 +1266,19 @@ export interface SystemStats {
   gpus?: GPUStats[];
 }
 
+// FilteredEncoder describes an encoder that was filtered out and why.
+export interface FilteredEncoder {
+  name: string;
+  reason: string;
+}
+
 export interface HWAccelInfo {
   type: string;
   device: string;
   available: boolean;
-  encoders: string[];
-  decoders: string[];
+  hw_encoders: string[];
+  hw_decoders: string[];
+  filtered_encoders?: FilteredEncoder[];
 }
 
 export interface GPUInfo {
@@ -1296,6 +1303,24 @@ export interface DaemonCapabilities {
   gpus?: GPUInfo[];
 }
 
+export interface ActiveJobDetail {
+  id: string;
+  session_id: string;
+  channel_id: string;
+  channel_name: string;
+  cpu_percent: number;
+  memory_mb: number;
+  encoding_speed: number;
+  samples_in: number;
+  samples_out: number;
+  bytes_in: number;
+  bytes_out: number;
+  running_time_ms: number;
+  hw_accel?: string;  // vaapi, cuda, qsv, videotoolbox (empty = software)
+  hw_device?: string; // Device path: /dev/dri/renderD128, cuda:0, etc.
+  ffmpeg_command?: string; // Full FFmpeg command line for debugging
+}
+
 export interface Daemon {
   id: string;
   name: string;
@@ -1306,6 +1331,7 @@ export interface Daemon {
   last_heartbeat: string;
   heartbeats_missed: number;
   active_jobs: number;
+  active_job_details?: ActiveJobDetail[];
   total_jobs_completed: number;
   total_jobs_failed: number;
   capabilities?: DaemonCapabilities;
@@ -1340,5 +1366,63 @@ export interface DrainDaemonResponse {
 export interface ActivateDaemonResponse {
   success: boolean;
   message: string;
+}
+
+// =============================================================================
+// ENCODER OVERRIDE TYPES
+// =============================================================================
+
+export type EncoderOverrideCodecType = 'video' | 'audio';
+
+export interface EncoderOverride {
+  id: string;
+  name: string;
+  description?: string;
+  codec_type: EncoderOverrideCodecType;
+  source_codec: string;
+  target_encoder: string;
+  hw_accel_match?: string;
+  cpu_match?: string;
+  priority: number;
+  is_enabled: boolean;
+  is_system: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EncoderOverridesResponse {
+  overrides: EncoderOverride[];
+  count: number;
+}
+
+export interface EncoderOverrideCreateRequest {
+  name: string;
+  description?: string;
+  codec_type: EncoderOverrideCodecType;
+  source_codec: string;
+  target_encoder: string;
+  hw_accel_match?: string;
+  cpu_match?: string;
+  priority?: number;
+  is_enabled?: boolean;
+}
+
+export interface EncoderOverrideUpdateRequest {
+  name?: string;
+  description?: string;
+  codec_type?: EncoderOverrideCodecType;
+  source_codec?: string;
+  target_encoder?: string;
+  hw_accel_match?: string;
+  cpu_match?: string;
+  priority?: number;
+  is_enabled?: boolean;
+}
+
+export interface EncoderOverrideReorderRequest {
+  reorders: Array<{
+    id: string;
+    priority: number;
+  }>;
 }
 

@@ -102,10 +102,10 @@ type TranscodeConfig struct {
 	AudioInitData    []byte `json:"audio_init_data"`    // AudioSpecificConfig
 
 	// Target codec info (from EncodingProfile)
+	// Note: Encoder selection is done locally by the daemon based on target codec
+	// and available hardware. The coordinator only specifies target codecs.
 	TargetVideoCodec string `json:"target_video_codec"`
 	TargetAudioCodec string `json:"target_audio_codec"`
-	VideoEncoder     string `json:"video_encoder"` // libx264, h264_nvenc
-	AudioEncoder     string `json:"audio_encoder"` // aac, libopus
 
 	// Encoding parameters
 	VideoBitrateKbps int    `json:"video_bitrate_kbps"`
@@ -129,6 +129,11 @@ type TranscodeConfig struct {
 
 	// Extra FFmpeg options (advanced)
 	ExtraOptions map[string]string `json:"extra_options,omitempty"`
+
+	// Custom FFmpeg flags from encoding profile
+	InputFlags  string `json:"input_flags,omitempty"`  // Flags placed before -i input
+	OutputFlags string `json:"output_flags,omitempty"` // Flags placed after -i input
+	GlobalFlags string `json:"global_flags,omitempty"` // Global FFmpeg flags
 }
 
 // GPUExhaustedPolicy defines behavior when GPU sessions are exhausted.
@@ -165,6 +170,13 @@ type TranscodeStats struct {
 	MemoryMB      float64       `json:"memory_mb"`
 	FFmpegPID     int           `json:"ffmpeg_pid"`
 	RunningTime   time.Duration `json:"running_time"`
+
+	// Hardware acceleration info
+	HWAccel  string `json:"hw_accel,omitempty"`  // vaapi, cuda, qsv, videotoolbox (empty = software)
+	HWDevice string `json:"hw_device,omitempty"` // Device path: /dev/dri/renderD128, cuda:0, etc.
+
+	// FFmpeg command for debugging
+	FFmpegCommand string `json:"ffmpeg_command,omitempty"` // Full FFmpeg command line
 }
 
 // CompressionRatio returns the output/input byte ratio.

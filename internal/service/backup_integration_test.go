@@ -65,7 +65,6 @@ func TestBackupRestore_IntegrationRoundTrip(t *testing.T) {
 		Expression: "name contains 'sports'",
 		SourceType: models.FilterSourceTypeStream,
 		Action:     models.FilterActionInclude,
-		IsEnabled:  boolPtr(true),
 		IsSystem:   false,
 	}
 	filter.ID = models.NewULID()

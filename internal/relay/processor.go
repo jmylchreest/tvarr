@@ -142,6 +142,9 @@ type BaseProcessor struct {
 	closed        atomic.Bool
 	closedCh      chan struct{}
 	streamContext StreamContext
+
+	// Bandwidth tracking for buffer-to-processor edge
+	bandwidthTracker *BandwidthTracker
 }
 
 // NewBaseProcessor creates a new base processor.
@@ -175,6 +178,19 @@ func (p *BaseProcessor) Buffer() *SharedESBuffer {
 // SetStreamContext sets the stream context for header generation.
 func (p *BaseProcessor) SetStreamContext(ctx StreamContext) {
 	p.streamContext = ctx
+}
+
+// SetBandwidthTracker sets the bandwidth tracker for buffer-to-processor edge tracking.
+func (p *BaseProcessor) SetBandwidthTracker(tracker *BandwidthTracker) {
+	p.bandwidthTracker = tracker
+}
+
+// TrackBytesFromBuffer records bytes read from the ES buffer.
+// This should be called after reading samples from the buffer.
+func (p *BaseProcessor) TrackBytesFromBuffer(bytes uint64) {
+	if p.bandwidthTracker != nil {
+		p.bandwidthTracker.Add(bytes)
+	}
 }
 
 // SetStreamHeaders sets the X-Stream-* and X-Tvarr-Version headers on the response.

@@ -416,8 +416,11 @@ func (s *BackupService) RestoreBackup(ctx context.Context, filename string) erro
 		return fmt.Errorf("loading backup metadata: %w", err)
 	}
 
-	// Verify checksum (skip if metadata has no checksum - legacy backups)
-	if meta.Checksum != "" {
+	// Verify checksum for legacy .db.gz format only
+	// For .tar.gz format, skip checksum verification since the checksum is embedded
+	// inside the archive - after embedding, the archive's actual checksum changes,
+	// making verification impossible.
+	if meta.Checksum != "" && strings.HasSuffix(filename, ".db.gz") {
 		checksum, err := s.calculateChecksum(backupPath)
 		if err != nil {
 			return fmt.Errorf("calculating checksum: %w", err)

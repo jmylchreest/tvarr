@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/jmylchreest/tvarr/internal/observability"
 )
 
 // HLS-fMP4 Processor errors.
@@ -438,19 +440,52 @@ func (p *HLSfMP4Processor) runProcessingLoop(esVariant *ESVariant) {
 	videoTrack := esVariant.VideoTrack()
 	audioTrack := esVariant.AudioTrack()
 
+	p.config.Logger.Log(p.ctx, observability.LevelTrace, "Starting processing loop",
+		slog.String("id", p.id),
+		slog.String("variant", esVariant.Variant().String()),
+		slog.Int("video_track_count", videoTrack.Count()),
+		slog.Int("audio_track_count", audioTrack.Count()))
+
 	// Wait for initial video keyframe
-	p.config.Logger.Debug("Waiting for initial keyframe")
+	p.config.Logger.Log(p.ctx, observability.LevelTrace, "Waiting for initial keyframe",
+		slog.String("id", p.id),
+		slog.String("variant", esVariant.Variant().String()))
+	notifyCount := 0
 	for {
 		select {
 		case <-p.ctx.Done():
 			return
 		case <-videoTrack.NotifyChan():
+			notifyCount++
 		}
 
+		trackCount := videoTrack.Count()
 		samples := videoTrack.ReadFromKeyframe(p.lastVideoSeq, 1)
 		if len(samples) > 0 {
+			p.config.Logger.Log(p.ctx, observability.LevelTrace, "Found initial keyframe",
+				slog.String("id", p.id),
+				slog.Uint64("sequence", samples[0].Sequence),
+				slog.Int("notify_count", notifyCount))
 			p.lastVideoSeq = samples[0].Sequence - 1
 			break
+		}
+		// Log periodically to help debug
+		if notifyCount%50 == 1 {
+			// Also check how many samples have IsKeyframe=true
+			allSamples := videoTrack.ReadFrom(0, 100)
+			keyframeCount := 0
+			for _, s := range allSamples {
+				if s.IsKeyframe {
+					keyframeCount++
+				}
+			}
+			p.config.Logger.Log(p.ctx, observability.LevelTrace, "Still waiting for keyframe",
+				slog.String("id", p.id),
+				slog.Int("notify_count", notifyCount),
+				slog.Int("track_sample_count", trackCount),
+				slog.Int("samples_read", len(allSamples)),
+				slog.Int("keyframes_found", keyframeCount),
+				slog.Uint64("last_video_seq", p.lastVideoSeq))
 		}
 	}
 
@@ -473,7 +508,9 @@ func (p *HLSfMP4Processor) runProcessingLoop(esVariant *ESVariant) {
 		case <-ticker.C:
 			// Read video samples
 			newVideoSamples := videoTrack.ReadFrom(p.lastVideoSeq, 100)
+			var bytesRead uint64
 			for _, sample := range newVideoSamples {
+				bytesRead += uint64(len(sample.Data))
 				// Check if this keyframe should trigger a new segment
 				if sample.IsKeyframe && len(videoSamples) > 0 && p.hasEnoughContent() {
 					p.flushSegment(videoSamples, audioSamples)
@@ -494,12 +531,18 @@ func (p *HLSfMP4Processor) runProcessingLoop(esVariant *ESVariant) {
 			// Read audio samples
 			newAudioSamples := audioTrack.ReadFrom(p.lastAudioSeq, 200)
 			for _, sample := range newAudioSamples {
+				bytesRead += uint64(len(sample.Data))
 				audioSamples = append(audioSamples, sample)
 				p.lastAudioSeq = sample.Sequence
 				p.currentSegment.hasAudio = true
 				if p.currentSegment.startPTS < 0 {
 					p.currentSegment.startPTS = sample.PTS
 				}
+			}
+
+			// Track bytes read from buffer for bandwidth stats
+			if bytesRead > 0 {
+				p.TrackBytesFromBuffer(bytesRead)
 			}
 
 			// Update consumer position to allow eviction of samples we've processed

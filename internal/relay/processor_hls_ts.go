@@ -538,7 +538,9 @@ func (p *HLSTSProcessor) runProcessingLoop(esVariant *ESVariant) {
 func (p *HLSTSProcessor) processAvailableSamples(videoTrack, audioTrack *ESTrack) {
 	// Read video samples
 	videoSamples := videoTrack.ReadFrom(p.lastVideoSeq, 100)
+	var bytesRead uint64
 	for _, sample := range videoSamples {
+		bytesRead += uint64(len(sample.Data))
 		p.processVideoSample(sample)
 		p.lastVideoSeq = sample.Sequence
 	}
@@ -546,8 +548,14 @@ func (p *HLSTSProcessor) processAvailableSamples(videoTrack, audioTrack *ESTrack
 	// Read audio samples
 	audioSamples := audioTrack.ReadFrom(p.lastAudioSeq, 200)
 	for _, sample := range audioSamples {
+		bytesRead += uint64(len(sample.Data))
 		p.processAudioSample(sample)
 		p.lastAudioSeq = sample.Sequence
+	}
+
+	// Track bytes read from buffer for bandwidth stats
+	if bytesRead > 0 {
+		p.TrackBytesFromBuffer(bytesRead)
 	}
 
 	// Update consumer position to allow eviction of samples we've processed

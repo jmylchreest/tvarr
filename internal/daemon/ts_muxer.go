@@ -14,9 +14,10 @@ import (
 
 // TSMuxerConfig configures the TS muxer for the daemon.
 type TSMuxerConfig struct {
-	Logger     *slog.Logger
-	VideoCodec string // "h264", "h265"
-	AudioCodec string // "aac", "ac3", "eac3", "mp3", "opus"
+	Logger        *slog.Logger
+	VideoCodec    string // "h264", "h265"
+	AudioCodec    string // "aac", "ac3", "eac3", "mp3", "opus"
+	AudioInitData []byte // AudioSpecificConfig for AAC (used to set correct ADTS parameters)
 }
 
 // TSMuxer muxes elementary streams into MPEG-TS format for FFmpeg input.
@@ -34,6 +35,9 @@ type TSMuxer struct {
 	// Track codec types
 	videoCodec string
 	audioCodec string
+
+	// Audio configuration parsed from init data
+	audioInitData []byte
 
 	// Video parameter set helper for ensuring VPS/SPS/PPS are present on keyframes
 	videoParams *VideoParamHelper
@@ -60,11 +64,12 @@ func NewTSMuxer(w io.Writer, config TSMuxerConfig) *TSMuxer {
 	}
 
 	return &TSMuxer{
-		writer:      w,
-		config:      config,
-		videoCodec:  config.VideoCodec,
-		audioCodec:  config.AudioCodec,
-		videoParams: NewVideoParamHelper(),
+		writer:        w,
+		config:        config,
+		videoCodec:    config.VideoCodec,
+		audioCodec:    config.AudioCodec,
+		audioInitData: config.AudioInitData,
+		videoParams:   NewVideoParamHelper(),
 	}
 }
 
@@ -83,7 +88,25 @@ func (m *TSMuxer) initialize() error {
 
 	// Create audio track if configured
 	if m.audioCodec != "" {
-		audioCodec, normalizedName := createAudioCodec(m.audioCodec, nil)
+		// Parse AudioSpecificConfig from init data if available
+		var aacConfig *mpeg4audio.AudioSpecificConfig
+		if len(m.audioInitData) > 0 && (m.audioCodec == "aac" || m.audioCodec == "") {
+			var cfg mpeg4audio.AudioSpecificConfig
+			if err := cfg.Unmarshal(m.audioInitData); err == nil {
+				aacConfig = &cfg
+				m.config.Logger.Info("Parsed AAC config from init data",
+					slog.Int("sample_rate", cfg.SampleRate),
+					slog.Int("channels", cfg.ChannelCount),
+					slog.Int("object_type", int(cfg.Type)))
+			} else {
+				m.config.Logger.Warn("Failed to parse AAC config from init data, using defaults",
+					slog.String("error", err.Error()))
+			}
+		} else if m.audioCodec == "aac" {
+			m.config.Logger.Warn("No AAC init data provided, using hardcoded defaults (48kHz, stereo)")
+		}
+
+		audioCodec, normalizedName := createAudioCodec(m.audioCodec, aacConfig)
 		m.audioCodec = normalizedName
 		m.audioTrack = &mpegts.Track{
 			PID:   tsAudioPID,
@@ -100,6 +123,12 @@ func (m *TSMuxer) initialize() error {
 
 	if err := m.muxer.Initialize(); err != nil {
 		return fmt.Errorf("initializing mpegts writer: %w", err)
+	}
+
+	// Write PAT/PMT tables immediately after initialization
+	// This ensures FFmpeg can detect codec parameters at stream start
+	if _, err := m.muxer.WriteTables(); err != nil {
+		return fmt.Errorf("writing PAT/PMT tables: %w", err)
 	}
 
 	m.initialized = true
@@ -168,10 +197,18 @@ func (m *TSMuxer) WriteVideo(pts, dts int64, data []byte, isKeyframe bool) error
 	m.videoParams.ExtractFromNALUs(au, isH265)
 
 	// For keyframes, prepend VPS/SPS/PPS (H.265) or SPS/PPS (H.264) if not already present
-	// This ensures decoders can always decode keyframes even after buffer eviction
+	// Use ForceKeyframePrependNALUs since the caller (gRPC message) already indicates
+	// this is a keyframe - we don't need to verify by checking NAL types
 	if isKeyframe {
-		au = m.videoParams.PrependParamsToKeyframeNALUs(au, isH265)
+		au = m.videoParams.ForceKeyframePrependNALUs(au, isH265)
 	}
+
+	// Reorder NAL units to ensure SPS/PPS come before SEI and other NALs.
+	// Many IPTV sources have NAL order like: SEI, SEI, SPS, PPS, IDR
+	// But FFmpeg's decoder expects SPS/PPS before SEI (since SEI may reference SPS).
+	// The correct order for decoders is: SPS, PPS, SEI, IDR (for H.264)
+	// or: VPS, SPS, PPS, SEI, IDR (for H.265)
+	au = reorderNALUnits(au, isH265)
 
 	// Write based on track's codec type
 	return m.writeVideoByCodecType(pts, dts, au)
@@ -243,6 +280,106 @@ func (m *TSMuxer) writeAudioByCodecType(pts int64, data []byte) error {
 func (m *TSMuxer) Flush() error {
 	// mediacommon handles PAT/PMT automatically
 	return nil
+}
+
+// InitializeAndGetHeader initializes the muxer and returns the PAT/PMT header bytes.
+// This can be used to send the header to FFmpeg before any media data.
+func (m *TSMuxer) InitializeAndGetHeader() ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.initialized {
+		return nil, nil // Already initialized
+	}
+
+	if err := m.initialize(); err != nil {
+		return nil, err
+	}
+
+	// Return a copy of any bytes that were written during initialization
+	// (PAT/PMT tables written by WriteTables in initialize())
+	return nil, nil // The bytes are already in the writer (m.writer)
+}
+
+// Format returns the FFmpeg input format string for MPEG-TS.
+func (m *TSMuxer) Format() string {
+	return "mpegts"
+}
+
+// Ensure TSMuxer implements InputMuxer interface.
+var _ InputMuxer = (*TSMuxer)(nil)
+
+// reorderNALUnits reorders NAL units to ensure parameter sets come first.
+// This fixes issues where IPTV sources send NALs in wrong order (e.g., SEI before SPS/PPS).
+// FFmpeg's decoder expects: VPS, SPS, PPS, AUD, SEI, slices (for H.265)
+// or: SPS, PPS, AUD, SEI, slices (for H.264)
+func reorderNALUnits(nalus [][]byte, isH265 bool) [][]byte {
+	if len(nalus) <= 1 {
+		return nalus
+	}
+
+	// Categorize NAL units
+	var paramSets [][]byte   // VPS, SPS, PPS
+	var audNALs [][]byte     // Access Unit Delimiter
+	var seiNALs [][]byte     // Supplemental Enhancement Information
+	var sliceNALs [][]byte   // Picture data (IDR, non-IDR slices)
+	var otherNALs [][]byte   // Everything else
+
+	for _, nalu := range nalus {
+		if len(nalu) == 0 {
+			continue
+		}
+
+		if isH265 {
+			// H.265: NAL type is in bits 1-6 of first byte
+			naluType := (nalu[0] >> 1) & 0x3F
+			switch naluType {
+			case H265NALTypeVPS, H265NALTypeSPS, H265NALTypePPS:
+				paramSets = append(paramSets, nalu)
+			case H265NALTypeAUD:
+				audNALs = append(audNALs, nalu)
+			case H265NALTypePrefixSEI, H265NALTypeSuffixSEI:
+				seiNALs = append(seiNALs, nalu)
+			case H265NALTypeBLAWLP, H265NALTypeBLAWRADL, H265NALTypeBLANLP,
+				H265NALTypeIDRWRADL, H265NALTypeIDRNLP, H265NALTypeCRANUT:
+				// IDR/CRA/BLA keyframe NALs
+				sliceNALs = append(sliceNALs, nalu)
+			default:
+				if naluType <= 31 {
+					// VCL NAL units (video coding layer - slice data)
+					sliceNALs = append(sliceNALs, nalu)
+				} else {
+					otherNALs = append(otherNALs, nalu)
+				}
+			}
+		} else {
+			// H.264: NAL type is in bits 0-4 of first byte
+			naluType := nalu[0] & 0x1F
+			switch naluType {
+			case H264NALTypeSPS, H264NALTypePPS:
+				paramSets = append(paramSets, nalu)
+			case H264NALTypeAUD:
+				audNALs = append(audNALs, nalu)
+			case H264NALTypeSEI:
+				seiNALs = append(seiNALs, nalu)
+			case H264NALTypeIDR, H264NALTypeSlice:
+				sliceNALs = append(sliceNALs, nalu)
+			default:
+				otherNALs = append(otherNALs, nalu)
+			}
+		}
+	}
+
+	// Rebuild in correct order: AUD, param sets, SEI, slices, other
+	// Note: AUD should technically come first if present, but it's optional
+	result := make([][]byte, 0, len(nalus))
+	result = append(result, audNALs...)      // AUD first (if present)
+	result = append(result, paramSets...)    // VPS/SPS/PPS
+	result = append(result, seiNALs...)      // SEI (now after SPS/PPS so references work)
+	result = append(result, sliceNALs...)    // IDR/slice data
+	result = append(result, otherNALs...)    // Anything else
+
+	return result
 }
 
 // dataToAccessUnit converts raw video data to access unit format using mediacommon.
