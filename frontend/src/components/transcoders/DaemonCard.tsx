@@ -50,6 +50,8 @@ function getStateBadgeVariant(state: DaemonState): 'default' | 'secondary' | 'de
   switch (state) {
     case 'connected':
       return 'secondary'; // Dark gray like "idle" states
+    case 'transcoding':
+      return 'default'; // Blue/primary for active transcoding
     case 'draining':
       return 'secondary';
     case 'unhealthy':
@@ -63,18 +65,21 @@ function getStateBadgeVariant(state: DaemonState): 'default' | 'secondary' | 'de
   }
 }
 
+// TODO: Add success/warning/info theme colors to globals.css for proper semantic styling
 function getStateColor(state: DaemonState): string {
   switch (state) {
     case 'connected':
       return 'text-muted-foreground';
+    case 'transcoding':
+      return 'text-primary'; // Active state - uses theme primary
     case 'draining':
-      return 'text-yellow-600 dark:text-yellow-400';
+      return 'text-yellow-600 dark:text-yellow-400'; // TODO: needs --warning theme color
     case 'unhealthy':
-      return 'text-red-600 dark:text-red-400';
+      return 'text-destructive';
     case 'disconnected':
-      return 'text-red-600 dark:text-red-400';
+      return 'text-destructive';
     case 'connecting':
-      return 'text-blue-600 dark:text-blue-400';
+      return 'text-primary';
     default:
       return 'text-muted-foreground';
   }

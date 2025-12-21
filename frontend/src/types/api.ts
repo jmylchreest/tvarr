@@ -1237,7 +1237,7 @@ export interface RestoreResult {
 // TRANSCODER TYPES (ffmpegd daemons)
 // =============================================================================
 
-export type DaemonState = 'connected' | 'draining' | 'unhealthy' | 'disconnected' | 'connecting';
+export type DaemonState = 'connected' | 'transcoding' | 'draining' | 'unhealthy' | 'disconnected' | 'connecting';
 
 export interface GPUStats {
   index: number;

@@ -206,12 +206,18 @@ type ActivateDaemonOutput struct {
 // --- Conversion Functions ---
 
 func daemonToDTO(d *types.Daemon) DaemonDTO {
+	// Compute effective state: show "transcoding" when connected with active jobs
+	effectiveState := d.State.String()
+	if d.State == types.DaemonStateConnected && d.ActiveJobs > 0 {
+		effectiveState = "transcoding"
+	}
+
 	dto := DaemonDTO{
 		ID:                 string(d.ID),
 		Name:               d.Name,
 		Version:            d.Version,
 		Address:            d.Address,
-		State:              d.State.String(),
+		State:              effectiveState,
 		ConnectedAt:        d.ConnectedAt.Format(time.RFC3339),
 		LastHeartbeat:      d.LastHeartbeat.Format(time.RFC3339),
 		HeartbeatsMissed:   d.HeartbeatsMissed,

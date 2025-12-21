@@ -20,6 +20,8 @@ function getStatePriority(state: DaemonState): BadgePriority {
   switch (state) {
     case 'connected':
       return 'secondary'; // Dark gray like "idle" states
+    case 'transcoding':
+      return 'info'; // Blue for active transcoding
     case 'draining':
       return 'warning';
     case 'unhealthy':
@@ -34,18 +36,21 @@ function getStatePriority(state: DaemonState): BadgePriority {
 }
 
 // Map daemon state to icon color
+// TODO: Add success/warning/info theme colors to globals.css for proper semantic styling
 function getStateColor(state: DaemonState): string {
   switch (state) {
     case 'connected':
       return 'text-muted-foreground';
+    case 'transcoding':
+      return 'text-primary'; // Active state - uses theme primary
     case 'draining':
-      return 'text-yellow-500';
+      return 'text-yellow-600 dark:text-yellow-400'; // TODO: needs --warning theme color
     case 'unhealthy':
-      return 'text-red-500';
+      return 'text-destructive';
     case 'disconnected':
-      return 'text-red-500';
+      return 'text-destructive';
     case 'connecting':
-      return 'text-blue-500';
+      return 'text-primary';
     default:
       return 'text-muted-foreground';
   }
@@ -53,12 +58,12 @@ function getStateColor(state: DaemonState): string {
 
 // Map daemon state to collapsed item status
 function getItemStatus(daemon: Daemon): MasterItemStatus {
-  // If actively transcoding, show as active
-  if (daemon.active_jobs > 0) return 'active';
   // Map state to status
   switch (daemon.state) {
     case 'connected':
       return 'default';
+    case 'transcoding':
+      return 'active';
     case 'draining':
       return 'warning';
     case 'unhealthy':
@@ -151,8 +156,8 @@ export function Transcoders() {
       });
     }
 
-    // Animate when transcoding (has active jobs)
-    const isTranscoding = daemon.active_jobs > 0;
+    // Animate when in transcoding state
+    const isTranscoding = daemon.state === 'transcoding';
 
     return {
       id: daemon.id,
