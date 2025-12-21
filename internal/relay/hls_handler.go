@@ -196,12 +196,19 @@ func (h *HLSHandler) GeneratePlaylist(baseURL string) string {
 	// Ensure baseURL doesn't have trailing slash
 	baseURL = strings.TrimSuffix(baseURL, "/")
 
+	// Determine the correct format value for segment URLs
+	// Use hls-fmp4 when in fMP4 mode to ensure proper routing
+	formatValue := FormatValueHLS
+	if isFMP4Mode {
+		formatValue = FormatValueHLSFMP4
+	}
+
 	// For fMP4 mode, add EXT-X-MAP pointing to the initialization segment
 	// This tells players where to get the ftyp+moov boxes before any media segments
 	if isFMP4Mode && hasInitSegment {
 		sb.WriteString(fmt.Sprintf("#EXT-X-MAP:URI=\"%s?%s=%s&%s=1\"\n",
 			baseURL,
-			QueryParamFormat, FormatValueHLS,
+			QueryParamFormat, formatValue,
 			QueryParamInit,
 		))
 	}
@@ -223,7 +230,7 @@ func (h *HLSHandler) GeneratePlaylist(baseURL string) string {
 		sb.WriteString(fmt.Sprintf("#EXTINF:%.3f,\n", seg.Duration))
 		sb.WriteString(fmt.Sprintf("%s?%s=%s&%s=%d\n",
 			baseURL,
-			QueryParamFormat, FormatValueHLS,
+			QueryParamFormat, formatValue,
 			QueryParamSegment, seg.Sequence,
 		))
 	}
