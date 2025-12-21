@@ -49,7 +49,7 @@ function RefreshControlCompact({
         <Label
           className={cn(
             'text-xs whitespace-nowrap w-8 text-right font-medium',
-            isAutoRefresh ? 'text-green-500' : 'text-muted-foreground'
+            isAutoRefresh ? 'text-success' : 'text-muted-foreground'
           )}
           title={
             refreshInterval === 0
@@ -131,7 +131,7 @@ function RefreshControlCard({
             <Label
               className={cn(
                 'text-sm font-medium',
-                isAutoRefresh ? 'text-green-500' : 'text-muted-foreground'
+                isAutoRefresh ? 'text-success' : 'text-muted-foreground'
               )}
             >
               Update Interval: {refreshInterval === 0 ? 'Off' : `${refreshInterval}s`}

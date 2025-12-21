@@ -481,18 +481,18 @@ export function MasterDetailLayout<T extends MasterItem>({
               <div className="flex flex-col items-center gap-1 py-2">
                 {filteredItems.map((item, index) => {
                   const isSelected = item.id === selectedId;
-                  // Status-based styling for collapsed indicators
+                  // Status-based styling for collapsed indicators using semantic theme colors
                   const getStatusClasses = () => {
                     if (isSelected) return 'bg-primary text-primary-foreground';
                     switch (item.status) {
                       case 'active':
-                        return 'bg-blue-500 text-white';
+                        return 'bg-info text-info-foreground';
                       case 'warning':
-                        return 'bg-amber-500 text-white';
+                        return 'bg-warning text-warning-foreground';
                       case 'error':
                         return 'bg-destructive text-destructive-foreground';
                       case 'success':
-                        return 'bg-emerald-500 text-white';
+                        return 'bg-success text-success-foreground';
                       default:
                         return 'bg-muted text-muted-foreground';
                     }
@@ -503,7 +503,7 @@ export function MasterDetailLayout<T extends MasterItem>({
                       onClick={() => onSelect(item)}
                       className={cn(
                         'w-6 h-6 rounded-sm flex items-center justify-center text-[10px] font-medium transition-colors',
-                        'hover:bg-accent focus:outline-none focus:ring-1 focus:ring-ring',
+                        'hover:opacity-80 focus:outline-none focus:ring-1 focus:ring-ring',
                         getStatusClasses(),
                         item.animate && !isSelected && 'badge-sparkle'
                       )}
