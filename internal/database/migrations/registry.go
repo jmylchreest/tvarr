@@ -31,6 +31,7 @@ import (
 // - 020: Add ffmpegd_config table for distributed transcoding configuration
 // - 021: Add max_concurrent_streams column to stream_sources table
 // - 022: Add encoder_overrides table for hardware encoder workarounds
+// - 023: Remove deprecated client_detection_enabled column from stream_proxies
 func AllMigrations() []Migration {
 	return []Migration{
 		migration001Schema(),
@@ -55,6 +56,7 @@ func AllMigrations() []Migration {
 		migration020FFmpegdConfig(),
 		migration021StreamSourceMaxConcurrent(),
 		migration022EncoderOverrides(),
+		migration023RemoveClientDetectionEnabled(),
 	}
 }
 

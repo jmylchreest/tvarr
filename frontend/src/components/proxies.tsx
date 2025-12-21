@@ -485,6 +485,7 @@ export function Proxies() {
                 isLoading={loading.proxies}
                 title={`Proxies (${allProxies.length})`}
                 searchPlaceholder="Search by name, mode, status..."
+                storageKey="proxies"
                 headerAction={
                   <Button
                     size="sm"

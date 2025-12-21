@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Server, MonitorCheck } from 'lucide-react';
 import { ClusterStats } from '@/components/transcoders/ClusterStats';
 import { ConnectTranscoderButton } from '@/components/transcoders/DaemonList';
@@ -225,24 +225,22 @@ export function Transcoders() {
 
   return (
     <div className="flex flex-col h-full gap-4">
-      {/* Cluster Stats */}
-      <ClusterStats stats={clusterStats} isLoading={isLoading} />
+      {/* Header with description and refresh controls */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <p className="text-muted-foreground">
+            Monitor available transcoder(s)
+          </p>
+        </div>
+        <RefreshControl autoRefresh={autoRefresh} isLoading={isLoading} variant="compact" />
+      </div>
 
-      {/* Controls Bar */}
-      <Card>
-        <CardContent className="p-3">
-          <div className="flex items-center justify-between gap-3">
-            {/* Connect Transcoder */}
-            <ConnectTranscoderButton />
-
-            {/* Spacer */}
-            <div className="flex-1" />
-
-            {/* Refresh Controls */}
-            <RefreshControl autoRefresh={autoRefresh} isLoading={isLoading} variant="compact" />
-          </div>
-        </CardContent>
-      </Card>
+      {/* Cluster Stats with Connect button */}
+      <ClusterStats
+        stats={clusterStats}
+        isLoading={isLoading}
+        action={<ConnectTranscoderButton />}
+      />
 
       {/* Master/Detail Layout */}
       <Card className="flex-1 min-h-0 overflow-hidden">
@@ -256,6 +254,7 @@ export function Transcoders() {
             masterWidth={340}
             collapsible={true}
             defaultCollapsed={true}
+            storageKey="transcoders"
             filterFn={filterFn}
             emptyState={{
               title: 'No transcoders connected',

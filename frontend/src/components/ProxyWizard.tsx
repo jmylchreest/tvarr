@@ -74,7 +74,6 @@ export interface ProxyFormData {
   auto_regenerate: boolean;
   cache_channel_logos: boolean;
   cache_program_logos: boolean;
-  client_detection_enabled: boolean;
   encoding_profile_id?: string;
 }
 
@@ -163,7 +162,6 @@ export function ProxyWizard({
     auto_regenerate: true,
     cache_channel_logos: true,
     cache_program_logos: false,
-    client_detection_enabled: true,
   });
 
   // Wizard steps configuration
@@ -267,7 +265,6 @@ export function ProxyWizard({
           auto_regenerate: detailedProxy.auto_regenerate,
           cache_channel_logos: detailedProxy.cache_channel_logos,
           cache_program_logos: detailedProxy.cache_program_logos,
-          client_detection_enabled: detailedProxy.client_detection_enabled ?? true,
           encoding_profile_id: detailedProxy.encoding_profile_id || '',
         });
       } else {
@@ -303,7 +300,6 @@ export function ProxyWizard({
           auto_regenerate: true,
           cache_channel_logos: true,
           cache_program_logos: false,
-          client_detection_enabled: true,
           encoding_profile_id: defaultProfile?.id || '',
         });
       }
@@ -444,46 +440,30 @@ export function ProxyWizard({
                   </Select>
                 </div>
 
-                {formData.proxy_mode === 'smart' && (
-                  <>
-                    <div className="flex items-center justify-between rounded-lg border p-3">
-                      <div>
-                        <Label>Client Detection</Label>
-                        <p className="text-sm text-muted-foreground">
-                          Automatically detect client capabilities
-                        </p>
-                      </div>
-                      <Switch
-                        checked={formData.client_detection_enabled}
-                        onCheckedChange={(checked) =>
-                          setFormData((prev) => ({ ...prev, client_detection_enabled: checked }))
-                        }
-                      />
-                    </div>
-
-                    {encodingProfiles.length > 0 && (
-                      <div className="space-y-2">
-                        <Label>Default Encoding Profile</Label>
-                        <Select
-                          value={formData.encoding_profile_id || ''}
-                          onValueChange={(value) =>
-                            setFormData((prev) => ({ ...prev, encoding_profile_id: value }))
-                          }
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select encoding profile" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {encodingProfiles.map((profile) => (
-                              <SelectItem key={profile.id} value={profile.id}>
-                                {profile.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    )}
-                  </>
+                {formData.proxy_mode === 'smart' && encodingProfiles.length > 0 && (
+                  <div className="space-y-2">
+                    <Label>Fallback Encoding Profile</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Used when no client detection rule matches
+                    </p>
+                    <Select
+                      value={formData.encoding_profile_id || ''}
+                      onValueChange={(value) =>
+                        setFormData((prev) => ({ ...prev, encoding_profile_id: value }))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select encoding profile" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {encodingProfiles.map((profile) => (
+                          <SelectItem key={profile.id} value={profile.id}>
+                            {profile.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 )}
               </div>
             </WizardStepSection>

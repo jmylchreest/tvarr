@@ -432,6 +432,16 @@ function EncoderOverrideDetailPanel({
           </Alert>
         )}
 
+        {/* Compact Status Display */}
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <Badge variant="secondary">
+            {override.codec_type === 'video' ? 'Video' : 'Audio'}
+          </Badge>
+          <Badge variant="outline">
+            {override.source_codec.toUpperCase()} → {override.target_encoder}
+          </Badge>
+        </div>
+
         <div className="space-y-2">
           <Label htmlFor="detail-name">Name</Label>
           <Input
@@ -812,6 +822,7 @@ export function EncoderOverrides() {
               isLoading={loading.overrides}
               title={`Encoder Overrides (${sortedOverrides.length})`}
               searchPlaceholder="Search by name, codec..."
+              storageKey="encoder-overrides"
               sortable={true}
               onReorder={handleDragReorder}
               headerAction={

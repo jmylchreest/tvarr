@@ -102,6 +102,8 @@ export interface MasterDetailLayoutProps<T extends MasterItem> {
   onReorder?: (reorderedIds: string[]) => void | Promise<void>;
   /** Start with the master panel collapsed */
   defaultCollapsed?: boolean;
+  /** localStorage key to persist collapsed state (e.g., 'transcoders-panel') */
+  storageKey?: string;
 }
 
 /**
@@ -208,11 +210,32 @@ export function MasterDetailLayout<T extends MasterItem>({
   sortable = false,
   onReorder,
   defaultCollapsed = false,
+  storageKey,
 }: MasterDetailLayoutProps<T>) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
   const [isMobile, setIsMobile] = useState(false);
   const [showDetailOnMobile, setShowDetailOnMobile] = useState(false);
+
+  // Initialize collapsed state from localStorage or default
+  const [isCollapsed, setIsCollapsed] = useState(() => {
+    if (typeof window === 'undefined' || !storageKey) return defaultCollapsed;
+    try {
+      const stored = localStorage.getItem(`master-detail-${storageKey}-collapsed`);
+      return stored !== null ? stored === 'true' : defaultCollapsed;
+    } catch {
+      return defaultCollapsed;
+    }
+  });
+
+  // Persist collapsed state to localStorage
+  useEffect(() => {
+    if (!storageKey) return;
+    try {
+      localStorage.setItem(`master-detail-${storageKey}-collapsed`, String(isCollapsed));
+    } catch {
+      // Ignore localStorage errors
+    }
+  }, [isCollapsed, storageKey]);
 
   // DnD sensors for drag and drop
   const sensors = useSensors(
@@ -505,7 +528,7 @@ export function MasterDetailLayout<T extends MasterItem>({
                         'w-6 h-6 rounded-sm flex items-center justify-center text-[10px] font-medium transition-colors',
                         'hover:opacity-80 focus:outline-none focus:ring-1 focus:ring-ring',
                         getStatusClasses(),
-                        item.animate && !isSelected && 'badge-sparkle'
+                        item.animate && 'badge-sparkle'
                       )}
                       title={item.title}
                       aria-label={`Select ${item.title}`}

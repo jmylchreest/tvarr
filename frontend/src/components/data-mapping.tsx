@@ -60,26 +60,6 @@ interface ErrorState {
   action: string | null;
 }
 
-function formatDate(dateString: string): string {
-  return new Date(dateString).toLocaleString();
-}
-
-function formatRelativeTime(dateString: string): string {
-  const now = new Date();
-  const date = new Date(dateString);
-  const diffMs = now.getTime() - date.getTime();
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffDays = Math.floor(diffHours / 24);
-
-  if (diffDays > 0) {
-    return `${diffDays}d ago`;
-  } else if (diffHours > 0) {
-    return `${diffHours}h ago`;
-  } else {
-    return 'Just now';
-  }
-}
-
 // Convert DataMappingRule to MasterItem format for MasterDetailLayout
 interface DataMappingRuleMasterItem extends MasterItem {
   rule: DataMappingRule;
@@ -369,9 +349,6 @@ function DataMappingRuleDetailPanel({
         {/* Compact Rule Info */}
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <Badge variant="secondary">{rule.source_type.toUpperCase()}</Badge>
-          <span className="text-muted-foreground">
-            Created {rule.created_at ? formatRelativeTime(rule.created_at) : 'Unknown'}
-          </span>
         </div>
 
         {/* Edit Form */}
@@ -807,6 +784,7 @@ export function DataMapping() {
               isLoading={loading.rules}
               title={`Data Mapping Rules (${sortedRules.length})`}
               searchPlaceholder="Search by name, type, expression..."
+              storageKey="data-mapping"
               sortable={true}
               onReorder={handleDragReorder}
               headerAction={

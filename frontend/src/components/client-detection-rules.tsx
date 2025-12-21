@@ -711,6 +711,11 @@ function ClientDetectionRuleDetailPanel({
           </Alert>
         )}
 
+        {/* Compact Status Display */}
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <Badge variant="secondary">Priority {rule.priority}</Badge>
+        </div>
+
         {/* Basic Settings */}
         <CollapsibleSection title="Basic Settings" defaultOpen={true}>
           <div className="space-y-4 pt-3">
@@ -1180,6 +1185,7 @@ export function ClientDetectionRules() {
               isLoading={loading.rules}
               title={`Client Detection Rules (${sortedRules.length})`}
               searchPlaceholder="Search by name, expression..."
+              storageKey="client-detection-rules"
               sortable={true}
               onReorder={handleDragReorder}
               headerAction={

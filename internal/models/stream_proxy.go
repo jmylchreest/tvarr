@@ -122,12 +122,9 @@ type StreamProxy struct {
 	// Also used as fallback when no client detection rule matches.
 	EncodingProfileID *ULID `gorm:"type:varchar(26)" json:"encoding_profile_id,omitempty"`
 
-	// ClientDetectionEnabled enables automatic client capability detection.
-	// When true, the proxy uses client detection rules to determine the best
-	// output format and whether transcoding is needed for each client.
-	// When false, uses the EncodingProfile settings directly.
-	// Using pointer to distinguish between "not set" (nil->default true) and "explicitly false".
-	ClientDetectionEnabled *bool `gorm:"default:true" json:"client_detection_enabled"`
+	// NOTE: client_detection_enabled was removed - client detection is now always enabled.
+	// Rules determine codec/format selection; defaults are h264/aac + fMP4/HLS support.
+	// The database column was removed in migration 023.
 
 	// OutputPath is the path for generated files.
 	OutputPath string `gorm:"size:512" json:"output_path,omitempty"`

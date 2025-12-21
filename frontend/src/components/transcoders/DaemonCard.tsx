@@ -135,7 +135,6 @@ export function DaemonCard({ daemon, onDrain, onActivate }: DaemonCardProps) {
   const systemStats = daemon.system_stats;
   const capabilities = daemon.capabilities;
   const gpus = capabilities?.gpus ?? [];
-  const gpuStats = systemStats?.gpus ?? [];
 
   return (
     <Card>
@@ -228,12 +227,8 @@ export function DaemonCard({ daemon, onDrain, onActivate }: DaemonCardProps) {
           <div className="space-y-2">
             <div className="text-xs font-medium text-muted-foreground">GPU Sessions</div>
             <div className="space-y-2">
-              {gpus.map((gpu, idx) => (
-                <GPUSessionStatus
-                  key={gpu.index}
-                  gpu={gpu}
-                  stats={gpuStats.find((s) => s.index === gpu.index)}
-                />
+              {gpus.map((gpu) => (
+                <GPUSessionStatus key={gpu.index} gpu={gpu} />
               ))}
             </div>
           </div>

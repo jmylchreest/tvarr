@@ -199,6 +199,11 @@ func (s *FFmpegDService) GetClusterStats() ClusterStats {
 	var cpuTotal, memTotal float64
 	var cpuCount, memCount int
 
+	// Get total active jobs from job provider (source of truth)
+	if s.jobProvider != nil {
+		stats.TotalActiveJobs = len(s.jobProvider.GetAllJobs())
+	}
+
 	for _, d := range daemons {
 		stats.TotalDaemons++
 
@@ -212,8 +217,6 @@ func (s *FFmpegDService) GetClusterStats() ClusterStats {
 		case types.DaemonStateDisconnected:
 			stats.DisconnectedDaemons++
 		}
-
-		stats.TotalActiveJobs += d.ActiveJobs
 
 		// Count GPUs and sessions
 		if d.Capabilities != nil {

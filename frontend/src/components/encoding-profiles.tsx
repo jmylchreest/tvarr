@@ -92,37 +92,8 @@ const AUDIO_CODECS = [
   { value: 'mp3', label: 'MP3', description: 'Legacy compatibility' },
 ];
 
-const QUALITY_PRESETS = [
-  { value: 'low', label: 'Low', description: 'CRF 28, ~2Mbps max, 128k audio' },
-  { value: 'medium', label: 'Medium', description: 'CRF 23, ~5Mbps max, 192k audio' },
-  { value: 'high', label: 'High', description: 'CRF 20, ~10Mbps max, 256k audio' },
-  { value: 'ultra', label: 'Ultra', description: 'CRF 16, no bitrate cap, 320k audio' },
-];
-
-const HW_ACCEL_OPTIONS = [
-  { value: 'auto', label: 'Auto', description: 'Detect available hardware' },
-  { value: 'none', label: 'None', description: 'Software encoding only' },
-  { value: 'cuda', label: 'NVIDIA CUDA', description: 'NVIDIA GPU acceleration' },
-  { value: 'vaapi', label: 'VA-API', description: 'Intel/AMD Linux acceleration' },
-  { value: 'qsv', label: 'Intel QuickSync', description: 'Intel GPU acceleration' },
-  { value: 'videotoolbox', label: 'VideoToolbox', description: 'Apple Silicon acceleration' },
-];
-
-function formatRelativeTime(dateString: string): string {
-  const now = new Date();
-  const date = new Date(dateString);
-  const diffMs = now.getTime() - date.getTime();
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffDays = Math.floor(diffHours / 24);
-
-  if (diffDays > 0) {
-    return `${diffDays}d ago`;
-  } else if (diffHours > 0) {
-    return `${diffHours}h ago`;
-  } else {
-    return 'Just now';
-  }
-}
+// Quality preset and HW acceleration use sensible defaults (medium, auto)
+// and can be overridden via custom FFmpeg flags if needed.
 
 interface ProfileFormData {
   name: string;
@@ -260,101 +231,60 @@ function EncodingProfileCreatePanel({
           </div>
         </div>
 
-        {/* Codec Settings */}
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>Video Codec</Label>
-            <Select
-              value={formData.target_video_codec}
-              onValueChange={(value) => setFormData({ ...formData, target_video_codec: value })}
-              disabled={loading}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {VIDEO_CODECS.map((codec) => (
-                  <SelectItem key={codec.value} value={codec.value}>
-                    <div className="flex flex-col">
-                      <span>{codec.label}</span>
-                      <span className="text-xs text-muted-foreground">{codec.description}</span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+        {/* Fallback Codec Settings */}
+        <div className="space-y-3">
+          <div>
+            <Label className="text-sm font-medium">Fallback Codec Settings</Label>
+            <p className="text-xs text-muted-foreground mt-1">
+              Used when no client detection rule matches
+            </p>
           </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Video Codec</Label>
+              <Select
+                value={formData.target_video_codec}
+                onValueChange={(value) => setFormData({ ...formData, target_video_codec: value })}
+                disabled={loading}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {VIDEO_CODECS.map((codec) => (
+                    <SelectItem key={codec.value} value={codec.value}>
+                      <div className="flex flex-col">
+                        <span>{codec.label}</span>
+                        <span className="text-xs text-muted-foreground">{codec.description}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-          <div className="space-y-2">
-            <Label>Audio Codec</Label>
-            <Select
-              value={formData.target_audio_codec}
-              onValueChange={(value) => setFormData({ ...formData, target_audio_codec: value })}
-              disabled={loading}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {AUDIO_CODECS.map((codec) => (
-                  <SelectItem key={codec.value} value={codec.value}>
-                    <div className="flex flex-col">
-                      <span>{codec.label}</span>
-                      <span className="text-xs text-muted-foreground">{codec.description}</span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-
-        {/* Quality Settings */}
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>Quality Preset</Label>
-            <Select
-              value={formData.quality_preset}
-              onValueChange={(value) => setFormData({ ...formData, quality_preset: value as QualityPreset })}
-              disabled={loading}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {QUALITY_PRESETS.map((preset) => (
-                  <SelectItem key={preset.value} value={preset.value}>
-                    <div className="flex flex-col">
-                      <span>{preset.label}</span>
-                      <span className="text-xs text-muted-foreground">{preset.description}</span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-2">
-            <Label>Hardware Acceleration</Label>
-            <Select
-              value={formData.hw_accel}
-              onValueChange={(value) => setFormData({ ...formData, hw_accel: value })}
-              disabled={loading}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {HW_ACCEL_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    <div className="flex flex-col">
-                      <span>{option.label}</span>
-                      <span className="text-xs text-muted-foreground">{option.description}</span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="space-y-2">
+              <Label>Audio Codec</Label>
+              <Select
+                value={formData.target_audio_codec}
+                onValueChange={(value) => setFormData({ ...formData, target_audio_codec: value })}
+                disabled={loading}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {AUDIO_CODECS.map((codec) => (
+                    <SelectItem key={codec.value} value={codec.value}>
+                      <div className="flex flex-col">
+                        <span>{codec.label}</span>
+                        <span className="text-xs text-muted-foreground">{codec.description}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         </div>
 
@@ -696,35 +626,15 @@ function EncodingProfileDetailPanel({
           </Alert>
         )}
 
-        {/* Profile Info */}
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <Label className="text-xs text-muted-foreground">Status</Label>
-            <div className="mt-1 flex items-center gap-2">
-              {profile.is_default && (
-                <Badge variant="default">
-                  <Star className="h-3 w-3 mr-1" />
-                  Default
-                </Badge>
-              )}
-              {profile.is_system && (
-                <Badge variant="outline" className="text-purple-600 border-purple-600">
-                  <Lock className="h-3 w-3 mr-1" />
-                  System
-                </Badge>
-              )}
-              {!profile.is_default && !profile.is_system && (
-                <Badge variant="outline">Custom</Badge>
-              )}
-            </div>
+        {/* Profile Status */}
+        {profile.is_default && (
+          <div className="flex items-center gap-2">
+            <Badge variant="default">
+              <Star className="h-3 w-3 mr-1" />
+              Default
+            </Badge>
           </div>
-          <div>
-            <Label className="text-xs text-muted-foreground">Created</Label>
-            <div className="mt-1 text-sm">
-              {profile.created_at ? formatRelativeTime(profile.created_at) : 'Unknown'}
-            </div>
-          </div>
-        </div>
+        )}
 
         {/* Basic Settings */}
         <CollapsibleSection title="Basic Settings" defaultOpen={true}>
@@ -753,9 +663,12 @@ function EncodingProfileDetailPanel({
           </div>
         </CollapsibleSection>
 
-        {/* Codec Settings */}
-        <CollapsibleSection title="Codec Settings" defaultOpen={true}>
+        {/* Fallback Codec Settings */}
+        <CollapsibleSection title="Fallback Codec Settings" defaultOpen={true}>
           <div className="space-y-4 pt-3">
+            <p className="text-xs text-muted-foreground">
+              Used when no client detection rule matches
+            </p>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Video Codec</Label>
@@ -790,52 +703,6 @@ function EncodingProfileDetailPanel({
                     {AUDIO_CODECS.map((codec) => (
                       <SelectItem key={codec.value} value={codec.value}>
                         {codec.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </div>
-        </CollapsibleSection>
-
-        {/* Quality Settings */}
-        <CollapsibleSection title="Quality Settings" defaultOpen={true}>
-          <div className="space-y-4 pt-3">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Quality Preset</Label>
-                <Select
-                  value={formData.quality_preset}
-                  onValueChange={(value) => handleFieldChange('quality_preset', value as QualityPreset)}
-                  disabled={loading.edit || isSystem}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {QUALITY_PRESETS.map((preset) => (
-                      <SelectItem key={preset.value} value={preset.value}>
-                        {preset.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Hardware Acceleration</Label>
-                <Select
-                  value={formData.hw_accel}
-                  onValueChange={(value) => handleFieldChange('hw_accel', value)}
-                  disabled={loading.edit || isSystem}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {HW_ACCEL_OPTIONS.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -1166,6 +1033,7 @@ export function EncodingProfiles() {
               isLoading={loading.profiles}
               title={`Encoding Profiles (${allProfiles.length})`}
               searchPlaceholder="Search profiles by name, codec, quality..."
+              storageKey="encoding-profiles"
               headerAction={
                 <Button
                   size="sm"

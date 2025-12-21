@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
 import {
   Collapsible,
   CollapsibleContent,
@@ -29,11 +28,7 @@ import {
   Play,
   ChevronDown,
   ChevronUp,
-  Cpu,
-  MemoryStick,
-  Clock,
   Activity,
-  Zap,
   Settings,
   Copy,
   Check,
@@ -108,7 +103,6 @@ function formatBytes(bytes: number): string {
 }
 
 export function TranscoderDetailPanel({ daemon, onDrain, onActivate }: TranscoderDetailPanelProps) {
-  const [isHwAccelExpanded, setIsHwAccelExpanded] = useState(true);
   const [isCapabilitiesExpanded, setIsCapabilitiesExpanded] = useState(false);
   const [isJobsExpanded, setIsJobsExpanded] = useState(true);
   const [isActioning, setIsActioning] = useState(false);
@@ -166,7 +160,6 @@ export function TranscoderDetailPanel({ daemon, onDrain, onActivate }: Transcode
   const systemStats = daemon.system_stats;
   const capabilities = daemon.capabilities;
   const gpus = capabilities?.gpus ?? [];
-  const gpuStats = systemStats?.gpus ?? [];
 
   return (
     <div className="h-full flex flex-col">
@@ -221,80 +214,40 @@ export function TranscoderDetailPanel({ daemon, onDrain, onActivate }: Transcode
       </div>
 
       <ScrollArea className="flex-1 min-h-0">
-        <div className="p-6 space-y-6">
-          {/* Quick Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="rounded-lg border p-3">
-              <div className="flex items-center gap-2 text-muted-foreground mb-1">
-                <Activity className="h-4 w-4" />
-                <span className="text-xs font-medium">Active Jobs</span>
+        <div className="p-6 space-y-4">
+          {/* Compact Resource Summary */}
+          <div className="space-y-3">
+            {/* Inline stats row */}
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">Uptime</span>
+                <span className="font-medium">{formatUptime(daemon.connected_at)}</span>
               </div>
-              <p className="text-2xl font-bold">{daemon.active_jobs}</p>
-            </div>
-            <div className="rounded-lg border p-3">
-              <div className="flex items-center gap-2 text-muted-foreground mb-1">
-                <Clock className="h-4 w-4" />
-                <span className="text-xs font-medium">Uptime</span>
-              </div>
-              <p className="text-2xl font-bold">{formatUptime(daemon.connected_at)}</p>
-            </div>
-            <div className="rounded-lg border p-3">
-              <div className="flex items-center gap-2 text-muted-foreground mb-1">
-                <Cpu className="h-4 w-4" />
-                <span className="text-xs font-medium">CPU Usage</span>
-              </div>
-              <p className="text-2xl font-bold">{systemStats?.cpu_percent.toFixed(0) ?? '-'}%</p>
-            </div>
-            <div className="rounded-lg border p-3">
-              <div className="flex items-center gap-2 text-muted-foreground mb-1">
-                <MemoryStick className="h-4 w-4" />
-                <span className="text-xs font-medium">Memory</span>
-              </div>
-              <p className="text-2xl font-bold">{systemStats?.memory_percent.toFixed(0) ?? '-'}%</p>
-            </div>
-          </div>
-
-          {/* System Resources */}
-          {systemStats && (
-            <div className="space-y-4">
-              <h3 className="text-sm font-medium">System Resources</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
+              {systemStats && (
+                <>
+                  <div className="flex items-center gap-2">
                     <span className="text-muted-foreground">CPU</span>
-                    <span>{systemStats.cpu_percent.toFixed(1)}%</span>
+                    <span className="font-medium">{systemStats.cpu_percent.toFixed(0)}%</span>
                   </div>
-                  <Progress value={systemStats.cpu_percent} className="h-2" />
-                </div>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
+                  <div className="flex items-center gap-2">
                     <span className="text-muted-foreground">Memory</span>
-                    <span>
+                    <span className="font-medium">
                       {formatBytes(systemStats.memory_used)} / {formatBytes(systemStats.memory_total)}
                     </span>
                   </div>
-                  <Progress value={systemStats.memory_percent} className="h-2" />
-                </div>
-              </div>
+                </>
+              )}
             </div>
-          )}
 
-          {/* GPU Sessions */}
-          {gpus.length > 0 && (
-            <div className="space-y-3">
-              <h3 className="text-sm font-medium">GPU Sessions</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {/* GPU Sessions */}
+            {gpus.length > 0 && (
+              <div className="space-y-2">
                 {gpus.map((gpu) => (
-                  <div key={gpu.index} className={gpus.length === 1 ? 'md:col-span-2' : ''}>
-                    <GPUSessionStatus
-                      gpu={gpu}
-                      stats={gpuStats.find((s) => s.index === gpu.index)}
-                    />
-                  </div>
+                  <GPUSessionStatus key={gpu.index} gpu={gpu} />
                 ))}
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
           {/* Transcode Jobs */}
           <Collapsible open={isJobsExpanded} onOpenChange={setIsJobsExpanded}>
@@ -336,45 +289,7 @@ export function TranscoderDetailPanel({ daemon, onDrain, onActivate }: Transcode
             </div>
           </Collapsible>
 
-          {/* Hardware Acceleration */}
-          {(capabilities?.hw_accels?.length ?? 0) > 0 && (
-            <Collapsible open={isHwAccelExpanded} onOpenChange={setIsHwAccelExpanded}>
-              <div className="rounded-lg border">
-                <CollapsibleTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="w-full justify-between h-10 px-4 rounded-lg hover:bg-muted/50"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Zap className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm font-medium">Hardware Acceleration</span>
-                    </div>
-                    {isHwAccelExpanded ? (
-                      <ChevronUp className="h-4 w-4 text-muted-foreground" />
-                    ) : (
-                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                    )}
-                  </Button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="px-4 pb-4">
-                  <div className="flex flex-wrap gap-2 pt-2">
-                    {capabilities?.hw_accels?.map((hw) => (
-                      <Badge
-                        key={hw.type}
-                        variant={hw.available ? 'default' : 'outline'}
-                        className="text-sm"
-                      >
-                        {hw.type}
-                      </Badge>
-                    ))}
-                  </div>
-                </CollapsibleContent>
-              </div>
-            </Collapsible>
-          )}
-
-          {/* Encoders */}
+          {/* Capabilities (HW Accel + Encoders combined) */}
           {capabilities &&
             ((capabilities.video_encoders?.length ?? 0) > 0 ||
               (capabilities.audio_encoders?.length ?? 0) > 0 ||
@@ -389,7 +304,12 @@ export function TranscoderDetailPanel({ daemon, onDrain, onActivate }: Transcode
                     >
                       <div className="flex items-center gap-2">
                         <Settings className="h-4 w-4 text-muted-foreground" />
-                        <span className="text-sm font-medium">Encoders</span>
+                        <span className="text-sm font-medium">Capabilities</span>
+                        {(capabilities.hw_accels?.filter(hw => hw.available).length ?? 0) > 0 && (
+                          <Badge variant="secondary" className="h-5 px-1.5 text-xs">
+                            {capabilities.hw_accels?.filter(hw => hw.available).map(hw => hw.type).join(', ')}
+                          </Badge>
+                        )}
                       </div>
                       {isCapabilitiesExpanded ? (
                         <ChevronUp className="h-4 w-4 text-muted-foreground" />
@@ -398,100 +318,72 @@ export function TranscoderDetailPanel({ daemon, onDrain, onActivate }: Transcode
                       )}
                     </Button>
                   </CollapsibleTrigger>
-                  <CollapsibleContent className="px-4 pb-4 space-y-4">
+                  <CollapsibleContent className="px-4 pb-4 space-y-3">
                     {/* Hardware Accelerated Encoders */}
                     <TooltipProvider delayDuration={100}>
                       {capabilities.hw_accels?.filter(hw => hw.available).map((hw) => {
                         const matchingOverrides = getMatchingOverrides(hw.type);
                         return (
                           <div key={hw.type} className="pt-2 first:pt-2">
-                            <p className="text-sm font-medium text-muted-foreground mb-2">
-                              {hw.type.toUpperCase()} {hw.device && <span className="font-normal text-xs">({hw.device})</span>}
+                            <p className="text-xs font-medium text-muted-foreground mb-1.5">
+                              {hw.type.toUpperCase()} {hw.device && <span className="font-normal">({hw.device})</span>}
                             </p>
-
-                            {/* HW Encoders */}
-                            {((hw.hw_encoders?.length ?? 0) > 0 || (hw.filtered_encoders?.length ?? 0) > 0 || matchingOverrides.length > 0) && (
-                              <div className="mb-3">
-                                <p className="text-xs text-muted-foreground mb-1.5">HW Encoders</p>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {hw.hw_encoders?.map((enc) => (
-                                    <Badge key={enc} variant="default" className="text-xs">
-                                      {enc}
+                            <div className="flex flex-wrap gap-1.5">
+                              {hw.hw_encoders?.map((enc) => (
+                                <Badge key={enc} variant="default" className="text-xs">
+                                  {enc}
+                                </Badge>
+                              ))}
+                              {hw.hw_decoders?.map((dec) => (
+                                <Badge key={dec} variant="secondary" className="text-xs">
+                                  {dec}
+                                </Badge>
+                              ))}
+                              {hw.filtered_encoders?.map((fe) => (
+                                <Tooltip key={fe.name}>
+                                  <TooltipTrigger asChild>
+                                    <Badge variant="destructive" className="text-xs opacity-70 cursor-help">
+                                      {fe.name}
                                     </Badge>
-                                  ))}
-                                  {hw.filtered_encoders?.map((fe) => (
-                                    <Tooltip key={fe.name}>
-                                      <TooltipTrigger asChild>
-                                        <Badge variant="destructive" className="text-xs opacity-70 cursor-help">
-                                          {fe.name}
-                                        </Badge>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top" className="max-w-xs">
-                                        <p className="text-xs">{fe.reason}</p>
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  ))}
-                                  {matchingOverrides.map((override) => (
-                                    <Tooltip key={override.id}>
-                                      <TooltipTrigger asChild>
-                                        <Badge className="text-xs cursor-help bg-yellow-600 hover:bg-yellow-600/80 text-white">
-                                          {override.source_codec} → {override.target_encoder}
-                                        </Badge>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top" className="max-w-xs">
-                                        <p className="text-xs font-medium">{override.name}</p>
-                                        {override.description && (
-                                          <p className="text-xs text-muted-foreground mt-1">{override.description}</p>
-                                        )}
-                                        {override.cpu_match && (
-                                          <p className="text-xs text-muted-foreground mt-1">CPU match: {override.cpu_match}</p>
-                                        )}
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* HW Decoders */}
-                            {(hw.hw_decoders?.length ?? 0) > 0 && (
-                              <div>
-                                <p className="text-xs text-muted-foreground mb-1.5">HW Decoders</p>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {hw.hw_decoders?.map((dec) => (
-                                    <Badge key={dec} variant="secondary" className="text-xs">
-                                      {dec}
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-xs">
+                                    <p className="text-xs">{fe.reason}</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              ))}
+                              {matchingOverrides.map((override) => (
+                                <Tooltip key={override.id}>
+                                  <TooltipTrigger asChild>
+                                    <Badge className="text-xs cursor-help bg-yellow-600 hover:bg-yellow-600/80 text-white">
+                                      {override.source_codec} → {override.target_encoder}
                                     </Badge>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-xs">
+                                    <p className="text-xs font-medium">{override.name}</p>
+                                    {override.description && (
+                                      <p className="text-xs text-muted-foreground mt-1">{override.description}</p>
+                                    )}
+                                  </TooltipContent>
+                                </Tooltip>
+                              ))}
+                            </div>
                           </div>
                         );
                       })}
                     </TooltipProvider>
 
-                    {/* Software Video Encoders */}
-                    {capabilities.video_encoders?.length > 0 && (
+                    {/* Software Encoders */}
+                    {((capabilities.video_encoders?.length ?? 0) > 0 || (capabilities.audio_encoders?.length ?? 0) > 0) && (
                       <div className="pt-2 border-t">
-                        <p className="text-sm font-medium text-muted-foreground mb-2">Software Video</p>
-                        <div className="flex flex-wrap gap-2">
-                          {capabilities.video_encoders.map((enc) => (
-                            <Badge key={enc} variant="outline" className="text-sm">
+                        <p className="text-xs font-medium text-muted-foreground mb-1.5">Software</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {capabilities.video_encoders?.map((enc) => (
+                            <Badge key={enc} variant="outline" className="text-xs">
                               {enc}
                             </Badge>
                           ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Software Audio Encoders */}
-                    {capabilities.audio_encoders?.length > 0 && (
-                      <div className="pt-2 border-t">
-                        <p className="text-sm font-medium text-muted-foreground mb-2">Software Audio</p>
-                        <div className="flex flex-wrap gap-2">
-                          {capabilities.audio_encoders.map((enc) => (
-                            <Badge key={enc} variant="outline" className="text-sm">
+                          {capabilities.audio_encoders?.map((enc) => (
+                            <Badge key={enc} variant="outline" className="text-xs">
                               {enc}
                             </Badge>
                           ))}

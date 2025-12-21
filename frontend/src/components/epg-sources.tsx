@@ -1084,6 +1084,7 @@ export function EpgSources() {
               isLoading={loading.sources}
               title={`EPG Sources (${sortedSources.length})`}
               searchPlaceholder="Search by name, type, status..."
+              storageKey="epg-sources"
               headerAction={
                 <Button
                   size="sm"

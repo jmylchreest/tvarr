@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -238,10 +239,48 @@ func daemonToDTO(d *types.Daemon) DaemonDTO {
 }
 
 func daemonToDTOWithJobs(d *types.Daemon, jobs []service.ActiveJobInfo) DaemonDTO {
-	dto := daemonToDTO(d)
+	// Use actual job count from job manager as source of truth
+	// (heartbeat-reported d.ActiveJobs may be stale or not updated)
+	actualJobCount := len(jobs)
 
-	if len(jobs) > 0 {
-		dto.ActiveJobDetails = make([]ActiveJobDTO, 0, len(jobs))
+	// Compute effective state: show "transcoding" when connected with active jobs
+	effectiveState := d.State.String()
+	if d.State == types.DaemonStateConnected && actualJobCount > 0 {
+		effectiveState = "transcoding"
+	}
+
+	// Count GPU sessions by device from active jobs
+	gpuSessions := make(map[string]int) // device -> session count
+	for _, job := range jobs {
+		if job.HWDevice != "" {
+			gpuSessions[job.HWDevice]++
+		}
+	}
+
+	dto := DaemonDTO{
+		ID:                 string(d.ID),
+		Name:               d.Name,
+		Version:            d.Version,
+		Address:            d.Address,
+		State:              effectiveState,
+		ConnectedAt:        d.ConnectedAt.Format(time.RFC3339),
+		LastHeartbeat:      d.LastHeartbeat.Format(time.RFC3339),
+		HeartbeatsMissed:   d.HeartbeatsMissed,
+		ActiveJobs:         actualJobCount, // Use actual count, not heartbeat-reported
+		TotalJobsCompleted: d.TotalJobsCompleted,
+		TotalJobsFailed:    d.TotalJobsFailed,
+	}
+
+	if d.Capabilities != nil {
+		dto.Capabilities = capabilitiesToDTOWithSessions(d.Capabilities, gpuSessions)
+	}
+
+	if d.SystemStats != nil {
+		dto.SystemStats = systemStatsToDTO(d.SystemStats)
+	}
+
+	if actualJobCount > 0 {
+		dto.ActiveJobDetails = make([]ActiveJobDTO, 0, actualJobCount)
 		for _, job := range jobs {
 			dto.ActiveJobDetails = append(dto.ActiveJobDetails, ActiveJobDTO{
 				ID:            job.ID,
@@ -267,6 +306,12 @@ func daemonToDTOWithJobs(d *types.Daemon, jobs []service.ActiveJobInfo) DaemonDT
 }
 
 func capabilitiesToDTO(c *types.Capabilities) *CapabilitiesDTO {
+	return capabilitiesToDTOWithSessions(c, nil)
+}
+
+// capabilitiesToDTOWithSessions converts capabilities to DTO, updating GPU session counts
+// from the active jobs' hw_device usage.
+func capabilitiesToDTOWithSessions(c *types.Capabilities, gpuSessions map[string]int) *CapabilitiesDTO {
 	dto := &CapabilitiesDTO{
 		VideoEncoders:     c.VideoEncoders,
 		VideoDecoders:     c.VideoDecoders,
@@ -275,6 +320,9 @@ func capabilitiesToDTO(c *types.Capabilities) *CapabilitiesDTO {
 		MaxConcurrentJobs: c.MaxConcurrentJobs,
 	}
 
+	// Build device-to-GPU-index mapping from hw_accels
+	// e.g., "/dev/dri/renderD128" -> 0
+	deviceToGPUIndex := make(map[string]int)
 	for _, hw := range c.HWAccels {
 		// Convert filtered encoders
 		var filteredEncoders []FilteredEncoderDTO
@@ -293,9 +341,40 @@ func capabilitiesToDTO(c *types.Capabilities) *CapabilitiesDTO {
 			Decoders:         hw.Decoders,
 			FilteredEncoders: filteredEncoders,
 		})
+
+		// Map device path to GPU index (assume GPUs are ordered by index)
+		if hw.Device != "" && hw.Available {
+			// Find matching GPU by checking if name contains device
+			for _, gpu := range c.GPUs {
+				if strings.Contains(gpu.Name, hw.Device) {
+					deviceToGPUIndex[hw.Device] = gpu.Index
+					break
+				}
+			}
+			// Fallback: if only one GPU, map to it
+			if _, found := deviceToGPUIndex[hw.Device]; !found && len(c.GPUs) == 1 {
+				deviceToGPUIndex[hw.Device] = c.GPUs[0].Index
+			}
+		}
+	}
+
+	// Compute session counts per GPU index from gpuSessions map
+	gpuIndexSessions := make(map[int]int)
+	if gpuSessions != nil {
+		for device, count := range gpuSessions {
+			if idx, found := deviceToGPUIndex[device]; found {
+				gpuIndexSessions[idx] += count
+			}
+		}
 	}
 
 	for _, gpu := range c.GPUs {
+		activeSessions := gpu.ActiveEncodeSessions
+		// Override with computed count if available
+		if count, found := gpuIndexSessions[gpu.Index]; found {
+			activeSessions = count
+		}
+
 		dto.GPUs = append(dto.GPUs, GPUInfoDTO{
 			Index:                gpu.Index,
 			Name:                 gpu.Name,
@@ -303,7 +382,7 @@ func capabilitiesToDTO(c *types.Capabilities) *CapabilitiesDTO {
 			Driver:               gpu.Driver,
 			MaxEncodeSessions:    gpu.MaxEncodeSessions,
 			MaxDecodeSessions:    gpu.MaxDecodeSessions,
-			ActiveEncodeSessions: gpu.ActiveEncodeSessions,
+			ActiveEncodeSessions: activeSessions,
 			ActiveDecodeSessions: gpu.ActiveDecodeSessions,
 			MemoryTotal:          gpu.MemoryTotal,
 		})
@@ -311,6 +390,7 @@ func capabilitiesToDTO(c *types.Capabilities) *CapabilitiesDTO {
 
 	return dto
 }
+
 
 func systemStatsToDTO(s *types.SystemStats) *SystemStatsDTO {
 	dto := &SystemStatsDTO{

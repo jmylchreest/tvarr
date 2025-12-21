@@ -558,7 +558,10 @@ func (t *TranscodeJob) startFFmpeg() error {
 	//   -vf format=nv12,hwupload
 	//
 	// The hwupload filter transfers frames to GPU memory for encoding.
-	if hwAccel != "" {
+	// Skip if custom flags already contain hwaccel options (user manages it).
+	customFlagsHaveHwaccel := strings.Contains(t.config.GlobalFlags, "-hwaccel") ||
+		strings.Contains(t.config.InputFlags, "-hwaccel")
+	if hwAccel != "" && !customFlagsHaveHwaccel {
 		builder.InitHWDevice(hwAccel, hwDevice)
 		builder.HWAccel(hwAccel)
 		if hwDevice != "" {
@@ -566,6 +569,9 @@ func (t *TranscodeJob) startFFmpeg() error {
 		}
 		t.actualHWAccel = hwAccel
 		t.actualHWDevice = hwDevice
+	} else if customFlagsHaveHwaccel {
+		t.logger.Debug("skipping auto hwaccel, custom flags contain hwaccel options",
+			slog.String("job_id", t.id))
 	}
 
 	// Input settings - format depends on the input muxer

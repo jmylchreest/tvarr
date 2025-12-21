@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"os"
-	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
@@ -21,11 +20,12 @@ import (
 
 // StatsCollector collects system statistics for heartbeat reporting.
 type StatsCollector struct {
-	hostname        string
-	startTime       time.Time
-	lastNetStats    *net.IOCountersStat
-	lastNetTime     time.Time
-	gpuCapabilities []*proto.GPUInfo
+	hostname          string
+	startTime         time.Time
+	lastNetStats      *net.IOCountersStat
+	lastNetTime       time.Time
+	gpuCapabilities   []*proto.GPUInfo
+	gpuSessionTracker *GPUSessionTracker
 }
 
 // NewStatsCollector creates a new stats collector.
@@ -36,6 +36,11 @@ func NewStatsCollector(gpuCaps []*proto.GPUInfo) *StatsCollector {
 		startTime:       time.Now(),
 		gpuCapabilities: gpuCaps,
 	}
+}
+
+// SetGPUSessionTracker sets the GPU session tracker for session counting.
+func (c *StatsCollector) SetGPUSessionTracker(tracker *GPUSessionTracker) {
+	c.gpuSessionTracker = tracker
 }
 
 // Collect gathers current system statistics.
@@ -227,62 +232,34 @@ func (c *StatsCollector) CollectTypes(ctx context.Context) (*types.SystemStats, 
 	return stats, nil
 }
 
-// collectGPUStats collects NVIDIA GPU stats via nvidia-smi.
+// collectGPUStats creates GPU stats from capabilities.
+// Runtime utilization metrics are NOT collected - only session counts matter for job scheduling.
+// Active session counts are computed by the coordinator from actual running jobs.
+//
+// This approach:
+// - Treats all GPU types consistently (NVIDIA, AMD, Intel)
+// - Avoids external tool dependencies (nvidia-smi)
+// - Focuses on what matters for scheduling: session availability
 func (c *StatsCollector) collectGPUStats(ctx context.Context) []*proto.GPUStats {
-	// Check for nvidia-smi
-	cmd := exec.CommandContext(ctx, "nvidia-smi",
-		"--query-gpu=index,name,driver_version,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,utilization.encoder,utilization.decoder",
-		"--format=csv,noheader,nounits")
+	var stats []*proto.GPUStats
 
-	output, err := cmd.Output()
-	if err != nil {
-		return nil
+	for _, gpuCap := range c.gpuCapabilities {
+		stat := &proto.GPUStats{
+			Index:             gpuCap.Index,
+			Name:              gpuCap.Name,
+			DriverVersion:     gpuCap.DriverVersion,
+			GpuClass:          gpuCap.GpuClass,
+			MaxEncodeSessions: gpuCap.MaxEncodeSessions,
+			MaxDecodeSessions: gpuCap.MaxDecodeSessions,
+			// ActiveEncodeSessions/ActiveDecodeSessions are computed by the
+			// coordinator from actual running jobs, not reported by the daemon
+		}
+		stats = append(stats, stat)
 	}
 
-	var stats []*proto.GPUStats
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-
-	for _, line := range lines {
-		parts := strings.Split(line, ", ")
-		if len(parts) < 10 {
-			continue
-		}
-
-		index, _ := strconv.Atoi(strings.TrimSpace(parts[0]))
-		utilization, _ := strconv.ParseFloat(strings.TrimSpace(parts[3]), 64)
-		memUsed, _ := strconv.ParseUint(strings.TrimSpace(parts[4]), 10, 64)
-		memTotal, _ := strconv.ParseUint(strings.TrimSpace(parts[5]), 10, 64)
-		temp, _ := strconv.Atoi(strings.TrimSpace(parts[6]))
-		power, _ := strconv.ParseFloat(strings.TrimSpace(parts[7]), 64)
-		encUtil, _ := strconv.ParseFloat(strings.TrimSpace(parts[8]), 64)
-		decUtil, _ := strconv.ParseFloat(strings.TrimSpace(parts[9]), 64)
-
-		stat := &proto.GPUStats{
-			Index:                int32(index),
-			Name:                 strings.TrimSpace(parts[1]),
-			DriverVersion:        strings.TrimSpace(parts[2]),
-			UtilizationPercent:   utilization,
-			MemoryTotalBytes:     memTotal * 1024 * 1024, // MiB to bytes
-			MemoryUsedBytes:      memUsed * 1024 * 1024,
-			MemoryPercent:        float64(memUsed) / float64(memTotal) * 100,
-			TemperatureCelsius:   int32(temp),
-			PowerWatts:           int32(power),
-			EncoderUtilization:   encUtil,
-			DecoderUtilization:   decUtil,
-			MaxEncodeSessions:    5, // Default for consumer NVIDIA
-			ActiveEncodeSessions: 0, // TODO: Track actual sessions
-		}
-
-		// Update max sessions from capabilities if available
-		for _, gpuCap := range c.gpuCapabilities {
-			if int(gpuCap.Index) == index {
-				stat.MaxEncodeSessions = gpuCap.MaxEncodeSessions
-				stat.GpuClass = gpuCap.GpuClass
-				break
-			}
-		}
-
-		stats = append(stats, stat)
+	// Update session counts from the tracker if available (for local tracking)
+	if c.gpuSessionTracker != nil && len(stats) > 0 {
+		c.gpuSessionTracker.UpdateGPUStats(stats)
 	}
 
 	return stats

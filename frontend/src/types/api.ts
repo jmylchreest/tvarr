@@ -169,7 +169,6 @@ export interface StreamProxy {
   upstream_timeout?: number;
   cache_channel_logos: boolean;
   cache_program_logos: boolean;
-  client_detection_enabled: boolean;
   encoding_profile_id?: string;
   m3u8_url?: string;
   xmltv_url?: string;

@@ -41,16 +41,36 @@ const edgeTypes = {
   animated: AnimatedEdge,
 };
 
+export interface FlowMetadata {
+  totalSessions: number;
+  totalClients: number;
+  totalIngressBps: number;
+  totalEgressBps: number;
+}
+
 interface RelayFlowDiagramProps {
   pollingInterval?: number;
   className?: string;
+  onMetadataUpdate?: (metadata: FlowMetadata) => void;
 }
 
-function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: RelayFlowDiagramProps) {
+function RelayFlowDiagramInner({ pollingInterval = 2000, className = '', onMetadataUpdate }: RelayFlowDiagramProps) {
   const { data, isLoading, error, refetch } = useRelayFlowData({
     pollingInterval,
     enabled: true,
   });
+
+  // Notify parent of metadata updates
+  useEffect(() => {
+    if (data?.metadata && onMetadataUpdate) {
+      onMetadataUpdate({
+        totalSessions: data.metadata.totalSessions ?? 0,
+        totalClients: data.metadata.totalClients ?? 0,
+        totalIngressBps: data.metadata.totalIngressBps ?? 0,
+        totalEgressBps: data.metadata.totalEgressBps ?? 0,
+      });
+    }
+  }, [data?.metadata, onMetadataUpdate]);
 
   const { fitView, getNodes } = useReactFlow();
 

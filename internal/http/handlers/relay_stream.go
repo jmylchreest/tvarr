@@ -13,7 +13,6 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/go-chi/chi/v5"
-	"github.com/jmylchreest/tvarr/internal/codec"
 	"github.com/jmylchreest/tvarr/internal/ffmpeg"
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/relay"
@@ -667,100 +666,47 @@ func (h *RelayStreamHandler) capsToClientFormat(caps relay.ClientCapabilities) s
 
 // computeTargetVariant determines the target codec variant for transcoding.
 // Logic:
-// - If client detection is enabled on the proxy:
-//   - Video: if source video NOT in accepted_video_codecs → use preferred_video_codec, else copy
-//   - Audio: if source audio NOT in accepted_audio_codecs → use preferred_audio_codec, else copy
-// - If client detection is disabled:
-//   - Use the encoding profile's target codecs
+// Client detection is always enabled - rules determine codec/format selection.
+// - Video: if source video NOT in accepted_video_codecs → use preferred_video_codec, else copy
+// - Audio: if source audio NOT in accepted_audio_codecs → use preferred_audio_codec, else copy
+// If no rules match, defaults to h264/aac with fMP4/HLS support.
 func (h *RelayStreamHandler) computeTargetVariant(
 	info *service.StreamInfo,
 	clientCaps relay.ClientCapabilities,
 	sourceVideoCodec, sourceAudioCodec string,
 ) relay.CodecVariant {
-	// Check if client detection is enabled on the proxy
-	// Client detection takes priority over encoding profile when enabled
-	clientDetectionEnabled := info != nil && info.Proxy != nil &&
-		info.Proxy.ClientDetectionEnabled != nil && *info.Proxy.ClientDetectionEnabled
-
-	if clientDetectionEnabled {
-		// Determine video codec: transcode if source not in accepted list
-		videoCodec := "copy"
-		if sourceVideoCodec != "" && !clientCaps.AcceptsVideoCodec(sourceVideoCodec) {
-			if clientCaps.PreferredVideoCodec != "" {
-				videoCodec = clientCaps.PreferredVideoCodec
-			}
+	// Determine video codec: transcode if source not in accepted list
+	videoCodec := "copy"
+	if sourceVideoCodec != "" && !clientCaps.AcceptsVideoCodec(sourceVideoCodec) {
+		if clientCaps.PreferredVideoCodec != "" {
+			videoCodec = clientCaps.PreferredVideoCodec
 		}
-
-		// Determine audio codec: transcode if source not in accepted list
-		audioCodec := "copy"
-		if sourceAudioCodec != "" && !clientCaps.AcceptsAudioCodec(sourceAudioCodec) {
-			if clientCaps.PreferredAudioCodec != "" {
-				audioCodec = clientCaps.PreferredAudioCodec
-			}
-		}
-
-		// If both are copy, return VariantCopy
-		if videoCodec == "copy" && audioCodec == "copy" {
-			return relay.VariantCopy
-		}
-
-		variant := relay.NewCodecVariant(videoCodec, audioCodec)
-		h.logger.Debug("Target variant from client detection",
-			"video_target", videoCodec,
-			"audio_target", audioCodec,
-			"source_video", sourceVideoCodec,
-			"source_audio", sourceAudioCodec,
-			"variant", variant.String(),
-			"detection_source", clientCaps.DetectionSource,
-			"matched_rule", clientCaps.MatchedRuleName,
-		)
-		return variant
 	}
 
-	// Client detection disabled - use encoding profile
-	if info != nil && info.EncodingProfile != nil && info.EncodingProfile.NeedsTranscode() {
-		encodingProfile := info.EncodingProfile
-		profileVideoCodec := string(encodingProfile.TargetVideoCodec)
-		profileAudioCodec := string(encodingProfile.TargetAudioCodec)
-
-		// Normalize empty/none to "copy"
-		if profileVideoCodec == "" || profileVideoCodec == "none" {
-			profileVideoCodec = "copy"
+	// Determine audio codec: transcode if source not in accepted list
+	audioCodec := "copy"
+	if sourceAudioCodec != "" && !clientCaps.AcceptsAudioCodec(sourceAudioCodec) {
+		if clientCaps.PreferredAudioCodec != "" {
+			audioCodec = clientCaps.PreferredAudioCodec
 		}
-		if profileAudioCodec == "" || profileAudioCodec == "none" {
-			profileAudioCodec = "copy"
-		}
-
-		// Check if source already matches target - no need to transcode if they match
-		videoCodec := profileVideoCodec
-		if sourceVideoCodec != "" && codec.Normalize(sourceVideoCodec) == codec.Normalize(profileVideoCodec) {
-			videoCodec = "copy"
-		}
-
-		audioCodec := profileAudioCodec
-		if sourceAudioCodec != "" && codec.Normalize(sourceAudioCodec) == codec.Normalize(profileAudioCodec) {
-			audioCodec = "copy"
-		}
-
-		// If both are copy, return VariantCopy
-		if videoCodec == "copy" && audioCodec == "copy" {
-			return relay.VariantCopy
-		}
-
-		variant := relay.NewCodecVariant(videoCodec, audioCodec)
-		h.logger.Debug("Target variant from encoding profile",
-			"video_target", videoCodec,
-			"audio_target", audioCodec,
-			"source_video", sourceVideoCodec,
-			"source_audio", sourceAudioCodec,
-			"variant", variant.String(),
-			"profile_name", encodingProfile.Name,
-		)
-		return variant
 	}
 
-	// Default: no transcoding needed
-	return relay.VariantCopy
+	// If both are copy, return VariantCopy
+	if videoCodec == "copy" && audioCodec == "copy" {
+		return relay.VariantCopy
+	}
+
+	variant := relay.NewCodecVariant(videoCodec, audioCodec)
+	h.logger.Debug("Target variant from client detection",
+		"video_target", videoCodec,
+		"audio_target", audioCodec,
+		"source_video", sourceVideoCodec,
+		"source_audio", sourceAudioCodec,
+		"variant", variant.String(),
+		"detection_source", clientCaps.DetectionSource,
+		"matched_rule", clientCaps.MatchedRuleName,
+	)
+	return variant
 }
 
 // getEncodingProfile returns the encoding profile from stream info.
