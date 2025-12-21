@@ -774,17 +774,12 @@ func (s *RelaySession) runESPipeline() error {
 		inputURL = s.Classification.SelectedMediaPlaylist
 	}
 
-	// Get the target variant from profile - this is what processors will request
-	// If target differs from source, on-demand transcoding will be triggered
-	targetVariant := s.getTargetVariant()
-
 	// Default streaming settings (EncodingProfile focuses on encoding, not streaming parameters)
 	var targetSegmentDuration float64 = 6.0
 	var maxSegments = 7
 
 	slog.Debug("Starting ES pipeline",
 		slog.String("session_id", s.ID.String()),
-		slog.String("target_variant", targetVariant.String()),
 		slog.Bool("needs_transcode", s.EncodingProfile != nil && s.EncodingProfile.NeedsTranscode()))
 
 	// Start ingest in a goroutine FIRST - this feeds data to the demuxer
@@ -849,6 +844,14 @@ func (s *RelaySession) runESPipeline() error {
 	slog.Debug("Source variant ready, pipeline initialized",
 		slog.String("session_id", s.ID.String()),
 		slog.String("source_variant", s.esBuffer.SourceVariantKey().String()))
+
+	// Get the target variant from profile - NOW that source codecs are known
+	// "copy" will be resolved to actual source codec (e.g., "av1/aac" not "av1/copy")
+	targetVariant := s.getTargetVariant()
+
+	slog.Debug("Target variant resolved",
+		slog.String("session_id", s.ID.String()),
+		slog.String("target_variant", targetVariant.String()))
 
 	// Store processor config for on-demand creation
 	// Processors are NOT created here - they are created on-demand when clients connect
