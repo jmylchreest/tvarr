@@ -255,9 +255,22 @@ func (m *Manager) GetOrCreateSession(ctx context.Context, channelID models.ULID,
 		if session, ok := m.sessions[sessionID]; ok {
 			if !session.closed.Load() {
 				m.mu.RUnlock()
+				m.logger.Debug("Reusing existing session for channel",
+					slog.String("channel_id", channelID.String()),
+					slog.String("session_id", session.ID.String()))
 				return session, nil
 			}
+			m.logger.Debug("Found existing session but it's closed",
+				slog.String("channel_id", channelID.String()),
+				slog.String("session_id", sessionID.String()))
+		} else {
+			m.logger.Debug("channelSessions has entry but sessions map doesn't",
+				slog.String("channel_id", channelID.String()),
+				slog.String("session_id", sessionID.String()))
 		}
+	} else {
+		m.logger.Debug("No existing session for channel",
+			slog.String("channel_id", channelID.String()))
 	}
 	m.mu.RUnlock()
 
@@ -787,6 +800,14 @@ func (m *Manager) cleanupStaleSessions() {
 		}
 
 		if shouldRemove {
+			m.logger.Info("Session scheduled for cleanup",
+				slog.String("session_id", id.String()),
+				slog.String("channel_id", session.ChannelID.String()),
+				slog.Bool("closed", closed),
+				slog.Int("client_count", clientCount),
+				slog.Time("idle_since", idleSince),
+				slog.Time("last_activity", lastActivity),
+				slog.Duration("idle_grace_period", idleGracePeriod))
 			toRemove = append(toRemove, id)
 		}
 	}
@@ -799,6 +820,9 @@ func (m *Manager) cleanupStaleSessions() {
 	m.mu.Lock()
 	for _, id := range toRemove {
 		if session, ok := m.sessions[id]; ok {
+			m.logger.Info("Removing session from manager",
+				slog.String("session_id", id.String()),
+				slog.String("channel_id", session.ChannelID.String()))
 			delete(m.sessions, id)
 			delete(m.channelSessions, session.ChannelID)
 			go session.Close()

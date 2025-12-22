@@ -37,8 +37,46 @@ type VideoCodecParams struct {
 
 // AudioCodecParams holds extracted audio codec parameters.
 type AudioCodecParams struct {
-	Codec     string // "aac", "ac3", etc.
+	Codec     string // "aac", "ac3", "opus", "mp3"
 	AACConfig *mpeg4audio.AudioSpecificConfig
+
+	// Opus parameters
+	OpusChannelCount int
+
+	// AC3/EAC3 parameters
+	AC3SampleRate   int
+	AC3ChannelCount int
+
+	// MP3 parameters
+	MP3SampleRate   int
+	MP3ChannelCount int
+}
+
+// NewAudioCodecParamsFromCodec creates AudioCodecParams from a codec name with sensible defaults.
+// This is used when we know the codec from the variant but don't have detailed stream info.
+func NewAudioCodecParamsFromCodec(codecName string) *AudioCodecParams {
+	params := &AudioCodecParams{
+		Codec: codecName,
+	}
+
+	switch codecName {
+	case "opus":
+		params.OpusChannelCount = 2 // Default stereo
+	case "aac":
+		params.AACConfig = &mpeg4audio.AudioSpecificConfig{
+			Type:         mpeg4audio.ObjectTypeAACLC,
+			SampleRate:   48000,
+			ChannelCount: 2,
+		}
+	case "ac3", "eac3":
+		params.AC3SampleRate = 48000
+		params.AC3ChannelCount = 2
+	case "mp3":
+		params.MP3SampleRate = 48000
+		params.MP3ChannelCount = 2
+	}
+
+	return params
 }
 
 // ExtractVideoCodecParams extracts video codec parameters from ES samples.
@@ -759,17 +797,41 @@ func (a *ESSampleAdapter) UpdateVideoParams(samples []ESSample) bool {
 
 // UpdateAudioParams updates audio codec params from samples.
 // Only updates if params haven't been locked.
+// For AAC, extracts detailed config from ADTS headers.
+// For other codecs (Opus, AC3, MP3), uses the preset codec info.
 func (a *ESSampleAdapter) UpdateAudioParams(samples []ESSample) bool {
 	if a.paramsLocked && a.audioParams != nil {
 		return false
 	}
 
+	// If we already have audio params set (e.g., from SetAudioCodecFromVariant),
+	// and it's not AAC, don't try to extract from samples since we can't detect
+	// Opus/AC3/MP3 from raw ES samples.
+	if a.audioParams != nil && a.audioParams.Codec != "" && a.audioParams.Codec != "aac" {
+		return false
+	}
+
 	params := ExtractAudioCodecParams(samples)
 	if params != nil {
+		// If we already have a codec set from variant, preserve it
+		if a.audioParams != nil && a.audioParams.Codec != "" {
+			params.Codec = a.audioParams.Codec
+		}
 		a.audioParams = params
 		return true
 	}
 	return false
+}
+
+// SetAudioCodecFromVariant sets the audio codec params based on the variant.
+// This should be called before processing samples to ensure correct codec detection.
+// For non-AAC codecs (Opus, AC3, MP3), this is essential since we can't detect
+// them from ES samples like we can with AAC's ADTS headers.
+func (a *ESSampleAdapter) SetAudioCodecFromVariant(audioCodec string) {
+	if a.paramsLocked && a.audioParams != nil {
+		return
+	}
+	a.audioParams = NewAudioCodecParamsFromCodec(audioCodec)
 }
 
 // LockParams prevents further parameter updates.
@@ -855,8 +917,21 @@ func (a *ESSampleAdapter) ConfigureWriter(writer *FMP4Writer) error {
 		}
 	}
 
-	if a.audioParams != nil && a.audioParams.AACConfig != nil {
-		writer.SetAACConfig(a.audioParams.AACConfig)
+	if a.audioParams != nil {
+		switch a.audioParams.Codec {
+		case "aac":
+			if a.audioParams.AACConfig != nil {
+				writer.SetAACConfig(a.audioParams.AACConfig)
+			}
+		case "opus":
+			writer.SetOpusConfig(a.audioParams.OpusChannelCount)
+		case "ac3":
+			writer.SetAC3Config(a.audioParams.AC3SampleRate, a.audioParams.AC3ChannelCount)
+		case "eac3":
+			writer.SetEAC3Config(a.audioParams.AC3SampleRate, a.audioParams.AC3ChannelCount)
+		case "mp3":
+			writer.SetMP3Config(a.audioParams.MP3SampleRate, a.audioParams.MP3ChannelCount)
+		}
 	}
 
 	return nil

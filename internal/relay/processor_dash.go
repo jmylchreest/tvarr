@@ -4,6 +4,8 @@ package relay
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -121,6 +123,11 @@ func NewDASHProcessor(
 
 	base := NewBaseProcessor(id, OutputFormatDASH, nil)
 
+	adapter := NewESSampleAdapter(DefaultESSampleAdapterConfig())
+	// Set audio codec from variant so we correctly handle Opus, AC3, MP3, etc.
+	// This is essential for non-AAC codecs since we can't detect them from ES samples.
+	adapter.SetAudioCodecFromVariant(variant.AudioCodec())
+
 	p := &DASHProcessor{
 		BaseProcessor: base,
 		config:        config,
@@ -129,7 +136,7 @@ func NewDASHProcessor(
 		segments:      make([]*dashSegment, 0, config.MaxSegments),
 		segmentNotify: make(chan struct{}, 1),
 		writer:        NewFMP4Writer(),
-		adapter:       NewESSampleAdapter(DefaultESSampleAdapterConfig()),
+		adapter:       adapter,
 	}
 
 	return p
@@ -347,6 +354,15 @@ func (p *DASHProcessor) ServeSegment(w http.ResponseWriter, r *http.Request, seg
 		if initSeg == nil {
 			http.Error(w, "Init segment not ready", http.StatusServiceUnavailable)
 			return ErrDASHInitSegmentNotReady
+		}
+
+		// Handle conditional request to avoid duplicate MOOV atoms on client reconnects
+		if initSeg.ETag != "" {
+			w.Header().Set("ETag", initSeg.ETag)
+			if r.Header.Get("If-None-Match") == initSeg.ETag {
+				w.WriteHeader(http.StatusNotModified)
+				return nil
+			}
 		}
 
 		p.SetStreamHeaders(w)
@@ -689,14 +705,22 @@ func (p *DASHProcessor) generateInitSegment(hasVideo, hasAudio bool) error {
 		return fmt.Errorf("generating init: %w", err)
 	}
 
+	// Compute ETag from init segment hash to enable HTTP caching
+	// This helps clients avoid refetching the init segment on reconnects,
+	// which prevents "duplicate MOOV atom" warnings
+	hash := sha256.Sum256(initData)
+	etag := `"` + hex.EncodeToString(hash[:8]) + `"` // Use first 8 bytes (16 hex chars)
+
 	p.initSegmentMu.Lock()
 	p.initSegment = &InitSegment{
 		Data: initData,
+		ETag: etag,
 	}
 	p.initSegmentMu.Unlock()
 
 	p.config.Logger.Debug("Generated DASH init segment",
-		slog.Int("size", len(initData)))
+		slog.Int("size", len(initData)),
+		slog.String("etag", etag))
 
 	return nil
 }

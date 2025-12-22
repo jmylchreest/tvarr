@@ -53,6 +53,10 @@ type InitSegment struct {
 	// Data is the raw init segment bytes (ftyp+moov).
 	Data []byte
 
+	// ETag is a hash of the init segment data for HTTP caching.
+	// Used for conditional requests (If-None-Match) to avoid duplicate fetches.
+	ETag string
+
 	// Timestamp is when the init segment was created.
 	Timestamp time.Time
 

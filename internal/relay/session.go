@@ -211,8 +211,14 @@ func (s *RelaySession) runPipeline() {
 	defer func() {
 		if err != nil {
 			s.lastErr.Store(&err)
+			// Only mark closed on error - successful completion should let cleanup
+			// handle session lifecycle based on client count and idle timeout
+			s.closed.Store(true)
 		}
-		s.closed.Store(true)
+		// NOTE: Don't set closed=true on success! The ingest may have completed
+		// (e.g., fixed-length source stream), but clients may still be connected
+		// waiting for transcoded data. Let the cleanup logic handle session closure
+		// based on client count and idle timeout.
 	}()
 
 	for {
@@ -232,6 +238,8 @@ func (s *RelaySession) runPipeline() {
 
 		// Check for cancellation
 		if errors.Is(err, context.Canceled) {
+			// Context cancellation means session was explicitly closed
+			s.closed.Store(true)
 			return
 		}
 
@@ -710,12 +718,15 @@ func (s *RelaySession) getTargetVariant() CodecVariant {
 	}
 
 	variant := NewCodecVariant(videoCodec, audioCodec)
-	slog.Default().Log(context.Background(), observability.LevelTrace, "getTargetVariant result",
+	slog.Info("getTargetVariant result",
 		slog.String("session_id", s.ID.String()),
+		slog.String("profile_video_codec", string(s.EncodingProfile.TargetVideoCodec)),
+		slog.String("profile_audio_codec", string(s.EncodingProfile.TargetAudioCodec)),
+		slog.String("resolved_video_codec", videoCodec),
+		slog.String("resolved_audio_codec", audioCodec),
 		slog.String("resolved_variant", variant.String()),
-		slog.String("video_codec", videoCodec),
-		slog.String("audio_codec", audioCodec),
-		slog.Bool("has_cached_codec_info", s.CachedCodecInfo != nil))
+		slog.Bool("has_cached_codec_info", s.CachedCodecInfo != nil),
+		slog.String("cached_audio_codec", func() string { if s.CachedCodecInfo != nil { return s.CachedCodecInfo.AudioCodec } else { return "" }}()))
 	return variant
 }
 
@@ -1171,6 +1182,26 @@ func (s *RelaySession) handleVariantRequest(source, target CodecVariant) error {
 		slog.String("session_id", s.ID.String()),
 		slog.String("source_variant", source.String()),
 		slog.String("target_variant", target.String()))
+
+	// Check if a transcoder for this source+target already exists and is still running
+	// This prevents duplicate transcoders for the same variant pair
+	s.esTranscodersMu.Lock()
+	for _, existing := range s.esTranscoders {
+		stats := existing.Stats()
+		if stats.SourceVariant == source && stats.TargetVariant == target {
+			if !existing.IsClosed() {
+				s.esTranscodersMu.Unlock()
+				slog.Debug("Transcoder already exists for variant pair",
+					slog.String("session_id", s.ID.String()),
+					slog.String("source_variant", source.String()),
+					slog.String("target_variant", target.String()),
+					slog.String("transcoder_id", stats.ID))
+				return nil // Transcoder already running, nothing to do
+			}
+			// Transcoder exists but is closed - will be cleaned up later
+		}
+	}
+	s.esTranscodersMu.Unlock()
 
 	// Initialize transcoder factory if needed
 	if s.transcoderFactory == nil {
@@ -1842,64 +1873,68 @@ func (s *RelaySession) Stats() SessionStats {
 	hasDash := s.dashProcessors.Len() > 0
 
 	// MPEG-TS processor clients (all variants)
-	s.mpegtsProcessors.Range(func(_ CodecVariant, processor *MPEGTSProcessor) bool {
+	s.mpegtsProcessors.Range(func(variant CodecVariant, processor *MPEGTSProcessor) bool {
 		clientCount += processor.ClientCount()
 		for _, c := range processor.GetClients() {
 			clients = append(clients, ClientStats{
-				ID:           c.ID,
-				BytesRead:    c.BytesRead.Load(),
-				ConnectedAt:  c.ConnectedAt,
-				UserAgent:    c.UserAgent,
-				RemoteAddr:   c.RemoteAddr,
-				ClientFormat: "mpegts",
+				ID:            c.ID,
+				BytesRead:     c.BytesRead.Load(),
+				ConnectedAt:   c.ConnectedAt,
+				UserAgent:     c.UserAgent,
+				RemoteAddr:    c.RemoteAddr,
+				ClientFormat:  "mpegts",
+				ClientVariant: string(variant),
 			})
 		}
 		return true
 	})
 
 	// HLS TS processor clients (all variants)
-	s.hlsTSProcessors.Range(func(_ CodecVariant, processor *HLSTSProcessor) bool {
+	s.hlsTSProcessors.Range(func(variant CodecVariant, processor *HLSTSProcessor) bool {
 		clientCount += processor.ClientCount()
 		for _, c := range processor.GetClients() {
 			clients = append(clients, ClientStats{
-				ID:           c.ID,
-				BytesRead:    c.BytesRead.Load(),
-				ConnectedAt:  c.ConnectedAt,
-				UserAgent:    c.UserAgent,
-				RemoteAddr:   c.RemoteAddr,
-				ClientFormat: "hls",
+				ID:            c.ID,
+				BytesRead:     c.BytesRead.Load(),
+				ConnectedAt:   c.ConnectedAt,
+				UserAgent:     c.UserAgent,
+				RemoteAddr:    c.RemoteAddr,
+				ClientFormat:  "hls",
+				ClientVariant: string(variant),
 			})
 		}
 		return true
 	})
 
 	// HLS fMP4 processor clients (all variants)
-	s.hlsFMP4Processors.Range(func(_ CodecVariant, processor *HLSfMP4Processor) bool {
+	s.hlsFMP4Processors.Range(func(variant CodecVariant, processor *HLSfMP4Processor) bool {
 		clientCount += processor.ClientCount()
 		for _, c := range processor.GetClients() {
 			clients = append(clients, ClientStats{
-				ID:           c.ID,
-				BytesRead:    c.BytesRead.Load(),
-				ConnectedAt:  c.ConnectedAt,
-				UserAgent:    c.UserAgent,
-				RemoteAddr:   c.RemoteAddr,
-				ClientFormat: "hls",
+				ID:            c.ID,
+				BytesRead:     c.BytesRead.Load(),
+				ConnectedAt:   c.ConnectedAt,
+				UserAgent:     c.UserAgent,
+				RemoteAddr:    c.RemoteAddr,
+				ClientFormat:  "hls",
+				ClientVariant: string(variant),
 			})
 		}
 		return true
 	})
 
 	// DASH processor clients (all variants)
-	s.dashProcessors.Range(func(_ CodecVariant, processor *DASHProcessor) bool {
+	s.dashProcessors.Range(func(variant CodecVariant, processor *DASHProcessor) bool {
 		clientCount += processor.ClientCount()
 		for _, c := range processor.GetClients() {
 			clients = append(clients, ClientStats{
-				ID:           c.ID,
-				BytesRead:    c.BytesRead.Load(),
-				ConnectedAt:  c.ConnectedAt,
-				UserAgent:    c.UserAgent,
-				RemoteAddr:   c.RemoteAddr,
-				ClientFormat: "dash",
+				ID:            c.ID,
+				BytesRead:     c.BytesRead.Load(),
+				ConnectedAt:   c.ConnectedAt,
+				UserAgent:     c.UserAgent,
+				RemoteAddr:    c.RemoteAddr,
+				ClientFormat:  "dash",
+				ClientVariant: string(variant),
 			})
 		}
 		return true
@@ -2183,14 +2218,15 @@ type SessionStats struct {
 
 // ClientStats holds statistics for a single connected client.
 type ClientStats struct {
-	ID           string    `json:"id"`
-	BytesRead    uint64    `json:"bytes_read"`
-	LastSequence uint64    `json:"last_sequence"`
-	ConnectedAt  time.Time `json:"connected_at"`
-	LastRead     time.Time `json:"last_read,omitempty"`
-	UserAgent    string    `json:"user_agent,omitempty"`
-	RemoteAddr   string    `json:"remote_addr,omitempty"`
-	ClientFormat string    `json:"client_format,omitempty"` // Format this client is using (hls, mpegts, dash)
+	ID            string    `json:"id"`
+	BytesRead     uint64    `json:"bytes_read"`
+	LastSequence  uint64    `json:"last_sequence"`
+	ConnectedAt   time.Time `json:"connected_at"`
+	LastRead      time.Time `json:"last_read,omitempty"`
+	UserAgent     string    `json:"user_agent,omitempty"`
+	RemoteAddr    string    `json:"remote_addr,omitempty"`
+	ClientFormat  string    `json:"client_format,omitempty"`  // Format this client is using (hls, mpegts, dash)
+	ClientVariant string    `json:"client_variant,omitempty"` // Codec variant this client receives (e.g., "h265/aac", "av1/eac3")
 }
 
 // SessionSegmentBufferStats contains segment buffer statistics for a session.

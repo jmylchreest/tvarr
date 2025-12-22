@@ -287,7 +287,7 @@ func (m *CMAFMuxer) parseInitSegment() error {
 			if m.initSegment.Timescale == 0 {
 				m.initSegment.Timescale = track.TimeScale
 			}
-		case *mp4.CodecMPEG4Audio, *mp4.CodecAC3, *mp4.CodecOpus, *mp4.CodecMPEG1Audio:
+		case *mp4.CodecMPEG4Audio, *mp4.CodecAC3, *mp4.CodecEAC3, *mp4.CodecOpus, *mp4.CodecMPEG1Audio:
 			m.initSegment.HasAudio = true
 			m.initSegment.AudioTrackID = uint32(track.ID)
 		}
@@ -938,6 +938,25 @@ type FMP4Writer struct {
 	vp9Configured        bool
 	aacConf              *mpeg4audio.AudioSpecificConfig
 
+	// Opus params
+	opusChannelCount int
+	opusConfigured   bool
+
+	// AC3 params
+	ac3SampleRate   int
+	ac3ChannelCount int
+	ac3Configured   bool
+
+	// EAC3 params
+	eac3SampleRate   int
+	eac3ChannelCount int
+	eac3Configured   bool
+
+	// MP3 params
+	mp3SampleRate   int
+	mp3ChannelCount int
+	mp3Configured   bool
+
 	// State
 	seqNum      uint32
 	initialized bool
@@ -997,6 +1016,66 @@ func (w *FMP4Writer) SetAACConfig(config *mpeg4audio.AudioSpecificConfig) {
 	defer w.mu.Unlock()
 
 	w.aacConf = config
+}
+
+// SetOpusConfig sets Opus codec configuration.
+func (w *FMP4Writer) SetOpusConfig(channelCount int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if channelCount <= 0 {
+		channelCount = 2 // Default to stereo
+	}
+	w.opusChannelCount = channelCount
+	w.opusConfigured = true
+}
+
+// SetAC3Config sets AC3 codec configuration.
+func (w *FMP4Writer) SetAC3Config(sampleRate, channelCount int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if sampleRate <= 0 {
+		sampleRate = 48000
+	}
+	if channelCount <= 0 {
+		channelCount = 2
+	}
+	w.ac3SampleRate = sampleRate
+	w.ac3ChannelCount = channelCount
+	w.ac3Configured = true
+}
+
+// SetEAC3Config sets EAC3 (Enhanced AC3 / Dolby Digital Plus) codec configuration.
+func (w *FMP4Writer) SetEAC3Config(sampleRate, channelCount int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if sampleRate <= 0 {
+		sampleRate = 48000
+	}
+	if channelCount <= 0 {
+		channelCount = 2
+	}
+	w.eac3SampleRate = sampleRate
+	w.eac3ChannelCount = channelCount
+	w.eac3Configured = true
+}
+
+// SetMP3Config sets MP3 codec configuration.
+func (w *FMP4Writer) SetMP3Config(sampleRate, channelCount int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if sampleRate <= 0 {
+		sampleRate = 48000
+	}
+	if channelCount <= 0 {
+		channelCount = 2
+	}
+	w.mp3SampleRate = sampleRate
+	w.mp3ChannelCount = channelCount
+	w.mp3Configured = true
 }
 
 // GenerateInit generates an fMP4 initialization segment.
@@ -1061,15 +1140,43 @@ func (w *FMP4Writer) GenerateInit(hasVideo, hasAudio bool, videoTimescale, audio
 		}
 	}
 
-	if hasAudio && w.aacConf != nil {
-		w.audioTrack = &fmp4.InitTrack{
-			ID:        trackID,
-			TimeScale: audioTimescale,
-			Codec: &mp4.CodecMPEG4Audio{
+	if hasAudio {
+		var audioCodec mp4.Codec
+
+		// Check audio codecs in order of priority
+		if w.opusConfigured {
+			audioCodec = &mp4.CodecOpus{
+				ChannelCount: w.opusChannelCount,
+			}
+		} else if w.ac3Configured {
+			audioCodec = &mp4.CodecAC3{
+				SampleRate:   w.ac3SampleRate,
+				ChannelCount: w.ac3ChannelCount,
+			}
+		} else if w.eac3Configured {
+			audioCodec = &mp4.CodecEAC3{
+				SampleRate:   w.eac3SampleRate,
+				ChannelCount: w.eac3ChannelCount,
+			}
+		} else if w.mp3Configured {
+			audioCodec = &mp4.CodecMPEG1Audio{
+				SampleRate:   w.mp3SampleRate,
+				ChannelCount: w.mp3ChannelCount,
+			}
+		} else if w.aacConf != nil {
+			audioCodec = &mp4.CodecMPEG4Audio{
 				Config: *w.aacConf,
-			},
+			}
 		}
-		init.Tracks = append(init.Tracks, w.audioTrack)
+
+		if audioCodec != nil {
+			w.audioTrack = &fmp4.InitTrack{
+				ID:        trackID,
+				TimeScale: audioTimescale,
+				Codec:     audioCodec,
+			}
+			init.Tracks = append(init.Tracks, w.audioTrack)
+		}
 	}
 
 	if len(init.Tracks) == 0 {

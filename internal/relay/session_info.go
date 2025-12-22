@@ -120,6 +120,7 @@ type RelayClientInfo struct {
 	PlayerType    string    `json:"player_type,omitempty"`    // Extracted from X-Tvarr-Player header
 	DetectionRule string    `json:"detection_rule,omitempty"` // Client detection rule that matched
 	ClientFormat  string    `json:"client_format,omitempty"`  // Format this client is using (hls, mpegts, dash)
+	ClientVariant string    `json:"client_variant,omitempty"` // Codec variant this client receives (e.g., "h265/aac", "av1/eac3")
 	ConnectedAt   time.Time `json:"connected_at"`
 	ConnectedSecs float64   `json:"connected_secs"` // How long the client has been connected
 	BytesRead     uint64    `json:"bytes_read"`
@@ -276,6 +277,7 @@ func (s *SessionStats) ToSessionInfo() RelaySessionInfo {
 			UserAgent:     c.UserAgent,
 			RemoteAddr:    c.RemoteAddr,
 			ClientFormat:  c.ClientFormat,
+			ClientVariant: c.ClientVariant,
 			ConnectedAt:   c.ConnectedAt,
 			ConnectedSecs: connectedSecs,
 			BytesRead:     c.BytesRead,

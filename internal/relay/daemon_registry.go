@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jmylchreest/tvarr/internal/observability"
 	"github.com/jmylchreest/tvarr/pkg/ffmpegd/proto"
 	"github.com/jmylchreest/tvarr/pkg/ffmpegd/types"
 )
@@ -154,11 +153,6 @@ func (r *DaemonRegistry) HandleHeartbeat(req *proto.HeartbeatRequest) (*types.Da
 			}
 		}
 	}
-
-	r.logger.Log(context.Background(), observability.LevelTrace, "heartbeat received",
-		slog.String("daemon_id", string(daemonID)),
-		slog.Int("active_jobs", daemon.ActiveJobs),
-	)
 
 	return daemon, nil
 }

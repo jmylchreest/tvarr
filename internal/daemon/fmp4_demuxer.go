@@ -193,7 +193,7 @@ func (d *FMP4Demuxer) parseInit(moovData []byte) error {
 				slog.Uint64("timescale", uint64(track.TimeScale)),
 				slog.String("codec_type", d.config.TargetVideoCodec),
 			)
-		case *fmp4.CodecMPEG4Audio, *fmp4.CodecOpus, *fmp4.CodecAC3:
+		case *fmp4.CodecMPEG4Audio, *fmp4.CodecOpus, *fmp4.CodecAC3, *fmp4.CodecEAC3:
 			d.audioTrackID = track.ID
 			d.audioTimescale = track.TimeScale
 			d.logger.Info("fMP4 demuxer: found audio track",

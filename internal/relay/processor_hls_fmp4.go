@@ -4,6 +4,8 @@ package relay
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -126,6 +128,11 @@ func NewHLSfMP4Processor(
 
 	base := NewBaseProcessor(id, OutputFormatHLSFMP4, nil)
 
+	adapter := NewESSampleAdapter(DefaultESSampleAdapterConfig())
+	// Set audio codec from variant so we correctly handle Opus, AC3, MP3, etc.
+	// This is essential for non-AAC codecs since we can't detect them from ES samples.
+	adapter.SetAudioCodecFromVariant(variant.AudioCodec())
+
 	p := &HLSfMP4Processor{
 		BaseProcessor: base,
 		config:        config,
@@ -134,7 +141,7 @@ func NewHLSfMP4Processor(
 		segments:      make([]*hlsFMP4Segment, 0, config.MaxSegments),
 		segmentNotify: make(chan struct{}, 1),
 		writer:        NewFMP4Writer(),
-		adapter:       NewESSampleAdapter(DefaultESSampleAdapterConfig()),
+		adapter:       adapter,
 	}
 
 	return p
@@ -306,6 +313,15 @@ func (p *HLSfMP4Processor) ServeSegment(w http.ResponseWriter, r *http.Request, 
 		if initSeg == nil {
 			http.Error(w, "Init segment not ready", http.StatusServiceUnavailable)
 			return ErrInitSegmentNotReady
+		}
+
+		// Handle conditional request to avoid duplicate MOOV atoms on client reconnects
+		if initSeg.ETag != "" {
+			w.Header().Set("ETag", initSeg.ETag)
+			if r.Header.Get("If-None-Match") == initSeg.ETag {
+				w.WriteHeader(http.StatusNotModified)
+				return nil
+			}
 		}
 
 		p.SetStreamHeaders(w)
@@ -683,14 +699,22 @@ func (p *HLSfMP4Processor) generateInitSegment(hasVideo, hasAudio bool) error {
 		return fmt.Errorf("generating init: %w", err)
 	}
 
+	// Compute ETag from init segment hash to enable HTTP caching
+	// This helps clients avoid refetching the init segment on reconnects,
+	// which prevents "duplicate MOOV atom" warnings
+	hash := sha256.Sum256(initData)
+	etag := `"` + hex.EncodeToString(hash[:8]) + `"` // Use first 8 bytes (16 hex chars)
+
 	p.initSegmentMu.Lock()
 	p.initSegment = &InitSegment{
 		Data: initData,
+		ETag: etag,
 	}
 	p.initSegmentMu.Unlock()
 
 	p.config.Logger.Debug("Generated init segment",
-		slog.Int("size", len(initData)))
+		slog.Int("size", len(initData)),
+		slog.String("etag", etag))
 
 	return nil
 }

@@ -110,43 +110,34 @@ func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph
 			graph.Edges = append(graph.Edges, transcoderToBuffer)
 		}
 
-		// Group clients by their format for connecting to the right processor
-		clientsByFormat := b.groupClientsByFormat(session.Clients)
+		// Group clients by their format and codec variant
+		clientsByKey := b.groupClientsByFormatVariant(session.Clients)
 
-		// Determine which processors to show
-		activeFormats := session.ActiveProcessorFormats
-		if len(activeFormats) == 0 {
-			for format := range clientsByFormat {
-				activeFormats = append(activeFormats, format)
-			}
-			if len(activeFormats) == 0 && session.OutputFormat != "" {
-				activeFormats = []string{session.OutputFormat}
-			}
+		// Build processor keys from grouped clients
+		// This creates one processor per unique format+variant combination
+		processorKeys := make([]ProcessorKey, 0, len(clientsByKey))
+		for key := range clientsByKey {
+			processorKeys = append(processorKeys, key)
 		}
 
-		// Create processor and client nodes
-		for _, format := range activeFormats {
-			processorNode := b.buildProcessorNode(session, format)
+		// Fallback: if no clients, use session output format
+		if len(processorKeys) == 0 && session.OutputFormat != "" {
+			processorKeys = []ProcessorKey{{Format: session.OutputFormat}}
+		}
+
+		// Create processor and client nodes for each format+variant combination
+		for _, processorKey := range processorKeys {
+			processorNode := b.buildProcessorNode(session, processorKey)
 			graph.Nodes = append(graph.Nodes, processorNode)
 
-			// Create edge from buffer to processor
-			// Resolve target codecs - "copy" means use source codec, so display source codec instead
-			edgeVideoCodec := session.VideoCodec
-			edgeAudioCodec := session.AudioCodec
-			if session.RouteType == RouteTranscode {
-				if session.TargetVideoCodec != "" && session.TargetVideoCodec != "copy" {
-					edgeVideoCodec = session.TargetVideoCodec
-				}
-				if session.TargetAudioCodec != "" && session.TargetAudioCodec != "copy" {
-					edgeAudioCodec = session.TargetAudioCodec
-				}
-			}
+			// Resolve codecs for this processor's variant
+			edgeVideoCodec, edgeAudioCodec := b.resolveVariantCodecs(session, processorKey.Variant)
 
 			// Determine bandwidth for buffer -> processor edge
 			// Use real-time per-processor tracking if available
-			bufferToProcessorBps := session.EgressRateBps / uint64(max(len(activeFormats), 1))
+			bufferToProcessorBps := session.EgressRateBps / uint64(max(len(processorKeys), 1))
 			if session.EdgeBandwidth != nil && session.EdgeBandwidth.BufferToProcessor != nil {
-				if processorInfo, ok := session.EdgeBandwidth.BufferToProcessor[format]; ok {
+				if processorInfo, ok := session.EdgeBandwidth.BufferToProcessor[processorKey.Format]; ok {
 					bufferToProcessorBps = processorInfo.CurrentBps
 				}
 			}
@@ -157,14 +148,14 @@ func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph
 				bufferToProcessorBps,
 				edgeVideoCodec,
 				edgeAudioCodec,
-				format,
+				processorKey.Format,
 			)
 			graph.Edges = append(graph.Edges, bufferToProcessor)
 
 			// Create client nodes connected to this processor
-			clients := clientsByFormat[format]
+			clients := clientsByKey[processorKey]
 			for _, client := range clients {
-				clientNode := b.buildClientNode(session, client, format)
+				clientNode := b.buildClientNode(session, client, processorKey.Format)
 				graph.Nodes = append(graph.Nodes, clientNode)
 
 				// Calculate per-client egress rate
@@ -181,7 +172,7 @@ func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph
 					clientEgressBps,
 					edgeVideoCodec,
 					edgeAudioCodec,
-					format,
+					processorKey.Format,
 				)
 				graph.Edges = append(graph.Edges, processorToClient)
 			}
@@ -213,17 +204,59 @@ func (b *FlowBuilder) collectSystemStats(metadata *FlowGraphMetadata) {
 	}
 }
 
-// groupClientsByFormat groups clients by their output format.
-func (b *FlowBuilder) groupClientsByFormat(clients []RelayClientInfo) map[string][]RelayClientInfo {
-	result := make(map[string][]RelayClientInfo)
+// ProcessorKey uniquely identifies a processor by format and codec variant.
+type ProcessorKey struct {
+	Format  string
+	Variant string
+}
+
+// String returns a unique string representation for IDs.
+func (p ProcessorKey) String() string {
+	if p.Variant == "" || p.Variant == "copy/copy" {
+		return p.Format
+	}
+	return fmt.Sprintf("%s-%s", p.Format, p.Variant)
+}
+
+// groupClientsByFormatVariant groups clients by their format and codec variant.
+func (b *FlowBuilder) groupClientsByFormatVariant(clients []RelayClientInfo) map[ProcessorKey][]RelayClientInfo {
+	result := make(map[ProcessorKey][]RelayClientInfo)
 	for _, client := range clients {
 		format := client.ClientFormat
 		if format == "" {
 			continue
 		}
-		result[format] = append(result[format], client)
+		key := ProcessorKey{
+			Format:  format,
+			Variant: client.ClientVariant,
+		}
+		result[key] = append(result[key], client)
 	}
 	return result
+}
+
+// resolveVariantCodecs parses a variant string (e.g., "h265/aac") into video and audio codecs.
+// Falls back to session source codecs if variant is empty or "copy/copy".
+func (b *FlowBuilder) resolveVariantCodecs(session RelaySessionInfo, variant string) (videoCodec, audioCodec string) {
+	// Default to source codecs
+	videoCodec = session.VideoCodec
+	audioCodec = session.AudioCodec
+
+	// If no variant or it's the copy variant, use source codecs
+	if variant == "" || variant == "copy/copy" {
+		return videoCodec, audioCodec
+	}
+
+	// Parse variant string "video/audio"
+	parts := strings.Split(variant, "/")
+	if len(parts) >= 1 && parts[0] != "" && parts[0] != "copy" {
+		videoCodec = parts[0]
+	}
+	if len(parts) >= 2 && parts[1] != "" && parts[1] != "copy" {
+		audioCodec = parts[1]
+	}
+
+	return videoCodec, audioCodec
 }
 
 func (b *FlowBuilder) buildOriginNode(session RelaySessionInfo) RelayFlowNode {
@@ -344,31 +377,22 @@ func (b *FlowBuilder) buildTranscoderNode(session RelaySessionInfo) RelayFlowNod
 	}
 }
 
-func (b *FlowBuilder) buildProcessorNode(session RelaySessionInfo, format string) RelayFlowNode {
-	outputVideoCodec := session.VideoCodec
-	outputAudioCodec := session.AudioCodec
-	if session.RouteType == RouteTranscode {
-		// Resolve target codecs - "copy" means use source codec, so display source codec instead
-		if session.TargetVideoCodec != "" && session.TargetVideoCodec != "copy" {
-			outputVideoCodec = session.TargetVideoCodec
-		}
-		if session.TargetAudioCodec != "" && session.TargetAudioCodec != "copy" {
-			outputAudioCodec = session.TargetAudioCodec
-		}
-	}
+func (b *FlowBuilder) buildProcessorNode(session RelaySessionInfo, key ProcessorKey) RelayFlowNode {
+	// Resolve codecs from the processor's variant
+	outputVideoCodec, outputAudioCodec := b.resolveVariantCodecs(session, key.Variant)
 
 	return RelayFlowNode{
-		ID:       fmt.Sprintf("processor-%s-%s", session.SessionID, format),
+		ID:       fmt.Sprintf("processor-%s-%s", session.SessionID, key.String()),
 		Type:     FlowNodeTypeProcessor,
 		Position: FlowPosition{X: 0, Y: 0}, // Frontend calculates layout
 		Data: FlowNodeData{
-			Label:            b.getProcessorLabel(format),
+			Label:            b.getProcessorLabel(key.Format),
 			SessionID:        session.SessionID,
 			ChannelID:        session.ChannelID,
 			ChannelName:      session.ChannelName,
 			RouteType:        session.RouteType,
 			ProfileName:      session.ProfileName,
-			OutputFormat:     format,
+			OutputFormat:     key.Format,
 			OutputVideoCodec: outputVideoCodec,
 			OutputAudioCodec: outputAudioCodec,
 			ProcessingBps:    session.EgressRateBps,
@@ -407,7 +431,8 @@ func (b *FlowBuilder) buildClientNode(session RelaySessionInfo, client RelayClie
 			EgressBps:     egressBps,
 			ConnectedSecs: client.ConnectedSecs,
 		},
-		ParentID: fmt.Sprintf("processor-%s-%s", session.SessionID, clientFormat),
+		// Note: ParentID intentionally omitted - frontend calculates absolute positions
+		// Setting parentId would cause React Flow to add parent's position as offset
 	}
 }
 

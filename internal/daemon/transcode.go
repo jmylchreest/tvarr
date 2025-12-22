@@ -681,18 +681,25 @@ func (t *TranscodeJob) startFFmpeg() error {
 		// Fragmented MP4 output for AV1/VP9 or when requested
 		builder.OutputArgs("-f", "mp4")
 
-		// Choose movflags based on whether audio is being copied.
-		// With audio copy mode (especially AAC), FFmpeg needs to parse input frames
-		// to extract codec info (AudioSpecificConfig from ADTS headers).
-		// - empty_moov: Writes moov immediately (before any media processed) - fails with audio copy
-		//   because esds box lacks decoder specific info
-		// - delay_moov: Waits until first fragment is processed to write moov - allows
-		//   FFmpeg to extract codec info from the input stream first
-		if audioEncoder == "copy" {
+		// Choose movflags based on audio codec requirements.
+		// - empty_moov: Writes moov immediately (before any media processed)
+		// - delay_moov: Waits until first fragment is processed to write moov
+		//
+		// delay_moov is required for:
+		// 1. Audio copy mode - FFmpeg needs to extract codec info from ADTS headers
+		// 2. AC3/EAC3 encoding - FFmpeg cannot write moov before AC3 packets are analyzed
+		// 3. Opus encoding - Similar issue with codec parameter extraction
+		needsDelayMoov := audioEncoder == "copy" ||
+			audioEncoder == "ac3" ||
+			audioEncoder == "eac3" ||
+			audioEncoder == "libopus"
+
+		if needsDelayMoov {
 			builder.OutputArgs("-movflags", "frag_keyframe+delay_moov+default_base_moof")
-			t.logger.Debug("using delay_moov for audio copy mode",
+			t.logger.Debug("using delay_moov for audio codec",
 				slog.String("job_id", t.id),
-				slog.String("reason", "allows FFmpeg to extract codec info from input before writing moov"),
+				slog.String("audio_encoder", audioEncoder),
+				slog.String("reason", "codec requires packet analysis before moov can be written"),
 			)
 		} else {
 			builder.OutputArgs("-movflags", "frag_keyframe+empty_moov+default_base_moof")

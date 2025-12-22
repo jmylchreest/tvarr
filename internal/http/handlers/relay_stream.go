@@ -667,16 +667,18 @@ func (h *RelayStreamHandler) capsToClientFormat(caps relay.ClientCapabilities) s
 // computeTargetVariant determines the target codec variant for transcoding.
 // Logic:
 // Client detection is always enabled - rules determine codec/format selection.
-// - Video: if source video NOT in accepted_video_codecs → use preferred_video_codec, else copy
-// - Audio: if source audio NOT in accepted_audio_codecs → use preferred_audio_codec, else copy
+// - Video: if source video NOT in accepted_video_codecs → use preferred_video_codec, else keep source
+// - Audio: if source audio NOT in accepted_audio_codecs → use preferred_audio_codec, else keep source
 // If no rules match, defaults to h264/aac with fMP4/HLS support.
+// The returned variant always contains actual codec names (e.g., "h265/aac"), never "copy".
 func (h *RelayStreamHandler) computeTargetVariant(
 	info *service.StreamInfo,
 	clientCaps relay.ClientCapabilities,
 	sourceVideoCodec, sourceAudioCodec string,
 ) relay.CodecVariant {
 	// Determine video codec: transcode if source not in accepted list
-	videoCodec := "copy"
+	// Use source codec if accepted, preferred codec if transcoding needed
+	videoCodec := sourceVideoCodec
 	if sourceVideoCodec != "" && !clientCaps.AcceptsVideoCodec(sourceVideoCodec) {
 		if clientCaps.PreferredVideoCodec != "" {
 			videoCodec = clientCaps.PreferredVideoCodec
@@ -684,15 +686,16 @@ func (h *RelayStreamHandler) computeTargetVariant(
 	}
 
 	// Determine audio codec: transcode if source not in accepted list
-	audioCodec := "copy"
+	// Use source codec if accepted, preferred codec if transcoding needed
+	audioCodec := sourceAudioCodec
 	if sourceAudioCodec != "" && !clientCaps.AcceptsAudioCodec(sourceAudioCodec) {
 		if clientCaps.PreferredAudioCodec != "" {
 			audioCodec = clientCaps.PreferredAudioCodec
 		}
 	}
 
-	// If both are copy, return VariantCopy
-	if videoCodec == "copy" && audioCodec == "copy" {
+	// If both codecs match source (or are empty), return VariantCopy for passthrough
+	if videoCodec == sourceVideoCodec && audioCodec == sourceAudioCodec {
 		return relay.VariantCopy
 	}
 
