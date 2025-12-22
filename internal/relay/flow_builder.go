@@ -3,6 +3,7 @@ package relay
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -113,11 +114,24 @@ func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph
 		// Group clients by their format and codec variant
 		clientsByKey := b.groupClientsByFormatVariant(session.Clients)
 
+		// Log client variants for debugging
+		for _, client := range session.Clients {
+			slog.Debug("FlowBuilder: client variant",
+				slog.String("session_id", session.SessionID),
+				slog.String("client_id", client.ClientID),
+				slog.String("format", client.ClientFormat),
+				slog.String("variant", client.ClientVariant))
+		}
+
 		// Build processor keys from grouped clients
 		// This creates one processor per unique format+variant combination
 		processorKeys := make([]ProcessorKey, 0, len(clientsByKey))
 		for key := range clientsByKey {
 			processorKeys = append(processorKeys, key)
+			slog.Debug("FlowBuilder: processor key",
+				slog.String("session_id", session.SessionID),
+				slog.String("format", key.Format),
+				slog.String("variant", key.Variant))
 		}
 
 		// Fallback: if no clients, use session output format
@@ -132,6 +146,12 @@ func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph
 
 			// Resolve codecs for this processor's variant
 			edgeVideoCodec, edgeAudioCodec := b.resolveVariantCodecs(session, processorKey.Variant)
+			slog.Debug("FlowBuilder: resolved codecs",
+				slog.String("session_id", session.SessionID),
+				slog.String("processor_key", processorKey.String()),
+				slog.String("variant", processorKey.Variant),
+				slog.String("video_codec", edgeVideoCodec),
+				slog.String("audio_codec", edgeAudioCodec))
 
 			// Determine bandwidth for buffer -> processor edge
 			// Use real-time per-processor tracking if available

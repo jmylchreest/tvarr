@@ -1875,7 +1875,12 @@ func (s *RelaySession) Stats() SessionStats {
 	// MPEG-TS processor clients (all variants)
 	s.mpegtsProcessors.Range(func(variant CodecVariant, processor *MPEGTSProcessor) bool {
 		clientCount += processor.ClientCount()
-		for _, c := range processor.GetClients() {
+		processorClients := processor.GetClients()
+		slog.Debug("Stats: MPEG-TS processor variant",
+			slog.String("session_id", s.ID.String()),
+			slog.String("variant", string(variant)),
+			slog.Int("client_count", len(processorClients)))
+		for _, c := range processorClients {
 			clients = append(clients, ClientStats{
 				ID:            c.ID,
 				BytesRead:     c.BytesRead.Load(),
