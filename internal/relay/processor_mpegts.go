@@ -5,14 +5,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
 	"github.com/jmylchreest/tvarr/internal/observability"
 )
 
@@ -50,11 +48,9 @@ func DefaultMPEGTSProcessorConfig() MPEGTSProcessorConfig {
 // Unlike HLS/DASH processors, this outputs a continuous stream without segmentation.
 // It implements the Processor interface.
 type MPEGTSProcessor struct {
-	*BaseProcessor
+	*ESProcessorBase
 
-	config   MPEGTSProcessorConfig
-	esBuffer *SharedESBuffer
-	variant  CodecVariant
+	config MPEGTSProcessorConfig
 
 	// TS muxer for generating output
 	muxer    *TSMuxer
@@ -65,22 +61,9 @@ type MPEGTSProcessor struct {
 	patPmtHeader   []byte
 	patPmtHeaderMu sync.RWMutex
 
-	// ES reading state
-	lastVideoSeq uint64
-	lastAudioSeq uint64
-
-	// Reference to the ES variant for consumer tracking
-	esVariant *ESVariant
-
 	// Streaming clients
 	streamClients   map[string]*mpegtsStreamClient
 	streamClientsMu sync.RWMutex
-
-	// Lifecycle
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-	started atomic.Bool
 }
 
 // mpegtsStreamClient represents a connected streaming client.
@@ -106,14 +89,14 @@ func NewMPEGTSProcessor(
 		config.Logger = slog.Default()
 	}
 
-	base := NewBaseProcessor(id, OutputFormatMPEGTS, nil)
+	esBase := NewESProcessorBase(id, OutputFormatMPEGTS, esBuffer, variant, ESProcessorConfig{
+		Logger: config.Logger,
+	})
 
 	p := &MPEGTSProcessor{
-		BaseProcessor: base,
-		config:        config,
-		esBuffer:      esBuffer,
-		variant:       variant,
-		streamClients: make(map[string]*mpegtsStreamClient),
+		ESProcessorBase: esBase,
+		config:          config,
+		streamClients:   make(map[string]*mpegtsStreamClient),
 	}
 
 	return p
@@ -121,108 +104,23 @@ func NewMPEGTSProcessor(
 
 // Start begins processing data from the shared buffer.
 func (p *MPEGTSProcessor) Start(ctx context.Context) error {
-	if !p.started.CompareAndSwap(false, true) {
-		return errors.New("processor already started")
-	}
-
-	p.ctx, p.cancel = context.WithCancel(ctx)
-	p.BaseProcessor.startedAt = time.Now()
-
-	// Get or create the variant we'll read from
-	// This will wait for the source variant to be ready if requesting VariantCopy
 	p.config.Logger.Info("MPEG-TS processor requesting variant from buffer",
 		slog.String("processor_id", p.id),
-		slog.String("requested_variant", p.variant.String()))
-	esVariant, err := p.esBuffer.GetOrCreateVariantWithContext(p.ctx, p.variant)
+		slog.String("requested_variant", p.Variant().String()))
+
+	esVariant, err := p.InitES(ctx)
 	if err != nil {
-		return fmt.Errorf("getting variant: %w", err)
+		return err
 	}
 
-	// Register with buffer
-	p.esBuffer.RegisterProcessor(p.id)
-
-	// Store variant reference and register as a consumer to prevent eviction of unread samples
-	p.esVariant = esVariant
-	esVariant.RegisterConsumer(p.id)
-
-	// Resolve actual codecs from the ES variant's tracks
-	// The variant key (e.g., "h265/") may not include audio if it wasn't detected
-	// when the source was created, but the track codec gets updated when audio arrives.
-	// For accurate codec info, we read directly from the tracks.
-	videoCodec := esVariant.VideoTrack().Codec()
-	audioCodec := esVariant.AudioTrack().Codec()
-
-	// If audio codec is empty, wait briefly for audio detection
-	// Audio often arrives shortly after video in the stream
-	if audioCodec == "" {
-		p.config.Logger.Debug("Waiting for audio codec detection")
-		waitCtx, waitCancel := context.WithTimeout(p.ctx, 2*time.Second)
-		ticker := time.NewTicker(50 * time.Millisecond)
-		for audioCodec == "" {
-			select {
-			case <-waitCtx.Done():
-				p.config.Logger.Debug("Audio codec detection timeout, proceeding without audio")
-				ticker.Stop()
-				waitCancel()
-				goto initMuxer
-			case <-ticker.C:
-				audioCodec = esVariant.AudioTrack().Codec()
-			}
-		}
-		ticker.Stop()
-		waitCancel()
-		p.config.Logger.Debug("Audio codec detected", slog.String("audio_codec", audioCodec))
-	}
-
-initMuxer:
-	// Get AAC config from initData if available
-	// For AAC, we need the initData to get correct sample rate/channels
-	// Wait briefly for it since the demuxer may not have parsed the first ADTS packet yet
-	var aacConfig *mpeg4audio.AudioSpecificConfig
-	if audioCodec == "aac" {
-		initData := esVariant.AudioTrack().GetInitData()
-		if initData == nil {
-			p.config.Logger.Debug("Waiting for AAC initData from demuxer")
-			waitCtx, waitCancel := context.WithTimeout(p.ctx, 2*time.Second)
-			ticker := time.NewTicker(50 * time.Millisecond)
-		waitLoop:
-			for {
-				select {
-				case <-waitCtx.Done():
-					p.config.Logger.Debug("AAC initData timeout, using defaults")
-					break waitLoop
-				case <-ticker.C:
-					initData = esVariant.AudioTrack().GetInitData()
-					if initData != nil {
-						break waitLoop
-					}
-				}
-			}
-			ticker.Stop()
-			waitCancel()
-		}
-
-		if initData != nil {
-			aacConfig = &mpeg4audio.AudioSpecificConfig{}
-			if err := aacConfig.Unmarshal(initData); err != nil {
-				p.config.Logger.Debug("Failed to unmarshal AAC config from initData, using defaults",
-					slog.String("error", err.Error()))
-				aacConfig = nil
-			} else {
-				p.config.Logger.Debug("AAC config from initData",
-					slog.Int("type", int(aacConfig.Type)),
-					slog.Int("sample_rate", aacConfig.SampleRate),
-					slog.Int("channel_count", aacConfig.ChannelCount))
-			}
-		} else {
-			p.config.Logger.Debug("No AAC initData available, using defaults")
-		}
-	}
+	// Wait for audio codec and AAC init data using base class helpers
+	audioCodec := p.WaitForAudioCodec()
+	aacConfig := p.WaitForAACInitData()
 
 	// Initialize TS muxer with the correct codec types from the tracks
 	p.muxer = NewTSMuxer(&p.muxerBuf, TSMuxerConfig{
 		Logger:     p.config.Logger,
-		VideoCodec: videoCodec,
+		VideoCodec: p.ResolvedVideoCodec(),
 		AudioCodec: audioCodec,
 		AACConfig:  aacConfig,
 	})
@@ -237,25 +135,25 @@ initMuxer:
 		p.patPmtHeaderMu.Lock()
 		p.patPmtHeader = patPmt
 		p.patPmtHeaderMu.Unlock()
-		p.config.Logger.Log(p.ctx, observability.LevelTrace, "Captured PAT/PMT header for late-joining clients",
+		p.config.Logger.Log(p.Context(), observability.LevelTrace, "Captured PAT/PMT header for late-joining clients",
 			slog.Int("size_bytes", len(patPmt)))
 	}
 
 	p.config.Logger.Debug("MPEG-TS muxer initialized",
-		slog.String("requested_variant", p.variant.String()),
+		slog.String("requested_variant", p.Variant().String()),
 		slog.String("resolved_variant", esVariant.Variant().String()),
-		slog.String("video_codec", videoCodec),
+		slog.String("video_codec", p.ResolvedVideoCodec()),
 		slog.String("audio_codec", audioCodec),
 		slog.Bool("has_aac_config", aacConfig != nil))
 
 	p.config.Logger.Debug("Starting MPEG-TS processor",
 		slog.String("id", p.id),
-		slog.String("variant", p.variant.String()))
+		slog.String("variant", p.Variant().String()))
 
 	// Start processing loop
-	p.wg.Add(1)
+	p.WaitGroup().Add(1)
 	go func() {
-		defer p.wg.Done()
+		defer p.WaitGroup().Done()
 		p.runProcessingLoop(esVariant)
 	}()
 
@@ -264,12 +162,7 @@ initMuxer:
 
 // Stop stops the processor and cleans up resources.
 func (p *MPEGTSProcessor) Stop() {
-	if p.cancel != nil {
-		p.cancel()
-	}
-	p.wg.Wait()
-
-	// Close all stream clients
+	// Close all stream clients before stopping processing
 	p.streamClientsMu.Lock()
 	for _, client := range p.streamClients {
 		close(client.done)
@@ -277,16 +170,8 @@ func (p *MPEGTSProcessor) Stop() {
 	p.streamClients = make(map[string]*mpegtsStreamClient)
 	p.streamClientsMu.Unlock()
 
-	// Unregister as a consumer to allow eviction of our unread samples
-	if p.esVariant != nil {
-		p.esVariant.UnregisterConsumer(p.id)
-	}
-
-	p.esBuffer.UnregisterProcessor(p.id)
-	p.BaseProcessor.Close()
-
-	p.config.Logger.Debug("MPEG-TS processor stopped",
-		slog.String("id", p.id))
+	// Use base class cleanup
+	p.StopES()
 }
 
 // RegisterClient adds a streaming client.
@@ -377,6 +262,7 @@ func (p *MPEGTSProcessor) ServeStream(w http.ResponseWriter, r *http.Request, cl
 	w.Header().Set("Connection", "keep-alive")
 
 	// Wait for PAT/PMT to be available
+	ctx := p.Context()
 	var patPmtHeader []byte
 	waitStart := time.Now()
 	for time.Since(waitStart) < 5*time.Second {
@@ -389,8 +275,8 @@ func (p *MPEGTSProcessor) ServeStream(w http.ResponseWriter, r *http.Request, cl
 		select {
 		case <-r.Context().Done():
 			return r.Context().Err()
-		case <-p.ctx.Done():
-			return p.ctx.Err()
+		case <-ctx.Done():
+			return ctx.Err()
 		case <-time.After(50 * time.Millisecond):
 			// Continue waiting
 		}
@@ -409,7 +295,7 @@ func (p *MPEGTSProcessor) ServeStream(w http.ResponseWriter, r *http.Request, cl
 				slog.String("error", err.Error()))
 			return err
 		}
-		p.config.Logger.Log(p.ctx, observability.LevelTrace, "Sent initial PAT/PMT to client",
+		p.config.Logger.Log(ctx, observability.LevelTrace, "Sent initial PAT/PMT to client",
 			slog.String("client_id", clientID),
 			slog.Int("bytes", len(patPmtHeader)))
 		if flusher, ok := w.(http.Flusher); ok {
@@ -432,35 +318,20 @@ func (p *MPEGTSProcessor) ServeStream(w http.ResponseWriter, r *http.Request, cl
 		return nil
 	case <-r.Context().Done():
 		return r.Context().Err()
-	case <-p.ctx.Done():
-		return p.ctx.Err()
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
 // runProcessingLoop is the main processing loop.
 func (p *MPEGTSProcessor) runProcessingLoop(esVariant *ESVariant) {
+	ctx := p.Context()
 	videoTrack := esVariant.VideoTrack()
 	audioTrack := esVariant.AudioTrack()
 
-	// Wait for initial video keyframe
-	// Check for existing samples first before waiting - handles case where
-	// transcoder has stopped but buffer still has content (finite streams)
-	p.config.Logger.Debug("Waiting for initial keyframe")
-	for {
-		// Try to read samples immediately (non-blocking check)
-		samples := videoTrack.ReadFromKeyframe(p.lastVideoSeq, 1)
-		if len(samples) > 0 {
-			p.lastVideoSeq = samples[0].Sequence - 1
-			break
-		}
-
-		// No samples available, wait for notification or context cancellation
-		select {
-		case <-p.ctx.Done():
-			return
-		case <-videoTrack.NotifyChan():
-			// New sample notification received, loop back to read
-		}
+	// Wait for initial video keyframe using base class helper
+	if _, ok := p.WaitForKeyframe(videoTrack); !ok {
+		return
 	}
 
 	ticker := time.NewTicker(10 * time.Millisecond)
@@ -468,7 +339,7 @@ func (p *MPEGTSProcessor) runProcessingLoop(esVariant *ESVariant) {
 
 	for {
 		select {
-		case <-p.ctx.Done():
+		case <-ctx.Done():
 			return
 
 		case <-ticker.C:
@@ -494,7 +365,7 @@ func (p *MPEGTSProcessor) processAvailableSamples(videoTrack, audioTrack *ESTrac
 	hasKeyframe := false
 
 	// Read video samples
-	videoSamples := videoTrack.ReadFrom(p.lastVideoSeq, 100)
+	videoSamples := videoTrack.ReadFrom(p.LastVideoSeq(), 100)
 	var bytesRead uint64
 	for _, sample := range videoSamples {
 		bytesRead += uint64(len(sample.Data))
@@ -519,11 +390,11 @@ func (p *MPEGTSProcessor) processAvailableSamples(videoTrack, audioTrack *ESTrac
 				slog.Int("data_len", len(sample.Data)),
 				slog.Bool("keyframe", sample.IsKeyframe))
 		}
-		p.lastVideoSeq = sample.Sequence
+		p.SetLastVideoSeq(sample.Sequence)
 	}
 
 	// Read audio samples
-	audioSamples := audioTrack.ReadFrom(p.lastAudioSeq, 200)
+	audioSamples := audioTrack.ReadFrom(p.LastAudioSeq(), 200)
 	for _, sample := range audioSamples {
 		bytesRead += uint64(len(sample.Data))
 		// Log muxer errors for debugging but continue streaming
@@ -533,7 +404,7 @@ func (p *MPEGTSProcessor) processAvailableSamples(videoTrack, audioTrack *ESTrac
 				slog.Int64("pts", sample.PTS),
 				slog.Int("data_len", len(sample.Data)))
 		}
-		p.lastAudioSeq = sample.Sequence
+		p.SetLastAudioSeq(sample.Sequence)
 	}
 
 	// Track bytes read from buffer for bandwidth stats
@@ -542,8 +413,8 @@ func (p *MPEGTSProcessor) processAvailableSamples(videoTrack, audioTrack *ESTrac
 	}
 
 	// Update consumer position to allow eviction of samples we've processed
-	if p.esVariant != nil && (len(videoSamples) > 0 || len(audioSamples) > 0) {
-		p.esVariant.UpdateConsumerPosition(p.id, p.lastVideoSeq, p.lastAudioSeq)
+	if len(videoSamples) > 0 || len(audioSamples) > 0 {
+		p.UpdateConsumerPosition()
 	}
 
 	return hasKeyframe
@@ -631,6 +502,8 @@ func (p *MPEGTSProcessor) broadcastToClients(data []byte, hasKeyframe bool) {
 		return
 	}
 
+	ctx := p.Context()
+
 	p.streamClientsMu.RLock()
 	clients := make([]*mpegtsStreamClient, 0, len(p.streamClients))
 	for _, c := range p.streamClients {
@@ -660,7 +533,7 @@ func (p *MPEGTSProcessor) broadcastToClients(data []byte, hasKeyframe bool) {
 				// Keyframe found - start sending data to this client
 				client.waitForKeyframe = false
 				needsPatPmt = true // New client needs PAT/PMT tables first
-				p.config.Logger.Log(p.ctx, observability.LevelTrace, "Client starting at keyframe",
+				p.config.Logger.Log(ctx, observability.LevelTrace, "Client starting at keyframe",
 					slog.String("client_id", client.id))
 			} else {
 				// No keyframe yet - skip this client
@@ -693,7 +566,7 @@ func (p *MPEGTSProcessor) broadcastToClients(data []byte, hasKeyframe bool) {
 			copy(combined, patPmtHeader)
 			copy(combined[len(patPmtHeader):], data)
 			dataToWrite = combined
-			p.config.Logger.Log(p.ctx, observability.LevelTrace, "Prepending PAT/PMT to new client data",
+			p.config.Logger.Log(ctx, observability.LevelTrace, "Prepending PAT/PMT to new client data",
 				slog.String("client_id", clientID),
 				slog.Int("total_bytes", len(combined)))
 		}

@@ -133,7 +133,6 @@ type StreamContext struct {
 type BaseProcessor struct {
 	id            string
 	format        OutputFormat
-	buffer        *SharedESBuffer
 	clients       map[string]*ProcessorClient
 	clientsMu     sync.RWMutex
 	startedAt     time.Time
@@ -148,11 +147,10 @@ type BaseProcessor struct {
 }
 
 // NewBaseProcessor creates a new base processor.
-func NewBaseProcessor(id string, format OutputFormat, buffer *SharedESBuffer) *BaseProcessor {
+func NewBaseProcessor(id string, format OutputFormat) *BaseProcessor {
 	p := &BaseProcessor{
 		id:       id,
 		format:   format,
-		buffer:   buffer,
 		clients:  make(map[string]*ProcessorClient),
 		closedCh: make(chan struct{}),
 	}
@@ -168,11 +166,6 @@ func (p *BaseProcessor) ID() string {
 // Format returns the output format.
 func (p *BaseProcessor) Format() OutputFormat {
 	return p.format
-}
-
-// Buffer returns the shared buffer.
-func (p *BaseProcessor) Buffer() *SharedESBuffer {
-	return p.buffer
 }
 
 // SetStreamContext sets the stream context for header generation.
@@ -344,30 +337,4 @@ func (p *BaseProcessor) IsClosed() bool {
 // ClosedChan returns a channel that is closed when the processor is closed.
 func (p *BaseProcessor) ClosedChan() <-chan struct{} {
 	return p.closedCh
-}
-
-// BroadcastToClients sends data to all connected clients.
-func (p *BaseProcessor) BroadcastToClients(data []byte) {
-	p.clientsMu.RLock()
-	clients := make([]*ProcessorClient, 0, len(p.clients))
-	for _, c := range p.clients {
-		clients = append(clients, c)
-	}
-	p.clientsMu.RUnlock()
-
-	for _, client := range clients {
-		select {
-		case <-client.Done():
-			// Client is done, skip
-			continue
-		default:
-			_, err := client.Write(data)
-			if err != nil {
-				// Client write failed, will be cleaned up
-				p.UnregisterClientBase(client.ID)
-			}
-		}
-	}
-
-	p.RecordBytesWritten(uint64(len(data)))
 }

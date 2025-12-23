@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/jmylchreest/tvarr/internal/observability"
@@ -70,11 +69,9 @@ type hlsFMP4Segment struct {
 // HLSfMP4Processor reads from a SharedESBuffer variant and produces HLS with fMP4/CMAF segments.
 // It implements the Processor and FMP4SegmentProvider interfaces.
 type HLSfMP4Processor struct {
-	*BaseProcessor
+	*ESProcessorBase
 
-	config   HLSfMP4ProcessorConfig
-	esBuffer *SharedESBuffer
-	variant  CodecVariant
+	config HLSfMP4ProcessorConfig
 
 	// Init segment
 	initSegment   *InitSegment
@@ -97,22 +94,9 @@ type HLSfMP4Processor struct {
 		samples   int // Number of samples in current segment
 	}
 
-	// ES reading state
-	lastVideoSeq uint64
-	lastAudioSeq uint64
-
-	// Reference to the ES variant for consumer tracking
-	esVariant *ESVariant
-
 	// fMP4 muxer using mediacommon
 	writer  *FMP4Writer
 	adapter *ESSampleAdapter
-
-	// Lifecycle
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-	started atomic.Bool
 }
 
 // NewHLSfMP4Processor creates a new HLS-fMP4 processor.
@@ -126,7 +110,9 @@ func NewHLSfMP4Processor(
 		config.Logger = slog.Default()
 	}
 
-	base := NewBaseProcessor(id, OutputFormatHLSFMP4, nil)
+	esBase := NewESProcessorBase(id, OutputFormatHLSFMP4, esBuffer, variant, ESProcessorConfig{
+		Logger: config.Logger,
+	})
 
 	adapter := NewESSampleAdapter(DefaultESSampleAdapterConfig())
 	// Set audio codec from variant so we correctly handle Opus, AC3, MP3, etc.
@@ -134,14 +120,12 @@ func NewHLSfMP4Processor(
 	adapter.SetAudioCodecFromVariant(variant.AudioCodec())
 
 	p := &HLSfMP4Processor{
-		BaseProcessor: base,
-		config:        config,
-		esBuffer:      esBuffer,
-		variant:       variant,
-		segments:      make([]*hlsFMP4Segment, 0, config.MaxSegments),
-		segmentNotify: make(chan struct{}, 1),
-		writer:        NewFMP4Writer(),
-		adapter:       adapter,
+		ESProcessorBase: esBase,
+		config:          config,
+		segments:        make([]*hlsFMP4Segment, 0, config.MaxSegments),
+		segmentNotify:   make(chan struct{}, 1),
+		writer:          NewFMP4Writer(),
+		adapter:         adapter,
 	}
 
 	return p
@@ -162,7 +146,7 @@ func (p *HLSfMP4Processor) WaitForSegments(ctx context.Context, minSegments int)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-p.ctx.Done():
+		case <-p.Context().Done():
 			return errors.New("processor stopped")
 		case <-p.segmentNotify:
 			// New segment added, check again
@@ -179,38 +163,23 @@ func (p *HLSfMP4Processor) SegmentCount() int {
 
 // Start begins processing data from the shared buffer.
 func (p *HLSfMP4Processor) Start(ctx context.Context) error {
-	if !p.started.CompareAndSwap(false, true) {
-		return errors.New("processor already started")
-	}
-
-	p.ctx, p.cancel = context.WithCancel(ctx)
-	p.BaseProcessor.startedAt = time.Now()
-
-	// Get or create the variant we'll read from
-	// This will wait for the source variant to be ready if requesting VariantCopy
-	esVariant, err := p.esBuffer.GetOrCreateVariantWithContext(p.ctx, p.variant)
+	// Initialize ES processor base (get variant, register consumer)
+	esVariant, err := p.InitES(ctx)
 	if err != nil {
-		return fmt.Errorf("getting variant: %w", err)
+		return fmt.Errorf("initializing ES processor: %w", err)
 	}
-
-	// Register with buffer
-	p.esBuffer.RegisterProcessor(p.id)
-
-	// Store variant reference and register as a consumer to prevent eviction of unread samples
-	p.esVariant = esVariant
-	esVariant.RegisterConsumer(p.id)
 
 	// Initialize segment accumulator
 	p.initNewSegment()
 
 	p.config.Logger.Debug("Starting HLS-fMP4 processor",
 		slog.String("id", p.id),
-		slog.String("variant", p.variant.String()))
+		slog.String("variant", p.Variant().String()))
 
 	// Start processing loop
-	p.wg.Add(1)
+	p.WaitGroup().Add(1)
 	go func() {
-		defer p.wg.Done()
+		defer p.WaitGroup().Done()
 		p.runProcessingLoop(esVariant)
 	}()
 
@@ -219,21 +188,7 @@ func (p *HLSfMP4Processor) Start(ctx context.Context) error {
 
 // Stop stops the processor and cleans up resources.
 func (p *HLSfMP4Processor) Stop() {
-	if p.cancel != nil {
-		p.cancel()
-	}
-	p.wg.Wait()
-
-	// Unregister as a consumer to allow eviction of our unread samples
-	if p.esVariant != nil {
-		p.esVariant.UnregisterConsumer(p.id)
-	}
-
-	p.esBuffer.UnregisterProcessor(p.id)
-	p.BaseProcessor.Close()
-
-	p.config.Logger.Debug("Processor stopped",
-		slog.String("id", p.id))
+	p.StopES()
 }
 
 // RegisterClient adds a client to receive output from this processor.
@@ -297,7 +252,7 @@ func (p *HLSfMP4Processor) ServeManifest(w http.ResponseWriter, r *http.Request)
 
 	// Add #EXT-X-ENDLIST if source stream has completed (VOD mode)
 	// This signals to players that no more segments will be added
-	if p.esBuffer != nil && p.esBuffer.IsSourceCompleted() {
+	if p.ESBuffer() != nil && p.ESBuffer().IsSourceCompleted() {
 		buf.WriteString("#EXT-X-ENDLIST\n")
 	}
 
@@ -459,10 +414,11 @@ func (p *HLSfMP4Processor) initNewSegment() {
 
 // runProcessingLoop is the main processing loop.
 func (p *HLSfMP4Processor) runProcessingLoop(esVariant *ESVariant) {
+	ctx := p.Context()
 	videoTrack := esVariant.VideoTrack()
 	audioTrack := esVariant.AudioTrack()
 
-	p.config.Logger.Log(p.ctx, observability.LevelTrace, "Starting processing loop",
+	p.config.Logger.Log(ctx, observability.LevelTrace, "Starting processing loop",
 		slog.String("id", p.id),
 		slog.String("variant", esVariant.Variant().String()),
 		slog.Int("video_track_count", videoTrack.Count()),
@@ -471,20 +427,20 @@ func (p *HLSfMP4Processor) runProcessingLoop(esVariant *ESVariant) {
 	// Wait for initial video keyframe
 	// Check for existing samples first before waiting - handles case where
 	// transcoder has stopped but buffer still has content (finite streams)
-	p.config.Logger.Log(p.ctx, observability.LevelTrace, "Waiting for initial keyframe",
+	p.config.Logger.Log(ctx, observability.LevelTrace, "Waiting for initial keyframe",
 		slog.String("id", p.id),
 		slog.String("variant", esVariant.Variant().String()))
 	notifyCount := 0
 	for {
 		// Try to read samples immediately (non-blocking check)
 		trackCount := videoTrack.Count()
-		samples := videoTrack.ReadFromKeyframe(p.lastVideoSeq, 1)
+		samples := videoTrack.ReadFromKeyframe(p.LastVideoSeq(), 1)
 		if len(samples) > 0 {
-			p.config.Logger.Log(p.ctx, observability.LevelTrace, "Found initial keyframe",
+			p.config.Logger.Log(ctx, observability.LevelTrace, "Found initial keyframe",
 				slog.String("id", p.id),
 				slog.Uint64("sequence", samples[0].Sequence),
 				slog.Int("notify_count", notifyCount))
-			p.lastVideoSeq = samples[0].Sequence - 1
+			p.SetLastVideoSeq(samples[0].Sequence - 1)
 			break
 		}
 
@@ -498,18 +454,18 @@ func (p *HLSfMP4Processor) runProcessingLoop(esVariant *ESVariant) {
 					keyframeCount++
 				}
 			}
-			p.config.Logger.Log(p.ctx, observability.LevelTrace, "Still waiting for keyframe",
+			p.config.Logger.Log(ctx, observability.LevelTrace, "Still waiting for keyframe",
 				slog.String("id", p.id),
 				slog.Int("notify_count", notifyCount),
 				slog.Int("track_sample_count", trackCount),
 				slog.Int("samples_read", len(allSamples)),
 				slog.Int("keyframes_found", keyframeCount),
-				slog.Uint64("last_video_seq", p.lastVideoSeq))
+				slog.Uint64("last_video_seq", p.LastVideoSeq()))
 		}
 
 		// No samples available, wait for notification or context cancellation
 		select {
-		case <-p.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-videoTrack.NotifyChan():
 			notifyCount++
@@ -526,7 +482,7 @@ func (p *HLSfMP4Processor) runProcessingLoop(esVariant *ESVariant) {
 
 	for {
 		select {
-		case <-p.ctx.Done():
+		case <-ctx.Done():
 			// Flush any remaining segment
 			if len(videoSamples) > 0 || len(audioSamples) > 0 {
 				p.flushSegment(videoSamples, audioSamples)
@@ -535,7 +491,7 @@ func (p *HLSfMP4Processor) runProcessingLoop(esVariant *ESVariant) {
 
 		case <-ticker.C:
 			// Read video samples
-			newVideoSamples := videoTrack.ReadFrom(p.lastVideoSeq, 100)
+			newVideoSamples := videoTrack.ReadFrom(p.LastVideoSeq(), 100)
 			var bytesRead uint64
 			for _, sample := range newVideoSamples {
 				bytesRead += uint64(len(sample.Data))
@@ -548,7 +504,7 @@ func (p *HLSfMP4Processor) runProcessingLoop(esVariant *ESVariant) {
 				}
 
 				videoSamples = append(videoSamples, sample)
-				p.lastVideoSeq = sample.Sequence
+				p.SetLastVideoSeq(sample.Sequence)
 				p.currentSegment.hasVideo = true
 				if p.currentSegment.startPTS < 0 {
 					p.currentSegment.startPTS = sample.PTS
@@ -557,11 +513,11 @@ func (p *HLSfMP4Processor) runProcessingLoop(esVariant *ESVariant) {
 			}
 
 			// Read audio samples
-			newAudioSamples := audioTrack.ReadFrom(p.lastAudioSeq, 200)
+			newAudioSamples := audioTrack.ReadFrom(p.LastAudioSeq(), 200)
 			for _, sample := range newAudioSamples {
 				bytesRead += uint64(len(sample.Data))
 				audioSamples = append(audioSamples, sample)
-				p.lastAudioSeq = sample.Sequence
+				p.SetLastAudioSeq(sample.Sequence)
 				p.currentSegment.hasAudio = true
 				if p.currentSegment.startPTS < 0 {
 					p.currentSegment.startPTS = sample.PTS
@@ -574,8 +530,8 @@ func (p *HLSfMP4Processor) runProcessingLoop(esVariant *ESVariant) {
 			}
 
 			// Update consumer position to allow eviction of samples we've processed
-			if p.esVariant != nil && (len(newVideoSamples) > 0 || len(newAudioSamples) > 0) {
-				p.esVariant.UpdateConsumerPosition(p.id, p.lastVideoSeq, p.lastAudioSeq)
+			if len(newVideoSamples) > 0 || len(newAudioSamples) > 0 {
+				p.UpdateConsumerPosition()
 			}
 
 			// Check if we should finalize current segment (timeout)

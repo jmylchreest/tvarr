@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -67,11 +66,9 @@ type dashSegment struct {
 // DASHProcessor reads from a SharedESBuffer variant and produces DASH with fMP4 segments.
 // It implements the Processor and FMP4SegmentProvider interfaces.
 type DASHProcessor struct {
-	*BaseProcessor
+	*ESProcessorBase
 
-	config   DASHProcessorConfig
-	esBuffer *SharedESBuffer
-	variant  CodecVariant
+	config DASHProcessorConfig
 
 	// Init segment
 	initSegment   *InitSegment
@@ -92,22 +89,9 @@ type DASHProcessor struct {
 		startTime time.Time
 	}
 
-	// ES reading state
-	lastVideoSeq uint64
-	lastAudioSeq uint64
-
-	// Reference to the ES variant for consumer tracking
-	esVariant *ESVariant
-
 	// fMP4 muxer using mediacommon
 	writer  *FMP4Writer
 	adapter *ESSampleAdapter
-
-	// Lifecycle
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-	started atomic.Bool
 }
 
 // NewDASHProcessor creates a new DASH processor.
@@ -121,7 +105,9 @@ func NewDASHProcessor(
 		config.Logger = slog.Default()
 	}
 
-	base := NewBaseProcessor(id, OutputFormatDASH, nil)
+	esBase := NewESProcessorBase(id, OutputFormatDASH, esBuffer, variant, ESProcessorConfig{
+		Logger: config.Logger,
+	})
 
 	adapter := NewESSampleAdapter(DefaultESSampleAdapterConfig())
 	// Set audio codec from variant so we correctly handle Opus, AC3, MP3, etc.
@@ -129,14 +115,12 @@ func NewDASHProcessor(
 	adapter.SetAudioCodecFromVariant(variant.AudioCodec())
 
 	p := &DASHProcessor{
-		BaseProcessor: base,
-		config:        config,
-		esBuffer:      esBuffer,
-		variant:       variant,
-		segments:      make([]*dashSegment, 0, config.MaxSegments),
-		segmentNotify: make(chan struct{}, 1),
-		writer:        NewFMP4Writer(),
-		adapter:       adapter,
+		ESProcessorBase: esBase,
+		config:          config,
+		segments:        make([]*dashSegment, 0, config.MaxSegments),
+		segmentNotify:   make(chan struct{}, 1),
+		writer:          NewFMP4Writer(),
+		adapter:         adapter,
 	}
 
 	return p
@@ -157,7 +141,7 @@ func (p *DASHProcessor) WaitForSegments(ctx context.Context, minSegments int) er
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-p.ctx.Done():
+		case <-p.Context().Done():
 			return errors.New("processor stopped")
 		case <-p.segmentNotify:
 			// New segment added, check again
@@ -174,38 +158,22 @@ func (p *DASHProcessor) SegmentCount() int {
 
 // Start begins processing data from the shared buffer.
 func (p *DASHProcessor) Start(ctx context.Context) error {
-	if !p.started.CompareAndSwap(false, true) {
-		return errors.New("processor already started")
-	}
-
-	p.ctx, p.cancel = context.WithCancel(ctx)
-	p.BaseProcessor.startedAt = time.Now()
-
-	// Get or create the variant we'll read from
-	// This will wait for the source variant to be ready if requesting VariantCopy
-	esVariant, err := p.esBuffer.GetOrCreateVariantWithContext(p.ctx, p.variant)
+	esVariant, err := p.InitES(ctx)
 	if err != nil {
-		return fmt.Errorf("getting variant: %w", err)
+		return fmt.Errorf("initializing ES processor: %w", err)
 	}
-
-	// Register with buffer
-	p.esBuffer.RegisterProcessor(p.id)
-
-	// Store variant reference and register as a consumer to prevent eviction of unread samples
-	p.esVariant = esVariant
-	esVariant.RegisterConsumer(p.id)
 
 	// Initialize segment accumulator
 	p.initNewSegment()
 
 	p.config.Logger.Debug("Starting DASH processor",
 		slog.String("id", p.id),
-		slog.String("variant", p.variant.String()))
+		slog.String("variant", p.Variant().String()))
 
 	// Start processing loop
-	p.wg.Add(1)
+	p.WaitGroup().Add(1)
 	go func() {
-		defer p.wg.Done()
+		defer p.WaitGroup().Done()
 		p.runProcessingLoop(esVariant)
 	}()
 
@@ -214,21 +182,7 @@ func (p *DASHProcessor) Start(ctx context.Context) error {
 
 // Stop stops the processor and cleans up resources.
 func (p *DASHProcessor) Stop() {
-	if p.cancel != nil {
-		p.cancel()
-	}
-	p.wg.Wait()
-
-	// Unregister as a consumer to allow eviction of our unread samples
-	if p.esVariant != nil {
-		p.esVariant.UnregisterConsumer(p.id)
-	}
-
-	p.esBuffer.UnregisterProcessor(p.id)
-	p.BaseProcessor.Close()
-
-	p.config.Logger.Debug("Processor stopped",
-		slog.String("id", p.id))
+	p.StopES()
 }
 
 // RegisterClient adds a client to receive output from this processor.
@@ -505,28 +459,13 @@ func (p *DASHProcessor) initNewSegment() {
 
 // runProcessingLoop is the main processing loop.
 func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
+	ctx := p.Context()
 	videoTrack := esVariant.VideoTrack()
 	audioTrack := esVariant.AudioTrack()
 
-	// Wait for initial video keyframe
-	// Check for existing samples first before waiting - handles case where
-	// transcoder has stopped but buffer still has content (finite streams)
-	p.config.Logger.Debug("Waiting for initial keyframe")
-	for {
-		// Try to read samples immediately (non-blocking check)
-		samples := videoTrack.ReadFromKeyframe(p.lastVideoSeq, 1)
-		if len(samples) > 0 {
-			p.lastVideoSeq = samples[0].Sequence - 1
-			break
-		}
-
-		// No samples available, wait for notification or context cancellation
-		select {
-		case <-p.ctx.Done():
-			return
-		case <-videoTrack.NotifyChan():
-			// New sample notification received, loop back to read
-		}
+	// Wait for initial video keyframe using base class helper
+	if _, ok := p.WaitForKeyframe(videoTrack); !ok {
+		return
 	}
 
 	ticker := time.NewTicker(10 * time.Millisecond)
@@ -538,7 +477,7 @@ func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
 
 	for {
 		select {
-		case <-p.ctx.Done():
+		case <-ctx.Done():
 			// Flush any remaining segment
 			if len(videoSamples) > 0 || len(audioSamples) > 0 {
 				p.flushSegment(videoSamples, audioSamples)
@@ -547,7 +486,7 @@ func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
 
 		case <-ticker.C:
 			// Read video samples
-			newVideoSamples := videoTrack.ReadFrom(p.lastVideoSeq, 100)
+			newVideoSamples := videoTrack.ReadFrom(p.LastVideoSeq(), 100)
 			var bytesRead uint64
 			for _, sample := range newVideoSamples {
 				bytesRead += uint64(len(sample.Data))
@@ -560,7 +499,7 @@ func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
 				}
 
 				videoSamples = append(videoSamples, sample)
-				p.lastVideoSeq = sample.Sequence
+				p.SetLastVideoSeq(sample.Sequence)
 				p.currentSegment.hasVideo = true
 				if p.currentSegment.startPTS < 0 {
 					p.currentSegment.startPTS = sample.PTS
@@ -569,11 +508,11 @@ func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
 			}
 
 			// Read audio samples
-			newAudioSamples := audioTrack.ReadFrom(p.lastAudioSeq, 200)
+			newAudioSamples := audioTrack.ReadFrom(p.LastAudioSeq(), 200)
 			for _, sample := range newAudioSamples {
 				bytesRead += uint64(len(sample.Data))
 				audioSamples = append(audioSamples, sample)
-				p.lastAudioSeq = sample.Sequence
+				p.SetLastAudioSeq(sample.Sequence)
 				p.currentSegment.hasAudio = true
 				if p.currentSegment.startPTS < 0 {
 					p.currentSegment.startPTS = sample.PTS
@@ -586,8 +525,8 @@ func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
 			}
 
 			// Update consumer position to allow eviction of samples we've processed
-			if p.esVariant != nil && (len(newVideoSamples) > 0 || len(newAudioSamples) > 0) {
-				p.esVariant.UpdateConsumerPosition(p.id, p.lastVideoSeq, p.lastAudioSeq)
+			if len(newVideoSamples) > 0 || len(newAudioSamples) > 0 {
+				p.UpdateConsumerPosition()
 			}
 
 			// Check if we should finalize current segment (timeout)
