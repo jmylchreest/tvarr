@@ -276,6 +276,13 @@ func (t *ESTranscoder) Start(ctx context.Context) error {
 		t.runOutputLoop(targetVariant)
 	}()
 
+	// Start stats polling goroutine (samples resource history for sparklines)
+	t.wg.Add(1)
+	go func() {
+		defer t.wg.Done()
+		t.runStatsPoller()
+	}()
+
 	return nil
 }
 
@@ -1031,6 +1038,29 @@ func (t *ESTranscoder) handleOutputSamples(target *ESVariant, batch *proto.ESSam
 
 	t.recordActivity()
 	return nil
+}
+
+// runStatsPoller periodically polls activeJob.Stats to update resource history for sparklines.
+// Stats are received by grpc_server and stored in activeJob.Stats, so we poll to sample them.
+func (t *ESTranscoder) runStatsPoller() {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-t.ctx.Done():
+			return
+		case <-ticker.C:
+			// Poll stats from activeJob and update history
+			if t.activeJob != nil && t.activeJob.Stats != nil {
+				stats := t.activeJob.Stats
+				// Sample resource history for sparkline graphs
+				if t.resourceHistory != nil && t.resourceHistory.ShouldSample() {
+					t.resourceHistory.AddSample(stats.CPUPercent, stats.MemoryMB)
+				}
+			}
+		}
+	}
 }
 
 // handleStats updates transcoder stats from ffmpegd.

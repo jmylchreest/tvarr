@@ -359,10 +359,11 @@ func (b *FlowBuilder) buildOriginNode(session RelaySessionInfo) RelayFlowNode {
 
 func (b *FlowBuilder) buildBufferNode(session RelaySessionInfo) RelayFlowNode {
 	data := FlowNodeData{
-		Label:       "Buffer",
-		SessionID:   session.SessionID,
-		ChannelID:   session.ChannelID,
-		ChannelName: session.ChannelName,
+		Label:           "Buffer",
+		SessionID:       session.SessionID,
+		ChannelID:       session.ChannelID,
+		ChannelName:     session.ChannelName,
+		OriginConnected: session.OriginConnected,
 	}
 
 	if len(session.BufferVariants) > 0 {
@@ -394,10 +395,11 @@ func (b *FlowBuilder) buildBufferNode(session RelaySessionInfo) RelayFlowNode {
 
 func (b *FlowBuilder) buildTranscoderNode(session RelaySessionInfo) RelayFlowNode {
 	data := FlowNodeData{
-		Label:       "FFmpeg",
-		SessionID:   session.SessionID,
-		ChannelID:   session.ChannelID,
-		ChannelName: session.ChannelName,
+		Label:           "FFmpeg",
+		SessionID:       session.SessionID,
+		ChannelID:       session.ChannelID,
+		ChannelName:     session.ChannelName,
+		OriginConnected: session.OriginConnected,
 	}
 
 	if session.FFmpegStats != nil {
@@ -479,6 +481,7 @@ func (b *FlowBuilder) buildESTranscoderNode(session RelaySessionInfo, transcoder
 		SessionID:        session.SessionID,
 		ChannelID:        session.ChannelID,
 		ChannelName:      session.ChannelName,
+		OriginConnected:  session.OriginConnected,
 		SourceVideoCodec: sourceVideo,
 		SourceAudioCodec: sourceAudio,
 		TargetVideoCodec: targetVideo,
@@ -528,6 +531,7 @@ func (b *FlowBuilder) buildProcessorNode(session RelaySessionInfo, key Processor
 			SessionID:        session.SessionID,
 			ChannelID:        session.ChannelID,
 			ChannelName:      session.ChannelName,
+			OriginConnected:  session.OriginConnected,
 			RouteType:        session.RouteType,
 			ProfileName:      session.ProfileName,
 			OutputFormat:     key.Format,

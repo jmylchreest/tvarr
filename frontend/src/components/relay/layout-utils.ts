@@ -146,22 +146,41 @@ export function calculateLayout<T extends FlowNode>(nodes: T[], edges: Edge[]): 
     const bufferX = bufferNode.position.x;
     const bufferY = bufferNode.position.y;
 
-    // Stack transcoders above the buffer
-    let transcoderY = bufferY;
-    for (const transcoder of transcoderNodes) {
-      const transcoderWidth = getNodeWidth(transcoder);
-      const transcoderHeight = getNodeHeight(transcoder);
+    // Calculate total width needed for all transcoders side by side
+    const transcoderGap = 30; // Gap between transcoders
+    const verticalGap = 80; // Gap between transcoders and buffer
 
-      // Position above the buffer, centered horizontally
-      transcoderY -= transcoderHeight + 60; // 60px gap above buffer
+    // Get dimensions for all transcoders
+    const transcoderDimensions = transcoderNodes.map((t) => ({
+      node: t,
+      width: getNodeWidth(t),
+      height: getNodeHeight(t),
+    }));
 
+    const totalTranscoderWidth = transcoderDimensions.reduce(
+      (sum, t) => sum + t.width,
+      0
+    ) + (transcoderNodes.length - 1) * transcoderGap;
+
+    // Find the tallest transcoder for positioning
+    const maxTranscoderHeight = Math.max(...transcoderDimensions.map((t) => t.height));
+
+    // Center the transcoders horizontally above the buffer
+    const bufferCenterX = bufferX + bufferWidth / 2;
+    let currentX = bufferCenterX - totalTranscoderWidth / 2;
+    const transcoderY = bufferY - maxTranscoderHeight - verticalGap;
+
+    // Position each transcoder side by side
+    for (const { node, width, height } of transcoderDimensions) {
       layoutedNodes.push({
-        ...transcoder,
+        ...node,
         position: {
-          x: bufferX + (bufferWidth - transcoderWidth) / 2,
-          y: transcoderY,
+          x: currentX,
+          // Align bottoms of transcoders (so they're level with each other)
+          y: transcoderY + (maxTranscoderHeight - height),
         },
       });
+      currentX += width + transcoderGap;
     }
   } else {
     // No buffer node, just add transcoders with default position

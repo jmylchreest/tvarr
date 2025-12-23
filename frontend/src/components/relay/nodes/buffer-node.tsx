@@ -6,7 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import type { FlowNodeData, BufferVariantInfo } from '@/types/relay-flow';
 import { formatBytes } from '@/types/relay-flow';
-import { Database, HardDrive } from 'lucide-react';
+import { Database, HardDrive, DatabaseZap } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
 // Format duration in seconds to a human-readable string (e.g., "1m 30s" or "45s")
@@ -40,6 +41,9 @@ interface BufferNodeProps {
 }
 
 function BufferNode({ data }: BufferNodeProps) {
+  // Determine if origin is still connected (streaming) - default to true if not specified
+  const isOriginConnected = data.originConnected !== false;
+
   const hasVariants = data.bufferVariants && data.bufferVariants.length > 0;
 
   return (
@@ -70,13 +74,24 @@ function BufferNode({ data }: BufferNodeProps) {
         style={{ left: '75%' }}
       />
 
-      <Card className="w-72 shadow-lg border-2 border-purple-500/30 bg-card">
+      <Card className={`w-72 shadow-lg border-2 bg-card ${
+        isOriginConnected ? 'border-purple-500/30' : 'border-gray-500/30 opacity-75'
+      }`}>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-medium flex items-center gap-2">
-            <Database className="h-4 w-4 text-purple-500" />
+            {isOriginConnected ? (
+              <Database className="h-4 w-4 text-purple-500" />
+            ) : (
+              <DatabaseZap className="h-4 w-4 text-gray-500" />
+            )}
             <span className="truncate" title={data.label || 'Buffer'}>
               {data.label || 'Buffer'}
             </span>
+            {!isOriginConnected && (
+              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-gray-500/20 text-gray-600 dark:text-gray-400">
+                Draining
+              </Badge>
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">

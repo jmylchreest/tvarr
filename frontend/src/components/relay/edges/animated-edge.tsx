@@ -92,12 +92,12 @@ function AnimatedEdge({
             className={`backdrop-blur-sm border rounded px-1.5 py-0.5 text-xs font-medium ${
               isActive
                 ? 'bg-background/90 text-green-600 dark:text-green-400 border-green-500/30'
-                : 'bg-background/60 text-muted-foreground'
+                : 'bg-background/60 text-muted-foreground/70'
             }`}
           >
             {data?.bandwidthBps !== undefined && data.bandwidthBps > 0
               ? formatBps(data.bandwidthBps)
-              : 'connecting...'}
+              : 'idle'}
           </div>
         </div>
       </EdgeLabelRenderer>

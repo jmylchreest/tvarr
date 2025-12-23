@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import type { FlowNodeData } from '@/types/relay-flow';
 import { formatBytes } from '@/types/relay-flow';
-import { Cog, ArrowRight, Zap } from 'lucide-react';
+import { Cog, ArrowRight, Zap, Square } from 'lucide-react';
 import { ResourceSparkline } from './resource-sparkline';
 import { SpeedDial } from './speed-dial';
 
@@ -15,6 +15,9 @@ interface TranscoderNodeProps {
 }
 
 function TranscoderNode({ data }: TranscoderNodeProps) {
+  // Determine if origin is still connected (streaming) - default to true if not specified
+  const isOriginConnected = data.originConnected !== false;
+
   const hasStats = data.transcoderCpu !== undefined || data.transcoderMemMb !== undefined;
   const hasHistory =
     (data.transcoderCpuHistory && data.transcoderCpuHistory.length > 0) ||
@@ -66,18 +69,32 @@ function TranscoderNode({ data }: TranscoderNodeProps) {
         style={{ left: '75%' }}
       />
 
-      <Card className="w-56 shadow-lg border-2 border-red-500/30 bg-card">
+      <Card className={`w-56 shadow-lg border-2 bg-card ${
+        isOriginConnected
+          ? 'border-red-500/30'
+          : 'border-gray-500/30 opacity-75'
+      }`}>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-medium flex items-center gap-2">
-            <Cog className="h-4 w-4 text-red-500 animate-[spin_3s_linear_infinite]" />
+            {isOriginConnected ? (
+              <Cog className="h-4 w-4 text-red-500 animate-[spin_3s_linear_infinite]" />
+            ) : (
+              <Square className="h-4 w-4 text-gray-500" />
+            )}
             <span className="truncate" title={data.label || 'FFmpeg'}>
               {data.label || 'FFmpeg'}
             </span>
             {/* Hardware acceleration badge */}
-            {hwAccel && (
+            {hwAccel && isOriginConnected && (
               <Badge className={`text-[10px] px-1.5 py-0 ${hwAccel.color} text-white`}>
                 <Zap className="h-2.5 w-2.5 mr-0.5" />
                 {hwAccel.type}
+              </Badge>
+            )}
+            {/* Stopped badge when origin disconnected */}
+            {!isOriginConnected && (
+              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-gray-500/20 text-gray-600 dark:text-gray-400">
+                Stopped
               </Badge>
             )}
           </CardTitle>

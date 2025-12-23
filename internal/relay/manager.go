@@ -819,13 +819,14 @@ func (m *Manager) cleanupStaleSessions() {
 			shouldRemove = true
 		} else if clientCount == 0 {
 			// Session has no clients - check idle grace period
-			// BUT don't remove if session has active content (transcoders still running or buffered data)
-			// This is important for finite streams where transcoding may still be in progress
+			// BUT don't remove if session has active transcoders still running.
+			// This is important for finite streams where transcoding may still be in progress.
+			// Note: Buffer data alone (without active transcoders) doesn't keep a session alive.
 			hasActiveContent := session.HasActiveContent()
 
 			if !idleSince.IsZero() && time.Since(idleSince) > idleGracePeriod {
 				if hasActiveContent {
-					// Don't clean up - transcoders still running or data still buffered
+					// Don't clean up - transcoders still running
 					m.logger.Debug("Session idle but has active content, keeping alive",
 						slog.String("session_id", id.String()),
 						slog.Duration("idle_duration", time.Since(idleSince)))

@@ -2402,10 +2402,14 @@ func (s *RelaySession) IngestCompleted() bool {
 	return s.ingestCompleted.Load()
 }
 
-// HasActiveContent returns true if the session has active transcoders or buffered samples.
+// HasActiveContent returns true if the session has active transcoders that are still working.
 // This is used to determine if a session with completed ingest can still serve new clients.
 // For finite streams (like IPTV error videos), we want to reuse the session if transcoders
 // are still producing output, rather than creating a new session that re-fetches the source.
+//
+// Note: We only consider active transcoders as "active content", not buffer data alone.
+// If ingest is complete and all transcoders are stopped, buffer data is stale and the
+// session should be cleaned up even if the buffer still has bytes.
 func (s *RelaySession) HasActiveContent() bool {
 	// Check for active (non-closed) transcoders
 	s.esTranscodersMu.RLock()
@@ -2418,14 +2422,17 @@ func (s *RelaySession) HasActiveContent() bool {
 	}
 	s.esTranscodersMu.RUnlock()
 
-	// Check if ES buffer has content (bytes ingested)
+	// Check if ES buffer has content (for logging purposes)
 	var bufferBytes uint64
 	if s.esBuffer != nil {
 		stats := s.esBuffer.Stats()
 		bufferBytes = stats.TotalBytes
 	}
 
-	hasActive := activeTranscoders > 0 || bufferBytes > 0
+	// Only active transcoders count as active content.
+	// Buffer data alone (without active transcoders) is considered stale
+	// and the session can be cleaned up.
+	hasActive := activeTranscoders > 0
 
 	slog.Debug("HasActiveContent check",
 		slog.String("session_id", s.ID.String()),
