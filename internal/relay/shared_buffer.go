@@ -506,6 +506,13 @@ type ESVariant struct {
 	consumers   map[string]*ConsumerPosition
 	consumersMu sync.RWMutex
 
+	// Cached watermark for efficient eviction checks
+	// These are the minimum sequences that all consumers have read
+	cachedMinVideoSeq atomic.Uint64
+	cachedMinAudioSeq atomic.Uint64
+	watermarkGen      atomic.Uint64 // Incremented when consumer positions change
+	cachedGen         atomic.Uint64 // Generation when cache was last computed
+
 	// Mutex for coordinated eviction
 	evictMu sync.Mutex
 }
@@ -577,29 +584,29 @@ func (v *ESVariant) IsInEOFGracePeriod() bool {
 // Returns the consumer's initial position (current buffer state).
 func (v *ESVariant) RegisterConsumer(consumerID string) {
 	v.consumersMu.Lock()
-	defer v.consumersMu.Unlock()
-
 	// Initialize at sequence 0 - consumer hasn't read anything yet
 	v.consumers[consumerID] = &ConsumerPosition{
 		VideoSeq: 0,
 		AudioSeq: 0,
 		Updated:  time.Now(),
 	}
+	v.consumersMu.Unlock()
+	v.watermarkGen.Add(1) // Invalidate cached watermark
 }
 
 // UnregisterConsumer removes a consumer when it's done reading.
 // This allows eviction of samples that were held for this consumer.
 func (v *ESVariant) UnregisterConsumer(consumerID string) {
 	v.consumersMu.Lock()
-	defer v.consumersMu.Unlock()
 	delete(v.consumers, consumerID)
+	v.consumersMu.Unlock()
+	v.watermarkGen.Add(1) // Invalidate cached watermark
 }
 
 // UpdateConsumerPosition updates the read position for a consumer.
 // Call this after successfully reading samples to allow eviction of older data.
 func (v *ESVariant) UpdateConsumerPosition(consumerID string, videoSeq, audioSeq uint64) {
 	v.consumersMu.Lock()
-	defer v.consumersMu.Unlock()
 
 	pos, ok := v.consumers[consumerID]
 	if !ok {
@@ -609,28 +616,50 @@ func (v *ESVariant) UpdateConsumerPosition(consumerID string, videoSeq, audioSeq
 			AudioSeq: audioSeq,
 			Updated:  time.Now(),
 		}
+		v.consumersMu.Unlock()
+		v.watermarkGen.Add(1) // Invalidate cached watermark
 		return
 	}
 
 	// Only update if new position is ahead (consumers only move forward)
+	changed := false
 	if videoSeq > pos.VideoSeq {
 		pos.VideoSeq = videoSeq
+		changed = true
 	}
 	if audioSeq > pos.AudioSeq {
 		pos.AudioSeq = audioSeq
+		changed = true
 	}
 	pos.Updated = time.Now()
+	v.consumersMu.Unlock()
+
+	if changed {
+		v.watermarkGen.Add(1) // Invalidate cached watermark
+	}
 }
 
 // getMinConsumerSeq returns the minimum video and audio sequence that any consumer
 // has read. Samples at or before these sequences are safe to evict.
 // Returns (0, 0) if no consumers are registered (all samples safe to evict).
+// Uses cached values when consumer positions haven't changed.
 func (v *ESVariant) getMinConsumerSeq() (minVideoSeq, minAudioSeq uint64) {
+	// Fast path: check if cached values are still valid
+	currentGen := v.watermarkGen.Load()
+	if currentGen == v.cachedGen.Load() && currentGen > 0 {
+		return v.cachedMinVideoSeq.Load(), v.cachedMinAudioSeq.Load()
+	}
+
+	// Slow path: need to recalculate
 	v.consumersMu.RLock()
-	defer v.consumersMu.RUnlock()
 
 	if len(v.consumers) == 0 {
-		return 0, 0 // No consumers - eviction unrestricted
+		v.consumersMu.RUnlock()
+		// No consumers - eviction unrestricted
+		v.cachedMinVideoSeq.Store(0)
+		v.cachedMinAudioSeq.Store(0)
+		v.cachedGen.Store(currentGen)
+		return 0, 0
 	}
 
 	// Start with max values
@@ -645,6 +674,12 @@ func (v *ESVariant) getMinConsumerSeq() (minVideoSeq, minAudioSeq uint64) {
 			minAudioSeq = pos.AudioSeq
 		}
 	}
+	v.consumersMu.RUnlock()
+
+	// Cache the computed values
+	v.cachedMinVideoSeq.Store(minVideoSeq)
+	v.cachedMinAudioSeq.Store(minAudioSeq)
+	v.cachedGen.Store(currentGen)
 
 	return minVideoSeq, minAudioSeq
 }
