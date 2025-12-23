@@ -263,8 +263,15 @@ func (t *ESTrack) binarySearchSequenceLocked(afterSeq uint64) int {
 
 // collectSamplesLocked collects up to maxSamples starting from startIdx.
 // Must be called with t.mu held.
-// IMPORTANT: This makes deep copies of sample Data to prevent corruption when
-// the buffer evicts samples while processors are still using them.
+//
+// SAFETY: Returns slices that reference the buffer's internal data directly (zero-copy).
+// This is safe because the watermark-based eviction system ensures samples are not
+// evicted until ALL consumers have updated their position past that sample.
+// The sequence of operations is:
+//  1. Consumer reads sample (position still at previous seq)
+//  2. Eviction checks: canEvict = (sampleSeq <= minConsumerSeq) - sample is PROTECTED
+//  3. Consumer finishes processing, calls UpdateConsumerPosition()
+//  4. NOW sample can be evicted (sampleSeq <= new minConsumerSeq)
 func (t *ESTrack) collectSamplesLocked(startIdx, maxSamples int) []ESSample {
 	available := len(t.samples) - startIdx
 	if maxSamples > 0 && available > maxSamples {
@@ -274,23 +281,9 @@ func (t *ESTrack) collectSamplesLocked(startIdx, maxSamples int) []ESSample {
 		return nil
 	}
 
-	result := make([]ESSample, available)
-	for i := 0; i < available; i++ {
-		src := t.samples[startIdx+i]
-		// Deep copy the Data slice to prevent corruption from buffer eviction
-		dataCopy := make([]byte, len(src.Data))
-		copy(dataCopy, src.Data)
-		result[i] = ESSample{
-			PTS:        src.PTS,
-			DTS:        src.DTS,
-			Data:       dataCopy,
-			IsKeyframe: src.IsKeyframe,
-			Sequence:   src.Sequence,
-			Timestamp:  src.Timestamp,
-		}
-	}
-
-	return result
+	// Return samples directly - no copy needed due to watermark protection
+	// This is a significant performance optimization for high-throughput streams
+	return t.samples[startIdx : startIdx+available]
 }
 
 // ReadFromKeyframe returns samples starting from the first keyframe after the given sequence.
