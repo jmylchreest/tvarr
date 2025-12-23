@@ -754,18 +754,23 @@ func (t *FFmpegTranscoder) runInputLoop(source *ESVariant) {
 	audioTrack := source.AudioTrack()
 
 	// Wait for initial keyframe
+	// Check for existing samples first before waiting - handles case where
+	// source has finished but buffer still has content (finite streams)
 	t.config.Logger.Debug("Waiting for initial keyframe from source")
 	for {
-		select {
-		case <-t.ctx.Done():
-			return
-		case <-videoTrack.NotifyChan():
-		}
-
+		// Try to read samples immediately (non-blocking check)
 		samples := videoTrack.ReadFromKeyframe(t.lastVideoSeq, 1)
 		if len(samples) > 0 {
 			t.lastVideoSeq = samples[0].Sequence - 1
 			break
+		}
+
+		// No samples available, wait for notification or context cancellation
+		select {
+		case <-t.ctx.Done():
+			return
+		case <-videoTrack.NotifyChan():
+			// New sample notification received, loop back to read
 		}
 	}
 

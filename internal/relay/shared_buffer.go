@@ -479,6 +479,10 @@ type ConsumerPosition struct {
 	Updated  time.Time // When this position was last updated
 }
 
+// SourceEOFGracePeriod is how long to preserve source variant data after EOF
+// to allow late-joining transcoders to access the content.
+const SourceEOFGracePeriod = 30 * time.Second
+
 // ESVariant holds the elementary stream tracks for a specific codec variant.
 type ESVariant struct {
 	variant    CodecVariant
@@ -490,6 +494,9 @@ type ESVariant struct {
 
 	// Variant-level byte limit (combined video + audio)
 	maxBytes uint64 // Maximum total bytes for this variant (0 = unlimited)
+
+	// EOF tracking for source variants - prevents aggressive eviction after finite stream ends
+	eofReceivedAt atomic.Value // time.Time - when EOF was received (zero if not yet)
 
 	// Statistics
 	bytesIngested atomic.Uint64
@@ -543,6 +550,26 @@ func (v *ESVariant) AudioTrack() *ESTrack {
 // IsSource returns true if this is the original source variant.
 func (v *ESVariant) IsSource() bool {
 	return v.isSource
+}
+
+// SignalEOF marks that the source stream has finished (EOF received).
+// For source variants, this starts a grace period during which eviction is paused
+// to allow late-joining transcoders to access the buffered content.
+func (v *ESVariant) SignalEOF() {
+	v.eofReceivedAt.Store(time.Now())
+}
+
+// IsInEOFGracePeriod returns true if this is a source variant that recently
+// received EOF and is in the grace period where eviction should be paused.
+func (v *ESVariant) IsInEOFGracePeriod() bool {
+	if !v.isSource {
+		return false
+	}
+	eofTime, ok := v.eofReceivedAt.Load().(time.Time)
+	if !ok || eofTime.IsZero() {
+		return false
+	}
+	return time.Since(eofTime) < SourceEOFGracePeriod
 }
 
 // RegisterConsumer registers a consumer (processor) that will read from this variant.
@@ -668,6 +695,12 @@ func (v *ESVariant) evictIfNeeded(incomingBytes uint64) {
 	// This ensures samples that all consumers have read are cleaned up
 	v.evictReadSamples()
 
+	// For source variants in EOF grace period, skip byte-limit eviction
+	// to preserve content for late-joining transcoders
+	if v.IsInEOFGracePeriod() {
+		return
+	}
+
 	if v.maxBytes == 0 {
 		return // No byte limit - consumer position eviction only
 	}
@@ -719,6 +752,13 @@ func (v *ESVariant) evictIfNeeded(incomingBytes uint64) {
 // This is the primary eviction mechanism when maxBytes=0 (unlimited).
 // Evicts samples where the sequence number is <= the minimum consumer position.
 func (v *ESVariant) evictReadSamples() {
+	// For source variants in EOF grace period, don't evict to allow late-joining transcoders
+	// to access the full buffered content. This is critical for finite streams where
+	// multiple codec variants may be requested at different times.
+	if v.IsInEOFGracePeriod() {
+		return
+	}
+
 	v.evictMu.Lock()
 	defer v.evictMu.Unlock()
 
@@ -966,8 +1006,10 @@ type SharedESBuffer struct {
 	onVariantRequest func(source, target CodecVariant) error
 
 	// Lifecycle
-	closed   atomic.Bool
-	closedCh chan struct{}
+	closed          atomic.Bool
+	closedCh        chan struct{}
+	sourceCompleted atomic.Bool   // True when source ingest has finished (EOF received)
+	sourceCompletedCh chan struct{} // Closed when source ingest completes
 }
 
 // NewSharedESBuffer creates a new shared elementary stream buffer.
@@ -980,14 +1022,15 @@ func NewSharedESBuffer(channelID, proxyID string, config SharedESBufferConfig) *
 	}
 
 	b := &SharedESBuffer{
-		channelID:     channelID,
-		proxyID:       proxyID,
-		config:        config,
-		variants:      make(map[CodecVariant]*ESVariant),
-		sourceReadyCh: make(chan struct{}),
-		startTime:     time.Now(),
-		processors:    make(map[string]struct{}),
-		closedCh:      make(chan struct{}),
+		channelID:         channelID,
+		proxyID:           proxyID,
+		config:            config,
+		variants:          make(map[CodecVariant]*ESVariant),
+		sourceReadyCh:     make(chan struct{}),
+		startTime:         time.Now(),
+		processors:        make(map[string]struct{}),
+		closedCh:          make(chan struct{}),
+		sourceCompletedCh: make(chan struct{}),
 	}
 
 	// Pre-create source variant if we have codec hints from probing
@@ -1531,6 +1574,36 @@ func (b *SharedESBuffer) IsClosed() bool {
 // ClosedChan returns a channel that is closed when the buffer is closed.
 func (b *SharedESBuffer) ClosedChan() <-chan struct{} {
 	return b.closedCh
+}
+
+// MarkSourceCompleted signals that the origin stream has finished (EOF received).
+// This allows transcoders to know that no more source samples will arrive
+// and they should finish processing remaining samples and shutdown gracefully.
+// Also triggers the EOF grace period on the source variant to prevent eviction
+// during the window when additional transcoders may still join.
+func (b *SharedESBuffer) MarkSourceCompleted() {
+	if b.sourceCompleted.CompareAndSwap(false, true) {
+		close(b.sourceCompletedCh)
+		// Signal EOF on source variant to start grace period (prevents eviction)
+		b.variantsMu.RLock()
+		if source := b.variants[b.sourceVariant]; source != nil {
+			source.SignalEOF()
+		}
+		b.variantsMu.RUnlock()
+		b.config.Logger.Info("ES buffer source completed (EOF received)",
+			slog.String("channel_id", b.channelID))
+	}
+}
+
+// IsSourceCompleted returns true if the origin stream has finished sending data.
+func (b *SharedESBuffer) IsSourceCompleted() bool {
+	return b.sourceCompleted.Load()
+}
+
+// SourceCompletedChan returns a channel that is closed when the source stream finishes.
+// Use this to be notified when no more source samples will arrive.
+func (b *SharedESBuffer) SourceCompletedChan() <-chan struct{} {
+	return b.sourceCompletedCh
 }
 
 // Duration returns how long this buffer has been active.

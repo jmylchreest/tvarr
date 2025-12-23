@@ -57,6 +57,9 @@ type TSDemuxer struct {
 	initErr     error
 	initDone    chan struct{}
 
+	// Debug logging flags
+	firstH265KeyframeLogged bool
+
 	// Context for cleanup
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -275,6 +278,32 @@ func (d *TSDemuxer) handleH265(pts, dts int64, au [][]byte) error {
 	}
 
 	isKeyframe := h265.IsRandomAccess(au)
+
+	// Log first keyframe's NAL types for debugging H.265 header issues
+	if isKeyframe && !d.firstH265KeyframeLogged {
+		d.firstH265KeyframeLogged = true
+		nalTypes := make([]int, 0, len(au))
+		hasVPS, hasSPS, hasPPS := false, false, false
+		for _, nalu := range au {
+			if len(nalu) > 0 {
+				naluType := int((nalu[0] >> 1) & 0x3F)
+				nalTypes = append(nalTypes, naluType)
+				if naluType == 32 {
+					hasVPS = true
+				} else if naluType == 33 {
+					hasSPS = true
+				} else if naluType == 34 {
+					hasPPS = true
+				}
+			}
+		}
+		d.config.Logger.Info("First H.265 keyframe NAL analysis from FFmpeg",
+			slog.Any("nal_types", nalTypes),
+			slog.Bool("has_vps", hasVPS),
+			slog.Bool("has_sps", hasSPS),
+			slog.Bool("has_pps", hasPPS),
+			slog.Int("nal_count", len(au)))
+	}
 
 	// H.265 also uses Annex B format
 	annexB, err := h264.AnnexB(au).Marshal()

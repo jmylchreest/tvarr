@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jmylchreest/tvarr/internal/observability"
 	"github.com/jmylchreest/tvarr/internal/util"
 	"github.com/jmylchreest/tvarr/pkg/ffmpegd/types"
 )
@@ -225,7 +226,7 @@ func (s *FFmpegDSpawner) SpawnForJob(ctx context.Context, jobID string) (types.D
 		"--coordinator-url", s.config.CoordinatorAddress,
 		"--daemon-id", string(daemonID),
 		"--name", string(daemonID),
-		"--log-level", "warn",
+		"--log-level", "info",
 	}
 
 	// Add auth token if configured
@@ -235,11 +236,13 @@ func (s *FFmpegDSpawner) SpawnForJob(ctx context.Context, jobID string) (types.D
 
 	cmd := exec.CommandContext(processCtx, binaryPath, args...)
 
-	// Capture stderr for debugging
-	cmd.Stderr = &logWriter{
+	// Capture both stdout and stderr - subprocess outputs JSON logs
+	logCapture := &logWriter{
 		logger: s.logger,
 		jobID:  jobID,
 	}
+	cmd.Stdout = logCapture
+	cmd.Stderr = logCapture
 
 	// Start the subprocess
 	if err := cmd.Start(); err != nil {
@@ -563,17 +566,89 @@ func (s *FFmpegDSpawner) StopAll() {
 }
 
 // logWriter implements io.Writer for subprocess stderr logging.
+// It parses JSON log lines from the subprocess and re-emits them with proper log levels.
 type logWriter struct {
 	logger *slog.Logger
 	jobID  string
+	buf    []byte // Buffer for incomplete lines
+}
+
+// subprocessLogEntry represents a JSON log entry from the subprocess.
+type subprocessLogEntry struct {
+	Time    string         `json:"time"`
+	Level   string         `json:"level"`
+	Msg     string         `json:"msg"`
+	Fields  map[string]any `json:"-"` // Captures all other fields
+	RawJSON json.RawMessage
 }
 
 func (w *logWriter) Write(p []byte) (n int, err error) {
-	line := string(p)
-	if line != "" && line != "\n" {
-		w.logger.Debug("ffmpegd subprocess output",
-			slog.String("job_id", w.jobID),
-			slog.String("line", line))
+	// Append to buffer
+	w.buf = append(w.buf, p...)
+
+	// Process complete lines
+	for {
+		idx := bytes.IndexByte(w.buf, '\n')
+		if idx < 0 {
+			break
+		}
+
+		line := w.buf[:idx]
+		w.buf = w.buf[idx+1:]
+
+		if len(line) == 0 {
+			continue
+		}
+
+		w.processLine(line)
 	}
+
 	return len(p), nil
+}
+
+func (w *logWriter) processLine(line []byte) {
+	// Try to parse as JSON
+	var entry map[string]any
+	if err := json.Unmarshal(line, &entry); err != nil {
+		// Not JSON, log as plain text
+		w.logger.Info("ffmpegd output",
+			slog.String("app", "tvarr-ffmpegd"),
+			slog.String("job_id", w.jobID),
+			slog.String("line", string(line)))
+		return
+	}
+
+	// Extract standard fields
+	level, _ := entry["level"].(string)
+	msg, _ := entry["msg"].(string)
+
+	// Build attributes from remaining fields (excluding time, level, msg)
+	attrs := make([]any, 0, len(entry)*2+4)
+	attrs = append(attrs, slog.String("app", "tvarr-ffmpegd"))
+	attrs = append(attrs, slog.String("job_id", w.jobID))
+
+	for k, v := range entry {
+		if k == "time" || k == "level" || k == "msg" {
+			continue
+		}
+		attrs = append(attrs, slog.Any(k, v))
+	}
+
+	// Re-emit with correct log level
+	switch strings.ToUpper(level) {
+	case "TRACE":
+		// Use custom trace level from observability package
+		w.logger.Log(context.Background(), observability.LevelTrace, msg, attrs...)
+	case "DEBUG":
+		w.logger.Debug(msg, attrs...)
+	case "INFO":
+		w.logger.Info(msg, attrs...)
+	case "WARN", "WARNING":
+		w.logger.Warn(msg, attrs...)
+	case "ERROR":
+		w.logger.Error(msg, attrs...)
+	default:
+		// Default to INFO for unknown levels
+		w.logger.Info(msg, attrs...)
+	}
 }

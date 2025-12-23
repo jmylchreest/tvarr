@@ -443,18 +443,23 @@ func (p *MPEGTSProcessor) runProcessingLoop(esVariant *ESVariant) {
 	audioTrack := esVariant.AudioTrack()
 
 	// Wait for initial video keyframe
+	// Check for existing samples first before waiting - handles case where
+	// transcoder has stopped but buffer still has content (finite streams)
 	p.config.Logger.Debug("Waiting for initial keyframe")
 	for {
-		select {
-		case <-p.ctx.Done():
-			return
-		case <-videoTrack.NotifyChan():
-		}
-
+		// Try to read samples immediately (non-blocking check)
 		samples := videoTrack.ReadFromKeyframe(p.lastVideoSeq, 1)
 		if len(samples) > 0 {
 			p.lastVideoSeq = samples[0].Sequence - 1
 			break
+		}
+
+		// No samples available, wait for notification or context cancellation
+		select {
+		case <-p.ctx.Done():
+			return
+		case <-videoTrack.NotifyChan():
+			// New sample notification received, loop back to read
 		}
 	}
 

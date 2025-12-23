@@ -53,17 +53,18 @@ type FlowNodeData struct {
 	ChannelName string `json:"channelName,omitempty"`
 
 	// Origin node fields
-	SourceName   string  `json:"sourceName,omitempty"` // Name of the stream source (e.g., "s8k")
-	SourceURL    string  `json:"sourceUrl,omitempty"`
-	SourceFormat string  `json:"sourceFormat,omitempty"` // hls, dash, mpegts
-	VideoCodec   string  `json:"videoCodec,omitempty"`
-	AudioCodec   string  `json:"audioCodec,omitempty"`
-	Framerate    float64 `json:"framerate,omitempty"`    // Video framerate (fps)
-	VideoWidth   int     `json:"videoWidth,omitempty"`   // Video width in pixels
-	VideoHeight  int     `json:"videoHeight,omitempty"`  // Video height in pixels
-	IngressBps   uint64  `json:"ingressBps,omitempty"`   // Bytes per second from origin
-	TotalBytesIn uint64  `json:"totalBytesIn,omitempty"` // Total bytes received from upstream
-	DurationSecs float64 `json:"durationSecs,omitempty"` // Session duration in seconds
+	SourceName      string  `json:"sourceName,omitempty"`      // Name of the stream source (e.g., "s8k")
+	SourceURL       string  `json:"sourceUrl,omitempty"`
+	SourceFormat    string  `json:"sourceFormat,omitempty"`    // hls, dash, mpegts
+	VideoCodec      string  `json:"videoCodec,omitempty"`
+	AudioCodec      string  `json:"audioCodec,omitempty"`
+	Framerate       float64 `json:"framerate,omitempty"`       // Video framerate (fps)
+	VideoWidth      int     `json:"videoWidth,omitempty"`      // Video width in pixels
+	VideoHeight     int     `json:"videoHeight,omitempty"`     // Video height in pixels
+	IngressBps      uint64  `json:"ingressBps,omitempty"`      // Bytes per second from origin
+	TotalBytesIn    uint64  `json:"totalBytesIn,omitempty"`    // Total bytes received from upstream
+	DurationSecs    float64 `json:"durationSecs,omitempty"`    // Session duration in seconds
+	OriginConnected bool    `json:"originConnected"` // True if origin is still streaming (false after EOF)
 
 	// Bandwidth history for sparkline (last 30 samples, ~1 sample/sec)
 	IngressHistory []uint64 `json:"ingressHistory,omitempty"` // Historical ingress bps values

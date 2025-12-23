@@ -71,12 +71,13 @@ type TranscodeJob struct {
 	outputCh chan *proto.ESSampleBatch
 
 	// Lifecycle
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	started  atomic.Bool
-	closed   atomic.Bool
-	closedCh chan struct{}
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
+	started       atomic.Bool
+	closed        atomic.Bool
+	closedCh      chan struct{}
+	inputComplete atomic.Bool // Set when input is done (source EOF) - allows graceful FFmpeg flush
 
 	// Stats
 	samplesIn     atomic.Uint64
@@ -177,16 +178,26 @@ func (t *TranscodeJob) Start(ctx context.Context) (*proto.TranscodeAck, error) {
 	}
 
 	// Common callbacks for both demuxers
+	var firstVideoSample bool
 	videoCallback := func(pts, dts int64, data []byte, isKeyframe bool) {
-		t.samplesOut.Add(1)
+		count := t.samplesOut.Add(1)
 		t.bytesOut.Add(uint64(len(data)))
 		t.recordActivity()
+		if !firstVideoSample {
+			firstVideoSample = true
+			t.logger.Info("First video sample demuxed from FFmpeg",
+				slog.String("job_id", t.id),
+				slog.Int64("pts", pts),
+				slog.Int("data_len", len(data)),
+				slog.Bool("is_keyframe", isKeyframe),
+				slog.String("target_video", t.config.TargetVideoCodec))
+		}
 		t.enqueueOutputSample(&proto.ESSample{
 			Pts:        pts,
 			Dts:        dts,
 			Data:       data,
 			IsKeyframe: isKeyframe,
-			Sequence:   t.samplesOut.Load(),
+			Sequence:   count,
 		}, true)
 	}
 	audioCallback := func(pts int64, data []byte) {
@@ -365,16 +376,37 @@ func (t *TranscodeJob) OutputChannel() <-chan *proto.ESSampleBatch {
 	return t.outputCh
 }
 
-// Stop stops the transcoding job.
+// SignalInputComplete signals that all input has been sent (source EOF).
+// This allows FFmpeg to flush its encoder and produce remaining output.
+// Unlike Stop(), this does NOT cancel the context - the output loop continues
+// reading until FFmpeg finishes and closes stdout.
+func (t *TranscodeJob) SignalInputComplete() {
+	if t.inputComplete.CompareAndSwap(false, true) {
+		t.logger.Info("input complete signaled, allowing FFmpeg to flush",
+			slog.String("job_id", t.id),
+			slog.Uint64("samples_in", t.samplesIn.Load()))
+
+		// Close input channel to signal the input writer to stop
+		// The input writer will close stdin, which tells FFmpeg to flush
+		close(t.inputCh)
+	}
+}
+
+// Stop stops the transcoding job immediately (forced shutdown).
+// For graceful shutdown after input exhaustion, use SignalInputComplete() instead.
 func (t *TranscodeJob) Stop() {
 	if t.closed.CompareAndSwap(false, true) {
+		// Cancel context to signal all goroutines to stop
 		if t.cancel != nil {
 			t.cancel()
 		}
 
-		// Close input channel to signal the input writer to stop
-		// The input writer will close stdin when it exits
-		close(t.inputCh)
+		// Close input channel if not already closed by SignalInputComplete
+		// Use a recover to handle the case where it's already closed
+		func() {
+			defer func() { recover() }()
+			close(t.inputCh)
+		}()
 
 		// Wait for input writer to finish and close stdin
 		select {
@@ -613,6 +645,26 @@ func (t *TranscodeJob) startFFmpeg() error {
 	if t.config.VideoPreset != "" && !IsHardwareEncoder(videoEncoder) {
 		builder.VideoPreset(t.config.VideoPreset)
 	}
+
+	// For H.265/HEVC encoders, ensure VPS/SPS/PPS are included with every keyframe.
+	// This is required for proper HLS/fMP4 playback since clients may join mid-stream
+	// and need codec parameters to initialize the decoder.
+	switch videoEncoder {
+	case "libx265":
+		// x265 specific option to repeat headers (VPS/SPS/PPS) on every keyframe
+		builder.OutputArgs("-x265-params", "repeat-headers=1")
+	case "hevc_nvenc":
+		// NVIDIA encoder option to repeat VPS/SPS/PPS
+		builder.OutputArgs("-repeat_vps_sps_pps", "1")
+	case "hevc_qsv":
+		// Intel QSV encoder option to repeat VPS/SPS/PPS
+		builder.OutputArgs("-repeat_pps", "1")
+	case "hevc_amf":
+		// AMD AMF encoder - header repetition via header_insertion_mode
+		builder.OutputArgs("-header_insertion_mode", "idr")
+	}
+	// Note: hevc_vaapi and hevc_videotoolbox don't have direct repeat-header options.
+	// The fMP4 adapter extracts params from init segment for these encoders.
 
 	// Audio codec - use locally selected encoder
 	audioEncoder := selector.SelectAudioEncoder(t.config.TargetAudioCodec)
@@ -856,14 +908,23 @@ func (t *TranscodeJob) runOutputLoop() {
 	logTicker := time.NewTicker(5 * time.Second)
 	defer logTicker.Stop()
 	var lastBytesRead, totalBytesRead uint64
+	var firstReadLogged bool
 
 	for {
+		// Check for context cancellation, but continue if input is complete
+		// This allows FFmpeg to flush its encoder after input EOF
 		select {
 		case <-t.ctx.Done():
-			t.logger.Debug("runOutputLoop exiting: context done",
-				slog.String("job_id", t.id),
-				slog.Uint64("total_bytes_read", totalBytesRead))
-			return
+			if !t.inputComplete.Load() {
+				// Forced shutdown - exit immediately
+				t.logger.Debug("runOutputLoop exiting: context done (forced)",
+					slog.String("job_id", t.id),
+					slog.Uint64("total_bytes_read", totalBytesRead))
+				return
+			}
+			// Input complete - continue reading until FFmpeg finishes
+			t.logger.Debug("context done but input complete, continuing to drain FFmpeg output",
+				slog.String("job_id", t.id))
 		case <-logTicker.C:
 			bytesDelta := totalBytesRead - lastBytesRead
 			t.logger.Log(t.ctx, observability.LevelTrace, "FFmpeg output throughput",
@@ -882,7 +943,9 @@ func (t *TranscodeJob) runOutputLoop() {
 				t.logger.Debug("runOutputLoop exiting: FFmpeg stdout closed",
 					slog.String("job_id", t.id),
 					slog.String("reason", err.Error()),
-					slog.Uint64("total_bytes_read", totalBytesRead))
+					slog.Uint64("total_bytes_read", totalBytesRead),
+					slog.Uint64("samples_out", t.samplesOut.Load()),
+					slog.Bool("input_complete", t.inputComplete.Load()))
 				return
 			}
 			t.errorCount.Add(1)
@@ -895,6 +958,14 @@ func (t *TranscodeJob) runOutputLoop() {
 
 		if n > 0 {
 			totalBytesRead += uint64(n)
+			if !firstReadLogged {
+				firstReadLogged = true
+				t.logger.Info("First FFmpeg output received",
+					slog.String("job_id", t.id),
+					slog.Int("bytes", n),
+					slog.String("target_video", t.config.TargetVideoCodec),
+					slog.String("target_audio", t.config.TargetAudioCodec))
+			}
 			if err := t.outputDemuxer.Write(buf[:n]); err != nil {
 				if errors.Is(err, io.ErrClosedPipe) || strings.Contains(err.Error(), "closed pipe") {
 					t.logger.Debug("runOutputLoop exiting: demuxer pipe closed",

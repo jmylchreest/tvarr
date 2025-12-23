@@ -136,6 +136,7 @@ export function Dashboard() {
       {/* Relay Flow Visualization */}
       <RelayFlowDiagram
         pollingInterval={autoRefresh.refreshInterval * 1000}
+        enabled={autoRefresh.isAutoRefresh}
         className="flex-1 min-h-0"
         onMetadataUpdate={setFlowMetadata}
       />

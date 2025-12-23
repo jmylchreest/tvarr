@@ -130,21 +130,16 @@ export function buildEdgesWithHandles(
     nodeMap.set(node.id, node);
   }
 
-  return backendEdges.map((edge) => {
+  const edges: Edge[] = [];
+
+  for (const edge of backendEdges) {
     const sourceNode = nodeMap.get(edge.source);
     const targetNode = nodeMap.get(edge.target);
 
+    // Skip edges where source or target node doesn't exist
+    // This prevents orphaned edges pointing to non-existent nodes
     if (!sourceNode || !targetNode) {
-      // If nodes not found, return edge as-is
-      return {
-        id: edge.id,
-        source: edge.source,
-        target: edge.target,
-        type: edge.type || 'animated',
-        animated: edge.animated,
-        data: edge.data as unknown as Record<string, unknown>,
-        style: edge.style,
-      };
+      continue;
     }
 
     const sourceType = sourceNode.type || 'unknown';
@@ -156,7 +151,7 @@ export function buildEdgesWithHandles(
       ? `edge-${edge.source}-${handles.sourceHandle}-${edge.target}-${handles.targetHandle}`
       : edge.id;
 
-    return {
+    edges.push({
       id: edgeId,
       source: edge.source,
       target: edge.target,
@@ -166,8 +161,10 @@ export function buildEdgesWithHandles(
       animated: edge.animated,
       data: edge.data as unknown as Record<string, unknown>,
       style: edge.style,
-    };
-  });
+    });
+  }
+
+  return edges;
 }
 
 /**

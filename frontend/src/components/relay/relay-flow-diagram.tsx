@@ -50,14 +50,16 @@ export interface FlowMetadata {
 
 interface RelayFlowDiagramProps {
   pollingInterval?: number;
+  /** Whether polling is enabled. When false, no automatic fetching occurs. */
+  enabled?: boolean;
   className?: string;
   onMetadataUpdate?: (metadata: FlowMetadata) => void;
 }
 
-function RelayFlowDiagramInner({ pollingInterval = 2000, className = '', onMetadataUpdate }: RelayFlowDiagramProps) {
+function RelayFlowDiagramInner({ pollingInterval = 2000, enabled = true, className = '', onMetadataUpdate }: RelayFlowDiagramProps) {
   const { data, isLoading, error, refetch } = useRelayFlowData({
     pollingInterval,
-    enabled: true,
+    enabled,
   });
 
   // Notify parent of metadata updates

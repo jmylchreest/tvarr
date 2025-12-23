@@ -372,6 +372,12 @@ func (p *HLSTSProcessor) ServeManifest(w http.ResponseWriter, r *http.Request) e
 		buf.WriteString(fmt.Sprintf("segment%d.ts\n", seg.sequence))
 	}
 
+	// Add #EXT-X-ENDLIST if source stream has completed (VOD mode)
+	// This signals to players that no more segments will be added
+	if p.esBuffer != nil && p.esBuffer.IsSourceCompleted() {
+		buf.WriteString("#EXT-X-ENDLIST\n")
+	}
+
 	p.SetStreamHeaders(w)
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -502,18 +508,23 @@ func (p *HLSTSProcessor) runProcessingLoop(esVariant *ESVariant) {
 	audioTrack := esVariant.AudioTrack()
 
 	// Wait for initial video keyframe
+	// Check for existing samples first before waiting - handles case where
+	// transcoder has stopped but buffer still has content (finite streams)
 	p.config.Logger.Debug("Waiting for initial keyframe")
 	for {
-		select {
-		case <-p.ctx.Done():
-			return
-		case <-videoTrack.NotifyChan():
-		}
-
+		// Try to read samples immediately (non-blocking check)
 		samples := videoTrack.ReadFromKeyframe(p.lastVideoSeq, 1)
 		if len(samples) > 0 {
 			p.lastVideoSeq = samples[0].Sequence - 1 // Process this sample next
 			break
+		}
+
+		// No samples available, wait for notification or context cancellation
+		select {
+		case <-p.ctx.Done():
+			return
+		case <-videoTrack.NotifyChan():
+			// New sample notification received, loop back to read
 		}
 	}
 

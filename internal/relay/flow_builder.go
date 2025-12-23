@@ -65,8 +65,46 @@ func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph
 		)
 		graph.Edges = append(graph.Edges, originToBuffer)
 
-		// Check if there's a transcoder (for transcode mode)
-		if session.RouteType == RouteTranscode && session.FFmpegStats != nil {
+		// Check if there are ES transcoders (for transcode mode with multi-variant support)
+		if session.RouteType == RouteTranscode && len(session.ESTranscoders) > 0 {
+			// Create a node for each ES transcoder
+			for _, esTranscoder := range session.ESTranscoders {
+				transcoderNode := b.buildESTranscoderNode(session, esTranscoder)
+				graph.Nodes = append(graph.Nodes, transcoderNode)
+
+				// Parse source/target variants for codec info
+				sourceVideo, sourceAudio := b.resolveVariantCodecs(session, esTranscoder.SourceVariant)
+				targetVideo, targetAudio := esTranscoder.VideoCodec, esTranscoder.AudioCodec
+				if targetVideo == "" {
+					targetVideo, _ = b.resolveVariantCodecs(session, esTranscoder.TargetVariant)
+				}
+				if targetAudio == "" {
+					_, targetAudio = b.resolveVariantCodecs(session, esTranscoder.TargetVariant)
+				}
+
+				// Create bidirectional edges: buffer <-> transcoder
+				bufferToTranscoder := b.buildEdge(
+					bufferNode.ID,
+					transcoderNode.ID,
+					esTranscoder.BytesIn,
+					sourceVideo,
+					sourceAudio,
+					"es",
+				)
+				graph.Edges = append(graph.Edges, bufferToTranscoder)
+
+				transcoderToBuffer := b.buildEdge(
+					transcoderNode.ID,
+					bufferNode.ID,
+					esTranscoder.BytesOut,
+					targetVideo,
+					targetAudio,
+					"es",
+				)
+				graph.Edges = append(graph.Edges, transcoderToBuffer)
+			}
+		} else if session.RouteType == RouteTranscode && session.FFmpegStats != nil {
+			// Fallback to single transcoder node if no ES transcoders
 			transcoderNode := b.buildTranscoderNode(session)
 			graph.Nodes = append(graph.Nodes, transcoderNode)
 
@@ -90,7 +128,6 @@ func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph
 			graph.Edges = append(graph.Edges, bufferToTranscoder)
 
 			// Transcoder back to buffer (transcoded data)
-			// Resolve target codecs - "copy" means use source codec, so display source codec instead
 			targetVideoCodec := session.VideoCodec
 			targetAudioCodec := session.AudioCodec
 			if session.TargetVideoCodec != "" && session.TargetVideoCodec != "copy" {
@@ -290,21 +327,22 @@ func (b *FlowBuilder) buildOriginNode(session RelaySessionInfo) RelayFlowNode {
 		Type:     FlowNodeTypeOrigin,
 		Position: FlowPosition{X: 0, Y: 0}, // Frontend calculates layout
 		Data: FlowNodeData{
-			Label:        label,
-			SessionID:    session.SessionID,
-			ChannelID:    session.ChannelID,
-			ChannelName:  session.ChannelName,
-			SourceName:   session.StreamSourceName,
-			SourceURL:    session.SourceURL,
-			SourceFormat: session.SourceFormat,
-			VideoCodec:   session.VideoCodec,
-			AudioCodec:   session.AudioCodec,
-			Framerate:    session.Framerate,
-			VideoWidth:   session.VideoWidth,
-			VideoHeight:  session.VideoHeight,
-			IngressBps:   session.IngressRateBps,
-			TotalBytesIn: session.BytesIn,
-			DurationSecs: session.DurationSecs,
+			Label:           label,
+			SessionID:       session.SessionID,
+			ChannelID:       session.ChannelID,
+			ChannelName:     session.ChannelName,
+			SourceName:      session.StreamSourceName,
+			SourceURL:       session.SourceURL,
+			SourceFormat:    session.SourceFormat,
+			VideoCodec:      session.VideoCodec,
+			AudioCodec:      session.AudioCodec,
+			Framerate:       session.Framerate,
+			VideoWidth:      session.VideoWidth,
+			VideoHeight:     session.VideoHeight,
+			IngressBps:      session.IngressRateBps,
+			TotalBytesIn:    session.BytesIn,
+			DurationSecs:    session.DurationSecs,
+			OriginConnected: session.OriginConnected,
 		},
 	}
 }
@@ -391,6 +429,72 @@ func (b *FlowBuilder) buildTranscoderNode(session RelaySessionInfo) RelayFlowNod
 
 	return RelayFlowNode{
 		ID:       fmt.Sprintf("transcoder-%s", session.SessionID),
+		Type:     FlowNodeTypeTranscoder,
+		Position: FlowPosition{X: 0, Y: 0}, // Frontend calculates layout
+		Data:     data,
+	}
+}
+
+// buildESTranscoderNode creates a node for a specific ES transcoder instance.
+func (b *FlowBuilder) buildESTranscoderNode(session RelaySessionInfo, transcoder ESTranscoderInfo) RelayFlowNode {
+	// Parse target variant for codec display
+	targetVideo, targetAudio := transcoder.VideoCodec, transcoder.AudioCodec
+	if targetVideo == "" || targetAudio == "" {
+		parts := strings.Split(transcoder.TargetVariant, "/")
+		if len(parts) >= 1 && targetVideo == "" {
+			targetVideo = parts[0]
+		}
+		if len(parts) >= 2 && targetAudio == "" {
+			targetAudio = parts[1]
+		}
+	}
+
+	// Parse source variant for display
+	sourceVideo, sourceAudio := session.VideoCodec, session.AudioCodec
+	if transcoder.SourceVariant != "" {
+		parts := strings.Split(transcoder.SourceVariant, "/")
+		if len(parts) >= 1 {
+			sourceVideo = parts[0]
+		}
+		if len(parts) >= 2 {
+			sourceAudio = parts[1]
+		}
+	}
+
+	// Create a label that shows the target variant
+	label := fmt.Sprintf("FFmpeg (%s)", transcoder.TargetVariant)
+
+	data := FlowNodeData{
+		Label:            label,
+		SessionID:        session.SessionID,
+		ChannelID:        session.ChannelID,
+		ChannelName:      session.ChannelName,
+		SourceVideoCodec: sourceVideo,
+		SourceAudioCodec: sourceAudio,
+		TargetVideoCodec: targetVideo,
+		TargetAudioCodec: targetAudio,
+		VideoEncoder:     transcoder.VideoEncoder,
+		AudioEncoder:     transcoder.AudioEncoder,
+		HWAccelType:      transcoder.HWAccel,
+		HWAccelDevice:    transcoder.HWAccelDevice,
+		TranscoderBytesIn: transcoder.BytesIn,
+	}
+
+	// Add CPU stats if available
+	if transcoder.CPUPercent > 0 {
+		cpuPercent := transcoder.CPUPercent
+		data.TranscoderCPU = &cpuPercent
+	}
+	if transcoder.MemoryMB > 0 {
+		memMB := transcoder.MemoryMB
+		data.TranscoderMemMB = &memMB
+	}
+
+	// Generate unique ID using the target variant
+	transcoderID := fmt.Sprintf("transcoder-%s-%s", session.SessionID, strings.ReplaceAll(transcoder.TargetVariant, "/", "-"))
+
+	return RelayFlowNode{
+		ID:       transcoderID,
 		Type:     FlowNodeTypeTranscoder,
 		Position: FlowPosition{X: 0, Y: 0}, // Frontend calculates layout
 		Data:     data,

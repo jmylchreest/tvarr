@@ -79,6 +79,9 @@ type RelaySessionInfo struct {
 	FFmpegPID   *int             `json:"ffmpeg_pid,omitempty"`
 	FFmpegStats *FFmpegStatsInfo `json:"ffmpeg_stats,omitempty"` // Detailed FFmpeg stats
 
+	// ES Transcoders (individual transcoder instances for codec variants)
+	ESTranscoders []ESTranscoderInfo `json:"es_transcoders,omitempty"` // Per-variant transcoder stats
+
 	// Buffer statistics
 	BufferUtilization *float64            `json:"buffer_utilization,omitempty"` // 0-100 percentage
 	SegmentCount      *int                `json:"segment_count,omitempty"`
@@ -88,8 +91,9 @@ type RelaySessionInfo struct {
 	EdgeBandwidth *EdgeBandwidthStats `json:"edge_bandwidth,omitempty"`
 
 	// Status
-	InFallback bool   `json:"in_fallback"`
-	Error      string `json:"error,omitempty"`
+	InFallback      bool   `json:"in_fallback"`
+	OriginConnected bool   `json:"origin_connected"` // True if origin is still streaming (false after EOF)
+	Error           string `json:"error,omitempty"`
 }
 
 // FFmpegStatsInfo contains detailed FFmpeg process statistics.
@@ -108,6 +112,31 @@ type FFmpegStatsInfo struct {
 	// Resource history for sparkline graphs (last 30 samples, ~1 sample/sec)
 	CPUHistory    []float64 `json:"cpu_history,omitempty"`    // Historical CPU percentage values
 	MemoryHistory []float64 `json:"memory_history,omitempty"` // Historical memory MB values
+}
+
+// ESTranscoderInfo contains stats for a single ES-based transcoder instance.
+type ESTranscoderInfo struct {
+	ID            string    `json:"id"`
+	SourceVariant string    `json:"source_variant"` // e.g., "h264/aac"
+	TargetVariant string    `json:"target_variant"` // e.g., "h265/aac" or "av1/eac3"
+	StartedAt     time.Time `json:"started_at"`
+	SamplesIn     uint64    `json:"samples_in"`
+	SamplesOut    uint64    `json:"samples_out"`
+	BytesIn       uint64    `json:"bytes_in"`
+	BytesOut      uint64    `json:"bytes_out"`
+	Errors        uint64    `json:"errors"`
+	// Codec names (output codecs for this transcoder)
+	VideoCodec string `json:"video_codec,omitempty"`
+	AudioCodec string `json:"audio_codec,omitempty"`
+	// Encoder names (what FFmpeg uses)
+	VideoEncoder  string `json:"video_encoder,omitempty"`
+	AudioEncoder  string `json:"audio_encoder,omitempty"`
+	HWAccel       string `json:"hwaccel,omitempty"`
+	HWAccelDevice string `json:"hwaccel_device,omitempty"`
+	// Process stats
+	PID        int     `json:"pid,omitempty"`
+	CPUPercent float64 `json:"cpu_percent,omitempty"`
+	MemoryMB   float64 `json:"memory_mb,omitempty"`
 }
 
 // Note: BufferVariantInfo is defined in flow_types.go
@@ -144,6 +173,7 @@ func (s *SessionStats) ToSessionInfo() RelaySessionInfo {
 		BytesIn:                s.BytesFromUpstream,
 		BytesOut:               s.BytesWritten,
 		InFallback:             s.InFallback,
+		OriginConnected:        s.OriginConnected,
 		Error:                  s.Error,
 	}
 
@@ -262,6 +292,32 @@ func (s *SessionStats) ToSessionInfo() RelaySessionInfo {
 				BufferDuration: v.BufferDuration.Seconds(),
 				EvictedSamples: v.EvictedSamples,
 				EvictedBytes:   v.EvictedBytes,
+			})
+		}
+	}
+
+	// Copy ES transcoder stats (for multi-variant transcoding)
+	if s.ESTranscoderStats != nil {
+		for _, t := range s.ESTranscoderStats.Transcoders {
+			info.ESTranscoders = append(info.ESTranscoders, ESTranscoderInfo{
+				ID:            t.ID,
+				SourceVariant: t.SourceVariant,
+				TargetVariant: t.TargetVariant,
+				StartedAt:     t.StartedAt,
+				SamplesIn:     t.SamplesIn,
+				SamplesOut:    t.SamplesOut,
+				BytesIn:       t.BytesIn,
+				BytesOut:      t.BytesOut,
+				Errors:        t.Errors,
+				VideoCodec:    t.VideoCodec,
+				AudioCodec:    t.AudioCodec,
+				VideoEncoder:  t.VideoEncoder,
+				AudioEncoder:  t.AudioEncoder,
+				HWAccel:       t.HWAccel,
+				HWAccelDevice: t.HWAccelDevice,
+				PID:           t.PID,
+				CPUPercent:    t.CPUPercent,
+				MemoryMB:      t.MemoryRSSMB,
 			})
 		}
 	}

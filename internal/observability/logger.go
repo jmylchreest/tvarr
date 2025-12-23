@@ -194,6 +194,12 @@ func WithCorrelationID(logger *slog.Logger, correlationID string) *slog.Logger {
 	return logger.With(slog.String("correlation_id", correlationID))
 }
 
+// WithApp adds an application name to the logger for identifying which binary is logging.
+// Use this to distinguish between "tvarr" and "tvarr-ffmpegd" logs.
+func WithApp(logger *slog.Logger, app string) *slog.Logger {
+	return logger.With(slog.String("app", app))
+}
+
 // WithComponent adds a component name to the logger for identifying the source.
 func WithComponent(logger *slog.Logger, component string) *slog.Logger {
 	return logger.With(slog.String("component", component))

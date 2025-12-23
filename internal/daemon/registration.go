@@ -666,8 +666,12 @@ func (h *TranscodeStreamHandler) processMessages(ctx context.Context) {
 			h.handleSourceSamples(payload.Samples)
 
 		case *proto.TranscodeMessage_Stop:
-			// Coordinator signaling to stop current job
+			// Coordinator signaling to stop current job (forced shutdown)
 			h.handleStop(payload.Stop)
+
+		case *proto.TranscodeMessage_InputComplete:
+			// Coordinator signaling input is complete (graceful shutdown)
+			h.handleInputComplete(payload.InputComplete)
 		}
 	}
 }
@@ -749,7 +753,7 @@ func (h *TranscodeStreamHandler) handleSourceSamples(samples *proto.ESSampleBatc
 	}
 }
 
-// handleStop stops the current transcode job.
+// handleStop stops the current transcode job (forced shutdown).
 func (h *TranscodeStreamHandler) handleStop(stop *proto.TranscodeStop) {
 	h.logger.Info("Received stop signal from coordinator",
 		slog.String("reason", stop.Reason),
@@ -761,6 +765,22 @@ func (h *TranscodeStreamHandler) handleStop(stop *proto.TranscodeStop) {
 		h.activeJob = nil
 	}
 	h.mu.Unlock()
+}
+
+// handleInputComplete signals that input is complete (graceful shutdown).
+// Unlike handleStop, this allows FFmpeg to flush its encoder before stopping.
+func (h *TranscodeStreamHandler) handleInputComplete(inputComplete *proto.TranscodeInputComplete) {
+	h.logger.Info("Received input complete signal from coordinator",
+		slog.String("reason", inputComplete.Reason),
+	)
+
+	h.mu.RLock()
+	job := h.activeJob
+	h.mu.RUnlock()
+
+	if job != nil {
+		job.SignalInputComplete()
+	}
 }
 
 // forwardTranscodedOutput reads transcoded samples from the job and sends them to coordinator.

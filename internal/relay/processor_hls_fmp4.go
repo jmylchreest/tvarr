@@ -295,6 +295,12 @@ func (p *HLSfMP4Processor) ServeManifest(w http.ResponseWriter, r *http.Request)
 		buf.WriteString(fmt.Sprintf("segment%d.m4s\n", seg.sequence))
 	}
 
+	// Add #EXT-X-ENDLIST if source stream has completed (VOD mode)
+	// This signals to players that no more segments will be added
+	if p.esBuffer != nil && p.esBuffer.IsSourceCompleted() {
+		buf.WriteString("#EXT-X-ENDLIST\n")
+	}
+
 	p.SetStreamHeaders(w)
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -463,18 +469,14 @@ func (p *HLSfMP4Processor) runProcessingLoop(esVariant *ESVariant) {
 		slog.Int("audio_track_count", audioTrack.Count()))
 
 	// Wait for initial video keyframe
+	// Check for existing samples first before waiting - handles case where
+	// transcoder has stopped but buffer still has content (finite streams)
 	p.config.Logger.Log(p.ctx, observability.LevelTrace, "Waiting for initial keyframe",
 		slog.String("id", p.id),
 		slog.String("variant", esVariant.Variant().String()))
 	notifyCount := 0
 	for {
-		select {
-		case <-p.ctx.Done():
-			return
-		case <-videoTrack.NotifyChan():
-			notifyCount++
-		}
-
+		// Try to read samples immediately (non-blocking check)
 		trackCount := videoTrack.Count()
 		samples := videoTrack.ReadFromKeyframe(p.lastVideoSeq, 1)
 		if len(samples) > 0 {
@@ -485,6 +487,7 @@ func (p *HLSfMP4Processor) runProcessingLoop(esVariant *ESVariant) {
 			p.lastVideoSeq = samples[0].Sequence - 1
 			break
 		}
+
 		// Log periodically to help debug
 		if notifyCount%50 == 1 {
 			// Also check how many samples have IsKeyframe=true
@@ -502,6 +505,15 @@ func (p *HLSfMP4Processor) runProcessingLoop(esVariant *ESVariant) {
 				slog.Int("samples_read", len(allSamples)),
 				slog.Int("keyframes_found", keyframeCount),
 				slog.Uint64("last_video_seq", p.lastVideoSeq))
+		}
+
+		// No samples available, wait for notification or context cancellation
+		select {
+		case <-p.ctx.Done():
+			return
+		case <-videoTrack.NotifyChan():
+			notifyCount++
+			// New sample notification received, loop back to read
 		}
 	}
 

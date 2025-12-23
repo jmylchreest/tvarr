@@ -4,10 +4,12 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"log/slog"
 	"sync"
 
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/fmp4"
+	"github.com/bluenviron/mediacommon/v2/pkg/formats/mp4"
 	"github.com/jmylchreest/tvarr/internal/observability"
 )
 
@@ -36,6 +38,15 @@ type FMP4Demuxer struct {
 	audioTrackID   int
 	videoTimescale uint32
 	audioTimescale uint32
+
+	// H.265 codec parameters (VPS/SPS/PPS) - stored in Annex B format for prepending to keyframes
+	h265VPS []byte
+	h265SPS []byte
+	h265PPS []byte
+	// NAL length size from hvc1 config (usually 4)
+	h265NALLengthSize int
+	// Track if we've logged the first H.265 conversion
+	firstH265KeyframeLogged bool
 
 	// Timing state per track
 	videoBaseTime uint64
@@ -184,8 +195,24 @@ func (d *FMP4Demuxer) parseInit(moovData []byte) error {
 
 	// Find video and audio track IDs and timescales
 	for _, track := range d.init.Tracks {
-		switch track.Codec.(type) {
-		case *fmp4.CodecH264, *fmp4.CodecH265, *fmp4.CodecAV1, *fmp4.CodecVP9:
+		switch codec := track.Codec.(type) {
+		case *mp4.CodecH265:
+			d.videoTrackID = track.ID
+			d.videoTimescale = track.TimeScale
+			// Extract VPS/SPS/PPS for prepending to keyframes
+			d.h265VPS = codec.VPS
+			d.h265SPS = codec.SPS
+			d.h265PPS = codec.PPS
+			// Default NAL length size is 4 bytes
+			d.h265NALLengthSize = 4
+			d.logger.Info("fMP4 demuxer: found H.265 video track",
+				slog.Int("track_id", track.ID),
+				slog.Uint64("timescale", uint64(track.TimeScale)),
+				slog.Int("vps_len", len(codec.VPS)),
+				slog.Int("sps_len", len(codec.SPS)),
+				slog.Int("pps_len", len(codec.PPS)),
+			)
+		case *mp4.CodecH264, *mp4.CodecAV1, *mp4.CodecVP9:
 			d.videoTrackID = track.ID
 			d.videoTimescale = track.TimeScale
 			d.logger.Info("fMP4 demuxer: found video track",
@@ -193,7 +220,7 @@ func (d *FMP4Demuxer) parseInit(moovData []byte) error {
 				slog.Uint64("timescale", uint64(track.TimeScale)),
 				slog.String("codec_type", d.config.TargetVideoCodec),
 			)
-		case *fmp4.CodecMPEG4Audio, *fmp4.CodecOpus, *fmp4.CodecAC3, *fmp4.CodecEAC3:
+		case *mp4.CodecMPEG4Audio, *mp4.CodecOpus, *mp4.CodecAC3, *mp4.CodecEAC3:
 			d.audioTrackID = track.ID
 			d.audioTimescale = track.TimeScale
 			d.logger.Info("fMP4 demuxer: found audio track",
@@ -259,6 +286,9 @@ func (d *FMP4Demuxer) processVideoTrack(track *fmp4.PartTrack) {
 		timescale = 90000 // Default to 90kHz
 	}
 
+	// Check if this is H.265 (we have VPS/SPS/PPS extracted)
+	isH265 := len(d.h265VPS) > 0 || len(d.h265SPS) > 0 || len(d.h265PPS) > 0
+
 	// Count keyframes in this batch for diagnostic logging
 	keyframeCount := 0
 	for i, sample := range track.Samples {
@@ -287,9 +317,19 @@ func (d *FMP4Demuxer) processVideoTrack(track *fmp4.PartTrack) {
 				slog.Bool("fragment_first", i == 0))
 		}
 
-		// Get raw payload - for AV1/VP9, payload is already in the right format
-		// FFmpeg outputs AV1 OBUs directly in the mdat
-		d.config.OnVideoSample(pts, dts, sample.Payload, isKeyframe)
+		// Process the payload based on codec
+		var outputData []byte
+		if isH265 {
+			// H.265: Convert from hvc1 (length-prefixed) to Annex B (start code prefixed)
+			// and prepend VPS/SPS/PPS to keyframes
+			outputData = d.convertH265ToAnnexB(sample.Payload, isKeyframe)
+		} else {
+			// For AV1/VP9, payload is already in the right format
+			// FFmpeg outputs AV1 OBUs directly in the mdat
+			outputData = sample.Payload
+		}
+
+		d.config.OnVideoSample(pts, dts, outputData, isKeyframe)
 
 		// Advance base time
 		baseTime += uint64(sample.Duration)
@@ -302,6 +342,85 @@ func (d *FMP4Demuxer) processVideoTrack(track *fmp4.PartTrack) {
 			slog.Int("keyframe_count", keyframeCount),
 			slog.Uint64("base_time", track.BaseTime))
 	}
+}
+
+// convertH265ToAnnexB converts H.265 data from hvc1 format (length-prefixed NALs)
+// to Annex B format (start code prefixed NALs), prepending VPS/SPS/PPS to keyframes.
+func (d *FMP4Demuxer) convertH265ToAnnexB(payload []byte, isKeyframe bool) []byte {
+	nalLengthSize := d.h265NALLengthSize
+	if nalLengthSize <= 0 {
+		nalLengthSize = 4
+	}
+
+	// Annex B start code
+	startCode := []byte{0x00, 0x00, 0x00, 0x01}
+
+	// Build output buffer
+	var out bytes.Buffer
+
+	// For keyframes, prepend VPS/SPS/PPS
+	if isKeyframe {
+		if len(d.h265VPS) > 0 {
+			out.Write(startCode)
+			out.Write(d.h265VPS)
+		}
+		if len(d.h265SPS) > 0 {
+			out.Write(startCode)
+			out.Write(d.h265SPS)
+		}
+		if len(d.h265PPS) > 0 {
+			out.Write(startCode)
+			out.Write(d.h265PPS)
+		}
+
+		// Log first keyframe conversion for diagnostics
+		if !d.firstH265KeyframeLogged {
+			d.firstH265KeyframeLogged = true
+			d.logger.Info("fMP4 demuxer: first H.265 keyframe conversion to Annex B",
+				slog.Int("input_payload_len", len(payload)),
+				slog.Int("vps_len", len(d.h265VPS)),
+				slog.Int("sps_len", len(d.h265SPS)),
+				slog.Int("pps_len", len(d.h265PPS)),
+				slog.Bool("has_vps", len(d.h265VPS) > 0),
+				slog.Bool("has_sps", len(d.h265SPS) > 0),
+				slog.Bool("has_pps", len(d.h265PPS) > 0))
+		}
+	}
+
+	// Convert each NAL from length-prefixed to start code prefixed
+	offset := 0
+	for offset < len(payload) {
+		if offset+nalLengthSize > len(payload) {
+			break
+		}
+
+		// Read NAL length (big-endian)
+		var nalLen uint32
+		switch nalLengthSize {
+		case 1:
+			nalLen = uint32(payload[offset])
+		case 2:
+			nalLen = uint32(binary.BigEndian.Uint16(payload[offset:]))
+		case 4:
+			nalLen = binary.BigEndian.Uint32(payload[offset:])
+		default:
+			nalLen = binary.BigEndian.Uint32(payload[offset:])
+		}
+
+		offset += nalLengthSize
+
+		if offset+int(nalLen) > len(payload) {
+			break
+		}
+
+		// Write start code + NAL data
+		out.Write(startCode)
+		out.Write(payload[offset : offset+int(nalLen)])
+
+		offset += int(nalLen)
+	}
+
+	return out.Bytes()
 }
 
 // processAudioTrack extracts audio samples from a track.

@@ -140,9 +140,10 @@ type RelaySession struct {
 	idleSince    atomic.Value // time.Time - when session became idle (zero if not idle)
 
 	// Session state - atomic to avoid lock contention with stats collection
-	closed     atomic.Bool           // Whether session is closed
-	inFallback atomic.Bool           // Whether session is in fallback mode
-	lastErr    atomic.Pointer[error] // Last error (if any)
+	closed          atomic.Bool           // Whether session is closed
+	inFallback      atomic.Bool           // Whether session is in fallback mode
+	ingestCompleted atomic.Bool           // Whether origin ingest has finished (EOF received)
+	lastErr         atomic.Pointer[error] // Last error (if any)
 
 	// Resource history for sparklines (CPU/memory over time)
 	resourceHistory *ResourceHistory
@@ -998,12 +999,18 @@ func (s *RelaySession) runIngestLoop(inputURL string, demuxer *TSDemuxer) error 
 		n, err := resp.Body.Read(buf)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				slog.Debug("Ingest loop: upstream stream ended (EOF)",
+				slog.Info("Ingest loop: upstream stream ended (EOF), origin disconnected",
 					slog.String("session_id", s.ID.String()),
 					slog.String("url", inputURL),
 					slog.Uint64("total_bytes_read", totalBytesRead),
 					slog.Duration("duration", time.Since(startTime)))
+				s.ingestCompleted.Store(true)
 				demuxer.Flush()
+				// Signal ES buffer that source stream is complete
+				// This triggers graceful shutdown of transcoders after they finish processing
+				if s.esBuffer != nil {
+					s.esBuffer.MarkSourceCompleted()
+				}
 				return nil
 			}
 			// Check if this is a context cancellation error
@@ -1069,6 +1076,11 @@ func (s *RelaySession) cleanupInactiveStreamingClients() {
 	totalRemoved := 0
 	sessionID := s.ID.String()
 
+	// Track which processor types have empty processors that need cleanup
+	hlsTSNeedsCleanup := false
+	hlsFMP4NeedsCleanup := false
+	dashNeedsCleanup := false
+
 	// Clean up inactive clients from all HLS-TS processors
 	s.hlsTSProcessors.Range(func(variant CodecVariant, processor *HLSTSProcessor) bool {
 		removed := processor.CleanupInactiveClients(HLSClientIdleTimeout)
@@ -1078,6 +1090,10 @@ func (s *RelaySession) cleanupInactiveStreamingClients() {
 				slog.String("session_id", sessionID),
 				slog.String("variant", variant.String()),
 				slog.Int("removed", removed))
+		}
+		// Check if processor is now empty
+		if processor.ClientCount() == 0 {
+			hlsTSNeedsCleanup = true
 		}
 		return true
 	})
@@ -1092,6 +1108,10 @@ func (s *RelaySession) cleanupInactiveStreamingClients() {
 				slog.String("variant", variant.String()),
 				slog.Int("removed", removed))
 		}
+		// Check if processor is now empty
+		if processor.ClientCount() == 0 {
+			hlsFMP4NeedsCleanup = true
+		}
 		return true
 	})
 
@@ -1105,12 +1125,27 @@ func (s *RelaySession) cleanupInactiveStreamingClients() {
 				slog.String("variant", variant.String()),
 				slog.Int("removed", removed))
 		}
+		// Check if processor is now empty
+		if processor.ClientCount() == 0 {
+			dashNeedsCleanup = true
+		}
 		return true
 	})
 
 	// If we removed clients, update session idle state
 	if totalRemoved > 0 {
 		s.UpdateIdleState()
+	}
+
+	// Schedule cleanup for empty processors (use goroutines to avoid blocking)
+	if hlsTSNeedsCleanup {
+		go s.StopProcessorIfIdle("hls-ts")
+	}
+	if hlsFMP4NeedsCleanup {
+		go s.StopProcessorIfIdle("hls-fmp4")
+	}
+	if dashNeedsCleanup {
+		go s.StopProcessorIfIdle("dash")
 	}
 }
 
@@ -1961,6 +1996,10 @@ func (s *RelaySession) Stats() SessionStats {
 	}
 
 	// Build stats from immutable fields (set at creation, no lock needed)
+	// Check ingest completion state (atomic, safe to call)
+	ingestCompleted := s.IngestCompleted()
+	originConnected := !ingestCompleted && !closed
+
 	stats := SessionStats{
 		ID:                s.ID.String(),
 		ChannelID:         s.ChannelID.String(),
@@ -1976,6 +2015,8 @@ func (s *RelaySession) Stats() SessionStats {
 		BytesWritten:      bytesWritten,
 		BytesFromUpstream: bytesWritten,
 		Closed:            closed,
+		IngestCompleted:   ingestCompleted,
+		OriginConnected:   originConnected,
 		Error:             errStr,
 		InFallback:        inFallback,
 		Clients:           clients,
@@ -2054,8 +2095,14 @@ func (s *RelaySession) Stats() SessionStats {
 		var totalCPUPercent, totalMemoryRSSMB, totalMemoryPercent float64
 		var activePID int
 		var transcoderList []ESTranscoderStats
+		var activeTranscoderCount int
 
 		for _, transcoder := range s.esTranscoders {
+			// Skip closed transcoders - they've finished processing and stopped
+			if transcoder.IsClosed() {
+				continue
+			}
+			activeTranscoderCount++
 			tStats := transcoder.Stats()
 			totalBytesIn += tStats.BytesIn
 			totalBytesOut += tStats.BytesOut
@@ -2108,23 +2155,23 @@ func (s *RelaySession) Stats() SessionStats {
 		}
 
 		stats.ESTranscoderStats = &ESTranscodersStats{
-			Count:          len(s.esTranscoders),
+			Count:          activeTranscoderCount,
 			TotalBytesIn:   totalBytesIn,
 			TotalBytesOut:  totalBytesOut,
 			TotalSamplesIn: totalSamplesIn,
 			Transcoders:    transcoderList,
 		}
 
-		// If no legacy FFmpeg stats but we have ES transcoders, populate FFmpegStats
+		// If no legacy FFmpeg stats but we have active ES transcoders, populate FFmpegStats
 		// with actual process stats so the flow visualization shows transcoding
-		if stats.FFmpegStats == nil && len(s.esTranscoders) > 0 {
+		if stats.FFmpegStats == nil && activeTranscoderCount > 0 && len(transcoderList) > 0 {
 			// Sample resource history if enough time has passed
 			if s.resourceHistory != nil && s.resourceHistory.ShouldSample() {
 				s.resourceHistory.AddSample(totalCPUPercent, totalMemoryRSSMB)
 			}
 
-			// Get encoding config from first transcoder for display
-			firstStats := s.esTranscoders[0].Stats()
+			// Get encoding config from first active transcoder for display
+			firstStats := transcoderList[0]
 			stats.FFmpegStats = &FFmpegProcessStats{
 				PID:           activePID,
 				CPUPercent:    totalCPUPercent,
@@ -2191,6 +2238,8 @@ type SessionStats struct {
 	BytesWritten      uint64    `json:"bytes_written"`
 	BytesFromUpstream uint64    `json:"bytes_from_upstream"`
 	Closed            bool      `json:"closed"`
+	IngestCompleted   bool      `json:"ingest_completed"`    // True if origin ingest finished (EOF received)
+	OriginConnected   bool      `json:"origin_connected"`    // True if origin is still streaming data
 	Error             string    `json:"error,omitempty"`
 	// Smart delivery information (only present when using smart mode)
 	DeliveryDecision       string   `json:"delivery_decision,omitempty"`        // passthrough, repackage, or transcode
@@ -2335,6 +2384,49 @@ func (s *RelaySession) LastActivity() time.Time {
 func (s *RelaySession) IdleSince() time.Time {
 	t, _ := s.idleSince.Load().(time.Time)
 	return t
+}
+
+// IngestCompleted returns true if the origin ingest has finished (EOF received).
+// This indicates the source stream has ended (finite content) but clients may still
+// be connected and consuming buffered data.
+// This is safe to call concurrently without holding any locks.
+func (s *RelaySession) IngestCompleted() bool {
+	return s.ingestCompleted.Load()
+}
+
+// HasActiveContent returns true if the session has active transcoders or buffered samples.
+// This is used to determine if a session with completed ingest can still serve new clients.
+// For finite streams (like IPTV error videos), we want to reuse the session if transcoders
+// are still producing output, rather than creating a new session that re-fetches the source.
+func (s *RelaySession) HasActiveContent() bool {
+	// Check for active (non-closed) transcoders
+	s.esTranscodersMu.RLock()
+	transcoderCount := len(s.esTranscoders)
+	activeTranscoders := 0
+	for _, transcoder := range s.esTranscoders {
+		if !transcoder.IsClosed() {
+			activeTranscoders++
+		}
+	}
+	s.esTranscodersMu.RUnlock()
+
+	// Check if ES buffer has content (bytes ingested)
+	var bufferBytes uint64
+	if s.esBuffer != nil {
+		stats := s.esBuffer.Stats()
+		bufferBytes = stats.TotalBytes
+	}
+
+	hasActive := activeTranscoders > 0 || bufferBytes > 0
+
+	slog.Debug("HasActiveContent check",
+		slog.String("session_id", s.ID.String()),
+		slog.Int("total_transcoders", transcoderCount),
+		slog.Int("active_transcoders", activeTranscoders),
+		slog.Uint64("buffer_bytes", bufferBytes),
+		slog.Bool("has_active_content", hasActive))
+
+	return hasActive
 }
 
 // markReady signals that the session pipeline is ready for clients.

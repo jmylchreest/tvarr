@@ -351,12 +351,13 @@ message PressureStats {
 //   6. Client sends TranscodeStop when done
 message TranscodeMessage {
   oneof payload {
-    TranscodeStart start = 1;      // Initial config (client -> daemon)
-    TranscodeAck ack = 2;          // Acknowledge start (daemon -> client)
-    ESSampleBatch samples = 3;     // ES samples (bidirectional)
-    TranscodeStats stats = 4;      // Periodic stats (daemon -> client)
-    TranscodeError error = 5;      // Error notification (daemon -> client)
-    TranscodeStop stop = 6;        // Stop signal (client -> daemon)
+    TranscodeStart start = 1;                // Initial config (client -> daemon)
+    TranscodeAck ack = 2;                    // Acknowledge start (daemon -> client)
+    ESSampleBatch samples = 3;               // ES samples (bidirectional)
+    TranscodeStats stats = 4;                // Periodic stats (daemon -> client)
+    TranscodeError error = 5;                // Error notification (daemon -> client)
+    TranscodeStop stop = 6;                  // Stop signal (client -> daemon)
+    TranscodeInputComplete input_complete = 7; // Input complete signal (client -> daemon)
   }
 }
 
@@ -511,6 +512,16 @@ message TranscodeError {
 
 message TranscodeStop {
   string reason = 1;  // "session_ended", "client_disconnected", "cancelled"
+}
+
+// TranscodeInputComplete signals that all input has been sent (source EOF).
+// This allows the daemon to let FFmpeg flush its encoder and produce remaining
+// output, without immediately killing the FFmpeg process.
+// Unlike TranscodeStop, this is a graceful signal - the daemon continues
+// reading FFmpeg output until it naturally finishes.
+message TranscodeInputComplete {
+  // Reason for input completion (for logging)
+  string reason = 1;  // "source_eof", "stream_ended"
 }
 
 // =============================================================================

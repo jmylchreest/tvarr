@@ -274,6 +274,9 @@ func (p *DASHProcessor) ServeManifest(w http.ResponseWriter, r *http.Request) er
 		totalDuration += seg.duration
 	}
 
+	// Check if source stream is complete (VOD mode)
+	isSourceComplete := p.esBuffer != nil && p.esBuffer.IsSourceCompleted()
+
 	// Build MPD manifest
 	var buf bytes.Buffer
 	buf.WriteString(`<?xml version="1.0" encoding="UTF-8"?>`)
@@ -281,11 +284,21 @@ func (p *DASHProcessor) ServeManifest(w http.ResponseWriter, r *http.Request) er
 	buf.WriteString(`<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" `)
 	buf.WriteString(`xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" `)
 	buf.WriteString(`xsi:schemaLocation="urn:mpeg:dash:schema:mpd:2011 DASH-MPD.xsd" `)
-	buf.WriteString(`type="dynamic" `)
-	buf.WriteString(`profiles="urn:mpeg:dash:profile:isoff-live:2011" `)
-	buf.WriteString(fmt.Sprintf(`minBufferTime="PT%.1fS" `, p.config.MinBufferTime))
-	buf.WriteString(fmt.Sprintf(`minimumUpdatePeriod="PT%.1fS" `, p.config.TargetSegmentDuration))
-	buf.WriteString(`availabilityStartTime="1970-01-01T00:00:00Z">`)
+
+	if isSourceComplete {
+		// VOD mode: static MPD with known duration
+		buf.WriteString(`type="static" `)
+		buf.WriteString(`profiles="urn:mpeg:dash:profile:isoff-on-demand:2011" `)
+		buf.WriteString(fmt.Sprintf(`mediaPresentationDuration="PT%.3fS" `, totalDuration))
+	} else {
+		// Live mode: dynamic MPD with periodic updates
+		buf.WriteString(`type="dynamic" `)
+		buf.WriteString(`profiles="urn:mpeg:dash:profile:isoff-live:2011" `)
+		buf.WriteString(fmt.Sprintf(`minimumUpdatePeriod="PT%.1fS" `, p.config.TargetSegmentDuration))
+		buf.WriteString(`availabilityStartTime="1970-01-01T00:00:00Z" `)
+	}
+
+	buf.WriteString(fmt.Sprintf(`minBufferTime="PT%.1fS">`, p.config.MinBufferTime))
 	buf.WriteString("\n")
 
 	// Period
@@ -496,18 +509,23 @@ func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
 	audioTrack := esVariant.AudioTrack()
 
 	// Wait for initial video keyframe
+	// Check for existing samples first before waiting - handles case where
+	// transcoder has stopped but buffer still has content (finite streams)
 	p.config.Logger.Debug("Waiting for initial keyframe")
 	for {
-		select {
-		case <-p.ctx.Done():
-			return
-		case <-videoTrack.NotifyChan():
-		}
-
+		// Try to read samples immediately (non-blocking check)
 		samples := videoTrack.ReadFromKeyframe(p.lastVideoSeq, 1)
 		if len(samples) > 0 {
 			p.lastVideoSeq = samples[0].Sequence - 1
 			break
+		}
+
+		// No samples available, wait for notification or context cancellation
+		select {
+		case <-p.ctx.Done():
+			return
+		case <-videoTrack.NotifyChan():
+			// New sample notification received, loop back to read
 		}
 	}
 

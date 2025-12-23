@@ -3,9 +3,10 @@
 import { memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import type { FlowNodeData } from '@/types/relay-flow';
 import { formatBps, formatBytes } from '@/types/relay-flow';
-import { Globe, Clock, Download, Film, Monitor } from 'lucide-react';
+import { Globe, Clock, Download, Film, Monitor, CloudOff, Check } from 'lucide-react';
 import { BandwidthSparkline } from './bandwidth-sparkline';
 
 interface OriginNodeProps {
@@ -13,15 +14,34 @@ interface OriginNodeProps {
 }
 
 function OriginNode({ data }: OriginNodeProps) {
+  // Determine connection state - default to connected if not specified
+  const isConnected = data.originConnected !== false;
+
   return (
     <>
-      <Card className="w-64 shadow-lg border-2 border-blue-500/30 bg-card">
+      <Card
+        className={`w-64 shadow-lg border-2 bg-card ${
+          isConnected
+            ? 'border-blue-500/30'
+            : 'border-amber-500/50 opacity-80'
+        }`}
+      >
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-medium flex items-center gap-2">
-            <Globe className="h-4 w-4 text-blue-500" />
-            <span className="truncate" title={data.label || 'Origin'}>
+            {isConnected ? (
+              <Globe className="h-4 w-4 text-blue-500" />
+            ) : (
+              <CloudOff className="h-4 w-4 text-amber-500" />
+            )}
+            <span className="truncate flex-1" title={data.label || 'Origin'}>
               {data.label || 'Origin'}
             </span>
+            {!isConnected && (
+              <Badge variant="secondary" className="text-xs bg-amber-500/20 text-amber-600 dark:text-amber-400 border-0">
+                <Check className="h-3 w-3 mr-1" />
+                EOF
+              </Badge>
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">

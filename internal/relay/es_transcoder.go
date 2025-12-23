@@ -117,12 +117,13 @@ type ESTranscoder struct {
 	videoParams *VideoParamHelper
 
 	// Lifecycle
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	started  atomic.Bool
-	closed   atomic.Bool
-	closedCh chan struct{}
+	ctx            context.Context
+	cancel         context.CancelFunc
+	wg             sync.WaitGroup
+	started        atomic.Bool
+	closed         atomic.Bool
+	closedCh       chan struct{}
+	inputExhausted atomic.Bool // Set when input loop finishes naturally (source EOF)
 
 	// Stats
 	samplesIn     atomic.Uint64
@@ -654,6 +655,8 @@ func (t *ESTranscoder) runInputLoop(source *ESVariant, stream *DaemonStream) {
 	audioTrack := source.AudioTrack()
 
 	// Wait for initial keyframe
+	// Check for existing samples first before waiting - handles case where
+	// source has finished but buffer still has content (finite streams)
 	t.logger.Debug("Waiting for initial keyframe from source",
 		slog.String("id", t.id),
 		slog.Uint64("current_last_seq", videoTrack.LastSequence()),
@@ -661,12 +664,7 @@ func (t *ESTranscoder) runInputLoop(source *ESVariant, stream *DaemonStream) {
 
 	waitCount := 0
 	for {
-		select {
-		case <-t.ctx.Done():
-			return
-		case <-videoTrack.NotifyChan():
-		}
-
+		// Try to read samples immediately (non-blocking check)
 		samples := videoTrack.ReadFromKeyframe(t.lastVideoSeq, 1)
 		if len(samples) > 0 {
 			t.logger.Debug("Found keyframe sample",
@@ -686,6 +684,14 @@ func (t *ESTranscoder) runInputLoop(source *ESVariant, stream *DaemonStream) {
 				slog.Uint64("track_last_seq", videoTrack.LastSequence()),
 				slog.Int("track_count", videoTrack.Count()))
 		}
+
+		// No samples available, wait for notification or context cancellation
+		select {
+		case <-t.ctx.Done():
+			return
+		case <-videoTrack.NotifyChan():
+			// New sample notification received, loop back to read
+		}
 	}
 
 	ticker := time.NewTicker(10 * time.Millisecond)
@@ -696,10 +702,25 @@ func (t *ESTranscoder) runInputLoop(source *ESVariant, stream *DaemonStream) {
 	defer logTicker.Stop()
 	var lastSamplesIn, lastBytesIn uint64
 
+	// Track source completion for graceful shutdown
+	sourceCompletedCh := t.buffer.SourceCompletedChan()
+	var sourceCompleted bool
+	var idleTicksAfterComplete int
+	const idleThresholdTicks = 50 // 500ms with 10ms ticker
+
 	for {
 		select {
 		case <-t.ctx.Done():
 			return
+		case <-sourceCompletedCh:
+			// Source stream finished (EOF), mark it but continue processing remaining samples
+			sourceCompleted = true
+			t.logger.Info("ES transcoder: source stream completed (EOF), processing remaining samples",
+				slog.String("id", t.id),
+				slog.Uint64("last_video_seq", t.lastVideoSeq),
+				slog.Uint64("last_audio_seq", t.lastAudioSeq))
+			// Set to nil to prevent repeated triggers (channel stays closed)
+			sourceCompletedCh = nil
 		case <-logTicker.C:
 			currentSamples := t.samplesIn.Load()
 			currentBytes := t.bytesIn.Load()
@@ -715,6 +736,9 @@ func (t *ESTranscoder) runInputLoop(source *ESVariant, stream *DaemonStream) {
 			lastSamplesIn = currentSamples
 			lastBytesIn = currentBytes
 		case <-ticker.C:
+			prevVideoSeq := t.lastVideoSeq
+			prevAudioSeq := t.lastAudioSeq
+
 			if err := t.processSourceSamples(videoTrack, audioTrack, stream); err != nil {
 				if !errors.Is(err, context.Canceled) {
 					t.errorCount.Add(1)
@@ -723,6 +747,48 @@ func (t *ESTranscoder) runInputLoop(source *ESVariant, stream *DaemonStream) {
 						slog.String("error", err.Error()))
 				}
 				return
+			}
+
+			// Track if we processed any samples (sequences advanced)
+			hadSamples := t.lastVideoSeq > prevVideoSeq || t.lastAudioSeq > prevAudioSeq
+
+			// If source is completed, track how long we've been idle
+			if sourceCompleted {
+				if hadSamples {
+					idleTicksAfterComplete = 0
+				} else {
+					idleTicksAfterComplete++
+					// After threshold idle ticks, assume all input samples sent to FFmpeg
+					if idleTicksAfterComplete >= idleThresholdTicks {
+						t.logger.Info("ES transcoder: input exhausted, all samples sent to FFmpeg",
+							slog.String("id", t.id),
+							slog.Uint64("total_samples_in", t.samplesIn.Load()),
+							slog.Uint64("total_bytes_in", t.bytesIn.Load()))
+
+						// Signal input complete to daemon so it lets FFmpeg flush
+						// This is a graceful signal - FFmpeg will finish encoding buffered frames
+						inputCompleteMsg := &proto.TranscodeMessage{
+							Payload: &proto.TranscodeMessage_InputComplete{
+								InputComplete: &proto.TranscodeInputComplete{
+									Reason: "source_eof",
+								},
+							},
+						}
+						if err := stream.Send(inputCompleteMsg); err != nil {
+							t.logger.Warn("Failed to send input complete to daemon",
+								slog.String("id", t.id),
+								slog.String("error", err.Error()))
+						} else {
+							t.logger.Info("Sent input complete signal to daemon",
+								slog.String("id", t.id))
+						}
+
+						// Mark input as exhausted - output loop will trigger Stop after FFmpeg finishes
+						// DON'T call Stop() here - FFmpeg may still be encoding buffered frames
+						t.inputExhausted.Store(true)
+						return
+					}
+				}
 			}
 		}
 	}
@@ -843,14 +909,34 @@ func (t *ESTranscoder) runOutputLoop(target *ESVariant) {
 		return
 	}
 
+	// Track if we exit due to context cancellation (external Stop) vs natural finish
+	var contextCanceled bool
+
+	// Cleanup: if input was exhausted (source EOF) and we exit naturally,
+	// trigger Stop() to clean up resources. This ensures FFmpeg can finish
+	// encoding all buffered frames before we shut down.
+	defer func() {
+		// Only trigger Stop if we exited naturally (not due to context cancellation)
+		// and input was exhausted (indicating a finite stream that finished)
+		if !contextCanceled && t.inputExhausted.Load() {
+			t.logger.Info("ES transcoder: output loop finished after input exhaustion, stopping transcoder",
+				slog.String("id", t.id),
+				slog.Uint64("total_samples_out", t.samplesOut.Load()),
+				slog.Uint64("total_bytes_out", t.bytesOut.Load()))
+			go t.Stop()
+		}
+	}()
+
 	// Throughput logging
 	logTicker := time.NewTicker(5 * time.Second)
 	defer logTicker.Stop()
 	var lastSamplesOut, lastBytesOut uint64
+	var firstBatchReceived bool
 
 	for {
 		select {
 		case <-t.ctx.Done():
+			contextCanceled = true
 			t.logger.Debug("runOutputLoop exiting: context done",
 				slog.String("id", t.id),
 				slog.Uint64("total_samples_out", t.samplesOut.Load()))
@@ -885,6 +971,15 @@ func (t *ESTranscoder) runOutputLoop(target *ESVariant) {
 					slog.String("id", t.id),
 					slog.Uint64("total_samples_out", t.samplesOut.Load()))
 				return
+			}
+			// Log first batch received for debugging pipeline connectivity
+			if !firstBatchReceived {
+				firstBatchReceived = true
+				t.logger.Info("First sample batch received from daemon",
+					slog.String("id", t.id),
+					slog.String("target_variant", target.Variant().String()),
+					slog.Int("video_samples", len(batch.VideoSamples)),
+					slog.Int("audio_samples", len(batch.AudioSamples)))
 			}
 			// Received transcoded samples from daemon
 			if err := t.handleOutputSamples(target, batch); err != nil {

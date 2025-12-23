@@ -251,18 +251,46 @@ func (m *Manager) EncoderOverridesProvider() EncoderOverridesProvider {
 func (m *Manager) GetOrCreateSession(ctx context.Context, channelID models.ULID, channelName string, sourceID models.ULID, streamSourceName string, streamURL string, sourceMaxConcurrentStreams int, profile *models.EncodingProfile) (*RelaySession, error) {
 	// First, check if session already exists (fast path with read lock)
 	m.mu.RLock()
+	m.logger.Debug("GetOrCreateSession lookup",
+		slog.String("channel_id", channelID.String()),
+		slog.Int("total_channel_sessions", len(m.channelSessions)),
+		slog.Int("total_sessions", len(m.sessions)))
 	if sessionID, ok := m.channelSessions[channelID]; ok {
 		if session, ok := m.sessions[sessionID]; ok {
-			if !session.closed.Load() {
-				m.mu.RUnlock()
-				m.logger.Debug("Reusing existing session for channel",
-					slog.String("channel_id", channelID.String()),
-					slog.String("session_id", session.ID.String()))
-				return session, nil
-			}
-			m.logger.Debug("Found existing session but it's closed",
+			isClosed := session.closed.Load()
+			ingestCompleted := session.IngestCompleted()
+			m.logger.Debug("Found session in lookup",
 				slog.String("channel_id", channelID.String()),
-				slog.String("session_id", sessionID.String()))
+				slog.String("session_id", sessionID.String()),
+				slog.Bool("is_closed", isClosed),
+				slog.Bool("ingest_completed", ingestCompleted))
+			if !isClosed {
+				// Session is not closed - check if we can reuse it
+				if !ingestCompleted {
+					// Origin is still connected - reuse it
+					m.mu.RUnlock()
+					m.logger.Debug("Reusing existing session for channel (origin connected)",
+						slog.String("channel_id", channelID.String()),
+						slog.String("session_id", session.ID.String()))
+					return session, nil
+				}
+				// Ingest completed (finite stream EOF) - but check if we still have active content
+				// This handles IPTV error videos where transcoding is still in progress
+				if session.HasActiveContent() {
+					m.mu.RUnlock()
+					m.logger.Debug("Reusing existing session for channel (ingest completed but has active content)",
+						slog.String("channel_id", channelID.String()),
+						slog.String("session_id", session.ID.String()))
+					return session, nil
+				}
+				m.logger.Debug("Found existing session but origin has disconnected (EOF) and no active content",
+					slog.String("channel_id", channelID.String()),
+					slog.String("session_id", sessionID.String()))
+			} else {
+				m.logger.Debug("Found existing session but it's closed",
+					slog.String("channel_id", channelID.String()),
+					slog.String("session_id", sessionID.String()))
+			}
 		} else {
 			m.logger.Debug("channelSessions has entry but sessions map doesn't",
 				slog.String("channel_id", channelID.String()),
@@ -299,11 +327,15 @@ func (m *Manager) GetOrCreateSession(ctx context.Context, channelID models.ULID,
 	if existingSessionID, ok := m.channelSessions[channelID]; ok {
 		if existingSession, ok := m.sessions[existingSessionID]; ok {
 			if !existingSession.closed.Load() {
-				// Another goroutine won the race - close our session and return the existing one
-				session.Close()
-				return existingSession, nil
+				// Check if we should reuse the existing session
+				if !existingSession.IngestCompleted() || existingSession.HasActiveContent() {
+					// Another goroutine won the race - close our session and return the existing one
+					// Reuse if origin is still connected OR if there's active content (finite stream with active transcoders)
+					session.Close()
+					return existingSession, nil
+				}
 			}
-			// Existing session is closed, remove it
+			// Existing session is closed or has no active content, remove it
 			delete(m.sessions, existingSessionID)
 			delete(m.channelSessions, channelID)
 		}
@@ -787,15 +819,29 @@ func (m *Manager) cleanupStaleSessions() {
 			shouldRemove = true
 		} else if clientCount == 0 {
 			// Session has no clients - check idle grace period
+			// BUT don't remove if session has active content (transcoders still running or buffered data)
+			// This is important for finite streams where transcoding may still be in progress
+			hasActiveContent := session.HasActiveContent()
+
 			if !idleSince.IsZero() && time.Since(idleSince) > idleGracePeriod {
-				// Session has been idle longer than the grace period
-				m.logger.Debug("Closing idle session after grace period",
-					slog.String("session_id", id.String()),
-					slog.Duration("idle_duration", time.Since(idleSince)))
-				shouldRemove = true
+				if hasActiveContent {
+					// Don't clean up - transcoders still running or data still buffered
+					m.logger.Debug("Session idle but has active content, keeping alive",
+						slog.String("session_id", id.String()),
+						slog.Duration("idle_duration", time.Since(idleSince)))
+				} else {
+					// Session has been idle longer than the grace period and no active content
+					m.logger.Debug("Closing idle session after grace period",
+						slog.String("session_id", id.String()),
+						slog.Duration("idle_duration", time.Since(idleSince)))
+					shouldRemove = true
+				}
 			} else if idleSince.IsZero() && time.Since(lastActivity) > sessionTimeout {
 				// Fallback: no idleSince set but inactive for too long
-				shouldRemove = true
+				// Still respect active content check
+				if !hasActiveContent {
+					shouldRemove = true
+				}
 			}
 		}
 

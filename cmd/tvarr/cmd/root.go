@@ -132,7 +132,9 @@ func initLogging() error {
 	}
 
 	// Use observability package to create logger with sensitive data redaction
+	// Add "app" field to distinguish tvarr from tvarr-ffmpegd logs
 	logger := observability.NewLoggerWithWriter(logCfg, os.Stderr)
+	logger = observability.WithApp(logger, "tvarr")
 	observability.SetDefault(logger)
 
 	return nil
