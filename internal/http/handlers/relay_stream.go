@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/md5"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -1083,123 +1082,6 @@ func (h *RelayStreamHandler) streamMPEGTSFromRelay(w http.ResponseWriter, r *htt
 			"error", err,
 		)
 	}
-}
-
-// streamRawDirectProxy streams content directly from upstream with CORS headers.
-// Deprecated: This direct proxy bypasses the ES buffer pipeline and doesn't allow
-// connection sharing between clients. Use handleSmartTranscode with VariantCopy instead.
-// Kept as emergency fallback; consider removing in a future release.
-func (h *RelayStreamHandler) streamRawDirectProxy(w http.ResponseWriter, r *http.Request, info *service.StreamInfo, classification *service.ClassificationResult) {
-	streamURL := info.Channel.StreamURL
-
-	logAttrs := []any{
-		"channel_id", info.Channel.ID,
-		"stream_url", streamURL,
-		"stream_mode", classification.Mode.String(),
-	}
-	if info.Proxy != nil {
-		logAttrs = append([]any{"proxy_id", info.Proxy.ID}, logAttrs...)
-	}
-	h.logger.Info("Proxy mode: direct proxy", logAttrs...)
-
-	setStreamHeaders(w, "direct", "proxy")
-
-	// Create HTTP request to upstream
-	req, err := http.NewRequest(http.MethodGet, streamURL, nil)
-	if err != nil {
-		errAttrs := []any{"channel_id", info.Channel.ID, "error", err}
-		if info.Proxy != nil {
-			errAttrs = append([]any{"proxy_id", info.Proxy.ID}, errAttrs...)
-		}
-		h.logger.Error("Failed to create upstream request", errAttrs...)
-		http.Error(w, "failed to create upstream request", http.StatusBadGateway)
-		return
-	}
-
-	// Forward relevant headers from client
-	if ua := r.Header.Get("User-Agent"); ua != "" {
-		req.Header.Set("User-Agent", ua)
-	}
-	if accept := r.Header.Get("Accept"); accept != "" {
-		req.Header.Set("Accept", accept)
-	}
-	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
-		req.Header.Set("Range", rangeHeader)
-	}
-
-	// Execute request
-	client := h.relayService.GetHTTPClient()
-	resp, err := client.Do(req)
-	if err != nil {
-		errAttrs := []any{"channel_id", info.Channel.ID, "error", err}
-		if info.Proxy != nil {
-			errAttrs = append([]any{"proxy_id", info.Proxy.ID}, errAttrs...)
-		}
-		h.logger.Error("Upstream request failed", errAttrs...)
-		http.Error(w, "upstream request failed", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	// Set content type from upstream or default to video/mp2t
-	contentType := resp.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = "video/mp2t"
-	}
-	w.Header().Set("Content-Type", contentType)
-
-	// Forward content length if available
-	if contentLength := resp.Header.Get("Content-Length"); contentLength != "" {
-		w.Header().Set("Content-Length", contentLength)
-	}
-
-	// Forward content range for partial content
-	if resp.StatusCode == http.StatusPartialContent {
-		if contentRange := resp.Header.Get("Content-Range"); contentRange != "" {
-			w.Header().Set("Content-Range", contentRange)
-		}
-		w.WriteHeader(http.StatusPartialContent)
-	} else {
-		w.Header().Set("Cache-Control", "no-cache, no-store")
-		w.Header().Set("Connection", "keep-alive")
-		w.WriteHeader(http.StatusOK)
-	}
-
-	// Stream data to client
-	buf := make([]byte, 32*1024) // 32KB buffer
-	for {
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
-				debugAttrs := []any{"channel_id", info.Channel.ID, "error", writeErr}
-				if info.Proxy != nil {
-					debugAttrs = append([]any{"proxy_id", info.Proxy.ID}, debugAttrs...)
-				}
-				h.logger.Debug("Client disconnected during proxy write", debugAttrs...)
-				break
-			}
-			// Flush if possible
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
-			}
-		}
-		if err != nil {
-			if err != io.EOF {
-				debugAttrs := []any{"channel_id", info.Channel.ID, "error", err}
-				if info.Proxy != nil {
-					debugAttrs = append([]any{"proxy_id", info.Proxy.ID}, debugAttrs...)
-				}
-				h.logger.Debug("Upstream read error", debugAttrs...)
-			}
-			break
-		}
-	}
-
-	endAttrs := []any{"channel_id", info.Channel.ID}
-	if info.Proxy != nil {
-		endAttrs = append([]any{"proxy_id", info.Proxy.ID}, endAttrs...)
-	}
-	h.logger.Info("Proxy stream ended", endAttrs...)
 }
 
 // ProbeStreamInput is the input for probing a stream.

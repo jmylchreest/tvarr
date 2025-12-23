@@ -209,11 +209,6 @@ func (i *Ingest) Stop() {
 	}
 }
 
-// Buffer returns the shared buffer.
-func (i *Ingest) Buffer() *SharedESBuffer {
-	return i.buffer
-}
-
 // Stats returns current ingest statistics.
 func (i *Ingest) Stats() IngestStats {
 	lastActivity, _ := i.lastActivity.Load().(time.Time)

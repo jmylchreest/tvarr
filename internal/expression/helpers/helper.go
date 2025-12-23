@@ -522,7 +522,3 @@ func ProcessImmediateHelpers(value string) (string, error) {
 		return value, nil
 	}
 }
-
-// DEPRECATED: The @req: helper syntax has been replaced by the unified
-// @dynamic(request.headers):key and @dynamic(request.query):key syntax.
-// See the expression engine's DynamicContext for details.

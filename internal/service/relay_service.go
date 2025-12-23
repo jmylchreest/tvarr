@@ -111,13 +111,6 @@ func (s *RelayService) WithBufferConfig(bufferCfg config.BufferConfig) *RelaySer
 	return s
 }
 
-// WithDaemonRegistry configures distributed transcoding using the provided daemon registry.
-// When set with PreferRemote=true, sessions will use remote ffmpegd daemons for transcoding.
-// Deprecated: Use WithDistributedTranscoding instead for full stream/job manager support.
-func (s *RelayService) WithDaemonRegistry(registry *relay.DaemonRegistry, preferRemote bool) *RelayService {
-	return s.WithDistributedTranscoding(registry, nil, nil, nil, preferRemote)
-}
-
 // WithDistributedTranscoding configures distributed transcoding using the provided components.
 // - registry: DaemonRegistry for daemon selection
 // - streamMgr: DaemonStreamManager for communicating with connected daemons (optional)

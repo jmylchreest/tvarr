@@ -353,18 +353,6 @@ func ApplyBitstreamFilters(builder *CommandBuilder, bsfInfo BitstreamFilterInfo)
 	return builder
 }
 
-// RequiresAnnexBConversion returns true if the output format requires Annex B NAL format.
-// Deprecated: Use outputFormat.RequiresAnnexB() instead.
-func RequiresAnnexBConversion(outputFormat OutputFormatType) bool {
-	return outputFormat.RequiresAnnexB()
-}
-
-// ParseOutputFormat converts a string to OutputFormatType.
-// Deprecated: Use codec.ParseOutputFormat instead.
-func ParseOutputFormat(format string) OutputFormatType {
-	return codec.ParseOutputFormat(format)
-}
-
 // IsHardwareEncoder returns true if the encoder is a hardware encoder.
 // Uses the unified codec package.
 func IsHardwareEncoder(encoder string) bool {
