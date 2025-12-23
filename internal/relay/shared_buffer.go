@@ -721,31 +721,56 @@ func (v *ESVariant) MaxBytes() uint64 {
 	return v.maxBytes
 }
 
-// evictIfNeeded performs paired video/audio eviction if the variant exceeds its byte limit.
-// This evicts from whichever track has the older PTS, maintaining A/V sync.
+// evictIfNeeded performs eviction to maintain buffer size and clean up read samples.
+// This is the unified eviction method that handles both:
+// 1. Consumer position-based eviction (free up samples all consumers have read)
+// 2. Size-based eviction (keep buffer under maxBytes limit)
+//
 // IMPORTANT: Eviction respects consumer read positions to prevent removing samples
 // that consumers haven't read yet. This prevents decoder errors from missing reference frames.
 func (v *ESVariant) evictIfNeeded(incomingBytes uint64) {
-	// Always do consumer-position-based eviction first
-	// This ensures samples that all consumers have read are cleaned up
-	v.evictReadSamples()
-
-	// For source variants in EOF grace period, skip byte-limit eviction
-	// to preserve content for late-joining transcoders
+	// For source variants in EOF grace period, don't evict to allow late-joining transcoders
+	// to access the full buffered content.
 	if v.IsInEOFGracePeriod() {
 		return
-	}
-
-	if v.maxBytes == 0 {
-		return // No byte limit - consumer position eviction only
 	}
 
 	v.evictMu.Lock()
 	defer v.evictMu.Unlock()
 
-	// Get the minimum sequence that all consumers have read
-	// We can only evict samples that ALL consumers have already processed
+	// Get the minimum sequence that all consumers have read (cached for efficiency)
 	minVideoSeq, minAudioSeq := v.getMinConsumerSeq()
+
+	// Phase 1: Consumer position-based eviction
+	// Evict all samples that ALL consumers have already read
+	if minVideoSeq > 0 || minAudioSeq > 0 {
+		// Evict read video samples
+		for {
+			videoSeq := v.videoTrack.OldestSequence()
+			if videoSeq == 0 || videoSeq > minVideoSeq {
+				break
+			}
+			if _, _, ok := v.videoTrack.EvictOldestSample(); !ok {
+				break
+			}
+		}
+
+		// Evict read audio samples
+		for {
+			audioSeq := v.audioTrack.OldestSequence()
+			if audioSeq == 0 || audioSeq > minAudioSeq {
+				break
+			}
+			if _, _, ok := v.audioTrack.EvictOldestSample(); !ok {
+				break
+			}
+		}
+	}
+
+	// Phase 2: Size-based eviction (if maxBytes is set)
+	if v.maxBytes == 0 {
+		return // No byte limit configured
+	}
 
 	// Keep evicting until we have room for the incoming data
 	for v.CurrentBytes()+incomingBytes > v.maxBytes {
@@ -755,83 +780,21 @@ func (v *ESVariant) evictIfNeeded(incomingBytes uint64) {
 		videoSeq := v.videoTrack.OldestSequence()
 		audioSeq := v.audioTrack.OldestSequence()
 
-		// Check if we can evict video (oldest video seq must be <= min consumer video seq)
+		// Check if we can evict (oldest seq must be <= min consumer seq)
 		canEvictVideo := videoPTS > 0 && (minVideoSeq == 0 || videoSeq <= minVideoSeq)
-		// Check if we can evict audio (oldest audio seq must be <= min consumer audio seq)
 		canEvictAudio := audioPTS > 0 && (minAudioSeq == 0 || audioSeq <= minAudioSeq)
 
-		// Evict from the track with the older sample, but only if safe
-		// This keeps video and audio roughly in sync
+		// Evict from the track with the older sample, maintaining A/V sync
 		if canEvictVideo && (audioPTS == 0 || videoPTS <= audioPTS || !canEvictAudio) {
-			// Video is older or audio is empty or can't evict audio - evict video
-			_, _, ok := v.videoTrack.EvictOldestSample()
-			if !ok {
-				break // No more samples to evict
+			if _, _, ok := v.videoTrack.EvictOldestSample(); !ok {
+				break
 			}
 		} else if canEvictAudio {
-			// Audio is older and can be evicted - evict audio
-			_, _, ok := v.audioTrack.EvictOldestSample()
-			if !ok {
-				break // No more samples to evict
+			if _, _, ok := v.audioTrack.EvictOldestSample(); !ok {
+				break
 			}
 		} else {
-			// Cannot evict any samples - consumers are too far behind
-			// This is a backpressure situation - we accept the buffer overflow
-			// rather than corrupt streams by evicting unread samples
-			break
-		}
-	}
-}
-
-// evictReadSamples evicts all samples that have been read by ALL consumers.
-// This is the primary eviction mechanism when maxBytes=0 (unlimited).
-// Evicts samples where the sequence number is <= the minimum consumer position.
-func (v *ESVariant) evictReadSamples() {
-	// For source variants in EOF grace period, don't evict to allow late-joining transcoders
-	// to access the full buffered content. This is critical for finite streams where
-	// multiple codec variants may be requested at different times.
-	if v.IsInEOFGracePeriod() {
-		return
-	}
-
-	v.evictMu.Lock()
-	defer v.evictMu.Unlock()
-
-	// Get the minimum sequence that all consumers have read
-	minVideoSeq, minAudioSeq := v.getMinConsumerSeq()
-
-	// If no consumers are registered, we can't safely evict
-	// (we don't know if something will read the data later)
-	if minVideoSeq == 0 && minAudioSeq == 0 {
-		// Check if there are actually consumers - if none, keep all data
-		if v.ConsumerCount() == 0 {
-			return
-		}
-		// If there are consumers but they're at position 0, they haven't read anything yet
-		// Don't evict in this case
-		return
-	}
-
-	// Evict all video samples that have been read by all consumers
-	for {
-		videoSeq := v.videoTrack.OldestSequence()
-		if videoSeq == 0 || videoSeq > minVideoSeq {
-			break // No more video to evict or reached unread samples
-		}
-		_, _, ok := v.videoTrack.EvictOldestSample()
-		if !ok {
-			break
-		}
-	}
-
-	// Evict all audio samples that have been read by all consumers
-	for {
-		audioSeq := v.audioTrack.OldestSequence()
-		if audioSeq == 0 || audioSeq > minAudioSeq {
-			break // No more audio to evict or reached unread samples
-		}
-		_, _, ok := v.audioTrack.EvictOldestSample()
-		if !ok {
+			// Cannot evict - consumers are too far behind (backpressure)
 			break
 		}
 	}
