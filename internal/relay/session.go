@@ -2126,6 +2126,9 @@ func (s *RelaySession) Stats() SessionStats {
 				}
 			}
 
+			// Get resource history for sparkline graphs
+			cpuHistory, memHistory := transcoder.GetResourceHistory()
+
 			transcoderList = append(transcoderList, ESTranscoderStats{
 				ID:            tStats.ID,
 				SourceVariant: tStats.SourceVariant.String(),
@@ -2150,6 +2153,8 @@ func (s *RelaySession) Stats() SessionStats {
 				MemoryRSSMB:   memoryRSSMB,
 				MemoryPercent: memoryPercent,
 				EncodingSpeed: tStats.EncodingSpeed,
+				CPUHistory:    cpuHistory,
+				MemoryHistory: memHistory,
 				FFmpegCommand: tStats.FFmpegCommand,
 			})
 		}
@@ -2360,6 +2365,9 @@ type ESTranscoderStats struct {
 	MemoryPercent float64 `json:"memory_percent,omitempty"`
 	// Encoding speed (1.0 = realtime, 2.0 = 2x realtime, 0.5 = half realtime)
 	EncodingSpeed float64 `json:"encoding_speed,omitempty"`
+	// Resource history for sparkline graphs (last 30 samples, ~1 sample/sec)
+	CPUHistory    []float64 `json:"cpu_history,omitempty"`
+	MemoryHistory []float64 `json:"memory_history,omitempty"`
 	// FFmpeg command for debugging
 	FFmpegCommand string `json:"ffmpeg_command,omitempty"`
 }

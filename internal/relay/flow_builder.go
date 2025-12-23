@@ -82,11 +82,21 @@ func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph
 					_, targetAudio = b.resolveVariantCodecs(session, esTranscoder.TargetVariant)
 				}
 
+				// Calculate bandwidth in bps from total bytes and duration
+				var bytesInBps, bytesOutBps uint64
+				if !esTranscoder.StartedAt.IsZero() {
+					duration := time.Since(esTranscoder.StartedAt).Seconds()
+					if duration > 0 {
+						bytesInBps = uint64(float64(esTranscoder.BytesIn) / duration)
+						bytesOutBps = uint64(float64(esTranscoder.BytesOut) / duration)
+					}
+				}
+
 				// Create bidirectional edges: buffer <-> transcoder
 				bufferToTranscoder := b.buildEdge(
 					bufferNode.ID,
 					transcoderNode.ID,
-					esTranscoder.BytesIn,
+					bytesInBps,
 					sourceVideo,
 					sourceAudio,
 					"es",
@@ -96,7 +106,7 @@ func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph
 				transcoderToBuffer := b.buildEdge(
 					transcoderNode.ID,
 					bufferNode.ID,
-					esTranscoder.BytesOut,
+					bytesOutBps,
 					targetVideo,
 					targetAudio,
 					"es",
@@ -489,6 +499,10 @@ func (b *FlowBuilder) buildESTranscoderNode(session RelaySessionInfo, transcoder
 		memMB := transcoder.MemoryMB
 		data.TranscoderMemMB = &memMB
 	}
+
+	// Add resource history for sparkline graphs
+	data.TranscoderCPUHistory = transcoder.CPUHistory
+	data.TranscoderMemHistory = transcoder.MemoryHistory
 
 	// Generate unique ID using the target variant
 	transcoderID := fmt.Sprintf("transcoder-%s-%s", session.SessionID, strings.ReplaceAll(transcoder.TargetVariant, "/", "-"))

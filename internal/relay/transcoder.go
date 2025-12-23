@@ -29,6 +29,10 @@ type Transcoder interface {
 	// Returns nil if not available.
 	ProcessStats() *TranscoderProcessStats
 
+	// GetResourceHistory returns CPU and memory history for sparkline graphs.
+	// Returns nil slices if history tracking is not available.
+	GetResourceHistory() (cpuHistory, memHistory []float64)
+
 	// IsClosed returns true if the transcoder is closed.
 	IsClosed() bool
 

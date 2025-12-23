@@ -137,6 +137,9 @@ type ESTranscoderInfo struct {
 	PID        int     `json:"pid,omitempty"`
 	CPUPercent float64 `json:"cpu_percent,omitempty"`
 	MemoryMB   float64 `json:"memory_mb,omitempty"`
+	// Resource history for sparkline graphs (last 30 samples, ~1 sample/sec)
+	CPUHistory    []float64 `json:"cpu_history,omitempty"`
+	MemoryHistory []float64 `json:"memory_history,omitempty"`
 }
 
 // Note: BufferVariantInfo is defined in flow_types.go
@@ -318,6 +321,8 @@ func (s *SessionStats) ToSessionInfo() RelaySessionInfo {
 				PID:           t.PID,
 				CPUPercent:    t.CPUPercent,
 				MemoryMB:      t.MemoryRSSMB,
+				CPUHistory:    t.CPUHistory,
+				MemoryHistory: t.MemoryHistory,
 			})
 		}
 	}

@@ -479,6 +479,12 @@ func (t *FFmpegTranscoder) ProcessStats() *TranscoderProcessStats {
 	return stats
 }
 
+// GetResourceHistory returns CPU and memory history for sparkline graphs.
+// FFmpegTranscoder doesn't currently track history, so this returns nil.
+func (t *FFmpegTranscoder) GetResourceHistory() (cpuHistory, memHistory []float64) {
+	return nil, nil
+}
+
 // TranscoderProcessStats contains process-level stats for the transcoder.
 type TranscoderProcessStats struct {
 	PID           int

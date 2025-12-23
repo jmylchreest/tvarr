@@ -140,6 +140,9 @@ type ESTranscoder struct {
 	memoryMB   atomic.Value // float64
 	ffmpegPID  atomic.Int32
 
+	// Resource history for sparkline graphs
+	resourceHistory *ResourceHistory
+
 	// Actual encoder (may differ from requested if fallback occurred)
 	actualVideoEncoder string
 	actualAudioEncoder string
@@ -159,16 +162,17 @@ func NewLocalESTranscoder(
 	}
 
 	t := &ESTranscoder{
-		id:          id,
-		mode:        ESTranscoderModeLocal,
-		config:      config,
-		buffer:      buffer,
-		spawner:     spawner,
-		streamMgr:   streamMgr,
-		jobMgr:      jobMgr,
-		logger:      config.Logger,
-		closedCh:    make(chan struct{}),
-		videoParams: NewVideoParamHelper(),
+		id:              id,
+		mode:            ESTranscoderModeLocal,
+		config:          config,
+		buffer:          buffer,
+		spawner:         spawner,
+		streamMgr:       streamMgr,
+		jobMgr:          jobMgr,
+		logger:          config.Logger,
+		closedCh:        make(chan struct{}),
+		videoParams:     NewVideoParamHelper(),
+		resourceHistory: NewResourceHistory(),
 	}
 	t.lastActivity.Store(time.Now())
 
@@ -189,17 +193,18 @@ func NewRemoteESTranscoder(
 	}
 
 	t := &ESTranscoder{
-		id:          id,
-		mode:        ESTranscoderModeRemote,
-		config:      config,
-		buffer:      buffer,
-		daemon:      daemon,
-		daemonID:    daemon.ID,
-		streamMgr:   streamMgr,
-		jobMgr:      jobMgr,
-		logger:      config.Logger,
-		closedCh:    make(chan struct{}),
-		videoParams: NewVideoParamHelper(),
+		id:              id,
+		mode:            ESTranscoderModeRemote,
+		config:          config,
+		buffer:          buffer,
+		daemon:          daemon,
+		daemonID:        daemon.ID,
+		streamMgr:       streamMgr,
+		jobMgr:          jobMgr,
+		logger:          config.Logger,
+		closedCh:        make(chan struct{}),
+		videoParams:     NewVideoParamHelper(),
+		resourceHistory: NewResourceHistory(),
 	}
 	t.lastActivity.Store(time.Now())
 
@@ -639,6 +644,14 @@ func (t *ESTranscoder) ProcessStats() *TranscoderProcessStats {
 	}
 }
 
+// GetResourceHistory returns CPU and memory history for sparkline graphs.
+func (t *ESTranscoder) GetResourceHistory() (cpuHistory, memHistory []float64) {
+	if t.resourceHistory == nil {
+		return nil, nil
+	}
+	return t.resourceHistory.GetHistory()
+}
+
 // IsClosed returns true if the transcoder is closed.
 func (t *ESTranscoder) IsClosed() bool {
 	return t.closed.Load()
@@ -1030,6 +1043,11 @@ func (t *ESTranscoder) handleStats(stats *proto.TranscodeStats) {
 	t.memoryMB.Store(stats.MemoryMb)
 	if stats.FfmpegPid > 0 {
 		t.ffmpegPID.Store(stats.FfmpegPid)
+	}
+
+	// Record history for sparkline graphs (sample periodically)
+	if t.resourceHistory != nil && t.resourceHistory.ShouldSample() {
+		t.resourceHistory.AddSample(stats.CpuPercent, stats.MemoryMb)
 	}
 }
 
