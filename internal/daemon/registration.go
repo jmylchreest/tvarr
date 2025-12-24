@@ -707,6 +707,16 @@ func (h *TranscodeStreamHandler) handleTranscodeStart(ctx context.Context, start
 		return
 	}
 
+	// Check if job start succeeded (ack may have Success=false even with nil error)
+	if !ack.Success {
+		h.logger.Error("Transcode job start failed",
+			slog.String("job_id", start.JobId),
+			slog.String("error", ack.Error),
+		)
+		h.sendError(proto.TranscodeError_FFMPEG_START_FAILED, ack.Error)
+		return
+	}
+
 	// Send acknowledgment to coordinator
 	h.mu.RLock()
 	stream := h.stream

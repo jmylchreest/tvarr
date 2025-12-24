@@ -70,28 +70,35 @@ func (s *EncoderSelector) SelectVideoEncoderWithPreference(targetCodec, preferre
 	// "auto" and "none" are special values that bypass preference checking
 	if preferredHWAccel != "" && preferredHWAccel != "auto" && preferredHWAccel != "none" {
 		if enc, ok := hwEncoders[preferredHWAccel]; ok {
-			hasEncoder := s.binInfo.HasEncoder(enc)
-			slog.Debug("checking preferred hwaccel",
-				slog.String("hwaccel", preferredHWAccel),
-				slog.String("encoder", enc),
-				slog.Bool("has_encoder", hasEncoder),
-			)
-			if hasEncoder {
-				for _, accel := range s.binInfo.HWAccels {
-					accelType := strings.ToLower(string(accel.Type))
-					if accelType == preferredHWAccel && accel.Available {
-						slog.Debug("using preferred hwaccel",
-							slog.String("hwaccel", preferredHWAccel),
-							slog.String("encoder", enc),
-							slog.String("device", accel.DeviceName),
-						)
+			for _, accel := range s.binInfo.HWAccels {
+				accelType := strings.ToLower(string(accel.Type))
+				if accelType == preferredHWAccel && accel.Available {
+					// Check if this specific encoder is in the GPU-validated encoder list
+					encoderSupported := false
+					for _, validEnc := range accel.Encoders {
+						if validEnc == enc {
+							encoderSupported = true
+							break
+						}
+					}
+
+					slog.Debug("checking preferred hwaccel encoder support",
+						slog.String("hwaccel", preferredHWAccel),
+						slog.String("encoder", enc),
+						slog.Bool("encoder_supported", encoderSupported),
+						slog.Any("gpu_encoders", accel.Encoders),
+						slog.String("device", accel.DeviceName),
+					)
+
+					if encoderSupported {
 						return enc, preferredHWAccel, accel.DeviceName
 					}
 				}
-				slog.Debug("preferred hwaccel not available in HWAccels list",
-					slog.String("hwaccel", preferredHWAccel),
-				)
 			}
+			slog.Debug("preferred hwaccel not available or encoder not supported",
+				slog.String("hwaccel", preferredHWAccel),
+				slog.String("encoder", enc),
+			)
 		} else {
 			slog.Debug("preferred hwaccel not supported for codec",
 				slog.String("hwaccel", preferredHWAccel),
@@ -114,32 +121,38 @@ func (s *EncoderSelector) SelectVideoEncoderWithPreference(targetCodec, preferre
 
 	for _, hwType := range priorityOrder {
 		if enc, ok := hwEncoders[hwType]; ok {
-			// Check if this encoder is available
-			hasEncoder := s.binInfo.HasEncoder(enc)
-			slog.Debug("checking hwaccel in priority order",
-				slog.String("hwaccel", hwType),
-				slog.String("encoder", enc),
-				slog.Bool("has_encoder", hasEncoder),
-			)
-			if hasEncoder {
-				// Check if the hwaccel is available
-				for _, accel := range s.binInfo.HWAccels {
-					accelType := strings.ToLower(string(accel.Type))
-					if accelType == hwType {
-						slog.Debug("found matching hwaccel entry",
-							slog.String("hwaccel", hwType),
-							slog.Bool("available", accel.Available),
-							slog.String("device", accel.DeviceName),
-						)
-						if accel.Available {
-							return enc, hwType, accel.DeviceName
+			// Check if the hwaccel is available and supports this encoder
+			for _, accel := range s.binInfo.HWAccels {
+				accelType := strings.ToLower(string(accel.Type))
+				if accelType == hwType && accel.Available {
+					// Check if this specific encoder is in the GPU-validated encoder list
+					// This is critical because FFmpeg may list encoders (e.g., vp9_vaapi)
+					// even when the GPU only supports decoding, not encoding
+					encoderSupported := false
+					for _, validEnc := range accel.Encoders {
+						if validEnc == enc {
+							encoderSupported = true
+							break
 						}
 					}
+
+					slog.Debug("checking hwaccel encoder support",
+						slog.String("hwaccel", hwType),
+						slog.String("encoder", enc),
+						slog.Bool("encoder_supported", encoderSupported),
+						slog.Any("gpu_encoders", accel.Encoders),
+						slog.String("device", accel.DeviceName),
+					)
+
+					if encoderSupported {
+						return enc, hwType, accel.DeviceName
+					}
 				}
-				slog.Debug("hwaccel not found or not available in HWAccels list",
-					slog.String("hwaccel", hwType),
-				)
 			}
+			slog.Debug("hwaccel not available or encoder not supported by GPU",
+				slog.String("hwaccel", hwType),
+				slog.String("encoder", enc),
+			)
 		}
 	}
 
