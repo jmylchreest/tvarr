@@ -740,6 +740,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	logger.Info("starting tvarr server",
 		slog.String("host", serverConfig.Host),
 		slog.Int("port", serverConfig.Port),
+		slog.String("protocol", "h2c"),
 		slog.String("version", version.Version),
 		slog.Int("scheduler_entries", sched.GetEntryCount()),
 		slog.Int("worker_count", viper.GetInt("scheduler.workers")),

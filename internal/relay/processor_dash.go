@@ -45,10 +45,10 @@ type DASHProcessorConfig struct {
 // DefaultDASHProcessorConfig returns sensible defaults.
 func DefaultDASHProcessorConfig() DASHProcessorConfig {
 	return DASHProcessorConfig{
-		TargetSegmentDuration: 6.0,
-		MaxSegments:           30, // Keep ~3 minutes of segments for slow clients
-		PlaylistSegments:      5,  // Segments in playlist
-		MinBufferTime:         6.0,
+		TargetSegmentDuration: 4.0,  // Shorter segments for faster startup
+		MaxSegments:           30,   // Keep ~2 minutes of segments for slow clients
+		PlaylistSegments:      5,    // Segments in playlist
+		MinBufferTime:         4.0,  // Match target segment duration
 		Logger:                slog.Default(),
 	}
 }
@@ -166,7 +166,7 @@ func (p *DASHProcessor) Start(ctx context.Context) error {
 	// Initialize segment accumulator
 	p.initNewSegment()
 
-	p.config.Logger.Debug("Starting DASH processor",
+	p.config.Logger.Info("Starting DASH processor",
 		slog.String("id", p.id),
 		slog.String("variant", p.Variant().String()))
 
@@ -463,10 +463,18 @@ func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
 	videoTrack := esVariant.VideoTrack()
 	audioTrack := esVariant.AudioTrack()
 
+	p.config.Logger.Info("DASH processor loop started, waiting for keyframe",
+		slog.String("id", p.id))
+
 	// Wait for initial video keyframe using base class helper
 	if _, ok := p.WaitForKeyframe(videoTrack); !ok {
+		p.config.Logger.Warn("DASH processor: keyframe wait failed, exiting loop",
+			slog.String("id", p.id))
 		return
 	}
+
+	p.config.Logger.Info("DASH processor: received first keyframe, starting segment accumulation",
+		slog.String("id", p.id))
 
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()

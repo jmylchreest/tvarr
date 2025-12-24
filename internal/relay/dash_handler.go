@@ -84,7 +84,62 @@ func (d *DASHHandler) SetStreamMetadata(videoWidth, videoHeight, videoBandwidth,
 }
 
 // ServePlaylist generates and serves the DASH MPD manifest.
+// If the provider implements SegmentWaiter and has no segments, it will wait
+// up to 15 seconds for the first segment before returning.
 func (d *DASHHandler) ServePlaylist(w http.ResponseWriter, baseURL string) error {
+	return d.ServePlaylistWithContext(context.Background(), w, baseURL)
+}
+
+// ServePlaylistWithContext generates and serves the DASH MPD manifest with context support.
+// If the provider implements SegmentWaiter and has no segments, it will wait
+// up to 15 seconds for the first segment before returning.
+// For CMAF mode, it also waits for the init segment to be ready.
+func (d *DASHHandler) ServePlaylistWithContext(ctx context.Context, w http.ResponseWriter, baseURL string) error {
+	// Record playlist activity - this is the heartbeat that indicates clients are watching
+	if recorder, ok := d.provider.(PlaylistActivityRecorder); ok {
+		recorder.RecordPlaylistRequest()
+	}
+
+	// Check if provider supports waiting for segments
+	// For DASH, we need at least 2 segments before serving the manifest
+	// because suggestedPresentationDelay is 2x segment duration (client expects to be 2 segments behind live edge)
+	const minSegmentsForDASH = 2
+	if waiter, ok := d.provider.(SegmentWaiter); ok {
+		if waiter.SegmentCount() < minSegmentsForDASH {
+			// Wait for at least 2 segments (with timeout)
+			// Use 30s timeout to allow for 2 segment durations (~12s) plus transcoding startup time
+			waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+
+			if err := waiter.WaitForSegments(waitCtx, minSegmentsForDASH); err != nil {
+				http.Error(w, "No segments available yet, please retry", http.StatusServiceUnavailable)
+				return fmt.Errorf("waiting for segments: %w", err)
+			}
+		}
+	}
+
+	// For CMAF mode, also wait for init segment to be ready
+	if fmp4Provider, ok := d.provider.(FMP4SegmentProvider); ok {
+		if fmp4Provider.IsFMP4Mode() && !fmp4Provider.HasInitSegment() {
+			// Wait for init segment with polling (up to 15 seconds)
+			waitCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			defer cancel()
+
+			ticker := time.NewTicker(100 * time.Millisecond)
+			defer ticker.Stop()
+
+			for !fmp4Provider.HasInitSegment() {
+				select {
+				case <-waitCtx.Done():
+					http.Error(w, "Init segment not available yet, please retry", http.StatusServiceUnavailable)
+					return fmt.Errorf("waiting for init segment: %w", waitCtx.Err())
+				case <-ticker.C:
+					// Check again
+				}
+			}
+		}
+	}
+
 	manifest := d.GenerateManifest(baseURL)
 
 	w.Header().Set("Content-Type", ContentTypeDASHManifest)
@@ -203,6 +258,17 @@ func (d *DASHHandler) GenerateManifest(baseURL string) string {
 	hasAudioInit := len(d.initAudioSeg) > 0
 	d.mu.RUnlock()
 
+	// Check FMP4SegmentProvider for CMAF-style init segment
+	// In CMAF mode, a single init segment contains both video and audio tracks (muxed)
+	isCMAFMode := false
+	if fmp4Provider, ok := d.provider.(FMP4SegmentProvider); ok {
+		if fmp4Provider.IsFMP4Mode() && fmp4Provider.HasInitSegment() {
+			hasVideoInit = true
+			hasAudioInit = true
+			isCMAFMode = true
+		}
+	}
+
 	// Use defaults if metadata not set
 	if videoWidth == 0 {
 		videoWidth = 1920
@@ -264,88 +330,139 @@ func (d *DASHHandler) GenerateManifest(baseURL string) string {
 	sb.WriteString(`  <Period id="0" start="PT0S">`)
 	sb.WriteString("\n")
 
-	// Video AdaptationSet
-	sb.WriteString(fmt.Sprintf(`    <AdaptationSet id="0" mimeType="video/mp4" codecs="avc1.64001f" `+
-		`width="%d" height="%d" frameRate="30" segmentAlignment="true" startWithSAP="1">`,
-		videoWidth, videoHeight,
-	))
-	sb.WriteString("\n")
-
-	// Video SegmentTemplate
-	if hasVideoInit {
-		sb.WriteString(fmt.Sprintf(`      <SegmentTemplate `+
-			`initialization="%s?%s=%s&amp;%s=v" `+
-			`media="%s?%s=%s&amp;%s=$Number$" `+
-			`timescale="1" `+
-			`duration="%d" `+
-			`startNumber="%d"/>`,
-			baseURL, QueryParamFormat, FormatValueDASH, QueryParamInit,
-			baseURL, QueryParamFormat, FormatValueDASH, QueryParamSegment,
-			targetDuration,
-			firstSegment,
+	if isCMAFMode {
+		// CMAF mode: single AdaptationSet with muxed video+audio
+		// Use combined codecs string since segments contain both tracks
+		sb.WriteString(fmt.Sprintf(`    <AdaptationSet id="0" mimeType="video/mp4" codecs="avc1.64001f,mp4a.40.2" `+
+			`width="%d" height="%d" frameRate="30" segmentAlignment="true" startWithSAP="1">`,
+			videoWidth, videoHeight,
 		))
+		sb.WriteString("\n")
+
+		// AudioChannelConfiguration for the muxed content
+		sb.WriteString(fmt.Sprintf(`      <AudioChannelConfiguration schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" value="%d"/>`,
+			audioChannels,
+		))
+		sb.WriteString("\n")
+
+		// SegmentTemplate for muxed content - use common init segment
+		if hasVideoInit {
+			sb.WriteString(fmt.Sprintf(`      <SegmentTemplate `+
+				`initialization="%s?%s=%s&amp;%s=1" `+
+				`media="%s?%s=%s&amp;%s=$Number$" `+
+				`timescale="1" `+
+				`duration="%d" `+
+				`startNumber="%d"/>`,
+				baseURL, QueryParamFormat, FormatValueDASH, QueryParamInit,
+				baseURL, QueryParamFormat, FormatValueDASH, QueryParamSegment,
+				targetDuration,
+				firstSegment,
+			))
+		} else {
+			sb.WriteString(fmt.Sprintf(`      <SegmentTemplate `+
+				`media="%s?%s=%s&amp;%s=$Number$" `+
+				`timescale="1" `+
+				`duration="%d" `+
+				`startNumber="%d"/>`,
+				baseURL, QueryParamFormat, FormatValueDASH, QueryParamSegment,
+				targetDuration,
+				firstSegment,
+			))
+		}
+		sb.WriteString("\n")
+
+		// Single Representation for muxed video+audio
+		totalBandwidth := videoBandwidth + audioBandwidth
+		sb.WriteString(fmt.Sprintf(`      <Representation id="muxed" bandwidth="%d"/>`, totalBandwidth))
+		sb.WriteString("\n")
+		sb.WriteString(`    </AdaptationSet>`)
+		sb.WriteString("\n")
 	} else {
-		sb.WriteString(fmt.Sprintf(`      <SegmentTemplate `+
-			`media="%s?%s=%s&amp;%s=$Number$" `+
-			`timescale="1" `+
-			`duration="%d" `+
-			`startNumber="%d"/>`,
-			baseURL, QueryParamFormat, FormatValueDASH, QueryParamSegment,
-			targetDuration,
-			firstSegment,
+		// Non-CMAF mode: separate video and audio AdaptationSets
+
+		// Video AdaptationSet
+		sb.WriteString(fmt.Sprintf(`    <AdaptationSet id="0" mimeType="video/mp4" codecs="avc1.64001f" `+
+			`width="%d" height="%d" frameRate="30" segmentAlignment="true" startWithSAP="1">`,
+			videoWidth, videoHeight,
 		))
+		sb.WriteString("\n")
+
+		// Video SegmentTemplate
+		if hasVideoInit {
+			sb.WriteString(fmt.Sprintf(`      <SegmentTemplate `+
+				`initialization="%s?%s=%s&amp;%s=v" `+
+				`media="%s?%s=%s&amp;%s=$Number$" `+
+				`timescale="1" `+
+				`duration="%d" `+
+				`startNumber="%d"/>`,
+				baseURL, QueryParamFormat, FormatValueDASH, QueryParamInit,
+				baseURL, QueryParamFormat, FormatValueDASH, QueryParamSegment,
+				targetDuration,
+				firstSegment,
+			))
+		} else {
+			sb.WriteString(fmt.Sprintf(`      <SegmentTemplate `+
+				`media="%s?%s=%s&amp;%s=$Number$" `+
+				`timescale="1" `+
+				`duration="%d" `+
+				`startNumber="%d"/>`,
+				baseURL, QueryParamFormat, FormatValueDASH, QueryParamSegment,
+				targetDuration,
+				firstSegment,
+			))
+		}
+		sb.WriteString("\n")
+
+		// Video Representation
+		sb.WriteString(fmt.Sprintf(`      <Representation id="video" bandwidth="%d"/>`, videoBandwidth))
+		sb.WriteString("\n")
+		sb.WriteString(`    </AdaptationSet>`)
+		sb.WriteString("\n")
+
+		// Audio AdaptationSet
+		sb.WriteString(fmt.Sprintf(`    <AdaptationSet id="1" mimeType="audio/mp4" codecs="mp4a.40.2" `+
+			`audioSamplingRate="48000" segmentAlignment="true" startWithSAP="1">`,
+		))
+		sb.WriteString("\n")
+
+		// AudioChannelConfiguration
+		sb.WriteString(fmt.Sprintf(`      <AudioChannelConfiguration schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" value="%d"/>`,
+			audioChannels,
+		))
+		sb.WriteString("\n")
+
+		// Audio SegmentTemplate
+		if hasAudioInit {
+			sb.WriteString(fmt.Sprintf(`      <SegmentTemplate `+
+				`initialization="%s?%s=%s&amp;%s=a" `+
+				`media="%s?%s=%s&amp;%s=$Number$" `+
+				`timescale="1" `+
+				`duration="%d" `+
+				`startNumber="%d"/>`,
+				baseURL, QueryParamFormat, FormatValueDASH, QueryParamInit,
+				baseURL, QueryParamFormat, FormatValueDASH, QueryParamSegment,
+				targetDuration,
+				firstSegment,
+			))
+		} else {
+			sb.WriteString(fmt.Sprintf(`      <SegmentTemplate `+
+				`media="%s?%s=%s&amp;%s=$Number$" `+
+				`timescale="1" `+
+				`duration="%d" `+
+				`startNumber="%d"/>`,
+				baseURL, QueryParamFormat, FormatValueDASH, QueryParamSegment,
+				targetDuration,
+				firstSegment,
+			))
+		}
+		sb.WriteString("\n")
+
+		// Audio Representation
+		sb.WriteString(fmt.Sprintf(`      <Representation id="audio" bandwidth="%d"/>`, audioBandwidth))
+		sb.WriteString("\n")
+		sb.WriteString(`    </AdaptationSet>`)
+		sb.WriteString("\n")
 	}
-	sb.WriteString("\n")
-
-	// Video Representation
-	sb.WriteString(fmt.Sprintf(`      <Representation id="video" bandwidth="%d"/>`, videoBandwidth))
-	sb.WriteString("\n")
-	sb.WriteString(`    </AdaptationSet>`)
-	sb.WriteString("\n")
-
-	// Audio AdaptationSet
-	sb.WriteString(fmt.Sprintf(`    <AdaptationSet id="1" mimeType="audio/mp4" codecs="mp4a.40.2" ` +
-		`audioSamplingRate="48000" segmentAlignment="true" startWithSAP="1">`,
-	))
-	sb.WriteString("\n")
-
-	// AudioChannelConfiguration
-	sb.WriteString(fmt.Sprintf(`      <AudioChannelConfiguration schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" value="%d"/>`,
-		audioChannels,
-	))
-	sb.WriteString("\n")
-
-	// Audio SegmentTemplate
-	if hasAudioInit {
-		sb.WriteString(fmt.Sprintf(`      <SegmentTemplate `+
-			`initialization="%s?%s=%s&amp;%s=a" `+
-			`media="%s?%s=%s&amp;%s=$Number$" `+
-			`timescale="1" `+
-			`duration="%d" `+
-			`startNumber="%d"/>`,
-			baseURL, QueryParamFormat, FormatValueDASH, QueryParamInit,
-			baseURL, QueryParamFormat, FormatValueDASH, QueryParamSegment,
-			targetDuration,
-			firstSegment,
-		))
-	} else {
-		sb.WriteString(fmt.Sprintf(`      <SegmentTemplate `+
-			`media="%s?%s=%s&amp;%s=$Number$" `+
-			`timescale="1" `+
-			`duration="%d" `+
-			`startNumber="%d"/>`,
-			baseURL, QueryParamFormat, FormatValueDASH, QueryParamSegment,
-			targetDuration,
-			firstSegment,
-		))
-	}
-	sb.WriteString("\n")
-
-	// Audio Representation
-	sb.WriteString(fmt.Sprintf(`      <Representation id="audio" bandwidth="%d"/>`, audioBandwidth))
-	sb.WriteString("\n")
-	sb.WriteString(`    </AdaptationSet>`)
-	sb.WriteString("\n")
 
 	// Close Period and MPD
 	sb.WriteString(`  </Period>`)

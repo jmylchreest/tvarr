@@ -55,6 +55,10 @@ type FMP4Demuxer struct {
 	h265NALLengthSize int
 	// Track if we've logged the first H.265 conversion
 	firstH265KeyframeLogged bool
+	// Track if we've warned about missing audio in fragments
+	audioMissingLogged bool
+	// Track if we've logged first audio samples
+	firstAudioLogged bool
 
 	// Timing state per track
 	videoBaseTime uint64
@@ -284,12 +288,23 @@ func (d *FMP4Demuxer) parseFragment(data []byte) error {
 
 	// Process each part (usually just one)
 	for _, part := range parts {
+		hasVideo := false
+		hasAudio := false
 		for _, track := range part.Tracks {
 			if track.ID == d.videoTrackID {
+				hasVideo = true
 				d.processVideoTrack(track)
 			} else if track.ID == d.audioTrackID {
+				hasAudio = true
 				d.processAudioTrack(track)
 			}
+		}
+		// Log if audio track is missing from fragments (but was in init)
+		if d.audioTrackID > 0 && hasVideo && !hasAudio && !d.audioMissingLogged {
+			d.logger.Warn("fMP4 demuxer: audio track missing from fragment (init had audio)",
+				slog.Int("video_track_id", d.videoTrackID),
+				slog.Int("audio_track_id", d.audioTrackID))
+			d.audioMissingLogged = true
 		}
 	}
 
@@ -527,6 +542,14 @@ func (d *FMP4Demuxer) convertH265ToAnnexB(payload []byte, isKeyframe bool) []byt
 func (d *FMP4Demuxer) processAudioTrack(track *fmp4.PartTrack) {
 	if d.config.OnAudioSample == nil {
 		return
+	}
+
+	// Log first audio samples received
+	if !d.firstAudioLogged && len(track.Samples) > 0 {
+		d.logger.Info("fMP4 demuxer: first audio samples from fragment",
+			slog.Int("sample_count", len(track.Samples)),
+			slog.Uint64("base_time", track.BaseTime))
+		d.firstAudioLogged = true
 	}
 
 	baseTime := track.BaseTime

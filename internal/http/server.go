@@ -120,7 +120,7 @@ func (s *Server) Start() error {
 		IdleTimeout:  s.config.IdleTimeout,
 	}
 
-	s.logger.Info("starting HTTP server",
+	s.logger.Debug("HTTP server configured",
 		slog.String("address", addr),
 		slog.String("protocol", "h2c"),
 	)

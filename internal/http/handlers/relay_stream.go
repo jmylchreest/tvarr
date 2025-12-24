@@ -1029,6 +1029,15 @@ func (h *RelayStreamHandler) handleMultiFormatOutput(w http.ResponseWriter, r *h
 					"error", err,
 				)
 			}
+		} else if dashHandler, ok := handler.(*relay.DASHHandler); ok {
+			// DASH init segment request - pass stream type (v/a) from URL
+			if err := dashHandler.ServeInitSegment(w, outputReq.InitType); err != nil {
+				h.logger.Debug("Failed to serve DASH init segment",
+					"session_id", session.ID,
+					"init_type", outputReq.InitType,
+					"error", err,
+				)
+			}
 		} else {
 			http.Error(w, "init segment not available", http.StatusNotFound)
 		}
@@ -1053,6 +1062,13 @@ func (h *RelayStreamHandler) handleMultiFormatOutput(w http.ResponseWriter, r *h
 		if hlsHandler, ok := handler.(*relay.HLSHandler); ok {
 			if err := hlsHandler.ServePlaylistWithContext(r.Context(), w, baseURL); err != nil {
 				h.logger.Debug("Failed to serve playlist",
+					"session_id", session.ID,
+					"error", err,
+				)
+			}
+		} else if dashHandler, ok := handler.(*relay.DASHHandler); ok {
+			if err := dashHandler.ServePlaylistWithContext(r.Context(), w, baseURL); err != nil {
+				h.logger.Debug("Failed to serve DASH manifest",
 					"session_id", session.ID,
 					"error", err,
 				)
