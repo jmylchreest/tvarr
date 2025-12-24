@@ -46,8 +46,8 @@ type DASHProcessorConfig struct {
 func DefaultDASHProcessorConfig() DASHProcessorConfig {
 	return DASHProcessorConfig{
 		TargetSegmentDuration: 6.0,
-		MaxSegments:           7,
-		PlaylistSegments:      3, // New clients start near live edge
+		MaxSegments:           30, // Keep ~3 minutes of segments for slow clients
+		PlaylistSegments:      5,  // Segments in playlist
 		MinBufferTime:         6.0,
 		Logger:                slog.Default(),
 	}
@@ -581,7 +581,11 @@ func (p *DASHProcessor) flushSegment(videoSamples, audioSamples []ESSample) {
 	p.initSegmentMu.RUnlock()
 
 	if !hasInit {
-		if err := p.generateInitSegment(len(videoSamples) > 0, len(audioSamples) > 0); err != nil {
+		// Determine audio presence from the adapter's preset audio codec, not just current samples.
+		// This ensures audio track is included even if audio samples haven't arrived yet
+		// (audio transcoding may be slower than video).
+		hasAudio := p.adapter.AudioParams() != nil && p.adapter.AudioParams().Codec != ""
+		if err := p.generateInitSegment(len(videoSamples) > 0, hasAudio); err != nil {
 			p.config.Logger.Error("Failed to generate DASH init segment",
 				slog.String("error", err.Error()))
 			return

@@ -53,7 +53,7 @@ func init() {
 	serveCmd.Flags().String("listen", "", "gRPC listen address (e.g., :9091)")
 	serveCmd.Flags().String("coordinator-url", "", "coordinator gRPC URL (overrides TVARR_COORDINATOR_URL)")
 	serveCmd.Flags().String("auth-token", "", "authentication token (overrides TVARR_AUTH_TOKEN)")
-	serveCmd.Flags().String("log-level", "", "log level (debug, info, warn, error)")
+	serveCmd.Flags().String("log-level", "", "log level (trace, debug, info, warn, error)")
 }
 
 func runServe(cmd *cobra.Command, _ []string) error {

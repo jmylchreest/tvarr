@@ -582,22 +582,28 @@ func (t *TranscodeJob) startFFmpeg() error {
 	)
 
 	// Hardware acceleration setup if a hardware encoder was selected.
-	// Uses the same pattern as main: init_hw_device + hwaccel + hwupload
-	//
-	// FFmpeg command structure:
+	// When using hwaccel for decode AND encode:
 	//   -init_hw_device vaapi=hw:/dev/dri/renderD128
-	//   -hwaccel vaapi -hwaccel_device /dev/dri/renderD128
-	//   -vf format=nv12,hwupload
+	//   -hwaccel vaapi -hwaccel_device /dev/dri/renderD128 -hwaccel_output_format vaapi
+	//   -vf scale_vaapi=format=nv12  (native VAAPI filter for frames already on GPU)
+	//   -c:v h264_vaapi
 	//
-	// The hwupload filter transfers frames to GPU memory for encoding.
+	// Note: We use hwaccel_output_format=vaapi to keep decoded frames on GPU in VAAPI format.
+	// Then we use scale_vaapi (not hwupload) since frames are already on GPU.
 	// Skip if custom flags already contain hwaccel options (user manages it).
 	customFlagsHaveHwaccel := strings.Contains(t.config.GlobalFlags, "-hwaccel") ||
 		strings.Contains(t.config.InputFlags, "-hwaccel")
+	usingHwaccelDecode := false
 	if hwAccel != "" && !customFlagsHaveHwaccel {
 		builder.InitHWDevice(hwAccel, hwDevice)
 		builder.HWAccel(hwAccel)
 		if hwDevice != "" {
 			builder.HWAccelDevice(hwDevice)
+		}
+		// Keep frames on GPU in native format for VAAPI
+		if hwAccel == "vaapi" {
+			builder.HWAccelOutputFormat("vaapi")
+			usingHwaccelDecode = true
 		}
 		t.actualHWAccel = hwAccel
 		t.actualHWDevice = hwDevice
@@ -631,11 +637,17 @@ func (t *TranscodeJob) startFFmpeg() error {
 	t.actualVideoEncoder = videoEncoder
 	builder.VideoCodec(videoEncoder)
 
-	// Add hardware upload filter when using hardware encoder.
-	// This matches main branch behavior - always add hwupload for HW encoders.
-	// The hwupload filter transfers decoded frames to GPU memory for encoding.
+	// Add appropriate video filter for hardware encoding.
+	// When using hwaccel decode (frames already on GPU), use native GPU filters.
+	// When using software decode, use hwupload to transfer frames to GPU.
 	if hwAccel != "" && IsHardwareEncoder(videoEncoder) {
-		builder.HWUploadFilter(hwAccel)
+		if usingHwaccelDecode && hwAccel == "vaapi" {
+			// Frames are already on GPU in VAAPI format, use native VAAPI filter
+			builder.VideoFilter("scale_vaapi=format=nv12")
+		} else {
+			// Frames are in CPU memory, need to upload to GPU
+			builder.HWUploadFilter(hwAccel)
+		}
 	}
 
 	if t.config.VideoBitrateKbps > 0 {

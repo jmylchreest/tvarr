@@ -58,7 +58,7 @@ func init() {
 	}
 
 	// Global flags
-	rootCmd.PersistentFlags().String("log-level", "info", "log level (debug, info, warn, error)")
+	rootCmd.PersistentFlags().String("log-level", "info", "log level (trace, debug, info, warn, error)")
 	rootCmd.PersistentFlags().String("log-format", "json", "log format (text, json)")
 }
 

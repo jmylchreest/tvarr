@@ -110,22 +110,9 @@ func ExtractVideoCodecParams(samples []ESSample) *VideoCodecParams {
 				continue
 			}
 
-			// Try to detect codec from NAL unit type using mediacommon constants
-			h264NalType := h264.NALUType(nal[0] & 0x1F)
-
-			// Check for H.264 NAL types
-			switch h264NalType {
-			case h264.NALUTypeSPS:
-				params.Codec = "h264"
-				params.H264SPS = nal
-			case h264.NALUTypePPS:
-				params.Codec = "h264"
-				params.H264PPS = nal
-			}
-
-			// Check for H.265 NAL types (different format: (nal[0] >> 1) & 0x3F)
-			// Only check if not already detected as H.264
-			if (params.Codec == "" || params.Codec == "h265") && len(nal) >= 2 {
+			// Check for H.265 NAL types FIRST (different format: (nal[0] >> 1) & 0x3F)
+			// H.265 NAL types 32-34 are VPS/SPS/PPS which don't conflict with H.264 types
+			if len(nal) >= 2 {
 				h265NalType := h265.NALUType((nal[0] >> 1) & 0x3F)
 
 				switch h265NalType {
@@ -138,6 +125,20 @@ func ExtractVideoCodecParams(samples []ESSample) *VideoCodecParams {
 				case h265.NALUType_PPS_NUT:
 					params.Codec = "h265"
 					params.H265PPS = nal
+				}
+			}
+
+			// Only check for H.264 NAL types if not already detected as H.265
+			if params.Codec != "h265" {
+				h264NalType := h264.NALUType(nal[0] & 0x1F)
+
+				switch h264NalType {
+				case h264.NALUTypeSPS:
+					params.Codec = "h264"
+					params.H264SPS = nal
+				case h264.NALUTypePPS:
+					params.Codec = "h264"
+					params.H264PPS = nal
 				}
 			}
 		}
@@ -495,6 +496,8 @@ func extractNALUnitsFromData(data []byte) [][]byte {
 }
 
 // ConvertESSamplesToFMP4Video converts ES video samples to fmp4.Sample format.
+// For H.264/H.265, this converts from Annex B format (start codes) to AVCC/HVCC format
+// (length-prefixed NALs) as required by fMP4/MP4 containers.
 func ConvertESSamplesToFMP4Video(samples []ESSample, timescale uint32) ([]*fmp4.Sample, uint64) {
 	if len(samples) == 0 {
 		return nil, 0
@@ -523,8 +526,9 @@ func ConvertESSamplesToFMP4Video(samples []ESSample, timescale uint32) ([]*fmp4.
 		// Calculate PTS offset (composition time offset)
 		ptsOffset := int32(sample.PTS - sample.DTS)
 
-		// Convert NAL units to Annex B format for fmp4
-		payload := convertToAnnexB(sample.Data)
+		// Convert NAL units from Annex B to AVCC/HVCC format for fMP4
+		// fMP4/MP4 containers require length-prefixed NALs, not start codes
+		payload := convertAnnexBToAVCC(sample.Data)
 
 		fmp4Samples = append(fmp4Samples, &fmp4.Sample{
 			Duration:        duration,
@@ -688,6 +692,7 @@ func stripADTSHeader(data []byte) []byte {
 }
 
 // convertToAnnexB ensures video data is in Annex B format using mediacommon.
+// This is used for MPEG-TS output which requires start code prefixed NALs.
 func convertToAnnexB(data []byte) []byte {
 	if len(data) == 0 {
 		return data
@@ -725,6 +730,46 @@ func convertToAnnexB(data []byte) []byte {
 		return result
 	}
 	return annexB
+}
+
+// convertAnnexBToAVCC converts video data from Annex B format (start codes) to AVCC format (length-prefixed).
+// This is required for fMP4/MP4 containers which use AVCC/HVCC format.
+// The function works for both H.264 and H.265 as they use the same NAL unit structure.
+func convertAnnexBToAVCC(data []byte) []byte {
+	if len(data) == 0 {
+		return data
+	}
+
+	// Check if already in AVCC format (no start codes)
+	if len(data) >= 4 && !(data[0] == 0x00 && data[1] == 0x00 && (data[2] == 0x01 || (data[2] == 0x00 && data[3] == 0x01))) {
+		// Doesn't start with a start code - check if it looks like length-prefixed
+		// Read first 4 bytes as big-endian length
+		length := uint32(data[0])<<24 | uint32(data[1])<<16 | uint32(data[2])<<8 | uint32(data[3])
+		if length > 0 && int(length)+4 <= len(data) {
+			// Looks like valid AVCC format already
+			return data
+		}
+	}
+
+	// Parse Annex B to extract NAL units
+	var annexB h264.AnnexB
+	if err := annexB.Unmarshal(data); err != nil {
+		// Fallback: return as-is if we can't parse
+		return data
+	}
+
+	if len(annexB) == 0 {
+		return data
+	}
+
+	// Convert to AVCC format (4-byte length prefix per NAL)
+	avcc, err := h264.AVCC(annexB).Marshal()
+	if err != nil {
+		// Fallback: return as-is
+		return data
+	}
+
+	return avcc
 }
 
 // ESSampleAdapterConfig configures the ES to fMP4 adapter.
@@ -781,6 +826,10 @@ func (a *ESSampleAdapter) UpdateVideoParams(samples []ESSample) bool {
 
 	params := ExtractVideoCodecParams(samples)
 	if params != nil && (params.H264SPS != nil || params.H265SPS != nil || params.AV1SequenceHeader != nil || params.VP9Width > 0) {
+		prevCodec := ""
+		if a.videoParams != nil {
+			prevCodec = a.videoParams.Codec
+		}
 		a.videoParams = params
 
 		// Also set params in the helper for use when prepending (H.264/H.265 only)
@@ -790,6 +839,12 @@ func (a *ESSampleAdapter) UpdateVideoParams(samples []ESSample) bool {
 			a.videoParamHelper.SetH264Params(params.H264SPS, params.H264PPS)
 		}
 		// AV1/VP9 don't need parameter prepending - codec config is in the bitstream
+
+		// Log codec detection for debugging H.265 issues
+		if params.Codec != prevCodec || params.Codec == "h265" {
+			// Can't use slog here directly, but we could add a debug flag
+			// For now, just silently track the codec change
+		}
 		return true
 	}
 	return false

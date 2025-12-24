@@ -421,19 +421,35 @@ func (h *ExpressionHandler) GetDataMappingHelpers(ctx context.Context, input *st
 
 // GetClientDetectionFields returns fields available for client detection expressions.
 func (h *ExpressionHandler) GetClientDetectionFields(ctx context.Context, input *struct{}) (*FieldsOutput, error) {
-	// Client detection fields are HTTP request properties
+	// Client detection fields include:
+	// 1. HTTP request properties (input fields - read-only)
+	// 2. Client capabilities output fields (settable)
 	fields := []FieldResponse{
-		{Name: "user_agent", Type: "string", Description: "HTTP User-Agent header", SourceType: "client"},
-		{Name: "client_ip", Type: "string", Description: "Client IP address", SourceType: "client"},
-		{Name: "request_path", Type: "string", Description: "Request URL path", SourceType: "client"},
-		{Name: "request_url", Type: "string", Description: "Full request URL", SourceType: "client"},
-		{Name: "query_params", Type: "string", Description: "Raw query string", SourceType: "client"},
-		{Name: "x_forwarded_for", Type: "string", Description: "X-Forwarded-For header", SourceType: "client"},
-		{Name: "x_real_ip", Type: "string", Description: "X-Real-IP header", SourceType: "client"},
-		{Name: "accept", Type: "string", Description: "Accept header", SourceType: "client"},
-		{Name: "accept_language", Type: "string", Description: "Accept-Language header", SourceType: "client"},
-		{Name: "host", Type: "string", Description: "Host header", SourceType: "client"},
-		{Name: "referer", Type: "string", Description: "Referer header", SourceType: "client"},
+		// Input fields - HTTP request properties
+		{Name: "user_agent", Type: "string", Description: "HTTP User-Agent header", SourceType: "client", ReadOnly: true},
+		{Name: "client_ip", Type: "string", Description: "Client IP address", SourceType: "client", ReadOnly: true},
+		{Name: "request_path", Type: "string", Description: "Request URL path", SourceType: "client", ReadOnly: true},
+		{Name: "request_url", Type: "string", Description: "Full request URL", SourceType: "client", ReadOnly: true},
+		{Name: "query_params", Type: "string", Description: "Raw query string", SourceType: "client", ReadOnly: true},
+		{Name: "x_forwarded_for", Type: "string", Description: "X-Forwarded-For header", SourceType: "client", ReadOnly: true},
+		{Name: "x_real_ip", Type: "string", Description: "X-Real-IP header", SourceType: "client", ReadOnly: true},
+		{Name: "accept", Type: "string", Description: "Accept header", SourceType: "client", ReadOnly: true},
+		{Name: "accept_language", Type: "string", Description: "Accept-Language header", SourceType: "client", ReadOnly: true},
+		{Name: "host", Type: "string", Description: "Host header", SourceType: "client", ReadOnly: true},
+		{Name: "referer", Type: "string", Description: "Referer header", SourceType: "client", ReadOnly: true},
+		// Dynamic header fields (can be extracted via @dynamic())
+		{Name: "x_video_codec", Type: "string", Description: "X-Video-Codec header value (via @dynamic())", SourceType: "client", ReadOnly: true},
+		{Name: "x_audio_codec", Type: "string", Description: "X-Audio-Codec header value (via @dynamic())", SourceType: "client", ReadOnly: true},
+		{Name: "x_container", Type: "string", Description: "X-Container header value (via @dynamic())", SourceType: "client", ReadOnly: true},
+
+		// Output fields - client capabilities (settable via SET clause)
+		{Name: "accepted_video_codecs", Type: "string", Description: "List of video codecs the client accepts (JSON array)", SourceType: "client"},
+		{Name: "accepted_audio_codecs", Type: "string", Description: "List of audio codecs the client accepts (JSON array)", SourceType: "client"},
+		{Name: "preferred_video_codec", Type: "string", Description: "Client's preferred video codec", SourceType: "client"},
+		{Name: "preferred_audio_codec", Type: "string", Description: "Client's preferred audio codec", SourceType: "client"},
+		{Name: "preferred_format", Type: "string", Description: "Client's preferred container format (hls, hls-fmp4, dash, mpegts)", SourceType: "client"},
+		{Name: "supports_fmp4", Type: "boolean", Description: "Whether the client supports fMP4 segments", SourceType: "client"},
+		{Name: "supports_mpegts", Type: "boolean", Description: "Whether the client supports MPEG-TS", SourceType: "client"},
 	}
 
 	return &FieldsOutput{Body: fields}, nil

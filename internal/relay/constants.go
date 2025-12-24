@@ -49,6 +49,11 @@ const (
 
 	// QueryParamInit is the query parameter for DASH initialization segment type.
 	QueryParamInit = "init"
+
+	// QueryParamVariant is the query parameter for codec variant selection.
+	// Format: "video/audio" (e.g., "h264/aac", "copy/copy")
+	// This ensures segment requests are routed to the correct processor.
+	QueryParamVariant = "variant"
 )
 
 // Format parameter values.

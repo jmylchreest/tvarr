@@ -495,9 +495,10 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 	}
 	s.tsDemuxer = NewTSDemuxer(s.esBuffer, demuxerConfig)
 
-	// Default streaming settings (EncodingProfile focuses on encoding, not streaming parameters)
-	var targetSegmentDuration float64 = 6.0
-	var maxSegments = 7
+	// Use HLS config from manager for segment settings
+	targetSegmentDuration := s.manager.config.HLSConfig.TargetSegmentDuration
+	maxSegments := s.manager.config.HLSConfig.MaxSegments
+	playlistSegments := s.manager.config.HLSConfig.PlaylistSegments
 
 	// No need to initialize processor maps - sync.Map is zero-value safe
 
@@ -506,6 +507,7 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 	hlsTSConfig.Logger = slog.Default()
 	hlsTSConfig.TargetSegmentDuration = targetSegmentDuration
 	hlsTSConfig.MaxSegments = maxSegments
+	hlsTSConfig.PlaylistSegments = playlistSegments
 
 	hlsTSProcessor := NewHLSTSProcessor(
 		fmt.Sprintf("hls-ts-%s-%s", s.ID.String(), VariantCopy.String()),
@@ -608,9 +610,9 @@ func (s *RelaySession) runHLSRepackagePipeline() error {
 		}
 	}
 
-	// Default streaming settings (EncodingProfile focuses on encoding, not streaming parameters)
-	segmentCount := 7
-	segmentDuration := 1 * time.Second
+	// Use HLS config from manager for segment settings
+	segmentCount := s.manager.config.HLSConfig.MaxSegments
+	segmentDuration := time.Duration(s.manager.config.HLSConfig.TargetSegmentDuration * float64(time.Second))
 
 	// Create the HLS repackager
 	repackager := NewHLSRepackager(HLSRepackagerConfig{
@@ -786,9 +788,10 @@ func (s *RelaySession) runESPipeline() error {
 		inputURL = s.Classification.SelectedMediaPlaylist
 	}
 
-	// Default streaming settings (EncodingProfile focuses on encoding, not streaming parameters)
-	var targetSegmentDuration float64 = 6.0
-	var maxSegments = 7
+	// Use HLS config from manager for segment settings
+	targetSegmentDuration := s.manager.config.HLSConfig.TargetSegmentDuration
+	maxSegments := s.manager.config.HLSConfig.MaxSegments
+	playlistSegments := s.manager.config.HLSConfig.PlaylistSegments
 
 	slog.Debug("Starting ES pipeline",
 		slog.String("session_id", s.ID.String()),
@@ -871,6 +874,7 @@ func (s *RelaySession) runESPipeline() error {
 		TargetVariant:         targetVariant,
 		TargetSegmentDuration: targetSegmentDuration,
 		MaxSegments:           maxSegments,
+		PlaylistSegments:      playlistSegments,
 	}
 
 	// Set up format router WITHOUT pre-created processors
@@ -987,7 +991,7 @@ func (s *RelaySession) runIngestLoop(inputURL string, demuxer *TSDemuxer) error 
 			elapsed := now.Sub(lastLogTime).Seconds()
 			bytesDelta := totalBytesRead - lastLogBytes
 			throughputKBps := float64(bytesDelta) / elapsed / 1024
-			slog.Info("Ingest throughput",
+			slog.Debug("Ingest throughput",
 				slog.String("session_id", s.ID.String()),
 				slog.Float64("kbps", throughputKBps),
 				slog.Uint64("total_bytes", totalBytesRead))
@@ -1047,13 +1051,9 @@ func (s *RelaySession) runIngestLoop(inputURL string, demuxer *TSDemuxer) error 
 	}
 }
 
-// HLSClientIdleTimeout is how long an HLS/DASH client can be inactive before being removed.
-// HLS clients make periodic requests for playlists/segments, so 30s covers ~5 segment requests.
-const HLSClientIdleTimeout = 30 * time.Second
-
 // runVariantCleanupLoop periodically cleans up unused transcoded variants and their transcoders.
 // This prevents memory leaks when clients stop requesting certain codec variants.
-// It also cleans up inactive HLS/DASH clients that haven't made requests recently.
+// It also checks HLS/DASH processors for playlist idle timeout (no playlist polls = client left).
 func (s *RelaySession) runVariantCleanupLoop() {
 	ticker := time.NewTicker(VariantCleanupInterval)
 	defer ticker.Stop()
@@ -1069,84 +1069,32 @@ func (s *RelaySession) runVariantCleanupLoop() {
 	}
 }
 
-// cleanupInactiveStreamingClients removes HLS/DASH clients that haven't made requests recently.
-// This is necessary because HLS/DASH are request-based protocols without persistent connections,
-// unlike MPEG-TS which maintains a persistent streaming connection.
+// cleanupInactiveStreamingClients checks HLS/DASH processors for playlist idle timeout.
+// Unlike MPEG-TS (persistent connections), HLS/DASH clients poll periodically.
+// We use playlist request activity as the heartbeat - if no playlist requests for
+// (playlist_segments * segment_duration * 2), the client has stopped watching.
 func (s *RelaySession) cleanupInactiveStreamingClients() {
-	totalRemoved := 0
 	sessionID := s.ID.String()
 
-	// Track which processor types have empty processors that need cleanup
-	hlsTSNeedsCleanup := false
-	hlsFMP4NeedsCleanup := false
-	dashNeedsCleanup := false
-
-	// Clean up inactive clients from all HLS-TS processors
-	s.hlsTSProcessors.Range(func(variant CodecVariant, processor *HLSTSProcessor) bool {
-		removed := processor.CleanupInactiveClients(HLSClientIdleTimeout)
-		if removed > 0 {
-			totalRemoved += removed
-			slog.Debug("Cleaned up inactive HLS-TS clients",
-				slog.String("session_id", sessionID),
-				slog.String("variant", variant.String()),
-				slog.Int("removed", removed))
-		}
-		// Check if processor is now empty
-		if processor.ClientCount() == 0 {
-			hlsTSNeedsCleanup = true
-		}
-		return true
-	})
-
-	// Clean up inactive clients from all HLS-fMP4 processors
+	// Check HLS-fMP4 processors for playlist idle timeout
 	s.hlsFMP4Processors.Range(func(variant CodecVariant, processor *HLSfMP4Processor) bool {
-		removed := processor.CleanupInactiveClients(HLSClientIdleTimeout)
-		if removed > 0 {
-			totalRemoved += removed
-			slog.Debug("Cleaned up inactive HLS-fMP4 clients",
+		if processor.IsPlaylistIdle() {
+			lastRequest := processor.LastPlaylistRequest()
+			timeout := processor.PlaylistIdleTimeout()
+			slog.Debug("HLS-fMP4 processor is playlist-idle, scheduling cleanup",
 				slog.String("session_id", sessionID),
 				slog.String("variant", variant.String()),
-				slog.Int("removed", removed))
-		}
-		// Check if processor is now empty
-		if processor.ClientCount() == 0 {
-			hlsFMP4NeedsCleanup = true
+				slog.Time("last_playlist_request", lastRequest),
+				slog.Duration("timeout", timeout),
+				slog.Duration("idle_for", time.Since(lastRequest)))
+			// Stop the processor - this triggers variant cleanup via the existing mechanism
+			go s.StopProcessorIfIdle("hls-fmp4")
 		}
 		return true
 	})
 
-	// Clean up inactive clients from all DASH processors
-	s.dashProcessors.Range(func(variant CodecVariant, processor *DASHProcessor) bool {
-		removed := processor.CleanupInactiveClients(HLSClientIdleTimeout)
-		if removed > 0 {
-			totalRemoved += removed
-			slog.Debug("Cleaned up inactive DASH clients",
-				slog.String("session_id", sessionID),
-				slog.String("variant", variant.String()),
-				slog.Int("removed", removed))
-		}
-		// Check if processor is now empty
-		if processor.ClientCount() == 0 {
-			dashNeedsCleanup = true
-		}
-		return true
-	})
-
-	// If we removed clients, update session idle state
-	if totalRemoved > 0 {
-		s.UpdateIdleState()
-	}
-
-	// Schedule cleanup for empty processors (use goroutines to avoid blocking)
-	if hlsTSNeedsCleanup {
-		go s.StopProcessorIfIdle("hls-ts")
-	}
-	if hlsFMP4NeedsCleanup {
-		go s.StopProcessorIfIdle("hls-fmp4")
-	}
-	if dashNeedsCleanup {
-		go s.StopProcessorIfIdle("dash")
-	}
+	// Update session idle state based on whether any processors remain active
+	s.UpdateIdleState()
 }
 
 // cleanupUnusedVariants removes variants that haven't been accessed recently
@@ -1527,7 +1475,10 @@ func (s *RelaySession) GetOrCreateHLSfMP4ProcessorForVariant(variant CodecVarian
 	slog.Debug("Created HLS-fMP4 processor on-demand",
 		slog.String("session_id", s.ID.String()),
 		slog.String("variant", variant.String()),
-		slog.Int("total_hls_fmp4_processors", s.hlsFMP4Processors.Len()))
+		slog.Int("total_hls_fmp4_processors", s.hlsFMP4Processors.Len()),
+		slog.Float64("target_segment_duration", config.TargetSegmentDuration),
+		slog.Int("max_segments", config.MaxSegments),
+		slog.Int("playlist_segments", config.PlaylistSegments))
 
 	return processor, nil
 }

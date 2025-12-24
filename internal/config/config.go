@@ -32,11 +32,14 @@ const (
 	defaultLogoTimeout           = 30 * time.Second
 	defaultLogoRetryAttempts     = 3
 	defaultLogoCircuitBreaker    = "logos"
-	defaultMaxConcurrentStreams  = 10
-	defaultCircuitBreakerThresh  = 3
-	defaultCircuitBreakerTimeout = 30 * time.Second
-	defaultConnectionPoolSize    = 100
-	defaultStreamTimeout         = 5 * time.Minute
+	defaultMaxConcurrentStreams    = 10
+	defaultCircuitBreakerThresh    = 3
+	defaultCircuitBreakerTimeout   = 30 * time.Second
+	defaultConnectionPoolSize      = 100
+	defaultStreamTimeout           = 5 * time.Minute
+	defaultHLSSegmentDuration      = 4.0 // seconds, cut on every keyframe
+	defaultHLSMaxSegments          = 30  // segments in ring buffer (2+ minutes at 4s/segment)
+	defaultHLSPlaylistSegments     = 5   // segments in playlist for new clients
 )
 
 // Config holds all configuration for the application.
@@ -123,6 +126,19 @@ type RelayConfig struct {
 	ConnectionPoolSize      int           `mapstructure:"connection_pool_size"`
 	StreamTimeout           time.Duration `mapstructure:"stream_timeout"`
 	Buffer                  BufferConfig  `mapstructure:"buffer"`
+	HLS                     HLSConfig     `mapstructure:"hls"`
+}
+
+// HLSConfig holds HLS streaming configuration.
+type HLSConfig struct {
+	// TargetSegmentDuration is the target segment duration in seconds.
+	// Actual duration may vary based on keyframe positions.
+	TargetSegmentDuration float64 `mapstructure:"target_segment_duration"`
+	// MaxSegments is the maximum number of segments to keep in the ring buffer.
+	MaxSegments int `mapstructure:"max_segments"`
+	// PlaylistSegments is the number of segments to include in playlists for new clients.
+	// More segments = more buffer before live edge.
+	PlaylistSegments int `mapstructure:"playlist_segments"`
 }
 
 // BufferConfig holds elementary stream buffer configuration.
@@ -262,6 +278,9 @@ func SetDefaults(v *viper.Viper) {
 	v.SetDefault("relay.circuit_breaker_timeout", defaultCircuitBreakerTimeout)
 	v.SetDefault("relay.connection_pool_size", defaultConnectionPoolSize)
 	v.SetDefault("relay.stream_timeout", defaultStreamTimeout)
+	v.SetDefault("relay.hls.target_segment_duration", defaultHLSSegmentDuration)
+	v.SetDefault("relay.hls.max_segments", defaultHLSMaxSegments)
+	v.SetDefault("relay.hls.playlist_segments", defaultHLSPlaylistSegments)
 
 	// FFmpeg defaults
 	v.SetDefault("ffmpeg.binary_path", "")

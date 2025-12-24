@@ -522,6 +522,12 @@ func (t *ESTranscoder) startRemote(sourceKey CodecVariant) (*DaemonStream, error
 // Stop stops the transcoder.
 func (t *ESTranscoder) Stop() {
 	if t.closed.CompareAndSwap(false, true) {
+		t.logger.Log(t.ctx, observability.LevelTrace, "ES transcoder: Stop() called",
+			slog.String("id", t.id),
+			slog.String("mode", t.modeString()),
+			slog.Uint64("samples_in", t.samplesIn.Load()),
+			slog.Uint64("samples_out", t.samplesOut.Load()))
+
 		// Send stop message to daemon via stream
 		if t.activeJob != nil && t.activeJob.Stream != nil {
 			stopMsg := &proto.TranscodeMessage{
@@ -1017,9 +1023,11 @@ func (t *ESTranscoder) handleOutputSamples(target *ESVariant, batch *proto.ESSam
 	// Process video samples
 	for _, sample := range batch.VideoSamples {
 		if sample.IsKeyframe {
-			t.logger.Log(t.ctx, observability.LevelTrace, "Writing keyframe to target variant",
+			t.logger.Log(t.ctx, observability.LevelTrace, "ES transcoder: writing keyframe to target variant",
 				slog.String("id", t.id),
 				slog.String("target_variant", target.Variant().String()),
+				slog.String("variant_ptr", fmt.Sprintf("%p", target)),
+				slog.String("video_track_ptr", fmt.Sprintf("%p", target.VideoTrack())),
 				slog.Int64("pts", sample.Pts),
 				slog.Uint64("sequence", sample.Sequence),
 				slog.Int("data_len", len(sample.Data)))

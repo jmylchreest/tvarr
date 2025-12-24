@@ -352,6 +352,10 @@ func runServe(_ *cobra.Command, _ []string) error {
 		proxyRepo,
 	).WithLogger(logger).WithBufferConfig(config.BufferConfig{
 		MaxVariantBytes: viperGetByteSizePtr("relay.buffer.max_variant_bytes"),
+	}).WithHLSConfig(config.HLSConfig{
+		TargetSegmentDuration: viper.GetFloat64("relay.hls.target_segment_duration"),
+		MaxSegments:           viper.GetInt("relay.hls.max_segments"),
+		PlaylistSegments:      viper.GetInt("relay.hls.playlist_segments"),
 	})
 
 	encodingProfileService := service.NewEncodingProfileService(encodingProfileRepo).

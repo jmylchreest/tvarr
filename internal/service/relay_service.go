@@ -111,6 +111,30 @@ func (s *RelayService) WithBufferConfig(bufferCfg config.BufferConfig) *RelaySer
 	return s
 }
 
+// WithHLSConfig configures the HLS streaming settings from application config.
+func (s *RelayService) WithHLSConfig(hlsCfg config.HLSConfig) *RelayService {
+	managerConfig := relay.DefaultManagerConfig()
+	managerConfig.CodecRepo = s.lastKnownCodecRepo
+
+	// Apply HLS config values
+	managerConfig.HLSConfig = relay.HLSConfig{
+		TargetSegmentDuration: hlsCfg.TargetSegmentDuration,
+		MaxSegments:           hlsCfg.MaxSegments,
+		PlaylistSegments:      hlsCfg.PlaylistSegments,
+	}
+
+	s.relayManager.Close()
+	s.relayManager = relay.NewManager(managerConfig)
+
+	s.logger.Info("Relay HLS config applied",
+		"target_segment_duration", hlsCfg.TargetSegmentDuration,
+		"max_segments", hlsCfg.MaxSegments,
+		"playlist_segments", hlsCfg.PlaylistSegments,
+	)
+
+	return s
+}
+
 // WithDistributedTranscoding configures distributed transcoding using the provided components.
 // - registry: DaemonRegistry for daemon selection
 // - streamMgr: DaemonStreamManager for communicating with connected daemons (optional)

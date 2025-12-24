@@ -44,8 +44,8 @@ type HLSTSProcessorConfig struct {
 func DefaultHLSTSProcessorConfig() HLSTSProcessorConfig {
 	return HLSTSProcessorConfig{
 		TargetSegmentDuration: 6.0,
-		MaxSegments:           7,
-		PlaylistSegments:      3,  // New clients start near live edge
+		MaxSegments:           30, // Keep ~3 minutes of segments for slow clients
+		PlaylistSegments:      5,  // Segments in playlist
 		PlaylistType:          "", // Live
 		Logger:                slog.Default(),
 	}

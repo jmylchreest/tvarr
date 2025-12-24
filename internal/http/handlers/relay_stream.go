@@ -665,30 +665,61 @@ func (h *RelayStreamHandler) capsToClientFormat(caps relay.ClientCapabilities) s
 
 // computeTargetVariant determines the target codec variant for transcoding.
 // Logic:
-// Client detection is always enabled - rules determine codec/format selection.
-// - Video: if source video NOT in accepted_video_codecs → use preferred_video_codec, else keep source
-// - Audio: if source audio NOT in accepted_audio_codecs → use preferred_audio_codec, else keep source
-// If no rules match, defaults to h264/aac with fMP4/HLS support.
+// 1. Client capabilities (from headers/detection) define what codecs the client ACCEPTS
+// 2. Source codecs define what we HAVE
+// 3. Encoding profile defines what we WANT to transcode to
+// 4. Priority: client compatibility > profile preferences
+//    - If client accepts source codec, use source (no transcoding needed for that track)
+//    - If client doesn't accept source, use profile target if client accepts it
+//    - Otherwise use client's preferred codec
 // The returned variant always contains actual codec names (e.g., "h265/aac"), never "copy".
 func (h *RelayStreamHandler) computeTargetVariant(
 	info *service.StreamInfo,
 	clientCaps relay.ClientCapabilities,
 	sourceVideoCodec, sourceAudioCodec string,
 ) relay.CodecVariant {
-	// Determine video codec: transcode if source not in accepted list
-	// Use source codec if accepted, preferred codec if transcoding needed
+	// Start with source codecs
 	videoCodec := sourceVideoCodec
-	if sourceVideoCodec != "" && !clientCaps.AcceptsVideoCodec(sourceVideoCodec) {
-		if clientCaps.PreferredVideoCodec != "" {
+	audioCodec := sourceAudioCodec
+
+	// Get profile targets if available
+	var profileVideoCodec, profileAudioCodec string
+	if info.EncodingProfile != nil {
+		profileVideoCodec = string(info.EncodingProfile.TargetVideoCodec)
+		profileAudioCodec = string(info.EncodingProfile.TargetAudioCodec)
+		// Resolve "copy" or empty to source
+		if profileVideoCodec == "" || profileVideoCodec == "copy" || profileVideoCodec == "none" {
+			profileVideoCodec = sourceVideoCodec
+		}
+		if profileAudioCodec == "" || profileAudioCodec == "copy" || profileAudioCodec == "none" {
+			profileAudioCodec = sourceAudioCodec
+		}
+	}
+
+	// Determine video codec based on client compatibility
+	if sourceVideoCodec != "" {
+		if clientCaps.AcceptsVideoCodec(sourceVideoCodec) {
+			// Client accepts source - no video transcoding needed
+			videoCodec = sourceVideoCodec
+		} else if profileVideoCodec != "" && clientCaps.AcceptsVideoCodec(profileVideoCodec) {
+			// Client accepts profile target - use it
+			videoCodec = profileVideoCodec
+		} else if clientCaps.PreferredVideoCodec != "" {
+			// Fall back to client's preferred codec
 			videoCodec = clientCaps.PreferredVideoCodec
 		}
 	}
 
-	// Determine audio codec: transcode if source not in accepted list
-	// Use source codec if accepted, preferred codec if transcoding needed
-	audioCodec := sourceAudioCodec
-	if sourceAudioCodec != "" && !clientCaps.AcceptsAudioCodec(sourceAudioCodec) {
-		if clientCaps.PreferredAudioCodec != "" {
+	// Determine audio codec based on client compatibility
+	if sourceAudioCodec != "" {
+		if clientCaps.AcceptsAudioCodec(sourceAudioCodec) {
+			// Client accepts source - no audio transcoding needed
+			audioCodec = sourceAudioCodec
+		} else if profileAudioCodec != "" && clientCaps.AcceptsAudioCodec(profileAudioCodec) {
+			// Client accepts profile target - use it
+			audioCodec = profileAudioCodec
+		} else if clientCaps.PreferredAudioCodec != "" {
+			// Fall back to client's preferred codec
 			audioCodec = clientCaps.PreferredAudioCodec
 		}
 	}
@@ -699,11 +730,13 @@ func (h *RelayStreamHandler) computeTargetVariant(
 	}
 
 	variant := relay.NewCodecVariant(videoCodec, audioCodec)
-	h.logger.Debug("Target variant from client detection",
+	h.logger.Debug("Target variant computed",
 		"video_target", videoCodec,
 		"audio_target", audioCodec,
 		"source_video", sourceVideoCodec,
 		"source_audio", sourceAudioCodec,
+		"profile_video", profileVideoCodec,
+		"profile_audio", profileAudioCodec,
 		"variant", variant.String(),
 		"detection_source", clientCaps.DetectionSource,
 		"matched_rule", clientCaps.MatchedRuleName,
@@ -811,9 +844,20 @@ func (h *RelayStreamHandler) handleMultiFormatOutput(w http.ResponseWriter, r *h
 	segmentStr := r.URL.Query().Get(relay.QueryParamSegment)
 	initStr := r.URL.Query().Get(relay.QueryParamInit)
 	formatOverride := r.URL.Query().Get(relay.QueryParamFormat)
+	variantOverride := r.URL.Query().Get(relay.QueryParamVariant)
 
 	// Use the pre-computed target variant (determined by computeTargetVariant)
+	// If variant is specified in URL (from playlist segment URLs), use that instead
 	clientVariant := targetVariant
+	if variantOverride != "" {
+		// Parse variant from URL (format: "video/audio", e.g., "h264/aac")
+		clientVariant = relay.ParseCodecVariant(variantOverride)
+		h.logger.Debug("Using variant from URL parameter",
+			"session_id", session.ID,
+			"variant", clientVariant.String(),
+			"variant_param", variantOverride,
+		)
+	}
 
 	h.logger.Debug("HLS/DASH client using target variant",
 		"session_id", session.ID,
@@ -910,11 +954,11 @@ func (h *RelayStreamHandler) handleMultiFormatOutput(w http.ResponseWriter, r *h
 		}
 		// Register client for tracking (will update existing or create new)
 		_ = processor.RegisterClient(clientID, w, r)
-		handler = relay.NewHLSHandler(processor)
+		handler = relay.NewHLSHandlerWithVariant(processor, clientVariant.String())
 
 	case relay.FormatValueFMP4, relay.FormatValueHLSFMP4:
 		// HLS-fMP4/CMAF format - get or create HLS-fMP4 processor for client's variant
-		processor, err := session.GetOrCreateHLSfMP4ProcessorForVariant(clientVariant)
+		fmp4Processor, err := session.GetOrCreateHLSfMP4ProcessorForVariant(clientVariant)
 		if err != nil {
 			h.logger.Error("Failed to create HLS-fMP4 processor",
 				"session_id", session.ID,
@@ -925,8 +969,19 @@ func (h *RelayStreamHandler) handleMultiFormatOutput(w http.ResponseWriter, r *h
 			return
 		}
 		// Register client for tracking (will update existing or create new)
-		_ = processor.RegisterClient(clientID, w, r)
-		handler = relay.NewHLSHandler(processor)
+		_ = fmp4Processor.RegisterClient(clientID, w, r)
+		handler = relay.NewHLSHandlerWithVariant(fmp4Processor, clientVariant.String())
+
+		// For init segment requests, call processor directly to enable client tracking
+		if outputReq.IsInitRequest() {
+			if err := fmp4Processor.ServeSegment(w, r, "init.mp4"); err != nil {
+				h.logger.Debug("Failed to serve init segment",
+					"session_id", session.ID,
+					"error", err,
+				)
+			}
+			return
+		}
 
 	case relay.FormatValueDASH:
 		// DASH format - get or create DASH processor for client's variant
@@ -958,7 +1013,7 @@ func (h *RelayStreamHandler) handleMultiFormatOutput(w http.ResponseWriter, r *h
 		}
 		// Register client for tracking (will update existing or create new)
 		_ = processor.RegisterClient(clientID, w, r)
-		handler = relay.NewHLSHandler(processor)
+		handler = relay.NewHLSHandlerWithVariant(processor, clientVariant.String())
 	}
 
 	// Build base URL for playlist (used to generate segment URLs)
@@ -979,8 +1034,14 @@ func (h *RelayStreamHandler) handleMultiFormatOutput(w http.ResponseWriter, r *h
 		}
 	} else if outputReq.IsSegmentRequest() {
 		// Segment request
+		h.logger.Debug("Serving segment request",
+			"session_id", session.ID,
+			"segment", *outputReq.Segment,
+			"format", effectiveFormat,
+			"variant", clientVariant.String(),
+		)
 		if err := handler.ServeSegment(w, *outputReq.Segment); err != nil {
-			h.logger.Debug("Failed to serve segment",
+			h.logger.Warn("Failed to serve segment",
 				"session_id", session.ID,
 				"segment", *outputReq.Segment,
 				"error", err,

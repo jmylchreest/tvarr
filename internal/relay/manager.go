@@ -77,6 +77,18 @@ type ManagerConfig struct {
 	PreferRemote bool
 	// EncoderOverridesProvider fetches enabled encoder overrides for transcoding.
 	EncoderOverridesProvider EncoderOverridesProvider
+	// HLSConfig for HLS streaming settings.
+	HLSConfig HLSConfig
+}
+
+// HLSConfig holds HLS streaming configuration for the relay manager.
+type HLSConfig struct {
+	// TargetSegmentDuration is the target segment duration in seconds.
+	TargetSegmentDuration float64
+	// MaxSegments is the maximum number of segments in the ring buffer.
+	MaxSegments int
+	// PlaylistSegments is the number of segments in playlists for new clients.
+	PlaylistSegments int
 }
 
 // DefaultManagerConfig returns sensible defaults for the relay manager.
@@ -108,6 +120,11 @@ func DefaultManagerConfig() ManagerConfig {
 		},
 		CodecCacheTTL: 24 * time.Hour, // Cache codec info for 24 hours
 		BufferConfig:  DefaultSharedESBufferConfig(),
+		HLSConfig: HLSConfig{
+			TargetSegmentDuration: 4.0, // Cut on every keyframe
+			MaxSegments:           30,  // Keep ~2 minutes of segments for slow clients
+			PlaylistSegments:      5,   // Segments in playlist
+		},
 	}
 }
 

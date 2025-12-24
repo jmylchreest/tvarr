@@ -491,7 +491,7 @@ func (m *TSMuxer) Reset() {
 }
 
 // dataToAccessUnit converts raw video data to access unit format using mediacommon.
-// It handles both Annex B format (with start codes) and raw NAL units.
+// It handles Annex B format (with start codes), AVCC format (length-prefixed), and raw NAL units.
 func dataToAccessUnit(data []byte) [][]byte {
 	if len(data) == 0 {
 		return nil
@@ -506,6 +506,15 @@ func dataToAccessUnit(data []byte) [][]byte {
 				// Fallback: treat as single NAL unit
 				return [][]byte{data}
 			}
+			return au
+		}
+	}
+
+	// Try AVCC format (length-prefixed) using mediacommon
+	// fMP4 outputs use AVCC format, so we need to handle this for HLS-TS muxing
+	if len(data) >= 4 {
+		var au h264.AVCC
+		if err := au.Unmarshal(data); err == nil && len(au) > 0 {
 			return au
 		}
 	}

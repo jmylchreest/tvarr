@@ -4,10 +4,13 @@ package relay
 import (
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/jmylchreest/tvarr/internal/observability"
 )
 
 // OutputFormat represents the output container format.
@@ -207,15 +210,23 @@ func (p *BaseProcessor) RegisterClientBase(clientID string, w http.ResponseWrite
 	p.clientsMu.Lock()
 	defer p.clientsMu.Unlock()
 
+	now := time.Now()
+
 	// Check if client already exists (for request-based protocols like HLS)
 	if existing, exists := p.clients[clientID]; exists {
 		// Update the existing client's activity - keep accumulated BytesRead
 		existing.mu.Lock()
+		oldActivity := existing.LastActivity
 		existing.writer = w
 		existing.flusher, _ = w.(http.Flusher)
-		existing.LastActivity = time.Now()
+		existing.LastActivity = now
 		existing.mu.Unlock()
-		p.lastActivity.Store(time.Now())
+		p.lastActivity.Store(now)
+
+		slog.Log(context.Background(), observability.LevelTrace, "Client activity updated",
+			slog.String("processor_id", p.id),
+			slog.String("client_id", clientID),
+			slog.Duration("since_last_activity", now.Sub(oldActivity)))
 		return existing
 	}
 
@@ -223,7 +234,11 @@ func (p *BaseProcessor) RegisterClientBase(clientID string, w http.ResponseWrite
 	client := NewProcessorClient(clientID, w, r)
 	p.clients[clientID] = client
 
-	p.lastActivity.Store(time.Now())
+	p.lastActivity.Store(now)
+
+	slog.Log(context.Background(), observability.LevelTrace, "New client registered",
+		slog.String("processor_id", p.id),
+		slog.String("client_id", clientID))
 	return client
 }
 
@@ -254,7 +269,13 @@ func (p *BaseProcessor) CleanupInactiveClients(timeout time.Duration) int {
 		lastActivity := client.LastActivity
 		client.mu.Unlock()
 
-		if now.Sub(lastActivity) > timeout {
+		idleDuration := now.Sub(lastActivity)
+		if idleDuration > timeout {
+			slog.Log(context.Background(), observability.LevelTrace, "Removing inactive client",
+				slog.String("processor_id", p.id),
+				slog.String("client_id", id),
+				slog.Duration("idle_duration", idleDuration),
+				slog.Duration("timeout", timeout))
 			client.Close()
 			delete(p.clients, id)
 			removed++

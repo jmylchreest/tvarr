@@ -1079,6 +1079,7 @@ func (w *FMP4Writer) SetMP3Config(sampleRate, channelCount int) {
 }
 
 // GenerateInit generates an fMP4 initialization segment.
+// Returns an error if hasVideo is true but no valid video codec can be created.
 func (w *FMP4Writer) GenerateInit(hasVideo, hasAudio bool, videoTimescale, audioTimescale uint32) ([]byte, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -1091,6 +1092,7 @@ func (w *FMP4Writer) GenerateInit(hasVideo, hasAudio bool, videoTimescale, audio
 
 	if hasVideo {
 		var codec mp4.Codec
+		var codecErr error
 
 		if w.h264SPS != nil && w.h264PPS != nil {
 			var spsp h264.SPS
@@ -1099,6 +1101,8 @@ func (w *FMP4Writer) GenerateInit(hasVideo, hasAudio bool, videoTimescale, audio
 					SPS: w.h264SPS,
 					PPS: w.h264PPS,
 				}
+			} else {
+				codecErr = fmt.Errorf("H.264 SPS unmarshal failed: %w (SPS len=%d, PPS len=%d)", err, len(w.h264SPS), len(w.h264PPS))
 			}
 		} else if w.h265SPS != nil && w.h265PPS != nil {
 			var spsp h265.SPS
@@ -1108,6 +1112,8 @@ func (w *FMP4Writer) GenerateInit(hasVideo, hasAudio bool, videoTimescale, audio
 					SPS: w.h265SPS,
 					PPS: w.h265PPS,
 				}
+			} else {
+				codecErr = fmt.Errorf("H.265 SPS unmarshal failed: %w (VPS len=%d, SPS len=%d, PPS len=%d)", err, len(w.h265VPS), len(w.h265SPS), len(w.h265PPS))
 			}
 		} else if w.av1SeqHeader != nil {
 			// AV1 codec - verify sequence header is valid
@@ -1116,6 +1122,8 @@ func (w *FMP4Writer) GenerateInit(hasVideo, hasAudio bool, videoTimescale, audio
 				codec = &mp4.CodecAV1{
 					SequenceHeader: w.av1SeqHeader,
 				}
+			} else {
+				codecErr = fmt.Errorf("AV1 sequence header unmarshal failed: %w (len=%d)", err, len(w.av1SeqHeader))
 			}
 		} else if w.vp9Configured {
 			// VP9 codec
@@ -1127,6 +1135,9 @@ func (w *FMP4Writer) GenerateInit(hasVideo, hasAudio bool, videoTimescale, audio
 				ChromaSubsampling: w.vp9ChromaSubsampling,
 				ColorRange:        w.vp9ColorRange,
 			}
+		} else {
+			// No video codec params available
+			codecErr = errors.New("no video codec params configured (missing SPS/PPS/VPS or sequence header)")
 		}
 
 		if codec != nil {
@@ -1137,6 +1148,9 @@ func (w *FMP4Writer) GenerateInit(hasVideo, hasAudio bool, videoTimescale, audio
 			}
 			init.Tracks = append(init.Tracks, w.videoTrack)
 			trackID++
+		} else if codecErr != nil {
+			// Video was expected but we couldn't create a codec - return error
+			return nil, fmt.Errorf("video codec creation failed: %w", codecErr)
 		}
 	}
 

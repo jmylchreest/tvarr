@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jmylchreest/tvarr/internal/codec"
+	"github.com/jmylchreest/tvarr/internal/observability"
 )
 
 // Errors for shared buffer operations.
@@ -438,6 +439,12 @@ func getSharedBufferCallerInfo() string {
 		return "unknown"
 	}
 	return fmt.Sprintf("%s:%d", file, line)
+}
+
+// ParseCodecVariant parses a variant string (e.g., "h264/aac") into a CodecVariant.
+// This is used when parsing variant from URL query parameters.
+func ParseCodecVariant(s string) CodecVariant {
+	return CodecVariant(s)
 }
 
 // VideoCodec returns the video codec part of the variant.
@@ -1209,11 +1216,13 @@ func (b *SharedESBuffer) GetOrCreateVariantWithContext(ctx context.Context, vari
 	b.variants[variant] = v
 	b.variantsMu.Unlock()
 
-	b.config.Logger.Info("Created new codec variant - triggering transcoding callback",
+	b.config.Logger.Log(context.Background(), observability.LevelTrace, "Created new codec variant - triggering transcoding callback",
 		slog.String("channel_id", b.channelID),
 		slog.String("variant", variant.String()),
 		slog.String("source", source.String()),
-		slog.Bool("has_callback", callback != nil))
+		slog.Bool("has_callback", callback != nil),
+		slog.String("variant_ptr", fmt.Sprintf("%p", v)),
+		slog.String("video_track_ptr", fmt.Sprintf("%p", v.VideoTrack())))
 
 	// Trigger transcoding if callback is set
 	if callback != nil {
@@ -1425,6 +1434,11 @@ func (b *SharedESBuffer) CreateVariant(variant CodecVariant) (*ESVariant, error)
 	// Check if variant already exists
 	if v, exists := b.variants[variant]; exists {
 		v.RecordAccess()
+		b.config.Logger.Log(context.Background(), observability.LevelTrace, "CreateVariant: returning existing variant",
+			slog.String("channel_id", b.channelID),
+			slog.String("variant", variant.String()),
+			slog.String("variant_ptr", fmt.Sprintf("%p", v)),
+			slog.String("video_track_ptr", fmt.Sprintf("%p", v.VideoTrack())))
 		return v, nil
 	}
 

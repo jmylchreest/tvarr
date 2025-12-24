@@ -57,6 +57,7 @@ func AllMigrations() []Migration {
 		migration021StreamSourceMaxConcurrent(),
 		migration022EncoderOverrides(),
 		migration023RemoveClientDetectionEnabled(),
+		migration024FixDynamicCodecRules(),
 	}
 }
 

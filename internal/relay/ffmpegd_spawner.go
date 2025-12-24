@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -237,8 +239,11 @@ func (s *FFmpegDSpawner) SpawnForJob(ctx context.Context, jobID string) (types.D
 	cmd := exec.CommandContext(processCtx, binaryPath, args...)
 
 	// Capture both stdout and stderr - subprocess outputs JSON logs
+	// Write subprocess JSON logs directly to stderr to preserve their original formatting
+	// (avoids duplicate "app" fields from parent logger's base attributes)
 	logCapture := &logWriter{
 		logger: s.logger,
+		output: os.Stderr,
 		jobID:  jobID,
 	}
 	cmd.Stdout = logCapture
@@ -568,7 +573,8 @@ func (s *FFmpegDSpawner) StopAll() {
 // logWriter implements io.Writer for subprocess stderr logging.
 // It parses JSON log lines from the subprocess and re-emits them with proper log levels.
 type logWriter struct {
-	logger *slog.Logger
+	logger *slog.Logger // Parent logger (for non-JSON fallback)
+	output io.Writer    // Direct output for subprocess JSON logs (preserves original formatting)
 	jobID  string
 	buf    []byte // Buffer for incomplete lines
 }
@@ -607,10 +613,10 @@ func (w *logWriter) Write(p []byte) (n int, err error) {
 }
 
 func (w *logWriter) processLine(line []byte) {
-	// Try to parse as JSON
+	// Try to parse as JSON to verify it's valid
 	var entry map[string]any
 	if err := json.Unmarshal(line, &entry); err != nil {
-		// Not JSON, log as plain text
+		// Not JSON, log as plain text using parent logger
 		w.logger.Info("ffmpegd output",
 			slog.String("app", "tvarr-ffmpegd"),
 			slog.String("job_id", w.jobID),
@@ -618,37 +624,30 @@ func (w *logWriter) processLine(line []byte) {
 		return
 	}
 
-	// Extract standard fields
+	// Valid JSON log from subprocess - write directly to output to preserve original formatting
+	// This avoids duplicate "app" fields from parent logger's base attributes
+	// Check log level to respect current log level settings
 	level, _ := entry["level"].(string)
-	msg, _ := entry["msg"].(string)
-
-	// Build attributes from remaining fields (excluding time, level, msg)
-	attrs := make([]any, 0, len(entry)*2+4)
-	attrs = append(attrs, slog.String("app", "tvarr-ffmpegd"))
-	attrs = append(attrs, slog.String("job_id", w.jobID))
-
-	for k, v := range entry {
-		if k == "time" || k == "level" || k == "msg" {
-			continue
-		}
-		attrs = append(attrs, slog.Any(k, v))
-	}
-
-	// Re-emit with correct log level
+	levelVal := slog.LevelInfo
 	switch strings.ToUpper(level) {
 	case "TRACE":
-		// Use custom trace level from observability package
-		w.logger.Log(context.Background(), observability.LevelTrace, msg, attrs...)
+		levelVal = observability.LevelTrace
 	case "DEBUG":
-		w.logger.Debug(msg, attrs...)
+		levelVal = slog.LevelDebug
 	case "INFO":
-		w.logger.Info(msg, attrs...)
+		levelVal = slog.LevelInfo
 	case "WARN", "WARNING":
-		w.logger.Warn(msg, attrs...)
+		levelVal = slog.LevelWarn
 	case "ERROR":
-		w.logger.Error(msg, attrs...)
-	default:
-		// Default to INFO for unknown levels
-		w.logger.Info(msg, attrs...)
+		levelVal = slog.LevelError
 	}
+
+	// Only output if the log level is enabled
+	if !w.logger.Enabled(context.Background(), levelVal) {
+		return
+	}
+
+	// Write the original JSON line directly (preserves subprocess log formatting exactly)
+	_, _ = w.output.Write(line)
+	_, _ = w.output.Write([]byte("\n"))
 }
