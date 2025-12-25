@@ -32,6 +32,16 @@ type FMP4SegmentProvider interface {
 
 	// HasInitSegment returns true if an initialization segment is available.
 	HasInitSegment() bool
+
+	// GetFilteredInitSegment returns an init segment containing only the specified track type.
+	// trackType should be "video" or "audio". Returns the full init segment if trackType is empty.
+	// This is used for DASH to serve separate video-only and audio-only init segments.
+	GetFilteredInitSegment(trackType string) ([]byte, error)
+
+	// GetStreamStartTime returns the time when the first segment was created.
+	// This is used for availabilityStartTime in DASH manifests which must be constant.
+	// Returns zero time if no segments have been created yet.
+	GetStreamStartTime() time.Time
 }
 
 // SegmentInfo contains segment metadata for playlist generation.

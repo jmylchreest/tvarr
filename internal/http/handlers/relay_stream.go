@@ -845,6 +845,7 @@ func (h *RelayStreamHandler) handleMultiFormatOutput(w http.ResponseWriter, r *h
 	initStr := r.URL.Query().Get(relay.QueryParamInit)
 	formatOverride := r.URL.Query().Get(relay.QueryParamFormat)
 	variantOverride := r.URL.Query().Get(relay.QueryParamVariant)
+	trackType := r.URL.Query().Get("track") // For DASH track-specific init segments (video/audio)
 
 	// Use the pre-computed target variant (determined by computeTargetVariant)
 	// If variant is specified in URL (from playlist segment URLs), use that instead
@@ -1030,11 +1031,12 @@ func (h *RelayStreamHandler) handleMultiFormatOutput(w http.ResponseWriter, r *h
 				)
 			}
 		} else if dashHandler, ok := handler.(*relay.DASHHandler); ok {
-			// DASH init segment request - pass stream type (v/a) from URL
-			if err := dashHandler.ServeInitSegment(w, outputReq.InitType); err != nil {
+			// DASH init segment request - pass track type (video/audio) from URL
+			// trackType comes from the "track" query param for CMAF with separate init segments
+			if err := dashHandler.ServeInitSegment(w, trackType); err != nil {
 				h.logger.Debug("Failed to serve DASH init segment",
 					"session_id", session.ID,
-					"init_type", outputReq.InitType,
+					"track_type", trackType,
 					"error", err,
 				)
 			}
@@ -1048,8 +1050,19 @@ func (h *RelayStreamHandler) handleMultiFormatOutput(w http.ResponseWriter, r *h
 			"segment", *outputReq.Segment,
 			"format", effectiveFormat,
 			"variant", clientVariant.String(),
+			"track_type", trackType,
 		)
-		if err := handler.ServeSegment(w, *outputReq.Segment); err != nil {
+		// For DASH, use track-filtered segment serving if track type is specified
+		if dashHandler, ok := handler.(*relay.DASHHandler); ok && trackType != "" {
+			if err := dashHandler.ServeSegmentFiltered(w, *outputReq.Segment, trackType); err != nil {
+				h.logger.Warn("Failed to serve filtered DASH segment",
+					"session_id", session.ID,
+					"segment", *outputReq.Segment,
+					"track_type", trackType,
+					"error", err,
+				)
+			}
+		} else if err := handler.ServeSegment(w, *outputReq.Segment); err != nil {
 			h.logger.Warn("Failed to serve segment",
 				"session_id", session.ID,
 				"segment", *outputReq.Segment,

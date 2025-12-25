@@ -2,6 +2,8 @@
 package relay
 
 import (
+	"log/slog"
+
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/av1"
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h264"
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h265"
@@ -530,6 +532,40 @@ func ConvertESSamplesToFMP4Video(samples []ESSample, timescale uint32) ([]*fmp4.
 		// fMP4/MP4 containers require length-prefixed NALs, not start codes
 		payload := convertAnnexBToAVCC(sample.Data)
 
+		// Log first sample conversion for debugging format issues
+		if i == 0 && len(samples) > 0 {
+			inputFormat := "unknown"
+			outputFormat := "unknown"
+			if len(sample.Data) >= 4 {
+				d := sample.Data
+				if d[0] == 0 && d[1] == 0 && (d[2] == 1 || (d[2] == 0 && d[3] == 1)) {
+					inputFormat = "annexb"
+				} else {
+					inputFormat = "avcc"
+				}
+			}
+			if len(payload) >= 4 {
+				d := payload
+				if d[0] == 0 && d[1] == 0 && (d[2] == 1 || (d[2] == 0 && d[3] == 1)) {
+					outputFormat = "annexb"
+				} else {
+					// Check if first 4 bytes look like valid AVCC length
+					length := uint32(d[0])<<24 | uint32(d[1])<<16 | uint32(d[2])<<8 | uint32(d[3])
+					if length > 0 && int(length)+4 <= len(payload) {
+						outputFormat = "avcc"
+					} else {
+						outputFormat = "invalid_avcc"
+					}
+				}
+			}
+			slog.Debug("Video sample format conversion",
+				slog.String("input_format", inputFormat),
+				slog.String("output_format", outputFormat),
+				slog.Int("input_len", len(sample.Data)),
+				slog.Int("output_len", len(payload)),
+				slog.Bool("is_keyframe", sample.IsKeyframe))
+		}
+
 		fmp4Samples = append(fmp4Samples, &fmp4.Sample{
 			Duration:        duration,
 			PTSOffset:       ptsOffset,
@@ -755,10 +791,16 @@ func convertAnnexBToAVCC(data []byte) []byte {
 	var annexB h264.AnnexB
 	if err := annexB.Unmarshal(data); err != nil {
 		// Fallback: return as-is if we can't parse
+		// Log the error for debugging
+		slog.Debug("convertAnnexBToAVCC: failed to parse Annex B",
+			slog.String("error", err.Error()),
+			slog.Int("data_len", len(data)))
 		return data
 	}
 
 	if len(annexB) == 0 {
+		slog.Debug("convertAnnexBToAVCC: empty NAL units after parsing",
+			slog.Int("data_len", len(data)))
 		return data
 	}
 
@@ -766,6 +808,9 @@ func convertAnnexBToAVCC(data []byte) []byte {
 	avcc, err := h264.AVCC(annexB).Marshal()
 	if err != nil {
 		// Fallback: return as-is
+		slog.Debug("convertAnnexBToAVCC: failed to marshal AVCC",
+			slog.String("error", err.Error()),
+			slog.Int("nal_count", len(annexB)))
 		return data
 	}
 

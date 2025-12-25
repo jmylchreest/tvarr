@@ -110,6 +110,11 @@ type HLSfMP4Processor struct {
 	// fMP4 muxer using mediacommon
 	writer  *FMP4Writer
 	adapter *ESSampleAdapter
+
+	// Stream start time - set once when first segment is created
+	// Used for availabilityStartTime in DASH manifests (must be constant)
+	streamStartTime   time.Time
+	streamStartTimeMu sync.RWMutex
 }
 
 // NewHLSfMP4Processor creates a new HLS-fMP4 processor.
@@ -184,6 +189,19 @@ func (p *HLSfMP4Processor) Start(ctx context.Context) error {
 	esVariant, err := p.InitES(ctx)
 	if err != nil {
 		return fmt.Errorf("initializing ES processor: %w", err)
+	}
+
+	// Update adapter's audio codec if using "copy" mode - we now know the actual codec
+	// from the resolved ES variant. This ensures the init segment includes the audio track.
+	currentAudioParams := p.adapter.AudioParams()
+	if currentAudioParams == nil || currentAudioParams.Codec == "" || currentAudioParams.Codec == "copy" {
+		resolvedAudioCodec := p.ResolvedAudioCodec()
+		if resolvedAudioCodec != "" && resolvedAudioCodec != "copy" {
+			p.adapter.SetAudioCodecFromVariant(resolvedAudioCodec)
+			p.config.Logger.Debug("Updated audio codec from resolved variant",
+				slog.String("id", p.id),
+				slog.String("resolved_codec", resolvedAudioCodec))
+		}
 	}
 
 	// Initialize segment accumulator
@@ -389,6 +407,14 @@ func (p *HLSfMP4Processor) HasInitSegment() bool {
 	p.initSegmentMu.RLock()
 	defer p.initSegmentMu.RUnlock()
 	return p.initSegment != nil
+}
+
+// GetStreamStartTime returns the time when the first segment was created.
+// This is used for availabilityStartTime in DASH manifests which must be constant.
+func (p *HLSfMP4Processor) GetStreamStartTime() time.Time {
+	p.streamStartTimeMu.RLock()
+	defer p.streamStartTimeMu.RUnlock()
+	return p.streamStartTime
 }
 
 // GetSegmentInfos implements SegmentProvider.
@@ -762,6 +788,14 @@ func (p *HLSfMP4Processor) flushSegment(videoSamples, audioSamples []ESSample) b
 
 	p.segmentsMu.Lock()
 	p.segments = append(p.segments, seg)
+
+	// Set stream start time once (on first segment)
+	// This is used for availabilityStartTime which must be constant throughout the stream
+	p.streamStartTimeMu.Lock()
+	if p.streamStartTime.IsZero() {
+		p.streamStartTime = seg.createdAt
+	}
+	p.streamStartTimeMu.Unlock()
 
 	// Trim to max segments, tracking evicted sequences for debug
 	var evictedSeqs []uint64

@@ -12,6 +12,10 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/bluenviron/mediacommon/v2/pkg/formats/fmp4"
+	"github.com/bluenviron/mediacommon/v2/pkg/formats/fmp4/seekablebuffer"
+	"github.com/bluenviron/mediacommon/v2/pkg/formats/mp4"
 )
 
 // DASH Processor errors.
@@ -92,6 +96,18 @@ type DASHProcessor struct {
 	// fMP4 muxer using mediacommon
 	writer  *FMP4Writer
 	adapter *ESSampleAdapter
+
+	// Timestamp offset for normalizing segment times to start from 0
+	// These are set from the first segment and subtracted from all subsequent segments
+	videoTimeOffset   uint64
+	audioTimeOffset   uint64
+	timeOffsetInitMu  sync.Mutex
+	timeOffsetInitSet bool
+
+	// Stream start time - set once when first segment is created
+	// Used for availabilityStartTime in DASH manifest (must be constant)
+	streamStartTime   time.Time
+	streamStartTimeMu sync.RWMutex
 }
 
 // NewDASHProcessor creates a new DASH processor.
@@ -161,6 +177,19 @@ func (p *DASHProcessor) Start(ctx context.Context) error {
 	esVariant, err := p.InitES(ctx)
 	if err != nil {
 		return fmt.Errorf("initializing ES processor: %w", err)
+	}
+
+	// Update adapter's audio codec if using "copy" mode - we now know the actual codec
+	// from the resolved ES variant. This ensures the init segment includes the audio track.
+	currentAudioParams := p.adapter.AudioParams()
+	if currentAudioParams == nil || currentAudioParams.Codec == "" || currentAudioParams.Codec == "copy" {
+		resolvedAudioCodec := p.ResolvedAudioCodec()
+		if resolvedAudioCodec != "" && resolvedAudioCodec != "copy" {
+			p.adapter.SetAudioCodecFromVariant(resolvedAudioCodec)
+			p.config.Logger.Debug("Updated audio codec from resolved variant",
+				slog.String("id", p.id),
+				slog.String("resolved_codec", resolvedAudioCodec))
+		}
 	}
 
 	// Initialize segment accumulator
@@ -390,6 +419,78 @@ func (p *DASHProcessor) HasInitSegment() bool {
 	return p.initSegment != nil
 }
 
+// GetFilteredInitSegment returns an init segment containing only the specified track type.
+// trackType should be "video" or "audio". Returns the full init segment if trackType is empty.
+// This method parses the existing muxed init segment and filters out tracks, preserving
+// the original track IDs so that segments (which contain both tracks) can be properly
+// demuxed by the client.
+func (p *DASHProcessor) GetFilteredInitSegment(trackType string) ([]byte, error) {
+	p.initSegmentMu.RLock()
+	defer p.initSegmentMu.RUnlock()
+
+	if p.initSegment == nil {
+		p.config.Logger.Debug("GetFilteredInitSegment: no init segment available",
+			slog.String("track_type", trackType))
+		return nil, fmt.Errorf("no init segment available")
+	}
+
+	p.config.Logger.Debug("GetFilteredInitSegment: processing request",
+		slog.String("track_type", trackType),
+		slog.Int("init_data_len", len(p.initSegment.Data)))
+
+	// If no filter, return full init segment
+	if trackType == "" {
+		return p.initSegment.Data, nil
+	}
+
+	// Parse the existing muxed init segment to preserve track IDs
+	var parsedInit fmp4.Init
+	if err := parsedInit.Unmarshal(bytes.NewReader(p.initSegment.Data)); err != nil {
+		p.config.Logger.Debug("GetFilteredInitSegment: failed to parse init segment",
+			slog.String("track_type", trackType),
+			slog.String("error", err.Error()),
+			slog.Int("init_data_len", len(p.initSegment.Data)))
+		return nil, fmt.Errorf("parsing init segment: %w", err)
+	}
+
+	p.config.Logger.Debug("GetFilteredInitSegment: parsed init segment",
+		slog.String("track_type", trackType),
+		slog.Int("track_count", len(parsedInit.Tracks)))
+
+	// Filter tracks based on type, preserving original track IDs
+	filteredInit := fmp4.Init{
+		Tracks: make([]*fmp4.InitTrack, 0),
+	}
+
+	for _, track := range parsedInit.Tracks {
+		isVideo := false
+		isAudio := false
+
+		switch track.Codec.(type) {
+		case *mp4.CodecH264, *mp4.CodecH265, *mp4.CodecAV1, *mp4.CodecVP9:
+			isVideo = true
+		case *mp4.CodecMPEG4Audio, *mp4.CodecAC3, *mp4.CodecEAC3, *mp4.CodecOpus, *mp4.CodecMPEG1Audio:
+			isAudio = true
+		}
+
+		if (trackType == "video" && isVideo) || (trackType == "audio" && isAudio) {
+			filteredInit.Tracks = append(filteredInit.Tracks, track)
+		}
+	}
+
+	if len(filteredInit.Tracks) == 0 {
+		return nil, fmt.Errorf("no %s track found in init segment", trackType)
+	}
+
+	// Marshal the filtered init segment (track IDs are preserved)
+	var buf seekablebuffer.Buffer
+	if err := filteredInit.Marshal(&buf); err != nil {
+		return nil, fmt.Errorf("marshaling filtered init: %w", err)
+	}
+
+	return buf.Bytes(), nil
+}
+
 // GetSegmentInfos implements SegmentProvider.
 // Returns only the latest PlaylistSegments segments so new clients start near live edge.
 func (p *DASHProcessor) GetSegmentInfos() []SegmentInfo {
@@ -432,10 +533,11 @@ func (p *DASHProcessor) GetSegment(sequence uint64) (*Segment, error) {
 	for _, seg := range p.segments {
 		if seg.sequence == sequence {
 			return &Segment{
-				Sequence:  seg.sequence,
-				Duration:  seg.duration,
-				Data:      seg.data,
-				Timestamp: seg.createdAt,
+				Sequence:     seg.sequence,
+				Duration:     seg.duration,
+				Data:         seg.data,
+				Timestamp:    seg.createdAt,
+				IsFragmented: true, // DASH always produces fMP4 segments
 			}, nil
 		}
 	}
@@ -446,6 +548,14 @@ func (p *DASHProcessor) GetSegment(sequence uint64) (*Segment, error) {
 // TargetDuration implements SegmentProvider.
 func (p *DASHProcessor) TargetDuration() int {
 	return int(p.config.TargetSegmentDuration + 0.5)
+}
+
+// GetStreamStartTime returns the time when the first segment was created.
+// This is used for availabilityStartTime in DASH manifests which must be constant.
+func (p *DASHProcessor) GetStreamStartTime() time.Time {
+	p.streamStartTimeMu.RLock()
+	defer p.streamStartTimeMu.RUnlock()
+	return p.streamStartTime
 }
 
 // initNewSegment initializes a new segment accumulator.
@@ -464,7 +574,9 @@ func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
 	audioTrack := esVariant.AudioTrack()
 
 	p.config.Logger.Info("DASH processor loop started, waiting for keyframe",
-		slog.String("id", p.id))
+		slog.String("id", p.id),
+		slog.Bool("has_video_track", videoTrack != nil),
+		slog.Bool("has_audio_track", audioTrack != nil))
 
 	// Wait for initial video keyframe using base class helper
 	if _, ok := p.WaitForKeyframe(videoTrack); !ok {
@@ -516,14 +628,17 @@ func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
 			}
 
 			// Read audio samples
-			newAudioSamples := audioTrack.ReadFrom(p.LastAudioSeq(), 200)
-			for _, sample := range newAudioSamples {
-				bytesRead += uint64(len(sample.Data))
-				audioSamples = append(audioSamples, sample)
-				p.SetLastAudioSeq(sample.Sequence)
-				p.currentSegment.hasAudio = true
-				if p.currentSegment.startPTS < 0 {
-					p.currentSegment.startPTS = sample.PTS
+			var newAudioSamples []ESSample
+			if audioTrack != nil {
+				newAudioSamples = audioTrack.ReadFrom(p.LastAudioSeq(), 200)
+				for _, sample := range newAudioSamples {
+					bytesRead += uint64(len(sample.Data))
+					audioSamples = append(audioSamples, sample)
+					p.SetLastAudioSeq(sample.Sequence)
+					p.currentSegment.hasAudio = true
+					if p.currentSegment.startPTS < 0 {
+						p.currentSegment.startPTS = sample.PTS
+					}
 				}
 			}
 
@@ -604,8 +719,44 @@ func (p *DASHProcessor) flushSegment(videoSamples, audioSamples []ESSample) {
 	fmp4VideoSamples, videoBaseTime := p.adapter.ConvertVideoSamples(videoSamples)
 	fmp4AudioSamples, audioBaseTime := p.adapter.ConvertAudioSamples(audioSamples)
 
-	// Generate fragment using mediacommon
-	fragmentData, err := p.writer.GeneratePart(fmp4VideoSamples, fmp4AudioSamples, videoBaseTime, audioBaseTime)
+	// Initialize time offsets on first segment to normalize timestamps to start from 0
+	// This is critical for DASH because the manifest's SegmentTemplate assumes segments
+	// start at time 0, but source streams may have arbitrary starting timestamps.
+	p.timeOffsetInitMu.Lock()
+	if !p.timeOffsetInitSet {
+		p.videoTimeOffset = videoBaseTime
+		p.audioTimeOffset = audioBaseTime
+		p.timeOffsetInitSet = true
+		p.config.Logger.Debug("DASH timestamp offset initialized",
+			slog.Uint64("video_offset", p.videoTimeOffset),
+			slog.Uint64("audio_offset", p.audioTimeOffset))
+	}
+	// Apply offset to normalize timestamps
+	normalizedVideoTime := videoBaseTime - p.videoTimeOffset
+	normalizedAudioTime := audioBaseTime - p.audioTimeOffset
+	p.timeOffsetInitMu.Unlock()
+
+	// Debug: Log sample counts for each segment
+	var videoFormat string
+	if len(videoSamples) > 0 && len(videoSamples[0].Data) >= 4 {
+		d := videoSamples[0].Data
+		if d[0] == 0 && d[1] == 0 && (d[2] == 1 || (d[2] == 0 && d[3] == 1)) {
+			videoFormat = "annexb"
+		} else {
+			videoFormat = "avcc"
+		}
+	}
+	p.config.Logger.Debug("DASH segment samples",
+		slog.Int("video_es_samples", len(videoSamples)),
+		slog.Int("audio_es_samples", len(audioSamples)),
+		slog.Int("video_fmp4_samples", len(fmp4VideoSamples)),
+		slog.Int("audio_fmp4_samples", len(fmp4AudioSamples)),
+		slog.Uint64("video_base_time", normalizedVideoTime),
+		slog.Uint64("audio_base_time", normalizedAudioTime),
+		slog.String("video_format", videoFormat))
+
+	// Generate fragment using mediacommon with normalized timestamps
+	fragmentData, err := p.writer.GeneratePart(fmp4VideoSamples, fmp4AudioSamples, normalizedVideoTime, normalizedAudioTime)
 	if err != nil {
 		p.config.Logger.Error("Failed to generate DASH fragment",
 			slog.String("error", err.Error()))
@@ -635,6 +786,14 @@ func (p *DASHProcessor) flushSegment(videoSamples, audioSamples []ESSample) {
 
 	p.segmentsMu.Lock()
 	p.segments = append(p.segments, seg)
+
+	// Set stream start time once (on first segment)
+	// This is used for availabilityStartTime which must be constant throughout the stream
+	p.streamStartTimeMu.Lock()
+	if p.streamStartTime.IsZero() {
+		p.streamStartTime = seg.createdAt
+	}
+	p.streamStartTimeMu.Unlock()
 
 	// Trim to max segments
 	for len(p.segments) > p.config.MaxSegments {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/av1"
@@ -271,6 +272,9 @@ func (m *CMAFMuxer) parseInitSegment() error {
 	reader := bytes.NewReader(m.initSegment.Data)
 	if err := init.Unmarshal(reader); err != nil {
 		// Fall back to manual parsing if mediacommon fails
+		slog.Debug("mediacommon init.Unmarshal failed, falling back to manual parsing",
+			slog.String("error", err.Error()),
+			slog.Int("init_data_len", len(m.initSegment.Data)))
 		return m.parseInitManual()
 	}
 
@@ -390,6 +394,58 @@ func (m *CMAFMuxer) GetInitSegment() *FMP4InitSegment {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.initSegment
+}
+
+// GetFilteredInitSegment returns an init segment containing only the specified track type.
+// trackType should be "video" or "audio". Returns the full init segment if trackType is empty.
+func (m *CMAFMuxer) GetFilteredInitSegment(trackType string) ([]byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.fmp4Init == nil {
+		slog.Debug("GetFilteredInitSegment: fmp4Init is nil, returning ErrNoInitSegment",
+			slog.String("track_type", trackType),
+			slog.Bool("has_init_data", m.initSegment != nil && len(m.initSegment.Data) > 0))
+		return nil, ErrNoInitSegment
+	}
+
+	// If no filter, return full init segment
+	if trackType == "" {
+		return m.initSegment.Data, nil
+	}
+
+	// Filter tracks based on type
+	filteredInit := fmp4.Init{
+		Tracks: make([]*fmp4.InitTrack, 0),
+	}
+
+	for _, track := range m.fmp4Init.Tracks {
+		isVideo := false
+		isAudio := false
+
+		switch track.Codec.(type) {
+		case *mp4.CodecH264, *mp4.CodecH265, *mp4.CodecAV1, *mp4.CodecVP9:
+			isVideo = true
+		case *mp4.CodecMPEG4Audio, *mp4.CodecAC3, *mp4.CodecEAC3, *mp4.CodecOpus, *mp4.CodecMPEG1Audio:
+			isAudio = true
+		}
+
+		if (trackType == "video" && isVideo) || (trackType == "audio" && isAudio) {
+			filteredInit.Tracks = append(filteredInit.Tracks, track)
+		}
+	}
+
+	if len(filteredInit.Tracks) == 0 {
+		return nil, fmt.Errorf("no %s track found in init segment", trackType)
+	}
+
+	// Marshal the filtered init segment
+	var buf seekablebuffer.Buffer
+	if err := filteredInit.Marshal(&buf); err != nil {
+		return nil, fmt.Errorf("marshaling filtered init: %w", err)
+	}
+
+	return buf.Bytes(), nil
 }
 
 // GetFragments returns all available fragments.
@@ -1286,4 +1342,64 @@ func (w *FMP4Writer) SequenceNumber() uint32 {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.seqNum
+}
+
+// filterSegmentByTrack filters an fMP4 segment to contain only the specified track type.
+// trackType should be "video" or "audio".
+// The function uses mediacommon's fmp4 library to parse and filter the segment.
+func filterSegmentByTrack(segmentData []byte, trackType string, provider FMP4SegmentProvider) ([]byte, error) {
+	if len(segmentData) == 0 {
+		return nil, fmt.Errorf("empty segment data")
+	}
+
+	// Determine the target track ID from the init segment
+	// Video is typically track 1, audio is track 2 based on generation order
+	var targetTrackID int
+	if trackType == "video" {
+		targetTrackID = 1
+	} else if trackType == "audio" {
+		targetTrackID = 2
+	} else {
+		return segmentData, nil // No filtering needed
+	}
+
+	// Parse the segment using mediacommon (Parts has Unmarshal, Part does not)
+	var parts fmp4.Parts
+	if err := parts.Unmarshal(segmentData); err != nil {
+		return nil, fmt.Errorf("parsing segment: %w", err)
+	}
+
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("no parts found in segment")
+	}
+
+	// Filter tracks in each part to only include the target track
+	filteredParts := make(fmp4.Parts, 0, len(parts))
+	for _, part := range parts {
+		filteredTracks := make([]*fmp4.PartTrack, 0)
+		for _, track := range part.Tracks {
+			if track.ID == targetTrackID {
+				filteredTracks = append(filteredTracks, track)
+			}
+		}
+
+		if len(filteredTracks) > 0 {
+			filteredParts = append(filteredParts, &fmp4.Part{
+				SequenceNumber: part.SequenceNumber,
+				Tracks:         filteredTracks,
+			})
+		}
+	}
+
+	if len(filteredParts) == 0 {
+		return nil, fmt.Errorf("no %s track found in segment", trackType)
+	}
+
+	// Marshal the filtered parts
+	var buf seekablebuffer.Buffer
+	if err := filteredParts.Marshal(&buf); err != nil {
+		return nil, fmt.Errorf("marshaling filtered segment: %w", err)
+	}
+
+	return buf.Bytes(), nil
 }

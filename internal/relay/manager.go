@@ -770,7 +770,9 @@ func (m *Manager) createSession(ctx context.Context, channelID models.ULID, chan
 	}
 
 	// Start the appropriate relay pipeline
-	if err := session.start(ctx); err != nil {
+	// Use session.ctx (background context) instead of ctx (HTTP request context)
+	// to prevent the transcoder from being cancelled when the request closes
+	if err := session.start(session.ctx); err != nil {
 		session.Close()
 		cb.RecordFailure()
 		return nil, err
