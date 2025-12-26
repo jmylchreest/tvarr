@@ -514,6 +514,83 @@ tasks:
           ghcr.io/jmylchreest/tvarr-ffmpeg:{{.TAG}} {{.ARGS}}
 
   # ============================================
+  # Docker Compose Tasks
+  # ============================================
+
+  compose:up:
+    desc: Start tvarr coordinator + transcoder stack
+    summary: |
+      Starts the tvarr stack using docker-compose with coordinator and transcoder.
+
+      The stack includes:
+        - tvarr (coordinator with gRPC enabled)
+        - tvarr-transcoder (ffmpegd daemon with GPU access)
+
+      Variables:
+        - NVIDIA: Set to "true" for NVIDIA GPU support (default: false, uses Intel/AMD)
+        - DETACH: Set to "false" to run in foreground (default: true)
+
+      Examples:
+        task compose:up                    # Start with Intel/AMD GPU
+        task compose:up NVIDIA=true        # Start with NVIDIA GPU
+        task compose:up DETACH=false       # Run in foreground
+    vars:
+      NVIDIA: '{{.NVIDIA | default "false"}}'
+      DETACH: '{{.DETACH | default "true"}}'
+    cmds:
+      - |
+        cd deployment/docker
+        if [ "{{.NVIDIA}}" = "true" ]; then
+          {{.CONTAINER_RUNTIME}} compose -f docker-compose.yml -f docker-compose.nvidia.yml up \
+            $([ "{{.DETACH}}" = "true" ] && echo "-d")
+        else
+          {{.CONTAINER_RUNTIME}} compose up $([ "{{.DETACH}}" = "true" ] && echo "-d")
+        fi
+
+  compose:down:
+    desc: Stop tvarr coordinator + transcoder stack
+    summary: |
+      Stops and removes the tvarr stack containers.
+
+      Variables:
+        - VOLUMES: Set to "true" to also remove volumes (default: false)
+    vars:
+      VOLUMES: '{{.VOLUMES | default "false"}}'
+    cmds:
+      - |
+        cd deployment/docker
+        {{.CONTAINER_RUNTIME}} compose down $([ "{{.VOLUMES}}" = "true" ] && echo "-v")
+
+  compose:logs:
+    desc: View logs from tvarr stack
+    summary: |
+      Shows logs from the tvarr stack containers.
+
+      Variables:
+        - FOLLOW: Set to "false" to not follow logs (default: true)
+        - SERVICE: Specific service to show logs for (default: all)
+
+      Examples:
+        task compose:logs                  # Follow all logs
+        task compose:logs SERVICE=tvarr    # Only coordinator logs
+        task compose:logs SERVICE=ffmpegd  # Only transcoder logs
+        task compose:logs FOLLOW=false     # Show logs without following
+    vars:
+      FOLLOW: '{{.FOLLOW | default "true"}}'
+      SERVICE: '{{.SERVICE | default ""}}'
+    cmds:
+      - |
+        cd deployment/docker
+        {{.CONTAINER_RUNTIME}} compose logs \
+          $([ "{{.FOLLOW}}" = "true" ] && echo "-f") \
+          {{.SERVICE}}
+
+  compose:ps:
+    desc: Show status of tvarr stack containers
+    cmds:
+      - cd deployment/docker && {{.CONTAINER_RUNTIME}} compose ps
+
+  # ============================================
   # UPX Compression Tasks
   # ============================================
 

@@ -68,7 +68,7 @@ services:
   # tvarr-ffmpegd - Transcoding daemon
   # =============================================================================
   ffmpegd:
-    image: ghcr.io/jmylchreest/tvarr-ffmpegd:latest
+    image: ghcr.io/jmylchreest/tvarr-transcoder:latest
     restart: unless-stopped
     networks:
       - tvarr-net
