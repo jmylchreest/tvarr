@@ -376,46 +376,7 @@ tasks:
           $([ "{{.TAG}}" = "{{.FFMPEG_DOCKERFILE_HASH}}" ] && echo "-t ghcr.io/jmylchreest/tvarr-ffmpeg:latest") \
           .
 
-  container:run:
-    desc: Run tvarr container with normal entrypoint
-    summary: |
-      Runs the tvarr container with the normal entrypoint (starts the server).
-      Passes through DRI devices for hardware acceleration if available.
-      Use NVIDIA=true to enable NVIDIA GPU passthrough (requires nvidia-container-toolkit).
-
-      Environment Variables:
-        TAG                       - Container tag (default: latest)
-        PORT                      - Host port mapping (default: 8080)
-        NVIDIA                    - Enable NVIDIA GPU (default: false)
-        LOG_LEVEL                 - Log level (default: debug)
-        BASE_URL                  - External base URL for M3U proxy URLs (e.g., https://tvarr.example.com)
-        DATABASE_DSN              - Database connection string (optional)
-        TZ                        - Timezone (optional)
-
-      Example:
-        task container:run BASE_URL=https://tvarr.example.com TZ=America/New_York
-    vars:
-      TAG: '{{.TAG | default "latest"}}'
-      PORT: '{{.PORT | default "8080"}}'
-      NVIDIA: '{{.NVIDIA | default "false"}}'
-      LOG_LEVEL: '{{.LOG_LEVEL | default "debug"}}'
-      BASE_URL: '{{.BASE_URL | default ""}}'
-      DATABASE_DSN: '{{.DATABASE_DSN | default ""}}'
-      TZ: '{{.TZ | default ""}}'
-    cmds:
-      - |
-        {{.CONTAINER_RUNTIME}} run --rm -it \
-          -p {{.PORT}}:8080 \
-          -v tvarr-data:/data \
-          -e TVARR_LOGGING_LEVEL={{.LOG_LEVEL}} \
-          $([ -n "{{.BASE_URL}}" ] && echo "-e TVARR_SERVER_BASE_URL={{.BASE_URL}}") \
-          $([ -n "{{.DATABASE_DSN}}" ] && echo "-e TVARR_DATABASE_DSN={{.DATABASE_DSN}}") \
-          $([ -n "{{.TZ}}" ] && echo "-e TZ={{.TZ}}") \
-          $([ -d /dev/dri ] && echo "--device /dev/dri:/dev/dri") \
-          $([ "{{.NVIDIA}}" = "true" ] && echo "--gpus all") \
-          ghcr.io/jmylchreest/tvarr:{{.TAG}}
-
-  container:run:tvarr:
+  container:shell:
     desc: Run tvarr container with interactive shell (for debugging)
     summary: |
       Starts the tvarr container with an interactive shell instead of the normal entrypoint.
@@ -434,7 +395,7 @@ tasks:
           --entrypoint /bin/bash \
           ghcr.io/jmylchreest/tvarr:{{.TAG}}
 
-  container:run:ffmpeg:
+  container:shell:ffmpeg:
     desc: Run FFmpeg base container with interactive shell (for debugging)
     summary: |
       Starts the FFmpeg base container with an interactive shell.
@@ -589,6 +550,58 @@ tasks:
     desc: Show status of tvarr stack containers
     cmds:
       - cd deployment/docker && {{.CONTAINER_RUNTIME}} compose ps
+
+  compose:standalone:
+    desc: Start tvarr all-in-one with local FFmpeg and gRPC enabled
+    summary: |
+      Starts a single tvarr container with everything included:
+        - Local FFmpeg transcoding with GPU access
+        - gRPC enabled (can add remote transcoders later)
+
+      This is the simplest way to run tvarr. Remote transcoders can be
+      added later by pointing them at this instance's gRPC port (9090).
+
+      Variables:
+        - NVIDIA: Set to "true" for NVIDIA GPU support (default: false, uses Intel/AMD)
+        - DETACH: Set to "false" to run in foreground (default: true)
+
+      Examples:
+        task compose:standalone                # Start with Intel/AMD GPU
+        task compose:standalone NVIDIA=true    # Start with NVIDIA GPU
+        task compose:standalone DETACH=false   # Run in foreground
+    vars:
+      NVIDIA: '{{.NVIDIA | default "false"}}'
+      DETACH: '{{.DETACH | default "true"}}'
+    cmds:
+      - |
+        cd deployment/docker
+        if [ "{{.NVIDIA}}" = "true" ]; then
+          {{.CONTAINER_RUNTIME}} compose -f docker-compose.standalone.yml -f docker-compose.nvidia.yml up \
+            $([ "{{.DETACH}}" = "true" ] && echo "-d")
+        else
+          {{.CONTAINER_RUNTIME}} compose -f docker-compose.standalone.yml up \
+            $([ "{{.DETACH}}" = "true" ] && echo "-d")
+        fi
+
+  compose:standalone:down:
+    desc: Stop tvarr standalone container
+    vars:
+      VOLUMES: '{{.VOLUMES | default "false"}}'
+    cmds:
+      - |
+        cd deployment/docker
+        {{.CONTAINER_RUNTIME}} compose -f docker-compose.standalone.yml down \
+          $([ "{{.VOLUMES}}" = "true" ] && echo "-v")
+
+  compose:standalone:logs:
+    desc: View logs from tvarr standalone container
+    vars:
+      FOLLOW: '{{.FOLLOW | default "true"}}'
+    cmds:
+      - |
+        cd deployment/docker
+        {{.CONTAINER_RUNTIME}} compose -f docker-compose.standalone.yml logs \
+          $([ "{{.FOLLOW}}" = "true" ] && echo "-f")
 
   # ============================================
   # UPX Compression Tasks

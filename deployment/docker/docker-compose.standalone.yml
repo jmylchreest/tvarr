@@ -1,0 +1,78 @@
+# tvarr Docker Compose - Standalone All-in-One
+#
+# Runs tvarr as a single all-in-one container with:
+# - Local FFmpeg transcoding
+# - gRPC enabled (for optional remote transcoders later)
+# - GPU device access
+#
+# Usage:
+#   docker compose -f deployment/docker/docker-compose.standalone.yml up -d
+#   task compose:standalone
+#
+# To add remote transcoders later, just start them pointing at this instance.
+
+services:
+  tvarr:
+    image: ghcr.io/jmylchreest/tvarr:latest
+    restart: unless-stopped
+
+    ports:
+      # HTTP API and UI
+      - "${TVARR_SERVER_PORT:-8080}:8080"
+      # gRPC for optional remote transcoders
+      - "${TVARR_GRPC_PORT:-9090}:9090"
+
+    environment:
+      # User/Group mapping for volume permissions
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
+
+      # Server configuration
+      - TVARR_SERVER_PORT=8080
+      - TVARR_SERVER_BASE_URL=${TVARR_SERVER_BASE_URL:-}
+
+      # gRPC server enabled (can add remote transcoders later)
+      - TVARR_GRPC_PORT=9090
+      - TVARR_GRPC_ENABLED=${TVARR_GRPC_ENABLED:-true}
+
+      # Database
+      - TVARR_DATABASE_DSN=${TVARR_DATABASE_DSN:-file:/data/tvarr.db}
+
+      # Logging
+      - TVARR_LOGGING_LEVEL=${TVARR_LOGGING_LEVEL:-info}
+
+      # Storage
+      - TVARR_STORAGE_BASE_DIR=/data
+
+      # FFmpeg paths
+      - TVARR_FFMPEG_BINARY_PATH=/usr/bin/ffmpeg
+      - TVARR_FFMPEG_PROBE_PATH=/usr/bin/ffprobe
+
+    volumes:
+      # Persistent data storage
+      - tvarr-data:/data
+
+    # Intel/AMD GPU (VAAPI)
+    devices:
+      - /dev/dri:/dev/dri
+
+    # NVIDIA GPU - use with docker-compose.nvidia.yml override
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu, video, compute]
+
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  tvarr-data:
+    name: tvarr-data
