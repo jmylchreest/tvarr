@@ -1693,6 +1693,12 @@ func (s *RelaySession) StopProcessorIfIdle(processorType string) {
 		p.processor.Stop()
 	}
 
+	// Trigger immediate variant cleanup to free resources sooner
+	// This avoids waiting up to 30s for the next cleanup cycle
+	if len(toStop) > 0 {
+		s.cleanupUnusedVariants()
+	}
+
 	// Update session idle state after processor cleanup
 	clientCount := s.ClientCount()
 	idleSince, _ := s.idleSince.Load().(time.Time)
