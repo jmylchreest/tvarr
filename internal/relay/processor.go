@@ -56,6 +56,16 @@ type Processor interface {
 	// ClientCount returns the number of connected clients.
 	ClientCount() int
 
+	// CleanupInactiveClients removes clients that haven't been active within the timeout.
+	// Returns the number of clients removed.
+	CleanupInactiveClients(timeout time.Duration) int
+
+	// IsIdle returns true if the processor should be stopped due to inactivity.
+	// Each processor type defines its own idle semantics:
+	// - HLS-fMP4: no playlist requests for playlist_segments * segment_duration * 2
+	// - HLS-TS/DASH/MPEG-TS: no connected clients
+	IsIdle() bool
+
 	// Stats returns current processor statistics.
 	Stats() ProcessorStats
 
@@ -290,6 +300,13 @@ func (p *BaseProcessor) ClientCount() int {
 	p.clientsMu.RLock()
 	defer p.clientsMu.RUnlock()
 	return len(p.clients)
+}
+
+// IsIdle returns true if the processor has no connected clients.
+// This is the default implementation suitable for most processor types.
+// Processors with different idle semantics (e.g., manifest-based) should override this.
+func (p *BaseProcessor) IsIdle() bool {
+	return p.ClientCount() == 0
 }
 
 // GetClients returns a copy of all clients.

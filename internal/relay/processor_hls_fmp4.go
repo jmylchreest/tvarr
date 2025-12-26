@@ -4,15 +4,12 @@ package relay
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -81,11 +78,6 @@ type HLSfMP4Processor struct {
 	initSegment   *InitSegment
 	initSegmentMu sync.RWMutex
 
-	// Track which clients have received the init segment (clientID -> ETag sent)
-	// This prevents duplicate MOOV warnings when clients refetch init.mp4
-	initDeliveredTo   map[string]string
-	initDeliveredToMu sync.RWMutex
-
 	// Segment management
 	segments      []*hlsFMP4Segment
 	segmentsMu    sync.RWMutex
@@ -140,7 +132,6 @@ func NewHLSfMP4Processor(
 	p := &HLSfMP4Processor{
 		ESProcessorBase: esBase,
 		config:          config,
-		initDeliveredTo: make(map[string]string),
 		segments:        make([]*hlsFMP4Segment, 0, config.MaxSegments),
 		segmentNotify:   make(chan struct{}, 1),
 		writer:          NewFMP4Writer(),
@@ -207,9 +198,11 @@ func (p *HLSfMP4Processor) Start(ctx context.Context) error {
 	// Initialize segment accumulator
 	p.initNewSegment()
 
-	p.config.Logger.Debug("Starting HLS-fMP4 processor",
+	p.config.Logger.Info("Starting HLS-fMP4 processor",
 		slog.String("id", p.id),
-		slog.String("variant", p.Variant().String()))
+		slog.String("variant", p.Variant().String()),
+		slog.String("es_variant_ptr", fmt.Sprintf("%p", esVariant)),
+		slog.String("video_track_ptr", fmt.Sprintf("%p", esVariant.VideoTrack())))
 
 	// Start processing loop
 	p.WaitGroup().Add(1)
@@ -372,24 +365,6 @@ func (p *HLSfMP4Processor) ServeSegment(w http.ResponseWriter, r *http.Request, 
 	return err
 }
 
-// extractClientID generates a consistent client identifier from an HTTP request.
-// Uses IP (without port) + User-Agent hash to identify unique clients.
-func (p *HLSfMP4Processor) extractClientID(r *http.Request) string {
-	remoteAddr := r.RemoteAddr
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		remoteAddr = strings.Split(fwd, ",")[0]
-	}
-	// Strip port from remote address
-	clientIP := remoteAddr
-	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
-		clientIP = host
-	}
-	// Create a short hash of User-Agent
-	userAgent := r.UserAgent()
-	uaHash := fmt.Sprintf("%x", md5.Sum([]byte(userAgent)))[:8]
-	return fmt.Sprintf("%s-%s", clientIP, uaHash)
-}
-
 // IsFMP4Mode returns true since this processor uses fMP4.
 func (p *HLSfMP4Processor) IsFMP4Mode() bool {
 	return true
@@ -415,6 +390,29 @@ func (p *HLSfMP4Processor) GetStreamStartTime() time.Time {
 	p.streamStartTimeMu.RLock()
 	defer p.streamStartTimeMu.RUnlock()
 	return p.streamStartTime
+}
+
+// GetFilteredInitSegment returns the init segment filtered by track type.
+// For HLS-fMP4, track filtering is not typically needed, so this returns the full
+// init segment when trackType is empty, or an error for specific track requests.
+// This method is required to implement FMP4SegmentProvider interface.
+func (p *HLSfMP4Processor) GetFilteredInitSegment(trackType string) ([]byte, error) {
+	p.initSegmentMu.RLock()
+	defer p.initSegmentMu.RUnlock()
+
+	if p.initSegment == nil {
+		return nil, fmt.Errorf("no init segment available")
+	}
+
+	// HLS-fMP4 uses muxed init segments, return full init segment
+	// Track filtering is primarily a DASH requirement
+	if trackType == "" {
+		return p.initSegment.Data, nil
+	}
+
+	// For HLS, we return the full muxed init segment even for specific track requests
+	// The client will parse out what it needs
+	return p.initSegment.Data, nil
 }
 
 // GetSegmentInfos implements SegmentProvider.
@@ -969,4 +967,11 @@ func (p *HLSfMP4Processor) IsPlaylistIdle() bool {
 		return false // Never had a request, not idle yet
 	}
 	return time.Since(lastRequest) > p.PlaylistIdleTimeout()
+}
+
+// IsIdle returns true if the processor should be stopped due to inactivity.
+// For HLS-fMP4, we use playlist-based idle detection since clients poll for manifests.
+// This overrides the base implementation which only checks client count.
+func (p *HLSfMP4Processor) IsIdle() bool {
+	return p.IsPlaylistIdle()
 }

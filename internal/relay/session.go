@@ -980,63 +980,74 @@ func (s *RelaySession) runVariantCleanupLoop() {
 	}
 }
 
-// cleanupInactiveStreamingClients checks HLS/DASH processors for playlist idle timeout.
-// Unlike MPEG-TS (persistent connections), HLS/DASH clients poll periodically.
-// We use playlist request activity as the heartbeat - if no playlist requests for
-// (playlist_segments * segment_duration * 2), the client has stopped watching.
+// DefaultClientIdleTimeout is the default timeout for client inactivity cleanup.
+const DefaultClientIdleTimeout = 60 * time.Second
+
+// cleanupInactiveStreamingClients cleans up inactive clients and stops idle processors.
+// Each processor type implements IsIdle() according to its own semantics:
+// - HLS-fMP4: playlist request timeout (clients poll for manifests)
+// - HLS-TS/DASH/MPEG-TS: no connected clients
 func (s *RelaySession) cleanupInactiveStreamingClients() {
 	sessionID := s.ID.String()
 
-	// Check HLS-fMP4 processors for playlist idle timeout and clean up inactive clients
+	// Check HLS-fMP4 processors
 	s.hlsFMP4Processors.Range(func(variant CodecVariant, processor *HLSfMP4Processor) bool {
-		// Clean up individual inactive clients within this processor
-		// Use the playlist idle timeout as the client inactivity threshold
+		// Use playlist idle timeout for client cleanup since that's the polling interval
 		clientTimeout := processor.PlaylistIdleTimeout()
 		if removed := processor.CleanupInactiveClients(clientTimeout); removed > 0 {
-			slog.Debug("Cleaned up inactive HLS-fMP4 clients",
+			slog.Debug("Cleaned up inactive clients",
 				slog.String("session_id", sessionID),
+				slog.String("format", "hls-fmp4"),
 				slog.String("variant", variant.String()),
 				slog.Int("removed_clients", removed))
 		}
 
-		// If the entire processor is idle (no playlist requests), stop it
-		if processor.IsPlaylistIdle() {
-			lastRequest := processor.LastPlaylistRequest()
-			timeout := processor.PlaylistIdleTimeout()
-			slog.Debug("HLS-fMP4 processor is playlist-idle, scheduling cleanup",
+		if processor.IsIdle() {
+			slog.Debug("Processor is idle, scheduling cleanup",
 				slog.String("session_id", sessionID),
-				slog.String("variant", variant.String()),
-				slog.Time("last_playlist_request", lastRequest),
-				slog.Duration("timeout", timeout),
-				slog.Duration("idle_for", time.Since(lastRequest)))
-			// Stop the processor - this triggers variant cleanup via the existing mechanism
+				slog.String("format", "hls-fmp4"),
+				slog.String("variant", variant.String()))
 			go s.StopProcessorIfIdle("hls-fmp4")
 		}
 		return true
 	})
 
-	// Check HLS-TS processors and clean up inactive clients
+	// Check HLS-TS processors
 	s.hlsTSProcessors.Range(func(variant CodecVariant, processor *HLSTSProcessor) bool {
-		// HLS-TS uses segment-based timeout (similar duration window)
-		clientTimeout := 60 * time.Second // Default client inactivity timeout
-		if removed := processor.CleanupInactiveClients(clientTimeout); removed > 0 {
-			slog.Debug("Cleaned up inactive HLS-TS clients",
+		if removed := processor.CleanupInactiveClients(DefaultClientIdleTimeout); removed > 0 {
+			slog.Debug("Cleaned up inactive clients",
 				slog.String("session_id", sessionID),
+				slog.String("format", "hls-ts"),
 				slog.String("variant", variant.String()),
 				slog.Int("removed_clients", removed))
+		}
+
+		if processor.IsIdle() {
+			slog.Debug("Processor is idle, scheduling cleanup",
+				slog.String("session_id", sessionID),
+				slog.String("format", "hls-ts"),
+				slog.String("variant", variant.String()))
+			go s.StopProcessorIfIdle("hls-ts")
 		}
 		return true
 	})
 
-	// Check DASH processors and clean up inactive clients
+	// Check DASH processors
 	s.dashProcessors.Range(func(variant CodecVariant, processor *DASHProcessor) bool {
-		// DASH uses similar polling pattern to HLS
-		clientTimeout := 60 * time.Second // Default client inactivity timeout
-		if removed := processor.CleanupInactiveClients(clientTimeout); removed > 0 {
-			slog.Debug("Cleaned up inactive DASH clients",
+		if removed := processor.CleanupInactiveClients(DefaultClientIdleTimeout); removed > 0 {
+			slog.Debug("Cleaned up inactive clients",
 				slog.String("session_id", sessionID),
+				slog.String("format", "dash"),
 				slog.String("variant", variant.String()),
 				slog.Int("removed_clients", removed))
+		}
+
+		if processor.IsIdle() {
+			slog.Debug("Processor is idle, scheduling cleanup",
+				slog.String("session_id", sessionID),
+				slog.String("format", "dash"),
+				slog.String("variant", variant.String()))
+			go s.StopProcessorIfIdle("dash")
 		}
 		return true
 	})
