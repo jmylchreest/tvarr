@@ -551,11 +551,6 @@ func (b *FlowBuilder) buildClientNode(session RelaySessionInfo, client RelayClie
 		egressBps = uint64(float64(client.BytesRead) / client.ConnectedSecs)
 	}
 
-	clientFormat := client.ClientFormat
-	if clientFormat == "" {
-		clientFormat = session.OutputFormat
-	}
-
 	return RelayFlowNode{
 		ID:       fmt.Sprintf("client-%s-%s", session.SessionID, client.ClientID),
 		Type:     FlowNodeTypeClient,

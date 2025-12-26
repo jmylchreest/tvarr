@@ -182,11 +182,11 @@ func NewManager(config ManagerConfig) *Manager {
 	if spawner.IsAvailable() {
 		version := spawner.GetVersion()
 		if version != "" {
-			logger.Info("Local tvarr-ffmpegd binary found for transcoding",
+			logger.Debug("tvarr-ffmpegd binary available",
 				slog.String("version", version),
 				slog.String("path", spawner.BinaryPath()))
 		} else {
-			logger.Info("Local tvarr-ffmpegd binary found for transcoding",
+			logger.Debug("tvarr-ffmpegd binary available",
 				slog.String("path", spawner.BinaryPath()))
 		}
 	} else {

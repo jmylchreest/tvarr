@@ -586,89 +586,6 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 	}
 }
 
-// runHLSRepackagePipeline runs the HLS repackaging pipeline.
-// This uses HLSRepackager to convert HLS sources to HLS with potentially different
-// segment container formats (e.g., MPEG-TS to fMP4 or vice versa) without transcoding.
-func (s *RelaySession) runHLSRepackagePipeline() error {
-	// Determine the playlist URL (use selected media playlist if available)
-	playlistURL := s.StreamURL
-	if s.Classification.SelectedMediaPlaylist != "" {
-		playlistURL = s.Classification.SelectedMediaPlaylist
-	}
-
-	// Determine the output variant based on profile container format preference
-	// Default to MPEG-TS for maximum compatibility with legacy HLS clients
-	outputVariant := HLSMuxerVariantMPEGTS
-	if s.EncodingProfile != nil {
-		// Use the profile's container format setting to determine variant
-		container := s.EncodingProfile.DetermineContainer()
-		switch container {
-		case models.ContainerFormatFMP4:
-			outputVariant = HLSMuxerVariantFMP4
-		case models.ContainerFormatMPEGTS:
-			outputVariant = HLSMuxerVariantMPEGTS
-		}
-	}
-
-	// Use HLS config from manager for segment settings
-	segmentCount := s.manager.config.HLSConfig.MaxSegments
-	segmentDuration := time.Duration(s.manager.config.HLSConfig.TargetSegmentDuration * float64(time.Second))
-
-	// Create the HLS repackager
-	repackager := NewHLSRepackager(HLSRepackagerConfig{
-		SourceURL:          playlistURL,
-		OutputVariant:      outputVariant,
-		SegmentCount:       segmentCount,
-		SegmentMinDuration: segmentDuration,
-		HTTPClient:         s.manager.config.HTTPClient,
-		Logger:             slog.Default(),
-	})
-
-	s.hlsRepackager = repackager
-
-	// Start the repackager
-	if err := repackager.Start(); err != nil {
-		return fmt.Errorf("starting HLS repackager: %w", err)
-	}
-
-	// Signal that the pipeline is ready for clients
-	s.markReady()
-
-	slog.Debug("Started HLS repackage pipeline",
-		slog.String("session_id", s.ID.String()),
-		slog.String("source_url", playlistURL),
-		slog.String("output_variant", outputVariant.String()))
-
-	// Wait for context cancellation or repackager error
-	for {
-		select {
-		case <-s.ctx.Done():
-			repackager.Close()
-			return s.ctx.Err()
-		default:
-		}
-
-		// Check for repackager error
-		if err := repackager.Error(); err != nil {
-			return fmt.Errorf("HLS repackager error: %w", err)
-		}
-
-		// Check if repackager closed unexpectedly
-		if repackager.IsClosed() {
-			if err := repackager.Error(); err != nil {
-				return fmt.Errorf("HLS repackager closed with error: %w", err)
-			}
-			return nil // Clean shutdown
-		}
-
-		// Update activity timestamp using atomic to avoid blocking stats collection
-		s.lastActivity.Store(time.Now())
-
-		// Small sleep to avoid busy loop
-		time.Sleep(100 * time.Millisecond)
-	}
-}
-
 // getTargetVariant returns the target codec variant based on the profile settings.
 // If the profile specifies transcoding, this returns the target variant (e.g., "h264/aac").
 // If no transcoding is needed, this returns VariantCopy which means use source codecs.
@@ -721,15 +638,9 @@ func (s *RelaySession) getTargetVariant() CodecVariant {
 	}
 
 	variant := NewCodecVariant(videoCodec, audioCodec)
-	slog.Info("getTargetVariant result",
+	slog.Debug("getTargetVariant result",
 		slog.String("session_id", s.ID.String()),
-		slog.String("profile_video_codec", string(s.EncodingProfile.TargetVideoCodec)),
-		slog.String("profile_audio_codec", string(s.EncodingProfile.TargetAudioCodec)),
-		slog.String("resolved_video_codec", videoCodec),
-		slog.String("resolved_audio_codec", audioCodec),
-		slog.String("resolved_variant", variant.String()),
-		slog.Bool("has_cached_codec_info", s.CachedCodecInfo != nil),
-		slog.String("cached_audio_codec", func() string { if s.CachedCodecInfo != nil { return s.CachedCodecInfo.AudioCodec } else { return "" }}()))
+		slog.String("resolved_variant", variant.String()))
 	return variant
 }
 
@@ -1076,8 +987,19 @@ func (s *RelaySession) runVariantCleanupLoop() {
 func (s *RelaySession) cleanupInactiveStreamingClients() {
 	sessionID := s.ID.String()
 
-	// Check HLS-fMP4 processors for playlist idle timeout
+	// Check HLS-fMP4 processors for playlist idle timeout and clean up inactive clients
 	s.hlsFMP4Processors.Range(func(variant CodecVariant, processor *HLSfMP4Processor) bool {
+		// Clean up individual inactive clients within this processor
+		// Use the playlist idle timeout as the client inactivity threshold
+		clientTimeout := processor.PlaylistIdleTimeout()
+		if removed := processor.CleanupInactiveClients(clientTimeout); removed > 0 {
+			slog.Debug("Cleaned up inactive HLS-fMP4 clients",
+				slog.String("session_id", sessionID),
+				slog.String("variant", variant.String()),
+				slog.Int("removed_clients", removed))
+		}
+
+		// If the entire processor is idle (no playlist requests), stop it
 		if processor.IsPlaylistIdle() {
 			lastRequest := processor.LastPlaylistRequest()
 			timeout := processor.PlaylistIdleTimeout()
@@ -1089,6 +1011,32 @@ func (s *RelaySession) cleanupInactiveStreamingClients() {
 				slog.Duration("idle_for", time.Since(lastRequest)))
 			// Stop the processor - this triggers variant cleanup via the existing mechanism
 			go s.StopProcessorIfIdle("hls-fmp4")
+		}
+		return true
+	})
+
+	// Check HLS-TS processors and clean up inactive clients
+	s.hlsTSProcessors.Range(func(variant CodecVariant, processor *HLSTSProcessor) bool {
+		// HLS-TS uses segment-based timeout (similar duration window)
+		clientTimeout := 60 * time.Second // Default client inactivity timeout
+		if removed := processor.CleanupInactiveClients(clientTimeout); removed > 0 {
+			slog.Debug("Cleaned up inactive HLS-TS clients",
+				slog.String("session_id", sessionID),
+				slog.String("variant", variant.String()),
+				slog.Int("removed_clients", removed))
+		}
+		return true
+	})
+
+	// Check DASH processors and clean up inactive clients
+	s.dashProcessors.Range(func(variant CodecVariant, processor *DASHProcessor) bool {
+		// DASH uses similar polling pattern to HLS
+		clientTimeout := 60 * time.Second // Default client inactivity timeout
+		if removed := processor.CleanupInactiveClients(clientTimeout); removed > 0 {
+			slog.Debug("Cleaned up inactive DASH clients",
+				slog.String("session_id", sessionID),
+				slog.String("variant", variant.String()),
+				slog.Int("removed_clients", removed))
 		}
 		return true
 	})
@@ -1434,6 +1382,11 @@ func (s *RelaySession) GetOrCreateHLSfMP4Processor() (*HLSfMP4Processor, error) 
 func (s *RelaySession) GetOrCreateHLSfMP4ProcessorForVariant(variant CodecVariant) (*HLSfMP4Processor, error) {
 	// Fast path: check if processor already exists (lock-free read)
 	if processor, exists := s.hlsFMP4Processors.Load(variant); exists {
+		slog.Info("Returning existing HLS-fMP4 processor",
+			slog.String("session_id", s.ID.String()),
+			slog.String("variant", variant.String()),
+			slog.String("processor_id", processor.ID()),
+			slog.Int("segment_count", processor.SegmentCount()))
 		return processor, nil
 	}
 
@@ -1472,9 +1425,10 @@ func (s *RelaySession) GetOrCreateHLSfMP4ProcessorForVariant(variant CodecVarian
 		return existing, nil
 	}
 
-	slog.Debug("Created HLS-fMP4 processor on-demand",
+	slog.Info("Created HLS-fMP4 processor on-demand",
 		slog.String("session_id", s.ID.String()),
 		slog.String("variant", variant.String()),
+		slog.String("processor_id", processor.ID()),
 		slog.Int("total_hls_fmp4_processors", s.hlsFMP4Processors.Len()),
 		slog.Float64("target_segment_duration", config.TargetSegmentDuration),
 		slog.Int("max_segments", config.MaxSegments),

@@ -226,9 +226,29 @@ function ClientDetectionRuleCreatePanel({
   const [testUserAgent, setTestUserAgent] = useState('');
   const [testResult, setTestResult] = useState<{ matches: boolean; error?: string } | null>(null);
   const [testing, setTesting] = useState(false);
+  const [warningAcknowledged, setWarningAcknowledged] = useState(false);
+
+  // Check for codec/format compatibility warning
+  const hasCompatibilityWarning = useMemo(() => {
+    return !isFormatCompatibleWithCodecs(
+      formData.preferred_format,
+      formData.preferred_video_codec,
+      formData.preferred_audio_codec
+    );
+  }, [formData.preferred_format, formData.preferred_video_codec, formData.preferred_audio_codec]);
+
+  // Reset warning acknowledgment when relevant fields change
+  useEffect(() => {
+    setWarningAcknowledged(false);
+  }, [formData.preferred_format, formData.preferred_video_codec, formData.preferred_audio_codec]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // If there's a warning and not acknowledged, just acknowledge it (don't save)
+    if (hasCompatibilityWarning && !warningAcknowledged) {
+      setWarningAcknowledged(true);
+      return;
+    }
     await onCreate(formData);
   };
 
@@ -279,9 +299,15 @@ function ClientDetectionRuleCreatePanel({
           <Button variant="outline" size="sm" onClick={onCancel} disabled={loading}>
             Cancel
           </Button>
-          <Button size="sm" onClick={handleSubmit} disabled={loading || !formData.name.trim() || !formData.expression.trim()}>
+          <Button
+            size="sm"
+            onClick={handleSubmit}
+            disabled={loading || !formData.name.trim() || !formData.expression.trim()}
+            variant={hasCompatibilityWarning && !warningAcknowledged ? 'outline' : 'default'}
+            className={hasCompatibilityWarning && !warningAcknowledged ? 'border-orange-500 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950' : ''}
+          >
             {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Create
+            {hasCompatibilityWarning && !warningAcknowledged ? 'Save Anyway' : 'Create'}
           </Button>
         </div>
       }
@@ -291,6 +317,18 @@ function ClientDetectionRuleCreatePanel({
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Error</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {hasCompatibilityWarning && (
+        <Alert className="mb-4 border-orange-500 bg-orange-50 dark:bg-orange-950/20">
+          <AlertCircle className="h-4 w-4 text-orange-600" />
+          <AlertTitle className="text-orange-700 dark:text-orange-400">Codec/Format Incompatibility</AlertTitle>
+          <AlertDescription className="text-orange-600 dark:text-orange-300">
+            {formData.preferred_video_codec.toUpperCase()}/{formData.preferred_audio_codec.toUpperCase()} requires fMP4 container.
+            The selected format ({FORMAT_OPTIONS.find(f => f.value === formData.preferred_format)?.label || formData.preferred_format}) uses MPEG-TS which cannot carry these codecs.
+            {warningAcknowledged && ' Click "Create" to save anyway.'}
+          </AlertDescription>
         </Alert>
       )}
 
@@ -497,7 +535,7 @@ function ClientDetectionRuleCreatePanel({
               onValueChange={(value) => setFormData({ ...formData, preferred_format: value })}
               disabled={loading}
             >
-              <SelectTrigger>
+              <SelectTrigger className={hasCompatibilityWarning ? 'border-orange-500 ring-orange-500/20' : ''}>
                 <SelectValue placeholder="Auto" />
               </SelectTrigger>
               <SelectContent>
@@ -506,6 +544,11 @@ function ClientDetectionRuleCreatePanel({
                 ))}
               </SelectContent>
             </Select>
+            {hasCompatibilityWarning && (
+              <p className="text-xs text-orange-600 dark:text-orange-400">
+                This format cannot carry {formData.preferred_video_codec.toUpperCase()}/{formData.preferred_audio_codec.toUpperCase()}
+              </p>
+            )}
           </div>
         </div>
       </form>
@@ -593,6 +636,16 @@ function ClientDetectionRuleDetailPanel({
     preferred_format: rule.preferred_format || 'auto',
   });
   const [hasChanges, setHasChanges] = useState(false);
+  const [warningAcknowledged, setWarningAcknowledged] = useState(false);
+
+  // Check for codec/format compatibility warning
+  const hasCompatibilityWarning = useMemo(() => {
+    return !isFormatCompatibleWithCodecs(
+      formData.preferred_format,
+      formData.preferred_video_codec,
+      formData.preferred_audio_codec
+    );
+  }, [formData.preferred_format, formData.preferred_video_codec, formData.preferred_audio_codec]);
 
   // Reset form when rule changes
   useEffect(() => {
@@ -611,7 +664,13 @@ function ClientDetectionRuleDetailPanel({
       preferred_format: rule.preferred_format || 'auto',
     });
     setHasChanges(false);
+    setWarningAcknowledged(false);
   }, [rule.id]);
+
+  // Reset warning acknowledgment when relevant fields change
+  useEffect(() => {
+    setWarningAcknowledged(false);
+  }, [formData.preferred_format, formData.preferred_video_codec, formData.preferred_audio_codec]);
 
   const handleFieldChange = (field: keyof RuleFormData, value: any) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -619,6 +678,11 @@ function ClientDetectionRuleDetailPanel({
   };
 
   const handleSave = async () => {
+    // If there's a warning and not acknowledged, just acknowledge it (don't save)
+    if (hasCompatibilityWarning && !warningAcknowledged) {
+      setWarningAcknowledged(true);
+      return;
+    }
     await onUpdate(rule.id, formData);
     setHasChanges(false);
   };
@@ -707,6 +771,18 @@ function ClientDetectionRuleDetailPanel({
             <AlertTitle>System Rule</AlertTitle>
             <AlertDescription>
               This is a system rule. You can enable/disable it and change its order, but cannot modify or delete it.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {hasCompatibilityWarning && (
+          <Alert className="border-orange-500 bg-orange-50 dark:bg-orange-950/20">
+            <AlertCircle className="h-4 w-4 text-orange-600" />
+            <AlertTitle className="text-orange-700 dark:text-orange-400">Codec/Format Incompatibility</AlertTitle>
+            <AlertDescription className="text-orange-600 dark:text-orange-300">
+              {formData.preferred_video_codec.toUpperCase()}/{formData.preferred_audio_codec.toUpperCase()} requires fMP4 container.
+              The selected format ({FORMAT_OPTIONS.find(f => f.value === formData.preferred_format)?.label || formData.preferred_format}) uses MPEG-TS which cannot carry these codecs.
+              {warningAcknowledged && ' Click "Save Changes" to save anyway.'}
             </AlertDescription>
           </Alert>
         )}
@@ -862,7 +938,7 @@ function ClientDetectionRuleDetailPanel({
                 onValueChange={(value) => handleFieldChange('preferred_format', value)}
                 disabled={loading.edit || isSystem}
               >
-                <SelectTrigger>
+                <SelectTrigger className={hasCompatibilityWarning ? 'border-orange-500 ring-orange-500/20' : ''}>
                   <SelectValue placeholder="Auto" />
                 </SelectTrigger>
                 <SelectContent>
@@ -871,6 +947,11 @@ function ClientDetectionRuleDetailPanel({
                   ))}
                 </SelectContent>
               </Select>
+              {hasCompatibilityWarning && (
+                <p className="text-xs text-orange-600 dark:text-orange-400">
+                  This format cannot carry {formData.preferred_video_codec.toUpperCase()}/{formData.preferred_audio_codec.toUpperCase()}
+                </p>
+              )}
             </div>
           </div>
         </CollapsibleSection>
@@ -878,9 +959,14 @@ function ClientDetectionRuleDetailPanel({
         {/* Save Button */}
         {hasChanges && !isSystem && (
           <div className="flex justify-end pt-4 border-t">
-            <Button onClick={handleSave} disabled={loading.edit}>
+            <Button
+              onClick={handleSave}
+              disabled={loading.edit}
+              variant={hasCompatibilityWarning && !warningAcknowledged ? 'outline' : 'default'}
+              className={hasCompatibilityWarning && !warningAcknowledged ? 'border-orange-500 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950' : ''}
+            >
               {loading.edit && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Save Changes
+              {hasCompatibilityWarning && !warningAcknowledged ? 'Save Anyway' : 'Save Changes'}
             </Button>
           </div>
         )}

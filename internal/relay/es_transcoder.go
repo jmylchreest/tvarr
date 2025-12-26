@@ -1071,24 +1071,6 @@ func (t *ESTranscoder) runStatsPoller() {
 	}
 }
 
-// handleStats updates transcoder stats from ffmpegd.
-func (t *ESTranscoder) handleStats(stats *proto.TranscodeStats) {
-	if stats == nil {
-		return
-	}
-	t.encodingSpeed.Store(stats.EncodingSpeed)
-	t.cpuPercent.Store(stats.CpuPercent)
-	t.memoryMB.Store(stats.MemoryMb)
-	if stats.FfmpegPid > 0 {
-		t.ffmpegPID.Store(stats.FfmpegPid)
-	}
-
-	// Record history for sparkline graphs (sample periodically)
-	if t.resourceHistory != nil && t.resourceHistory.ShouldSample() {
-		t.resourceHistory.AddSample(stats.CpuPercent, stats.MemoryMb)
-	}
-}
-
 // recordActivity updates last activity time.
 func (t *ESTranscoder) recordActivity() {
 	t.lastActivity.Store(time.Now())

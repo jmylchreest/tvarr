@@ -35,6 +35,16 @@ const FALLBACK_DIMENSIONS: Record<string, { width: number; height: number }> = {
   client: { width: 192, height: 160 },
 };
 
+// Layout configuration
+const LAYOUT_CONFIG = {
+  nodesep: 80, // Vertical spacing between nodes (increased from 50)
+  ranksep: 120, // Horizontal spacing between columns (increased from 100)
+  marginx: 50,
+  marginy: 50,
+  transcoderGap: 40, // Gap between transcoders
+  transcoderBufferGap: 100, // Gap between transcoders and buffer
+};
+
 /**
  * Gets the width of a node, preferring measured dimensions.
  */
@@ -76,6 +86,7 @@ function getNodeRank(node: FlowNode): number {
 /**
  * Calculates layout using dagre for automatic node positioning.
  * After dagre layout, transcoder nodes are repositioned above their buffer.
+ * The layout is then shifted to ensure transcoders don't overlap with other nodes.
  */
 export function calculateLayout<T extends FlowNode>(nodes: T[], edges: Edge[]): T[] {
   if (nodes.length === 0) return [];
@@ -84,16 +95,26 @@ export function calculateLayout<T extends FlowNode>(nodes: T[], edges: Edge[]): 
   const transcoderNodes = nodes.filter((n) => n.type === 'transcoder');
   const nonTranscoderNodes = nodes.filter((n) => n.type !== 'transcoder');
 
+  // Calculate transcoder space needed upfront
+  let transcoderSpaceNeeded = 0;
+  if (transcoderNodes.length > 0) {
+    const maxTranscoderHeight = Math.max(
+      ...transcoderNodes.map((t) => getNodeHeight(t))
+    );
+    transcoderSpaceNeeded = maxTranscoderHeight + LAYOUT_CONFIG.transcoderBufferGap;
+  }
+
   // Create a new dagre graph
   const g = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
 
   // Configure the graph for left-to-right layout
+  // Add extra top margin to account for transcoders
   g.setGraph({
     rankdir: 'LR', // Left to right
-    nodesep: 50, // Vertical spacing between nodes
-    ranksep: 100, // Horizontal spacing between columns
-    marginx: 50,
-    marginy: 50,
+    nodesep: LAYOUT_CONFIG.nodesep,
+    ranksep: LAYOUT_CONFIG.ranksep,
+    marginx: LAYOUT_CONFIG.marginx,
+    marginy: LAYOUT_CONFIG.marginy + transcoderSpaceNeeded,
   });
 
   // Add non-transcoder nodes to the graph
@@ -146,10 +167,6 @@ export function calculateLayout<T extends FlowNode>(nodes: T[], edges: Edge[]): 
     const bufferX = bufferNode.position.x;
     const bufferY = bufferNode.position.y;
 
-    // Calculate total width needed for all transcoders side by side
-    const transcoderGap = 30; // Gap between transcoders
-    const verticalGap = 80; // Gap between transcoders and buffer
-
     // Get dimensions for all transcoders
     const transcoderDimensions = transcoderNodes.map((t) => ({
       node: t,
@@ -160,7 +177,7 @@ export function calculateLayout<T extends FlowNode>(nodes: T[], edges: Edge[]): 
     const totalTranscoderWidth = transcoderDimensions.reduce(
       (sum, t) => sum + t.width,
       0
-    ) + (transcoderNodes.length - 1) * transcoderGap;
+    ) + (transcoderNodes.length - 1) * LAYOUT_CONFIG.transcoderGap;
 
     // Find the tallest transcoder for positioning
     const maxTranscoderHeight = Math.max(...transcoderDimensions.map((t) => t.height));
@@ -168,7 +185,7 @@ export function calculateLayout<T extends FlowNode>(nodes: T[], edges: Edge[]): 
     // Center the transcoders horizontally above the buffer
     const bufferCenterX = bufferX + bufferWidth / 2;
     let currentX = bufferCenterX - totalTranscoderWidth / 2;
-    const transcoderY = bufferY - maxTranscoderHeight - verticalGap;
+    const transcoderY = bufferY - maxTranscoderHeight - LAYOUT_CONFIG.transcoderBufferGap;
 
     // Position each transcoder side by side
     for (const { node, width, height } of transcoderDimensions) {
@@ -180,7 +197,7 @@ export function calculateLayout<T extends FlowNode>(nodes: T[], edges: Edge[]): 
           y: transcoderY + (maxTranscoderHeight - height),
         },
       });
-      currentX += width + transcoderGap;
+      currentX += width + LAYOUT_CONFIG.transcoderGap;
     }
   } else {
     // No buffer node, just add transcoders with default position

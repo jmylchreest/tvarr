@@ -1138,14 +1138,12 @@ func (b *SharedESBuffer) SourceVariantKey() CodecVariant {
 }
 
 // GetVariant returns a specific codec variant, or nil if it doesn't exist.
+// Note: This does NOT update lastAccess - only actual reads should do that.
+// Use RecordAccess() explicitly when consuming samples from the variant.
 func (b *SharedESBuffer) GetVariant(variant CodecVariant) *ESVariant {
 	b.variantsMu.RLock()
 	defer b.variantsMu.RUnlock()
-	v := b.variants[variant]
-	if v != nil {
-		v.RecordAccess()
-	}
-	return v
+	return b.variants[variant]
 }
 
 // GetOrCreateVariant returns an existing variant or creates a new one.

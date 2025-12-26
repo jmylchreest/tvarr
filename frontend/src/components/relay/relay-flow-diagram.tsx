@@ -263,7 +263,7 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, enabled = true, classNa
             <p className="text-xs mt-1">Sessions will appear here when channels are streaming</p>
           </div>
         ) : (
-          <div className="h-[400px] w-full border rounded-lg overflow-hidden bg-background">
+          <div className="min-h-[400px] h-[calc(100vh-300px)] w-full border rounded-lg overflow-hidden bg-background">
             <ReactFlow
               nodes={nodesState}
               edges={edgesState}

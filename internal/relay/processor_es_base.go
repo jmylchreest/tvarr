@@ -250,6 +250,15 @@ func (p *ESProcessorBase) ReadSamples(videoTrack, audioTrack *ESTrack, maxVideo,
 		p.lastAudioSeq = sample.Sequence
 	}
 
+	// Record access on the variant if we read any samples
+	// This is used for variant cleanup - variants that aren't being read
+	// from can be cleaned up along with their transcoders
+	if len(videoSamples) > 0 || len(audioSamples) > 0 {
+		if p.esVariant != nil {
+			p.esVariant.RecordAccess()
+		}
+	}
+
 	return videoSamples, audioSamples, bytesRead
 }
 
