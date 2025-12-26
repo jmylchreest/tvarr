@@ -266,9 +266,9 @@ tasks:
           .
 
   container:build:ffmpegd:
-    desc: Build tvarr-ffmpegd daemon container image
+    desc: Build tvarr-transcoder container image (distributed transcoding daemon)
     summary: |
-      Builds the tvarr-ffmpegd distributed transcoding daemon container image.
+      Builds the tvarr-transcoder container image (runs tvarr-ffmpegd binary).
       Requires the FFmpeg base image to exist (or will pull from GHCR).
       Auto-detects container runtime ({{.CONTAINER_RUNTIME}}) and platform ({{.LOCAL_ARCH}}).
 
@@ -295,8 +295,8 @@ tasks:
           --build-arg BUILD_DATE={{.BUILD_DATE}} \
           --build-arg BRANCH={{.BRANCH}} \
           --build-arg TREE_STATE={{.TREE_STATE}} \
-          -t ghcr.io/jmylchreest/tvarr-ffmpegd:{{.TAG}} \
-          -t ghcr.io/jmylchreest/tvarr-ffmpegd:{{.VERSION_TAG}} \
+          -t ghcr.io/jmylchreest/tvarr-transcoder:{{.TAG}} \
+          -t ghcr.io/jmylchreest/tvarr-transcoder:{{.VERSION_TAG}} \
           .
 
   container:build:coordinator:
