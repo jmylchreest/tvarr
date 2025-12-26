@@ -421,28 +421,11 @@ tasks:
           --entrypoint /bin/bash \
           ghcr.io/jmylchreest/tvarr-ffmpeg:{{.TAG}}
 
-  container:preflight:
-    desc: Run tvarr container in preflight mode to check HW acceleration
-    summary: |
-      Runs the hardware acceleration check script inside the container.
-      This tests what HW encoders/decoders are actually working.
-      Passes through DRI devices for VAAPI/Intel/AMD GPU support.
-      Use NVIDIA=true to enable NVIDIA GPU passthrough.
-    vars:
-      TAG: '{{.TAG | default "latest"}}'
-      NVIDIA: '{{.NVIDIA | default "false"}}'
-    cmds:
-      - |
-        {{.CONTAINER_RUNTIME}} run --rm \
-          $([ -d /dev/dri ] && echo "--device /dev/dri:/dev/dri") \
-          $([ "{{.NVIDIA}}" = "true" ] && echo "--gpus all") \
-          --entrypoint /usr/local/bin/check-hwaccel \
-          ghcr.io/jmylchreest/tvarr-ffmpeg:{{.TAG}}
-
   container:hwaccel:
-    desc: Run hardware acceleration test (alias for container:preflight)
+    desc: Test hardware acceleration support in container
     summary: |
-      Alias for container:preflight. Tests hardware acceleration support.
+      Runs the hardware acceleration check script inside the FFmpeg container.
+      Tests what HW encoders/decoders are actually working.
 
       Options:
         --quick, -q   Quick check (list available, skip encode tests)
