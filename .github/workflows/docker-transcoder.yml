@@ -1,4 +1,4 @@
-name: Build tvarr-ffmpegd Docker Image
+name: Build tvarr-transcoder Docker Image
 
 on:
   push:
@@ -11,7 +11,7 @@ on:
       - 'deployment/docker/Dockerfile.coordinator'
       - 'deployment/docker/pkgbuild/**'
       - '.github/workflows/docker-ffmpeg.yml'
-      - '.github/workflows/docker-ffmpegd.yml'
+      - '.github/workflows/docker-transcoder.yml'
       - '.github/workflows/docker-coordinator.yml'
       - '.github/workflows/dependency-updates.yml'
       - '**.md'
@@ -23,7 +23,7 @@ on:
       - 'deployment/docker/Dockerfile.coordinator'
       - 'deployment/docker/pkgbuild/**'
       - '.github/workflows/docker-ffmpeg.yml'
-      - '.github/workflows/docker-ffmpegd.yml'
+      - '.github/workflows/docker-transcoder.yml'
       - '.github/workflows/docker-coordinator.yml'
       - '.github/workflows/dependency-updates.yml'
       - '**.md'
@@ -42,7 +42,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/tvarr-ffmpegd
+  IMAGE_NAME: ${{ github.repository_owner }}/tvarr-transcoder
   FFMPEG_IMAGE: ghcr.io/${{ github.repository_owner }}/tvarr-ffmpeg
 
 jobs:
