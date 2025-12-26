@@ -6,18 +6,31 @@ on:
       - main
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'  # Only release tags (v1.2.3), not dev tags (v1.2.3-dev.N)
-    paths:
-      # Only build when coordinator-specific files change
-      - 'deployment/docker/Dockerfile.coordinator'
-      - 'deployment/docker/scripts/entrypoint-tvarr.sh'
-      - 'deployment/docker/pkgbuild/**'
+    paths-ignore:
+      - 'deployment/docker/Dockerfile.ffmpeg'
+      - 'deployment/docker/Dockerfile.ffmpegd'
+      - 'deployment/docker/Dockerfile'
+      - '.github/workflows/docker-ffmpeg.yml'
+      - '.github/workflows/docker-ffmpegd.yml'
+      - '.github/workflows/docker-tvarr.yml'
       - '.github/workflows/docker-coordinator.yml'
+      - '.github/workflows/dependency-updates.yml'
+      - '**.md'
+      - 'docs/**'
+      - 'specs/**'
   pull_request:
-    paths:
-      - 'deployment/docker/Dockerfile.coordinator'
-      - 'deployment/docker/scripts/entrypoint-tvarr.sh'
-      - 'deployment/docker/pkgbuild/**'
+    paths-ignore:
+      - 'deployment/docker/Dockerfile.ffmpeg'
+      - 'deployment/docker/Dockerfile.ffmpegd'
+      - 'deployment/docker/Dockerfile'
+      - '.github/workflows/docker-ffmpeg.yml'
+      - '.github/workflows/docker-ffmpegd.yml'
+      - '.github/workflows/docker-tvarr.yml'
       - '.github/workflows/docker-coordinator.yml'
+      - '.github/workflows/dependency-updates.yml'
+      - '**.md'
+      - 'docs/**'
+      - 'specs/**'
   workflow_dispatch:
 
 # Cancel in-progress runs for the same branch/tag
