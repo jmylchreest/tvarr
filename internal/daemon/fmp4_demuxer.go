@@ -60,10 +60,6 @@ type FMP4Demuxer struct {
 	// Track if we've logged first audio samples
 	firstAudioLogged bool
 
-	// Timing state per track
-	videoBaseTime uint64
-	audioBaseTime uint64
-
 	// Track whether we've seen the init segment
 	initDone bool
 }

@@ -1393,11 +1393,6 @@ func (s *RelaySession) GetOrCreateHLSfMP4Processor() (*HLSfMP4Processor, error) 
 func (s *RelaySession) GetOrCreateHLSfMP4ProcessorForVariant(variant CodecVariant) (*HLSfMP4Processor, error) {
 	// Fast path: check if processor already exists (lock-free read)
 	if processor, exists := s.hlsFMP4Processors.Load(variant); exists {
-		slog.Info("Returning existing HLS-fMP4 processor",
-			slog.String("session_id", s.ID.String()),
-			slog.String("variant", variant.String()),
-			slog.String("processor_id", processor.ID()),
-			slog.Int("segment_count", processor.SegmentCount()))
 		return processor, nil
 	}
 
@@ -1436,14 +1431,10 @@ func (s *RelaySession) GetOrCreateHLSfMP4ProcessorForVariant(variant CodecVarian
 		return existing, nil
 	}
 
-	slog.Info("Created HLS-fMP4 processor on-demand",
+	slog.Debug("Created HLS-fMP4 processor on-demand",
 		slog.String("session_id", s.ID.String()),
 		slog.String("variant", variant.String()),
-		slog.String("processor_id", processor.ID()),
-		slog.Int("total_hls_fmp4_processors", s.hlsFMP4Processors.Len()),
-		slog.Float64("target_segment_duration", config.TargetSegmentDuration),
-		slog.Int("max_segments", config.MaxSegments),
-		slog.Int("playlist_segments", config.PlaylistSegments))
+		slog.Int("total_hls_fmp4_processors", s.hlsFMP4Processors.Len()))
 
 	return processor, nil
 }

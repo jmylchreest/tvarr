@@ -199,10 +199,10 @@ func (p *HLSTSProcessor) SegmentCount() int {
 }
 
 // ServeManifest serves the HLS playlist.
-// If no segments are available, it waits up to 15 seconds for the first segment.
+// If no segments are available, it waits up to SegmentWaitTimeout for the first segment.
 func (p *HLSTSProcessor) ServeManifest(w http.ResponseWriter, r *http.Request) error {
-	// Wait for at least 1 segment to be available (with timeout)
-	waitCtx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	// Wait for at least 1 segment to be available (timeout matching HTTP WriteTimeout)
+	waitCtx, cancel := context.WithTimeout(r.Context(), SegmentWaitTimeout)
 	defer cancel()
 
 	if err := p.WaitForSegments(waitCtx, 1); err != nil {

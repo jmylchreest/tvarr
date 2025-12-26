@@ -80,11 +80,11 @@ func TestRemoteDaemonRegistration(t *testing.T) {
 				MaxConcurrentJobs: 4,
 				HwAccels: []*proto.HWAccelInfo{
 					{
-						Type:      "nvenc",
-						Device:    "/dev/nvidia0",
-						Available: true,
-						Encoders:  []string{"h264_nvenc", "hevc_nvenc"},
-						Decoders:  []string{"h264_cuvid", "hevc_cuvid"},
+						Type:       "nvenc",
+						Device:     "/dev/nvidia0",
+						Available:  true,
+						HwEncoders: []string{"h264_nvenc", "hevc_nvenc"},
+						HwDecoders: []string{"h264_cuvid", "hevc_cuvid"},
 					},
 				},
 				Gpus: []*proto.GPUInfo{

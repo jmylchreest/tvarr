@@ -206,38 +206,6 @@ type ActivateDaemonOutput struct {
 
 // --- Conversion Functions ---
 
-func daemonToDTO(d *types.Daemon) DaemonDTO {
-	// Compute effective state: show "transcoding" when connected with active jobs
-	effectiveState := d.State.String()
-	if d.State == types.DaemonStateConnected && d.ActiveJobs > 0 {
-		effectiveState = "transcoding"
-	}
-
-	dto := DaemonDTO{
-		ID:                 string(d.ID),
-		Name:               d.Name,
-		Version:            d.Version,
-		Address:            d.Address,
-		State:              effectiveState,
-		ConnectedAt:        d.ConnectedAt.Format(time.RFC3339),
-		LastHeartbeat:      d.LastHeartbeat.Format(time.RFC3339),
-		HeartbeatsMissed:   d.HeartbeatsMissed,
-		ActiveJobs:         d.ActiveJobs,
-		TotalJobsCompleted: d.TotalJobsCompleted,
-		TotalJobsFailed:    d.TotalJobsFailed,
-	}
-
-	if d.Capabilities != nil {
-		dto.Capabilities = capabilitiesToDTO(d.Capabilities)
-	}
-
-	if d.SystemStats != nil {
-		dto.SystemStats = systemStatsToDTO(d.SystemStats)
-	}
-
-	return dto
-}
-
 func daemonToDTOWithJobs(d *types.Daemon, jobs []service.ActiveJobInfo) DaemonDTO {
 	// Use actual job count from job manager as source of truth
 	// (heartbeat-reported d.ActiveJobs may be stale or not updated)
@@ -305,10 +273,6 @@ func daemonToDTOWithJobs(d *types.Daemon, jobs []service.ActiveJobInfo) DaemonDT
 	return dto
 }
 
-func capabilitiesToDTO(c *types.Capabilities) *CapabilitiesDTO {
-	return capabilitiesToDTOWithSessions(c, nil)
-}
-
 // capabilitiesToDTOWithSessions converts capabilities to DTO, updating GPU session counts
 // from the active jobs' hw_device usage.
 func capabilitiesToDTOWithSessions(c *types.Capabilities, gpuSessions map[string]int) *CapabilitiesDTO {
@@ -360,11 +324,9 @@ func capabilitiesToDTOWithSessions(c *types.Capabilities, gpuSessions map[string
 
 	// Compute session counts per GPU index from gpuSessions map
 	gpuIndexSessions := make(map[int]int)
-	if gpuSessions != nil {
-		for device, count := range gpuSessions {
-			if idx, found := deviceToGPUIndex[device]; found {
-				gpuIndexSessions[idx] += count
-			}
+	for device, count := range gpuSessions {
+		if idx, found := deviceToGPUIndex[device]; found {
+			gpuIndexSessions[idx] += count
 		}
 	}
 

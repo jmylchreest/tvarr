@@ -53,7 +53,6 @@ type HWAccelDetector struct {
 var (
 	vainfoPath     string
 	vainfoPathOnce sync.Once
-	vainfoFound    bool
 )
 
 // getVainfoPath returns the path to vainfo binary, or empty string if not found.
@@ -64,7 +63,6 @@ func getVainfoPath() string {
 		path, err := util.FindBinary("vainfo", "TVARR_VAINFO_PATH")
 		if err == nil {
 			vainfoPath = path
-			vainfoFound = true
 		}
 	})
 	return vainfoPath

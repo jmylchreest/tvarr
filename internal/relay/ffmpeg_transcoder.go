@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -952,16 +951,6 @@ func CreateTranscoderFromProfile(
 	}
 
 	return NewFFmpegTranscoder(id, buffer, config), nil
-}
-
-
-// getCallerInfo returns a string with caller information for debugging
-func getCallerInfo() string {
-	_, file, line, ok := runtime.Caller(2)
-	if !ok {
-		return "unknown"
-	}
-	return fmt.Sprintf("%s:%d", file, line)
 }
 
 // CreateTranscoderFromVariantOptions contains optional parameters for CreateTranscoderFromVariant.

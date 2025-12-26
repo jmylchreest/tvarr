@@ -81,18 +81,18 @@ func TestRegisterRequest_CapabilitiesSerialization(t *testing.T) {
 			MaxConcurrentJobs: 8,
 			HwAccels: []*proto.HWAccelInfo{
 				{
-					Type:      "cuda",
-					Device:    "GPU 0",
-					Available: true,
-					Encoders:  []string{"h264_nvenc", "hevc_nvenc"},
-					Decoders:  []string{"h264_cuvid", "hevc_cuvid"},
+					Type:       "cuda",
+					Device:     "GPU 0",
+					Available:  true,
+					HwEncoders: []string{"h264_nvenc", "hevc_nvenc"},
+					HwDecoders: []string{"h264_cuvid", "hevc_cuvid"},
 				},
 				{
-					Type:      "vaapi",
-					Device:    "/dev/dri/renderD128",
-					Available: true,
-					Encoders:  []string{"h264_vaapi", "hevc_vaapi"},
-					Decoders:  []string{"h264", "hevc"},
+					Type:       "vaapi",
+					Device:     "/dev/dri/renderD128",
+					Available:  true,
+					HwEncoders: []string{"h264_vaapi", "hevc_vaapi"},
+					HwDecoders: []string{"h264", "hevc"},
 				},
 			},
 			Gpus: []*proto.GPUInfo{

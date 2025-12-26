@@ -223,12 +223,13 @@ func (s *FFmpegDSpawner) SpawnForJob(ctx context.Context, jobID string) (types.D
 	processCtx, processCancel := context.WithCancel(context.Background())
 
 	// Build command arguments
+	// Use trace log level so subprocess emits all logs; tvarr's log level filters them
 	args := []string{
 		"serve",
 		"--coordinator-url", s.config.CoordinatorAddress,
 		"--daemon-id", string(daemonID),
 		"--name", string(daemonID),
-		"--log-level", "info",
+		"--log-level", "trace",
 	}
 
 	// Add auth token if configured
@@ -426,12 +427,6 @@ func (s *FFmpegDSpawner) LogCapabilities(ctx context.Context) {
 		return
 	}
 
-	// Log FFmpeg info
-	s.logger.Info("local ffmpegd detected",
-		slog.String("ffmpeg_version", caps.FFmpeg.Version),
-		slog.String("ffmpeg_path", caps.FFmpeg.FFmpegPath),
-		slog.String("ffprobe_path", caps.FFmpeg.FFprobePath))
-
 	// Log hardware accels with encoder/decoder details
 	var availableAccels []string
 	for _, hw := range caps.Capabilities.HardwareAccels {
@@ -442,8 +437,8 @@ func (s *FFmpegDSpawner) LogCapabilities(ctx context.Context) {
 			}
 			availableAccels = append(availableAccels, name)
 
-			// Log per-hwaccel encoder/decoder details
-			s.logger.Info("local hwaccel details",
+			// Log per-hwaccel encoder/decoder details at DEBUG
+			s.logger.Debug("local hwaccel details",
 				slog.String("type", hw.Type),
 				slog.String("device", hw.Device),
 				slog.Any("encoders", hw.Encoders),
@@ -451,24 +446,22 @@ func (s *FFmpegDSpawner) LogCapabilities(ctx context.Context) {
 		}
 	}
 
-	if len(availableAccels) > 0 {
-		s.logger.Info("local hardware acceleration available",
-			slog.Any("hw_accels", availableAccels))
-	}
-
-	// Log GPUs
+	// Log GPUs at DEBUG
 	for _, gpu := range caps.Capabilities.GPUs {
-		s.logger.Info("local GPU detected",
+		s.logger.Debug("local GPU detected",
 			slog.Int("index", gpu.Index),
 			slog.String("name", gpu.Name),
 			slog.String("class", gpu.Class),
 			slog.Int("max_encode_sessions", gpu.MaxEncodeSessions))
 	}
 
-	// Log encoder summary
-	s.logger.Info("local ffmpegd encoder summary",
+	// Single summary log at INFO level
+	s.logger.Info("local ffmpegd capabilities detected",
+		slog.String("ffmpeg_version", caps.FFmpeg.Version),
 		slog.Int("video_encoders", len(caps.Capabilities.VideoEncoders)),
 		slog.Int("audio_encoders", len(caps.Capabilities.AudioEncoders)),
+		slog.Int("gpus", len(caps.Capabilities.GPUs)),
+		slog.Any("hw_accels", availableAccels),
 		slog.Int("max_concurrent_jobs", caps.Capabilities.MaxConcurrentJobs))
 }
 
@@ -577,15 +570,6 @@ type logWriter struct {
 	output io.Writer    // Direct output for subprocess JSON logs (preserves original formatting)
 	jobID  string
 	buf    []byte // Buffer for incomplete lines
-}
-
-// subprocessLogEntry represents a JSON log entry from the subprocess.
-type subprocessLogEntry struct {
-	Time    string         `json:"time"`
-	Level   string         `json:"level"`
-	Msg     string         `json:"msg"`
-	Fields  map[string]any `json:"-"` // Captures all other fields
-	RawJSON json.RawMessage
 }
 
 func (w *logWriter) Write(p []byte) (n int, err error) {

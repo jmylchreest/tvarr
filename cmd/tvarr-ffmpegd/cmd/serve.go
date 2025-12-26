@@ -143,10 +143,10 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		slog.Int("gpus", len(caps.Gpus)),
 	)
 
-	// Log hardware acceleration details
+	// Log hardware acceleration details at DEBUG level
 	for _, hwaccel := range caps.HwAccels {
 		if hwaccel.Available {
-			logger.Info("hardware acceleration available",
+			logger.Debug("hardware acceleration details",
 				slog.String("type", hwaccel.Type),
 				slog.String("device", hwaccel.Device),
 				slog.Any("hw_encoders", hwaccel.HwEncoders),
@@ -156,9 +156,9 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	// Log GPU details
+	// Log GPU details at DEBUG level
 	for _, gpu := range caps.Gpus {
-		logger.Info("GPU detected",
+		logger.Debug("GPU details",
 			slog.Int("index", int(gpu.Index)),
 			slog.String("name", gpu.Name),
 			slog.String("class", gpu.GpuClass.String()),

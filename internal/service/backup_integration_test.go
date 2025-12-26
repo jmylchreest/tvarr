@@ -131,9 +131,6 @@ func TestBackupRestore_IntegrationRoundTrip(t *testing.T) {
 	db.Model(&models.Filter{}).Count(&filterCount)
 	assert.Zero(t, filterCount, "Fresh database should be empty")
 
-	// Create a new backup service pointing to the same database path
-	backupService = NewBackupService(db, cfg, tempDir)
-
 	// Close the DB connection before restore (simulates real restore scenario)
 	sqlDB, _ = db.DB()
 	sqlDB.Close()

@@ -104,7 +104,7 @@ func NewMPEGTSProcessor(
 
 // Start begins processing data from the shared buffer.
 func (p *MPEGTSProcessor) Start(ctx context.Context) error {
-	p.config.Logger.Info("MPEG-TS processor requesting variant from buffer",
+	p.config.Logger.Debug("MPEG-TS processor requesting variant from buffer",
 		slog.String("processor_id", p.id),
 		slog.String("requested_variant", p.Variant().String()))
 

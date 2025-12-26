@@ -24,8 +24,6 @@ func TestTranscodeStart_ValidatesRequiredFields(t *testing.T) {
 			SourceAudioCodec: "aac",
 			TargetVideoCodec: "h265",
 			TargetAudioCodec: "aac",
-			VideoEncoder:     "libx265",
-			AudioEncoder:     "aac",
 		}
 
 		// Verify serialization round-trip
@@ -40,7 +38,6 @@ func TestTranscodeStart_ValidatesRequiredFields(t *testing.T) {
 		assert.Equal(t, start.SessionId, decoded.SessionId)
 		assert.Equal(t, start.SourceVideoCodec, decoded.SourceVideoCodec)
 		assert.Equal(t, start.TargetVideoCodec, decoded.TargetVideoCodec)
-		assert.Equal(t, start.VideoEncoder, decoded.VideoEncoder)
 	})
 
 	t.Run("full_transcode_start_with_hw_accel", func(t *testing.T) {
@@ -55,8 +52,6 @@ func TestTranscodeStart_ValidatesRequiredFields(t *testing.T) {
 			AudioInitData:     []byte{0x11, 0x90},                   // AAC config
 			TargetVideoCodec:  "h265",
 			TargetAudioCodec:  "aac",
-			VideoEncoder:      "hevc_nvenc",
-			AudioEncoder:      "aac",
 			VideoBitrateKbps:  8000,
 			AudioBitrateKbps:  192,
 			VideoPreset:       "fast",
@@ -79,7 +74,7 @@ func TestTranscodeStart_ValidatesRequiredFields(t *testing.T) {
 		err = proto.Unmarshal(data, decoded)
 		require.NoError(t, err)
 
-		assert.Equal(t, "hevc_nvenc", decoded.VideoEncoder)
+		assert.Equal(t, "h265", decoded.TargetVideoCodec)
 		assert.Equal(t, "cuda", decoded.PreferredHwAccel)
 		assert.Equal(t, int32(8000), decoded.VideoBitrateKbps)
 		assert.Equal(t, int32(1920), decoded.ScaleWidth)
@@ -357,8 +352,8 @@ func TestTranscodeMessage_OneofPayload(t *testing.T) {
 		msg := &pb.TranscodeMessage{
 			Payload: &pb.TranscodeMessage_Start{
 				Start: &pb.TranscodeStart{
-					JobId:        "job-1",
-					VideoEncoder: "libx264",
+					JobId:            "job-1",
+					TargetVideoCodec: "h264",
 				},
 			},
 		}

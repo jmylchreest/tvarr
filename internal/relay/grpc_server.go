@@ -237,7 +237,7 @@ func (s *GRPCServer) InternalAddress() string {
 
 // Register handles daemon registration requests.
 func (s *GRPCServer) Register(ctx context.Context, req *proto.RegisterRequest) (*proto.RegisterResponse, error) {
-	s.logger.Info("daemon registration request",
+	s.logger.Debug("daemon registration request",
 		slog.String("daemon_id", req.DaemonId),
 		slog.String("daemon_name", req.DaemonName),
 		slog.String("version", req.Version),
@@ -254,7 +254,7 @@ func (s *GRPCServer) Register(ctx context.Context, req *proto.RegisterRequest) (
 		}, nil
 	}
 
-	// Register with the daemon registry
+	// Register with the daemon registry (registry logs at INFO level)
 	_, err := s.registry.Register(req)
 	if err != nil {
 		s.logger.Error("registration failed",
@@ -266,13 +266,6 @@ func (s *GRPCServer) Register(ctx context.Context, req *proto.RegisterRequest) (
 			Error:   err.Error(),
 		}, nil
 	}
-
-	s.logger.Info("daemon registered successfully",
-		slog.String("daemon_id", req.DaemonId),
-		slog.String("daemon_name", req.DaemonName),
-		slog.Int("max_jobs", int(req.Capabilities.MaxConcurrentJobs)),
-		slog.Int("gpus", len(req.Capabilities.Gpus)),
-	)
 
 	return &proto.RegisterResponse{
 		Success:            true,

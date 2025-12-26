@@ -107,9 +107,8 @@ func (d *DASHHandler) ServePlaylistWithContext(ctx context.Context, w http.Respo
 	const minSegmentsForDASH = 2
 	if waiter, ok := d.provider.(SegmentWaiter); ok {
 		if waiter.SegmentCount() < minSegmentsForDASH {
-			// Wait for at least 2 segments (with timeout)
-			// Use 30s timeout to allow for 2 segment durations (~12s) plus transcoding startup time
-			waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			// Wait for at least 2 segments (timeout matching HTTP WriteTimeout)
+			waitCtx, cancel := context.WithTimeout(ctx, SegmentWaitTimeout)
 			defer cancel()
 
 			if err := waiter.WaitForSegments(waitCtx, minSegmentsForDASH); err != nil {
@@ -122,8 +121,8 @@ func (d *DASHHandler) ServePlaylistWithContext(ctx context.Context, w http.Respo
 	// For CMAF mode, also wait for init segment to be ready
 	if fmp4Provider, ok := d.provider.(FMP4SegmentProvider); ok {
 		if fmp4Provider.IsFMP4Mode() && !fmp4Provider.HasInitSegment() {
-			// Wait for init segment with polling (up to 15 seconds)
-			waitCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			// Wait for init segment with polling (timeout matching HTTP WriteTimeout)
+			waitCtx, cancel := context.WithTimeout(ctx, SegmentWaitTimeout)
 			defer cancel()
 
 			ticker := time.NewTicker(100 * time.Millisecond)
@@ -208,25 +207,13 @@ func (d *DASHHandler) ServeSegmentFiltered(w http.ResponseWriter, sequence uint6
 // streamType should be "video" or "audio" for track-specific init segments.
 // For CMAF streams with unified init segment, streamType can be empty or "cmaf".
 func (d *DASHHandler) ServeInitSegment(w http.ResponseWriter, streamType string) error {
-	slog.Debug("ServeInitSegment called",
-		slog.String("stream_type", streamType))
-
 	// Try to get init segment from FMP4SegmentProvider (CMAF mode)
 	if fmp4Provider, ok := d.provider.(FMP4SegmentProvider); ok {
-		isFMP4 := fmp4Provider.IsFMP4Mode()
-		hasInit := fmp4Provider.HasInitSegment()
-		slog.Debug("ServeInitSegment: FMP4 provider check",
-			slog.Bool("is_fmp4_mode", isFMP4),
-			slog.Bool("has_init", hasInit),
-			slog.String("stream_type", streamType))
-
-		if isFMP4 && hasInit {
+		if fmp4Provider.IsFMP4Mode() && fmp4Provider.HasInitSegment() {
 			// For DASH with separate video/audio AdaptationSets, serve filtered init segments
 			// This is required because FFmpeg's DASH demuxer assigns one stream_index per
 			// representation, and muxed segments cause issues when both tracks are present
 			if streamType == "video" || streamType == "audio" {
-				slog.Debug("ServeInitSegment: requesting filtered init segment",
-					slog.String("track_type", streamType))
 				initData, err := fmp4Provider.GetFilteredInitSegment(streamType)
 				if err != nil {
 					slog.Warn("Failed to get filtered init segment, falling back to full init",
@@ -236,15 +223,9 @@ func (d *DASHHandler) ServeInitSegment(w http.ResponseWriter, streamType string)
 					initSeg := fmp4Provider.GetInitSegment()
 					if initSeg != nil && !initSeg.IsEmpty() {
 						initData = initSeg.Data
-						slog.Debug("ServeInitSegment: using fallback full init",
-							slog.Int("data_len", len(initData)))
 					} else {
 						slog.Warn("ServeInitSegment: fallback init segment is nil or empty")
 					}
-				} else {
-					slog.Debug("ServeInitSegment: got filtered init segment",
-						slog.String("track_type", streamType),
-						slog.Int("data_len", len(initData)))
 				}
 				if len(initData) > 0 {
 					w.Header().Set("Content-Type", ContentTypeFMP4Init)
@@ -339,37 +320,37 @@ func (d *DASHHandler) GenerateManifest(baseURL string) string {
 	// In CMAF mode, a single init segment contains both video and audio tracks (muxed)
 	isCMAFMode := false
 	if fmp4Provider, ok := d.provider.(FMP4SegmentProvider); ok {
-		isFMP4 := fmp4Provider.IsFMP4Mode()
-		hasInit := fmp4Provider.HasInitSegment()
-		slog.Debug("DASH CMAF mode check",
-			slog.Bool("is_fmp4_provider", true),
-			slog.Bool("is_fmp4_mode", isFMP4),
-			slog.Bool("has_init_segment", hasInit))
-		if isFMP4 && hasInit {
+		if fmp4Provider.IsFMP4Mode() && fmp4Provider.HasInitSegment() {
 			hasVideoInit = true
 			hasAudioInit = true
 			isCMAFMode = true
 		}
-	} else {
-		slog.Debug("DASH CMAF mode check", slog.Bool("is_fmp4_provider", false))
 	}
-	slog.Debug("DASH manifest mode", slog.Bool("cmaf_mode", isCMAFMode))
 
 	// Use defaults if metadata not set
+	// This can happen before init segment is parsed or if stream setup failed
+	usingDefaults := false
 	if videoWidth == 0 {
-		videoWidth = 1920
+		videoWidth = DefaultVideoWidth
+		usingDefaults = true
 	}
 	if videoHeight == 0 {
-		videoHeight = 1080
+		videoHeight = DefaultVideoHeight
+		usingDefaults = true
 	}
 	if videoBandwidth == 0 {
-		videoBandwidth = 5000000 // 5 Mbps default
+		videoBandwidth = DefaultVideoBandwidth
+		usingDefaults = true
 	}
 	if audioChannels == 0 {
-		audioChannels = 2
+		audioChannels = DefaultAudioChannels
 	}
 	if audioBandwidth == 0 {
-		audioBandwidth = 128000 // 128 kbps default
+		audioBandwidth = DefaultAudioBandwidth
+		usingDefaults = true
+	}
+	if usingDefaults {
+		slog.Warn("DASH manifest using default stream metadata - init segment may not be parsed yet")
 	}
 
 	// Ensure baseURL doesn't have trailing slash

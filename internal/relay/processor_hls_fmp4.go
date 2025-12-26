@@ -198,11 +198,9 @@ func (p *HLSfMP4Processor) Start(ctx context.Context) error {
 	// Initialize segment accumulator
 	p.initNewSegment()
 
-	p.config.Logger.Info("Starting HLS-fMP4 processor",
+	p.config.Logger.Debug("Starting HLS-fMP4 processor",
 		slog.String("id", p.id),
-		slog.String("variant", p.Variant().String()),
-		slog.String("es_variant_ptr", fmt.Sprintf("%p", esVariant)),
-		slog.String("video_track_ptr", fmt.Sprintf("%p", esVariant.VideoTrack())))
+		slog.String("variant", p.Variant().String()))
 
 	// Start processing loop
 	p.WaitGroup().Add(1)

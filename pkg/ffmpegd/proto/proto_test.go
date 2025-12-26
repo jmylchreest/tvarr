@@ -24,11 +24,11 @@ func TestRegisterRequest_RoundTrip(t *testing.T) {
 			MaxConcurrentJobs: 4,
 			HwAccels: []*HWAccelInfo{
 				{
-					Type:      "cuda",
-					Device:    "GPU 0",
-					Available: true,
-					Encoders:  []string{"h264_nvenc", "hevc_nvenc"},
-					Decoders:  []string{"h264_cuvid", "hevc_cuvid"},
+					Type:       "cuda",
+					Device:     "GPU 0",
+					Available:  true,
+					HwEncoders: []string{"h264_nvenc", "hevc_nvenc"},
+					HwDecoders: []string{"h264_cuvid", "hevc_cuvid"},
 				},
 			},
 			Gpus: []*GPUInfo{
@@ -169,8 +169,6 @@ func TestTranscodeStart_RoundTrip(t *testing.T) {
 		AudioInitData:      []byte{0x11, 0x90},              // AudioSpecificConfig placeholder
 		TargetVideoCodec:   "hevc",
 		TargetAudioCodec:   "aac",
-		VideoEncoder:       "hevc_nvenc",
-		AudioEncoder:       "aac",
 		VideoBitrateKbps:   5000,
 		AudioBitrateKbps:   192,
 		VideoPreset:        "fast",
@@ -195,7 +193,7 @@ func TestTranscodeStart_RoundTrip(t *testing.T) {
 	// Verify
 	assert.Equal(t, start.JobId, decoded.JobId)
 	assert.Equal(t, start.SourceVideoCodec, decoded.SourceVideoCodec)
-	assert.Equal(t, start.VideoEncoder, decoded.VideoEncoder)
+	assert.Equal(t, start.TargetVideoCodec, decoded.TargetVideoCodec)
 	assert.Equal(t, start.VideoBitrateKbps, decoded.VideoBitrateKbps)
 	assert.Equal(t, start.VideoInitData, decoded.VideoInitData)
 	assert.Equal(t, start.ExtraOptions["profile"], decoded.ExtraOptions["profile"])

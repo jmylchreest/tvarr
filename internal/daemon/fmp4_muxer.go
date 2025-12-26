@@ -35,7 +35,6 @@ type FMP4Muxer struct {
 	audioCodec string
 
 	// Codec-specific initialization data
-	videoInitData []byte // SPS/PPS for H.264/H.265, sequence header for AV1
 	audioInitData []byte // AudioSpecificConfig for AAC
 
 	// fMP4 state
@@ -57,7 +56,6 @@ type FMP4Muxer struct {
 	audioSamples []*fmp4.Sample
 
 	// Video parameter extraction
-	vp9Header    []byte // VP9 superframe header
 	av1SeqHeader []byte // AV1 sequence header OBU
 	h264SPS      []byte
 	h264PPS      []byte

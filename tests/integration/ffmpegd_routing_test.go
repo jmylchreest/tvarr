@@ -55,11 +55,11 @@ func TestCapabilityBasedRouting(t *testing.T) {
 				MaxConcurrentJobs: 8,
 				HwAccels: []*proto.HWAccelInfo{
 					{
-						Type:      "nvenc",
-						Device:    "/dev/nvidia0",
-						Available: true,
-						Encoders:  []string{"h264_nvenc", "hevc_nvenc"},
-						Decoders:  []string{"h264_cuvid", "hevc_cuvid"},
+						Type:       "nvenc",
+						Device:     "/dev/nvidia0",
+						Available:  true,
+						HwEncoders: []string{"h264_nvenc", "hevc_nvenc"},
+						HwDecoders: []string{"h264_cuvid", "hevc_cuvid"},
 					},
 				},
 				Gpus: []*proto.GPUInfo{
@@ -90,11 +90,11 @@ func TestCapabilityBasedRouting(t *testing.T) {
 				MaxConcurrentJobs: 6,
 				HwAccels: []*proto.HWAccelInfo{
 					{
-						Type:      "vaapi",
-						Device:    "/dev/dri/renderD128",
-						Available: true,
-						Encoders:  []string{"h264_vaapi", "hevc_vaapi"},
-						Decoders:  []string{},
+						Type:       "vaapi",
+						Device:     "/dev/dri/renderD128",
+						Available:  true,
+						HwEncoders: []string{"h264_vaapi", "hevc_vaapi"},
+						HwDecoders: []string{},
 					},
 				},
 				Gpus: []*proto.GPUInfo{
@@ -162,8 +162,8 @@ func TestCapabilityBasedRouting(t *testing.T) {
 	})
 
 	t.Run("load_balancing_prefers_least_loaded", func(t *testing.T) {
-		// Simulate load on NVENC daemon
-		nvencDaemon, ok := registry.Get(types.DaemonID("daemon-nvenc"))
+		// Verify NVENC daemon exists before simulating load
+		_, ok := registry.Get(types.DaemonID("daemon-nvenc"))
 		require.True(t, ok)
 
 		// Simulate adding jobs via heartbeat
@@ -182,8 +182,7 @@ func TestCapabilityBasedRouting(t *testing.T) {
 		require.NotNil(t, daemon)
 		// Should NOT be NVENC daemon since it's most loaded
 		if daemon.Capabilities.MaxConcurrentJobs > 0 {
-			nvencDaemon, _ = registry.Get(types.DaemonID("daemon-nvenc"))
-			if daemon.ID == nvencDaemon.ID {
+			if daemon.ID == types.DaemonID("daemon-nvenc") {
 				// If selected nvenc, others must be at same or higher load
 				t.Log("Selected NVENC daemon despite higher load - checking if it's the only option")
 			}

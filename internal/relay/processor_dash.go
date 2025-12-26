@@ -195,7 +195,7 @@ func (p *DASHProcessor) Start(ctx context.Context) error {
 	// Initialize segment accumulator
 	p.initNewSegment()
 
-	p.config.Logger.Info("Starting DASH processor",
+	p.config.Logger.Debug("Starting DASH processor",
 		slog.String("id", p.id),
 		slog.String("variant", p.Variant().String()))
 
@@ -573,7 +573,7 @@ func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
 	videoTrack := esVariant.VideoTrack()
 	audioTrack := esVariant.AudioTrack()
 
-	p.config.Logger.Info("DASH processor loop started, waiting for keyframe",
+	p.config.Logger.Debug("DASH processor loop started, waiting for keyframe",
 		slog.String("id", p.id),
 		slog.Bool("has_video_track", videoTrack != nil),
 		slog.Bool("has_audio_track", audioTrack != nil))
@@ -585,7 +585,7 @@ func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
 		return
 	}
 
-	p.config.Logger.Info("DASH processor: received first keyframe, starting segment accumulation",
+	p.config.Logger.Debug("DASH processor: received first keyframe, starting segment accumulation",
 		slog.String("id", p.id))
 
 	ticker := time.NewTicker(10 * time.Millisecond)

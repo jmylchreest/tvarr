@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 )
 
 // SegmentWaiter is an optional interface that SegmentProviders can implement
@@ -101,8 +100,8 @@ func (h *HLSHandler) ServePlaylistWithContext(ctx context.Context, w http.Respon
 	// Check if provider supports waiting for segments
 	if waiter, ok := h.provider.(SegmentWaiter); ok {
 		if waiter.SegmentCount() == 0 {
-			// Wait for at least 1 segment (with timeout)
-			waitCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			// Wait for at least 1 segment (with timeout matching HTTP WriteTimeout)
+			waitCtx, cancel := context.WithTimeout(ctx, SegmentWaitTimeout)
 			defer cancel()
 
 			if err := waiter.WaitForSegments(waitCtx, 1); err != nil {
