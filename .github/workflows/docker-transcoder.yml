@@ -110,9 +110,25 @@ jobs:
           echo "Checking FFmpeg workflow status for commit $COMMIT"
 
           for i in {1..60}; do
-            RESULT=$(gh run list --repo "$REPO" --workflow=docker-ffmpeg.yml --commit="$COMMIT" --json status,conclusion -q '.[0]' 2>/dev/null || echo '{}')
-            STATUS=$(echo "$RESULT" | jq -r '.status // "not_found"')
-            CONCLUSION=$(echo "$RESULT" | jq -r '.conclusion // "pending"')
+            # Get the first workflow run for this commit (if any)
+            RESULT=$(gh run list --repo "$REPO" --workflow=docker-ffmpeg.yml --commit="$COMMIT" --json status,conclusion -q '.[0]' 2>/dev/null || echo '')
+
+            # Check if result is empty/null (no workflow found for this commit)
+            if [[ -z "$RESULT" ]] || [[ "$RESULT" == "null" ]]; then
+              echo "No FFmpeg workflow found for this commit - paths likely didn't change"
+              echo "Proceeding with existing FFmpeg image"
+              exit 0
+            fi
+
+            STATUS=$(echo "$RESULT" | jq -r '.status // ""')
+            CONCLUSION=$(echo "$RESULT" | jq -r '.conclusion // ""')
+
+            # Handle empty status (shouldn't happen but be safe)
+            if [[ -z "$STATUS" ]]; then
+              echo "No FFmpeg workflow found for this commit - paths likely didn't change"
+              echo "Proceeding with existing FFmpeg image"
+              exit 0
+            fi
 
             if [[ "$STATUS" == "completed" ]]; then
               if [[ "$CONCLUSION" == "success" ]] || [[ "$CONCLUSION" == "skipped" ]]; then
@@ -122,13 +138,6 @@ jobs:
                 echo "FFmpeg workflow failed with conclusion: $CONCLUSION"
                 exit 1
               fi
-            fi
-
-            # FFmpeg workflow may not run if paths didn't change
-            if [[ "$STATUS" == "not_found" ]]; then
-              echo "No FFmpeg workflow found for this commit - paths likely didn't change"
-              echo "Proceeding with existing FFmpeg image"
-              exit 0
             fi
 
             echo "FFmpeg workflow status: $STATUS (attempt $i/60), waiting..."
