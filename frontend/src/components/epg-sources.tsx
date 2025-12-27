@@ -27,6 +27,7 @@ import {
   WifiOff,
   Clock,
   Globe,
+  Save,
 } from 'lucide-react';
 import {
   EpgSourceResponse,
@@ -521,6 +522,15 @@ function EpgSourceDetailPanel({
               <Trash2 className="h-4 w-4" />
             )}
           </Button>
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={loading.edit || !hasChanges || !isOnline || !cronValidation.isValid}
+          >
+            {loading.edit && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            <Save className="h-4 w-4 mr-1" />
+            Save
+          </Button>
         </div>
       }
     >
@@ -705,18 +715,6 @@ function EpgSourceDetailPanel({
             </div>
           </div>
 
-          {/* Save Button */}
-          {hasChanges && (
-            <div className="flex justify-end pt-4 border-t">
-              <Button
-                onClick={handleSave}
-                disabled={loading.edit || !isOnline || !cronValidation.isValid}
-              >
-                {loading.edit && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Save Changes
-              </Button>
-            </div>
-          )}
         </div>
       </div>
     </DetailPanel>
