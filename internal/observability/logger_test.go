@@ -99,8 +99,9 @@ func TestNewLogger_AddSource(t *testing.T) {
 	logger.Info("test message")
 
 	output := buf.String()
-	// Source adds "source" field with file and line info
-	assert.Contains(t, output, "source")
+	// Source adds "logpos" field with relative file path and line number
+	assert.Contains(t, output, "logpos")
+	assert.Contains(t, output, "internal/observability/logger_test.go:")
 }
 
 func TestNewLogger_CustomTimeFormat(t *testing.T) {

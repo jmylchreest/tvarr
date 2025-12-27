@@ -60,8 +60,8 @@ logging:
   level: "info"
   # Output format: json, text
   format: "json"
-  # Include source file and line in logs
-  add_source: false
+  # Include source file and line in logs (e.g., logpos=internal/relay/manager.go:123)
+  add_source: true
   # Time format (Go time layout)
   time_format: "2006-01-02T15:04:05Z07:00"
 

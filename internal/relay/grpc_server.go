@@ -131,17 +131,15 @@ func (s *GRPCServer) Start(ctx context.Context) error {
 
 	s.started = true
 
-	// Log listener information
-	s.logger.Info("starting coordinator gRPC server",
-		slog.String("internal_socket", s.config.InternalSocketPath),
-		slog.String("internal_addr", s.internalAddr),
-	)
-
+	// Log startup with consolidated listener information
+	externalAddr := ""
 	if s.externalListener != nil {
-		s.logger.Info("external gRPC listener enabled",
-			slog.String("address", s.config.ExternalListenAddr),
-		)
+		externalAddr = s.config.ExternalListenAddr
 	}
+	s.logger.Info("grpc server started",
+		slog.String("internal_socket", s.config.InternalSocketPath),
+		slog.String("external_addr", externalAddr),
+	)
 
 	// Start serving on internal socket
 	go func() {
@@ -182,8 +180,8 @@ func (s *GRPCServer) ServeWithListener(ctx context.Context, listener net.Listene
 	s.started = true
 	s.mu.Unlock()
 
-	s.logger.Info("starting coordinator gRPC server with listener",
-		slog.String("address", listener.Addr().String()),
+	s.logger.Info("grpc server started",
+		slog.String("listen_addr", listener.Addr().String()),
 	)
 
 	// Start registry cleanup goroutine
@@ -347,10 +345,6 @@ func (s *GRPCServer) Transcode(stream grpc.BidiStreamingServer[proto.TranscodeMe
 	// Register this stream with the stream manager
 	daemonStream := s.streamMgr.RegisterStream(daemonID, stream)
 	defer s.streamMgr.UnregisterStream(daemonID)
-
-	s.logger.Info("Daemon transcode stream connected",
-		slog.String("daemon_id", string(daemonID)),
-	)
 
 	// Main loop: receive messages from daemon
 	for {

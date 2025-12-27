@@ -83,7 +83,7 @@ Configuration can be set via:
 |------------|---------------------|---------|-------------|
 | `logging.level` | `TVARR_LOGGING_LEVEL` | `info` | Log level: `trace`, `debug`, `info`, `warn`, `error` |
 | `logging.format` | `TVARR_LOGGING_FORMAT` | `json` | Log format: `json`, `text` |
-| `logging.add_source` | `TVARR_LOGGING_ADD_SOURCE` | `false` | Include source location in logs |
+| `logging.add_source` | `TVARR_LOGGING_ADD_SOURCE` | `true` | Include source location in logs (e.g., `logpos=internal/relay/manager.go:123`) |
 | `logging.time_format` | `TVARR_LOGGING_TIME_FORMAT` | `RFC3339` | Timestamp format |
 
 ---
@@ -202,7 +202,7 @@ storage:
 logging:
   level: info
   format: json
-  add_source: false
+  add_source: true
   time_format: "2006-01-02T15:04:05Z07:00"
 
 ingestion:

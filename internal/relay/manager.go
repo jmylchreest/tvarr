@@ -12,6 +12,7 @@ import (
 
 	"github.com/jmylchreest/tvarr/internal/ffmpeg"
 	"github.com/jmylchreest/tvarr/internal/models"
+	"github.com/jmylchreest/tvarr/internal/observability"
 	"github.com/jmylchreest/tvarr/internal/repository"
 	"github.com/jmylchreest/tvarr/pkg/ffmpegd/proto"
 )
@@ -273,55 +274,34 @@ func (m *Manager) EncoderOverridesProvider() EncoderOverridesProvider {
 func (m *Manager) GetOrCreateSession(ctx context.Context, channelID models.ULID, channelName string, sourceID models.ULID, streamSourceName string, streamURL string, sourceMaxConcurrentStreams int, profile *models.EncodingProfile) (*RelaySession, error) {
 	// First, check if session already exists (fast path with read lock)
 	m.mu.RLock()
-	m.logger.Debug("GetOrCreateSession lookup",
+	// TRACE level: frequent session lookups (one per playlist request)
+	m.logger.Log(ctx, observability.LevelTrace, "session lookup",
 		slog.String("channel_id", channelID.String()),
-		slog.Int("total_channel_sessions", len(m.channelSessions)),
-		slog.Int("total_sessions", len(m.sessions)))
+		slog.Int("active_sessions", len(m.sessions)))
 	if sessionID, ok := m.channelSessions[channelID]; ok {
 		if session, ok := m.sessions[sessionID]; ok {
 			isClosed := session.closed.Load()
 			ingestCompleted := session.IngestCompleted()
-			m.logger.Debug("Found session in lookup",
-				slog.String("channel_id", channelID.String()),
-				slog.String("session_id", sessionID.String()),
-				slog.Bool("is_closed", isClosed),
-				slog.Bool("ingest_completed", ingestCompleted))
 			if !isClosed {
 				// Session is not closed - check if we can reuse it
 				if !ingestCompleted {
 					// Origin is still connected - reuse it
 					m.mu.RUnlock()
-					m.logger.Debug("Reusing existing session for channel (origin connected)",
-						slog.String("channel_id", channelID.String()),
-						slog.String("session_id", session.ID.String()))
 					return session, nil
 				}
 				// Ingest completed (finite stream EOF) - but check if we still have active content
 				// This handles IPTV error videos where transcoding is still in progress
 				if session.HasActiveContent() {
 					m.mu.RUnlock()
-					m.logger.Debug("Reusing existing session for channel (ingest completed but has active content)",
-						slog.String("channel_id", channelID.String()),
-						slog.String("session_id", session.ID.String()))
 					return session, nil
 				}
-				m.logger.Debug("Found existing session but origin has disconnected (EOF) and no active content",
-					slog.String("channel_id", channelID.String()),
-					slog.String("session_id", sessionID.String()))
-			} else {
-				m.logger.Debug("Found existing session but it's closed",
-					slog.String("channel_id", channelID.String()),
-					slog.String("session_id", sessionID.String()))
+				// Origin disconnected and no active content - will create new session
 			}
-		} else {
-			m.logger.Debug("channelSessions has entry but sessions map doesn't",
-				slog.String("channel_id", channelID.String()),
-				slog.String("session_id", sessionID.String()))
+			// Session is closed - will create new session
 		}
-	} else {
-		m.logger.Debug("No existing session for channel",
-			slog.String("channel_id", channelID.String()))
+		// channelSessions has entry but sessions map doesn't - stale entry
 	}
+	// No existing usable session for channel
 	m.mu.RUnlock()
 
 	// Check session limit before doing slow operations

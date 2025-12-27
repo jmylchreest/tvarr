@@ -113,8 +113,8 @@ func (s *Server) Start(ctx context.Context) error {
 			return fmt.Errorf("creating listener: %w", err)
 		}
 
-		s.logger.Info("starting gRPC server",
-			slog.String("address", s.config.ListenAddr),
+		s.logger.Info("grpc server started",
+			slog.String("listen_addr", s.config.ListenAddr),
 		)
 
 		go func() {

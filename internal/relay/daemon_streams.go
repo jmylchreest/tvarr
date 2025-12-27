@@ -547,7 +547,7 @@ func (m *DaemonStreamManager) RegisterStream(
 
 	m.streams[daemonID] = ds
 
-	m.logger.Info("Daemon transcode stream registered",
+	m.logger.Info("daemon transcode stream connected",
 		slog.String("daemon_id", string(daemonID)),
 		slog.Int("max_jobs", maxJobs),
 		slog.Int("max_cpu_jobs", maxCPUJobs),
@@ -566,7 +566,7 @@ func (m *DaemonStreamManager) UnregisterStream(daemonID types.DaemonID) {
 	if ds, ok := m.streams[daemonID]; ok {
 		ds.Close()
 		delete(m.streams, daemonID)
-		m.logger.Info("Daemon transcode stream unregistered",
+		m.logger.Debug("daemon transcode stream disconnected",
 			slog.String("daemon_id", string(daemonID)),
 		)
 	}

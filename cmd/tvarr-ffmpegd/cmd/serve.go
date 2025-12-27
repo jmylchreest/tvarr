@@ -61,6 +61,17 @@ func init() {
 
 func runServe(cmd *cobra.Command, _ []string) error {
 	logger := slog.Default()
+
+	// Log version banner first
+	versionInfo := version.GetInfo()
+	logger.Info("tvarr-ffmpegd starting",
+		slog.String("version", versionInfo.Version),
+		slog.String("commit", versionInfo.CommitSHA),
+		slog.String("built", versionInfo.Date),
+		slog.String("go", versionInfo.GoVersion),
+		slog.String("platform", versionInfo.Platform),
+	)
+
 	v := GetDaemonViper()
 
 	// Get daemon configuration
@@ -124,9 +135,8 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		reconnectMaxDelay = 60 * time.Second
 	}
 
-	// Log startup information
-	logger.Info("starting tvarr-ffmpegd daemon",
-		slog.String("version", version.Short()),
+	// Log daemon configuration
+	logger.Info("daemon configured",
 		slog.String("daemon_id", daemonID),
 		slog.String("daemon_name", daemonName),
 		slog.Int("max_jobs", maxJobs),
@@ -141,7 +151,6 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	detectCtx, detectCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer detectCancel()
 
-	logger.Info("detecting FFmpeg installation and capabilities")
 	capDetector := daemon.NewCapabilityDetector()
 	caps, binInfo, err := capDetector.Detect(detectCtx)
 	if err != nil {
@@ -162,10 +171,10 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		caps.MaxProbeJobs = int32(maxProbeJobs)
 	}
 
-	logger.Info("FFmpeg detected",
+	logger.Info("ffmpeg binaries detected",
 		slog.String("version", binInfo.Version),
-		slog.String("ffmpeg_path", binInfo.FFmpegPath),
-		slog.String("ffprobe_path", binInfo.FFprobePath),
+		slog.String("ffmpeg", binInfo.FFmpegPath),
+		slog.String("ffprobe", binInfo.FFprobePath),
 		slog.Int("video_encoders", len(caps.VideoEncoders)),
 		slog.Int("audio_encoders", len(caps.AudioEncoders)),
 		slog.Int("hw_accels", len(caps.HwAccels)),
@@ -216,10 +225,6 @@ func runServe(cmd *cobra.Command, _ []string) error {
 			if err := server.Start(ctx); err != nil {
 				return fmt.Errorf("starting server: %w", err)
 			}
-
-			logger.Info("gRPC server started in standalone mode",
-				slog.String("address", listenAddr),
-			)
 
 			// Wait for shutdown
 			sig := waitForSignal()

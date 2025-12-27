@@ -3,16 +3,21 @@ package observability
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"regexp"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/jmylchreest/tvarr/internal/config"
 	"github.com/m-mizutani/masq"
 )
+
+// modulePrefix is the Go module path prefix used to compute relative source paths.
+const modulePrefix = "github.com/jmylchreest/tvarr/"
 
 // urlSensitiveParamPattern matches sensitive query parameters in URLs.
 // Matches: password=value, secret=value, token=value, apikey=value, api_key=value, credential=value
@@ -95,6 +100,20 @@ func NewLoggerWithWriter(cfg config.LoggingConfig, w io.Writer) *slog.Logger {
 			if a.Key == slog.LevelKey {
 				if lvl, ok := a.Value.Any().(slog.Level); ok && lvl == LevelTrace {
 					return slog.String(slog.LevelKey, "TRACE")
+				}
+			}
+
+			// Format source location as relative path with line number
+			// Changes "source=/full/path/to/github.com/jmylchreest/tvarr/internal/foo.go:123"
+			// to "logpos=internal/foo.go:123"
+			if a.Key == slog.SourceKey {
+				if src, ok := a.Value.Any().(*slog.Source); ok && src != nil {
+					relPath := src.File
+					// Strip the module prefix to get relative path
+					if idx := strings.Index(src.File, modulePrefix); idx >= 0 {
+						relPath = src.File[idx+len(modulePrefix):]
+					}
+					return slog.String("logpos", fmt.Sprintf("%s:%d", relPath, src.Line))
 				}
 			}
 

@@ -118,6 +118,16 @@ func runServe(_ *cobra.Command, _ []string) error {
 
 	logger := slog.Default()
 
+	// Log version banner first
+	versionInfo := version.GetInfo()
+	logger.Info("tvarr starting",
+		slog.String("version", versionInfo.Version),
+		slog.String("commit", versionInfo.CommitSHA),
+		slog.String("built", versionInfo.Date),
+		slog.String("go", versionInfo.GoVersion),
+		slog.String("platform", versionInfo.Platform),
+	)
+
 	// T055/T057: Clean up orphaned temp directories from previous runs
 	orphansRemoved, err := startup.CleanupSystemTempDirs(logger)
 	if err != nil {
@@ -165,17 +175,14 @@ func runServe(_ *cobra.Command, _ []string) error {
 			recommendedHWAccel = recommended.Name
 		}
 
-		logger.Info("ffmpeg detected",
+		logger.Info("ffmpeg binaries detected",
 			slog.String("version", ffmpegInfo.Version),
-			slog.String("path", ffmpegInfo.FFmpegPath),
-			slog.Int("encoder_count", len(ffmpegInfo.Encoders)),
-			slog.Int("decoder_count", len(ffmpegInfo.Decoders)),
+			slog.String("ffmpeg", ffmpegInfo.FFmpegPath),
+			slog.String("ffprobe", ffmpegInfo.FFprobePath),
+			slog.Int("encoders", len(ffmpegInfo.Encoders)),
+			slog.Int("decoders", len(ffmpegInfo.Decoders)),
 			slog.Any("hw_accels", hwAccelNames),
 			slog.String("recommended_hw_accel", recommendedHWAccel),
-		)
-
-		logger.Info("ffprobe detected",
-			slog.String("path", ffmpegInfo.FFprobePath),
 		)
 	}
 
@@ -242,12 +249,6 @@ func runServe(_ *cobra.Command, _ []string) error {
 		logoServiceConfig.Concurrency = 10
 	}
 
-	logger.Info("initializing logo service",
-		slog.Duration("timeout", logoServiceConfig.Timeout),
-		slog.Int("retry_attempts", logoServiceConfig.RetryAttempts),
-		slog.String("circuit_breaker", logoServiceConfig.CircuitBreakerName),
-		slog.Int("concurrency", logoServiceConfig.Concurrency))
-
 	logoService := service.NewLogoServiceWithConfig(logoCache, logoServiceConfig).
 		WithLogger(logger)
 
@@ -262,16 +263,20 @@ func runServe(_ *cobra.Command, _ []string) error {
 		if err != nil {
 			return fmt.Errorf("loading logo index: %w", err)
 		}
-		if result.PrunedCount > 0 {
-			logger.Info("pruned stale logos on startup",
-				slog.Int("pruned_count", result.PrunedCount),
-				slog.Int64("pruned_bytes", result.PrunedSize),
-				slog.String("retention", duration.Format(logoRetention)))
-		}
+		logger.Info("logo service initialized",
+			slog.Int("logos_loaded", result.TotalLoaded),
+			slog.Int("pruned_count", result.PrunedCount),
+		)
 	} else {
-		if err := logoService.LoadIndex(context.Background()); err != nil {
+		result, err := logoService.LoadIndexWithOptions(context.Background(), service.LogoIndexerOptions{
+			PruneStaleLogos: false,
+		})
+		if err != nil {
 			return fmt.Errorf("loading logo index: %w", err)
 		}
+		logger.Info("logo service initialized",
+			slog.Int("logos_loaded", result.TotalLoaded),
+		)
 	}
 
 	// Initialize ingestor components
@@ -286,8 +291,6 @@ func runServe(_ *cobra.Command, _ []string) error {
 		ingestionGuardStateManager = stateManager
 		logger.Info("ingestion guard enabled for proxy generation")
 	}
-
-	logger.Debug("creating pipeline factory")
 
 	// Construct base URL for logo resolution in pipeline output
 	// This allows generated M3U/XMLTV to contain fully qualified logo URLs
@@ -315,17 +318,13 @@ func runServe(_ *cobra.Command, _ []string) error {
 		ingestionGuardStateManager,
 		baseURL,
 	)
-	logger.Debug("pipeline factory created")
 
 	// Initialize progress service
-	logger.Debug("initializing progress service")
 	progressService := progress.NewService(logger)
 	progressService.Start()
 	defer progressService.Stop()
-	logger.Debug("progress service started")
 
 	// Initialize services
-	logger.Debug("initializing services")
 	sourceService := service.NewSourceService(
 		streamSourceRepo,
 		channelRepo,
@@ -379,7 +378,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 		logger.Warn("failed to refresh encoder overrides cache", slog.String("error", err.Error()))
 	}
 
-	logger.Debug("services initialized")
+	logger.Info("core services initialized")
 
 	// Initialize backup service (needed for both scheduler and HTTP handler)
 	backupConfig := config.BackupConfig{
@@ -394,7 +393,6 @@ func runServe(_ *cobra.Command, _ []string) error {
 		WithLogger(logger)
 
 	// Configure internal recurring jobs
-	logger.Debug("configuring scheduler")
 	var internalJobs []scheduler.InternalJobConfig
 	logoScanSchedule := viper.GetString("scheduler.logo_scan_schedule")
 	if logoScanSchedule != "" {
@@ -626,13 +624,11 @@ func runServe(_ *cobra.Command, _ []string) error {
 
 	go func() {
 		sig := <-sigChan
-		logger.Info("received shutdown signal", slog.String("signal", sig.String()))
+		logger.Info("shutdown initiated", slog.String("signal", sig.String()))
 		cancel()
 	}()
-	logger.Debug("signal handler registered")
 
 	// Start scheduler
-	logger.Debug("starting scheduler")
 	if err := sched.Start(ctx); err != nil {
 		return fmt.Errorf("starting scheduler: %w", err)
 	}
@@ -699,12 +695,6 @@ func runServe(_ *cobra.Command, _ []string) error {
 	}
 	defer func() { _ = grpcServer.Stop(ctx) }()
 
-	if viper.GetBool("grpc.enabled") {
-		logger.Info("gRPC server started for ffmpegd daemon registration",
-			slog.Int("port", viper.GetInt("grpc.port")),
-		)
-	}
-
 	// Create FFmpegD spawner for local subprocess transcoding
 	// Uses the internal Unix socket to connect subprocesses to coordinator
 	spawner := relay.NewFFmpegDSpawner(relay.FFmpegDSpawnerConfig{
@@ -743,11 +733,10 @@ func runServe(_ *cobra.Command, _ []string) error {
 	)
 
 	// Start server
-	logger.Info("starting tvarr server",
+	logger.Info("http server ready",
 		slog.String("host", serverConfig.Host),
 		slog.Int("port", serverConfig.Port),
 		slog.String("protocol", "h2c"),
-		slog.String("version", version.Version),
 		slog.Int("scheduler_entries", sched.GetEntryCount()),
 		slog.Int("worker_count", viper.GetInt("scheduler.workers")),
 	)

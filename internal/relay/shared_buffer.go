@@ -1639,7 +1639,7 @@ func (b *SharedESBuffer) CleanupUnusedVariants(maxIdle time.Duration) int {
 		if v.LastAccess().Before(cutoff) {
 			delete(b.variants, variant)
 			removed++
-			b.config.Logger.Info("Cleaned up unused variant",
+			b.config.Logger.Debug("cleaned up unused variant",
 				slog.String("channel_id", b.channelID),
 				slog.String("variant", variant.String()),
 				slog.Duration("idle_time", time.Since(v.LastAccess())))

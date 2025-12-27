@@ -248,7 +248,7 @@ func SetDefaults(v *viper.Viper) {
 	// Logging defaults
 	v.SetDefault("logging.level", "info")
 	v.SetDefault("logging.format", "json")
-	v.SetDefault("logging.add_source", false)
+	v.SetDefault("logging.add_source", true)
 	v.SetDefault("logging.time_format", time.RFC3339)
 
 	// Ingestion defaults
