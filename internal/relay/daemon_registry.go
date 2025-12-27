@@ -181,12 +181,27 @@ func (r *DaemonRegistry) Unregister(daemonID types.DaemonID, reason string) {
 }
 
 // Get returns a daemon by ID.
+// WARNING: The returned pointer shares state with the registry. For thread-safe
+// field access after Get returns, use GetState or similar synchronized methods.
 func (r *DaemonRegistry) Get(daemonID types.DaemonID) (*types.Daemon, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	daemon, ok := r.daemons[daemonID]
 	return daemon, ok
+}
+
+// GetState returns the state of a daemon by ID, or DaemonStateDisconnected if not found.
+// This is a thread-safe way to check daemon state.
+func (r *DaemonRegistry) GetState(daemonID types.DaemonID) types.DaemonState {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	daemon, ok := r.daemons[daemonID]
+	if !ok {
+		return types.DaemonStateDisconnected
+	}
+	return daemon.State
 }
 
 // GetAll returns all registered daemons.

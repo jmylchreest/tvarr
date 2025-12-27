@@ -336,16 +336,20 @@ func TestRemoteDaemonHealthTracking(t *testing.T) {
 		_, err = client.Register(ctx, regReq)
 		require.NoError(t, err)
 
-		// Verify initially active
-		daemon, _ := registry.Get(types.DaemonID("health-test-daemon"))
-		assert.Equal(t, types.DaemonStateConnected, daemon.State)
+		// Helper to get daemon state safely (thread-safe via registry)
+		getDaemonState := func() types.DaemonState {
+			return registry.GetState(types.DaemonID("health-test-daemon"))
+		}
 
-		// Wait for health check to run (timeout + cleanup interval margin)
-		time.Sleep(3 * time.Second)
+		// Verify initially active using Eventually to avoid race
+		require.Eventually(t, func() bool {
+			return getDaemonState() == types.DaemonStateConnected
+		}, 1*time.Second, 50*time.Millisecond, "daemon should be connected initially")
 
-		// Verify marked unhealthy
-		daemon, _ = registry.Get(types.DaemonID("health-test-daemon"))
-		assert.Equal(t, types.DaemonStateUnhealthy, daemon.State, "daemon should be marked unhealthy")
+		// Wait for health check to mark it unhealthy
+		require.Eventually(t, func() bool {
+			return getDaemonState() == types.DaemonStateUnhealthy
+		}, 5*time.Second, 100*time.Millisecond, "daemon should be marked unhealthy after missed heartbeats")
 
 		// Send heartbeat to recover
 		hbReq := &proto.HeartbeatRequest{
@@ -354,9 +358,10 @@ func TestRemoteDaemonHealthTracking(t *testing.T) {
 		_, err = client.Heartbeat(ctx, hbReq)
 		require.NoError(t, err)
 
-		// Verify recovered
-		daemon, _ = registry.Get(types.DaemonID("health-test-daemon"))
-		assert.Equal(t, types.DaemonStateConnected, daemon.State, "daemon should recover after heartbeat")
+		// Verify recovered using Eventually
+		require.Eventually(t, func() bool {
+			return getDaemonState() == types.DaemonStateConnected
+		}, 2*time.Second, 50*time.Millisecond, "daemon should recover after heartbeat")
 	})
 }
 

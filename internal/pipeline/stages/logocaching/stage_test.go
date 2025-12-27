@@ -2,6 +2,7 @@ package logocaching
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,6 +35,7 @@ func testProgram(title string, iconURL string) *models.EpgProgram {
 
 // mockLogoCacher implements LogoCacher for testing.
 type mockLogoCacher struct {
+	mu          sync.RWMutex
 	cachedURLs  map[string]*storage.CachedLogoMetadata
 	cacheErrors map[string]error
 }
@@ -46,23 +48,32 @@ func newMockLogoCacher() *mockLogoCacher {
 }
 
 func (m *mockLogoCacher) CacheLogo(ctx context.Context, logoURL string) (*storage.CachedLogoMetadata, error) {
-	if err, ok := m.cacheErrors[logoURL]; ok {
+	m.mu.RLock()
+	err, hasErr := m.cacheErrors[logoURL]
+	m.mu.RUnlock()
+	if hasErr {
 		return nil, err
 	}
 	// Create new metadata for the logo
 	meta := storage.NewCachedLogoMetadata(logoURL)
 	meta.ContentType = "image/png"
+	m.mu.Lock()
 	m.cachedURLs[logoURL] = meta
+	m.mu.Unlock()
 	return meta, nil
 }
 
 func (m *mockLogoCacher) Contains(logoURL string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	_, ok := m.cachedURLs[logoURL]
 	return ok
 }
 
 // withCachedLogo pre-populates a cached logo.
 func (m *mockLogoCacher) withCachedLogo(url string) *mockLogoCacher {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	meta := storage.NewCachedLogoMetadata(url)
 	meta.ContentType = "image/png"
 	m.cachedURLs[url] = meta
@@ -71,12 +82,16 @@ func (m *mockLogoCacher) withCachedLogo(url string) *mockLogoCacher {
 
 // withCacheError makes CacheLogo return an error for a specific URL.
 func (m *mockLogoCacher) withCacheError(url string, err error) *mockLogoCacher {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.cacheErrors[url] = err
 	return m
 }
 
 // getCachedCount returns the number of logos cached during the test.
 func (m *mockLogoCacher) getCachedCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return len(m.cachedURLs)
 }
 

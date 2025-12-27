@@ -163,19 +163,23 @@ func TestNetworkPartition(t *testing.T) {
 	_, err = client.Register(ctx, regReq)
 	require.NoError(t, err)
 
-	// Verify daemon is active
-	daemon, _ := registry.Get(types.DaemonID("partition-test-daemon"))
-	assert.Equal(t, types.DaemonStateConnected, daemon.State)
+	// Helper to get daemon state safely (thread-safe via registry)
+	getDaemonState := func() types.DaemonState {
+		return registry.GetState(types.DaemonID("partition-test-daemon"))
+	}
+
+	// Verify daemon is active using Eventually to avoid race
+	require.Eventually(t, func() bool {
+		return getDaemonState() == types.DaemonStateConnected
+	}, 1*time.Second, 50*time.Millisecond, "daemon should be connected initially")
 
 	t.Logf("Daemon registered, simulating network partition (no heartbeats)...")
 
 	// Simulate network partition by not sending heartbeats
-	// Wait for heartbeat timeout + health check interval
-	time.Sleep(3 * time.Second)
-
-	// Daemon should be marked unhealthy
-	daemon, _ = registry.Get(types.DaemonID("partition-test-daemon"))
-	assert.Equal(t, types.DaemonStateUnhealthy, daemon.State, "daemon should be unhealthy after missed heartbeats")
+	// Wait for daemon to be marked unhealthy
+	require.Eventually(t, func() bool {
+		return getDaemonState() == types.DaemonStateUnhealthy
+	}, 5*time.Second, 100*time.Millisecond, "daemon should be unhealthy after missed heartbeats")
 
 	t.Logf("Network partition healed, sending heartbeat...")
 
@@ -187,8 +191,9 @@ func TestNetworkPartition(t *testing.T) {
 	require.NoError(t, err)
 
 	// Daemon should recover to active state
-	daemon, _ = registry.Get(types.DaemonID("partition-test-daemon"))
-	assert.Equal(t, types.DaemonStateConnected, daemon.State, "daemon should recover after heartbeat")
+	require.Eventually(t, func() bool {
+		return getDaemonState() == types.DaemonStateConnected
+	}, 2*time.Second, 50*time.Millisecond, "daemon should recover after heartbeat")
 }
 
 // TestDaemonCrashRecovery tests coordinator handling of daemon crash.
