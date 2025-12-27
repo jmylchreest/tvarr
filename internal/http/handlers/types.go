@@ -35,71 +35,75 @@ type PaginationMeta struct {
 
 // StreamSourceResponse represents a stream source in API responses.
 type StreamSourceResponse struct {
-	ID                  models.ULID         `json:"id"`
-	CreatedAt           time.Time           `json:"created_at"`
-	UpdatedAt           time.Time           `json:"updated_at"`
-	Name                string              `json:"name"`
-	Type                models.SourceType   `json:"type"`
-	URL                 string              `json:"url"`
-	Username            string              `json:"username,omitempty"`
-	UserAgent           string              `json:"user_agent,omitempty"`
-	Enabled             bool                `json:"enabled"`
-	Priority            int                 `json:"priority"`
-	Status              models.SourceStatus `json:"status"`
-	LastIngestionAt     *time.Time          `json:"last_ingestion_at,omitempty"`
-	LastError           string              `json:"last_error,omitempty"`
-	ChannelCount        int                 `json:"channel_count"`
-	CronSchedule        string              `json:"cron_schedule,omitempty"`
-	NextScheduledUpdate *time.Time          `json:"next_scheduled_update,omitempty"`
+	ID                   models.ULID         `json:"id"`
+	CreatedAt            time.Time           `json:"created_at"`
+	UpdatedAt            time.Time           `json:"updated_at"`
+	Name                 string              `json:"name"`
+	Type                 models.SourceType   `json:"type"`
+	URL                  string              `json:"url"`
+	Username             string              `json:"username,omitempty"`
+	UserAgent            string              `json:"user_agent,omitempty"`
+	Enabled              bool                `json:"enabled"`
+	Priority             int                 `json:"priority"`
+	MaxConcurrentStreams int                 `json:"max_concurrent_streams"`
+	Status               models.SourceStatus `json:"status"`
+	LastIngestionAt      *time.Time          `json:"last_ingestion_at,omitempty"`
+	LastError            string              `json:"last_error,omitempty"`
+	ChannelCount         int                 `json:"channel_count"`
+	CronSchedule         string              `json:"cron_schedule,omitempty"`
+	NextScheduledUpdate  *time.Time          `json:"next_scheduled_update,omitempty"`
 }
 
 // StreamSourceFromModel converts a model to a response.
 func StreamSourceFromModel(s *models.StreamSource) StreamSourceResponse {
 	return StreamSourceResponse{
-		ID:                  s.ID,
-		CreatedAt:           s.CreatedAt,
-		UpdatedAt:           s.UpdatedAt,
-		Name:                s.Name,
-		Type:                s.Type,
-		URL:                 s.URL,
-		Username:            s.Username,
-		UserAgent:           s.UserAgent,
-		Enabled:             models.BoolVal(s.Enabled),
-		Priority:            s.Priority,
-		Status:              s.Status,
-		LastIngestionAt:     s.LastIngestionAt,
-		LastError:           s.LastError,
-		ChannelCount:        s.ChannelCount,
-		CronSchedule:        s.CronSchedule,
-		NextScheduledUpdate: scheduler.CalculateNextRun(s.CronSchedule),
+		ID:                   s.ID,
+		CreatedAt:            s.CreatedAt,
+		UpdatedAt:            s.UpdatedAt,
+		Name:                 s.Name,
+		Type:                 s.Type,
+		URL:                  s.URL,
+		Username:             s.Username,
+		UserAgent:            s.UserAgent,
+		Enabled:              models.BoolVal(s.Enabled),
+		Priority:             s.Priority,
+		MaxConcurrentStreams: s.MaxConcurrentStreams,
+		Status:               s.Status,
+		LastIngestionAt:      s.LastIngestionAt,
+		LastError:            s.LastError,
+		ChannelCount:         s.ChannelCount,
+		CronSchedule:         s.CronSchedule,
+		NextScheduledUpdate:  scheduler.CalculateNextRun(s.CronSchedule),
 	}
 }
 
 // CreateStreamSourceRequest is the request body for creating a stream source.
 type CreateStreamSourceRequest struct {
-	Name         string            `json:"name" doc:"User-friendly name for the source" minLength:"1" maxLength:"255"`
-	Type         models.SourceType `json:"type" doc:"Source type: m3u or xtream" enum:"m3u,xtream"`
-	URL          string            `json:"url" doc:"M3U playlist URL or Xtream server URL" minLength:"1" maxLength:"2048"`
-	Username     string            `json:"username,omitempty" doc:"Username for Xtream authentication" maxLength:"255"`
-	Password     string            `json:"password,omitempty" doc:"Password for Xtream authentication" maxLength:"255"`
-	UserAgent    string            `json:"user_agent,omitempty" doc:"Custom User-Agent header" maxLength:"512"`
-	Enabled      *bool             `json:"enabled,omitempty" doc:"Whether the source is enabled (default: true)"`
-	Priority     *int              `json:"priority,omitempty" doc:"Priority for channel merging (higher = preferred)"`
-	CronSchedule string            `json:"cron_schedule,omitempty" doc:"Cron schedule for automatic ingestion" maxLength:"100"`
+	Name                 string            `json:"name" doc:"User-friendly name for the source" minLength:"1" maxLength:"255"`
+	Type                 models.SourceType `json:"type" doc:"Source type: m3u or xtream" enum:"m3u,xtream"`
+	URL                  string            `json:"url" doc:"M3U playlist URL or Xtream server URL" minLength:"1" maxLength:"2048"`
+	Username             string            `json:"username,omitempty" doc:"Username for Xtream authentication" maxLength:"255"`
+	Password             string            `json:"password,omitempty" doc:"Password for Xtream authentication" maxLength:"255"`
+	UserAgent            string            `json:"user_agent,omitempty" doc:"Custom User-Agent header" maxLength:"512"`
+	Enabled              *bool             `json:"enabled,omitempty" doc:"Whether the source is enabled (default: true)"`
+	Priority             *int              `json:"priority,omitempty" doc:"Priority for channel merging (higher = preferred)"`
+	MaxConcurrentStreams *int              `json:"max_concurrent_streams,omitempty" doc:"Max concurrent streams from this source (0 = unlimited, default: 1)"`
+	CronSchedule         string            `json:"cron_schedule,omitempty" doc:"Cron schedule for automatic ingestion" maxLength:"100"`
 }
 
 // ToModel converts the request to a model.
 func (r *CreateStreamSourceRequest) ToModel() *models.StreamSource {
 	source := &models.StreamSource{
-		Name:         r.Name,
-		Type:         r.Type,
-		URL:          r.URL,
-		Username:     r.Username,
-		Password:     r.Password,
-		UserAgent:    r.UserAgent,
-		Enabled:      models.BoolPtr(true),
-		Priority:     0,
-		CronSchedule: r.CronSchedule,
+		Name:                 r.Name,
+		Type:                 r.Type,
+		URL:                  r.URL,
+		Username:             r.Username,
+		Password:             r.Password,
+		UserAgent:            r.UserAgent,
+		Enabled:              models.BoolPtr(true),
+		Priority:             0,
+		MaxConcurrentStreams: 1, // Default: 1 concurrent stream
+		CronSchedule:         r.CronSchedule,
 	}
 	if r.Enabled != nil {
 		source.Enabled = r.Enabled
@@ -107,20 +111,24 @@ func (r *CreateStreamSourceRequest) ToModel() *models.StreamSource {
 	if r.Priority != nil {
 		source.Priority = *r.Priority
 	}
+	if r.MaxConcurrentStreams != nil {
+		source.MaxConcurrentStreams = *r.MaxConcurrentStreams
+	}
 	return source
 }
 
 // UpdateStreamSourceRequest is the request body for updating a stream source.
 type UpdateStreamSourceRequest struct {
-	Name         *string            `json:"name,omitempty" doc:"User-friendly name for the source" maxLength:"255"`
-	Type         *models.SourceType `json:"type,omitempty" doc:"Source type: m3u or xtream" enum:"m3u,xtream"`
-	URL          *string            `json:"url,omitempty" doc:"M3U playlist URL or Xtream server URL" maxLength:"2048"`
-	Username     *string            `json:"username,omitempty" doc:"Username for Xtream authentication" maxLength:"255"`
-	Password     *string            `json:"password,omitempty" doc:"Password for Xtream authentication" maxLength:"255"`
-	UserAgent    *string            `json:"user_agent,omitempty" doc:"Custom User-Agent header" maxLength:"512"`
-	Enabled      *bool              `json:"enabled,omitempty" doc:"Whether the source is enabled"`
-	Priority     *int               `json:"priority,omitempty" doc:"Priority for channel merging"`
-	CronSchedule *string            `json:"cron_schedule,omitempty" doc:"Cron schedule for automatic ingestion" maxLength:"100"`
+	Name                 *string            `json:"name,omitempty" doc:"User-friendly name for the source" maxLength:"255"`
+	Type                 *models.SourceType `json:"type,omitempty" doc:"Source type: m3u or xtream" enum:"m3u,xtream"`
+	URL                  *string            `json:"url,omitempty" doc:"M3U playlist URL or Xtream server URL" maxLength:"2048"`
+	Username             *string            `json:"username,omitempty" doc:"Username for Xtream authentication" maxLength:"255"`
+	Password             *string            `json:"password,omitempty" doc:"Password for Xtream authentication" maxLength:"255"`
+	UserAgent            *string            `json:"user_agent,omitempty" doc:"Custom User-Agent header" maxLength:"512"`
+	Enabled              *bool              `json:"enabled,omitempty" doc:"Whether the source is enabled"`
+	Priority             *int               `json:"priority,omitempty" doc:"Priority for channel merging"`
+	MaxConcurrentStreams *int               `json:"max_concurrent_streams,omitempty" doc:"Max concurrent streams from this source (0 = unlimited)"`
+	CronSchedule         *string            `json:"cron_schedule,omitempty" doc:"Cron schedule for automatic ingestion" maxLength:"100"`
 }
 
 // ApplyToModel applies the update request to an existing model.
@@ -148,6 +156,9 @@ func (r *UpdateStreamSourceRequest) ApplyToModel(s *models.StreamSource) {
 	}
 	if r.Priority != nil {
 		s.Priority = *r.Priority
+	}
+	if r.MaxConcurrentStreams != nil {
+		s.MaxConcurrentStreams = *r.MaxConcurrentStreams
 	}
 	if r.CronSchedule != nil {
 		s.CronSchedule = *r.CronSchedule
