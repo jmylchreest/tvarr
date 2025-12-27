@@ -411,6 +411,9 @@ func convertProtoCapabilities(caps *proto.Capabilities) *types.Capabilities {
 		AudioEncoders:     caps.AudioEncoders,
 		AudioDecoders:     caps.AudioDecoders,
 		MaxConcurrentJobs: int(caps.MaxConcurrentJobs),
+		MaxCPUJobs:        int(caps.MaxCpuJobs),
+		MaxGPUJobs:        int(caps.MaxGpuJobs),
+		MaxProbeJobs:      int(caps.MaxProbeJobs),
 	}
 
 	// Convert HW accels

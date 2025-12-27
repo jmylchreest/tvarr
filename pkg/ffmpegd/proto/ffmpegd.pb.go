@@ -845,10 +845,17 @@ type Capabilities struct {
 	AudioEncoders []string `protobuf:"bytes,5,rep,name=audio_encoders,json=audioEncoders,proto3" json:"audio_encoders,omitempty"`
 	// Supported audio decoders (e.g., aac, ac3, eac3, mp3)
 	AudioDecoders []string `protobuf:"bytes,6,rep,name=audio_decoders,json=audioDecoders,proto3" json:"audio_decoders,omitempty"`
-	// Maximum concurrent transcoding jobs this daemon will accept
+	// Maximum concurrent transcoding jobs this daemon will accept (overall guard)
 	MaxConcurrentJobs int32 `protobuf:"varint,7,opt,name=max_concurrent_jobs,json=maxConcurrentJobs,proto3" json:"max_concurrent_jobs,omitempty"`
 	// Optional performance benchmark results
-	Performance   *PerformanceMetrics `protobuf:"bytes,8,opt,name=performance,proto3" json:"performance,omitempty"`
+	Performance *PerformanceMetrics `protobuf:"bytes,8,opt,name=performance,proto3" json:"performance,omitempty"`
+	// Optional overrides for type-specific job limits (0 = use detected defaults)
+	// max_cpu_jobs: defaults to detected CPU cores
+	// max_gpu_jobs: defaults to sum of GPU encode sessions
+	// max_probe_jobs: defaults to max_concurrent_jobs
+	MaxCpuJobs    int32 `protobuf:"varint,9,opt,name=max_cpu_jobs,json=maxCpuJobs,proto3" json:"max_cpu_jobs,omitempty"`
+	MaxGpuJobs    int32 `protobuf:"varint,10,opt,name=max_gpu_jobs,json=maxGpuJobs,proto3" json:"max_gpu_jobs,omitempty"`
+	MaxProbeJobs  int32 `protobuf:"varint,11,opt,name=max_probe_jobs,json=maxProbeJobs,proto3" json:"max_probe_jobs,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -937,6 +944,27 @@ func (x *Capabilities) GetPerformance() *PerformanceMetrics {
 		return x.Performance
 	}
 	return nil
+}
+
+func (x *Capabilities) GetMaxCpuJobs() int32 {
+	if x != nil {
+		return x.MaxCpuJobs
+	}
+	return 0
+}
+
+func (x *Capabilities) GetMaxGpuJobs() int32 {
+	if x != nil {
+		return x.MaxGpuJobs
+	}
+	return 0
+}
+
+func (x *Capabilities) GetMaxProbeJobs() int32 {
+	if x != nil {
+		return x.MaxProbeJobs
+	}
+	return 0
 }
 
 // HWAccelInfo describes a hardware acceleration method.
@@ -2380,8 +2408,10 @@ type TranscodeAck struct {
 	ActualVideoEncoder string `protobuf:"bytes,3,opt,name=actual_video_encoder,json=actualVideoEncoder,proto3" json:"actual_video_encoder,omitempty"`
 	ActualAudioEncoder string `protobuf:"bytes,4,opt,name=actual_audio_encoder,json=actualAudioEncoder,proto3" json:"actual_audio_encoder,omitempty"`
 	ActualHwAccel      string `protobuf:"bytes,5,opt,name=actual_hw_accel,json=actualHwAccel,proto3" json:"actual_hw_accel,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Job ID for multi-job stream routing
+	JobId         string `protobuf:"bytes,6,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *TranscodeAck) Reset() {
@@ -2449,6 +2479,13 @@ func (x *TranscodeAck) GetActualHwAccel() string {
 	return ""
 }
 
+func (x *TranscodeAck) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
 // ESSampleBatch groups elementary stream samples for efficient transport
 type ESSampleBatch struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
@@ -2458,6 +2495,8 @@ type ESSampleBatch struct {
 	IsSource bool `protobuf:"varint,3,opt,name=is_source,json=isSource,proto3" json:"is_source,omitempty"` // true = source samples from coordinator
 	// Batch sequence for ordering
 	BatchSequence uint64 `protobuf:"varint,4,opt,name=batch_sequence,json=batchSequence,proto3" json:"batch_sequence,omitempty"`
+	// Job ID for multi-job stream routing
+	JobId         string `protobuf:"bytes,5,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2518,6 +2557,13 @@ func (x *ESSampleBatch) GetBatchSequence() uint64 {
 		return x.BatchSequence
 	}
 	return 0
+}
+
+func (x *ESSampleBatch) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
 }
 
 // ESSample represents a single elementary stream sample
@@ -2613,6 +2659,8 @@ type TranscodeStats struct {
 	HwDevice string `protobuf:"bytes,11,opt,name=hw_device,json=hwDevice,proto3" json:"hw_device,omitempty"` // Device path: /dev/dri/renderD128, cuda:0, etc.
 	// FFmpeg command for debugging
 	FfmpegCommand string `protobuf:"bytes,12,opt,name=ffmpeg_command,json=ffmpegCommand,proto3" json:"ffmpeg_command,omitempty"` // Full FFmpeg command line being executed
+	// Job ID for multi-job stream routing
+	JobId         string `protobuf:"bytes,13,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2731,12 +2779,21 @@ func (x *TranscodeStats) GetFfmpegCommand() string {
 	return ""
 }
 
+func (x *TranscodeStats) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
 type TranscodeError struct {
-	state         protoimpl.MessageState   `protogen:"open.v1"`
-	Code          TranscodeError_ErrorCode `protobuf:"varint,1,opt,name=code,proto3,enum=ffmpegd.TranscodeError_ErrorCode" json:"code,omitempty"`
-	Message       string                   `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	FfmpegStderr  string                   `protobuf:"bytes,3,opt,name=ffmpeg_stderr,json=ffmpegStderr,proto3" json:"ffmpeg_stderr,omitempty"` // Last N lines of FFmpeg stderr
-	Recoverable   bool                     `protobuf:"varint,4,opt,name=recoverable,proto3" json:"recoverable,omitempty"`                      // Can retry with fallback?
+	state        protoimpl.MessageState   `protogen:"open.v1"`
+	Code         TranscodeError_ErrorCode `protobuf:"varint,1,opt,name=code,proto3,enum=ffmpegd.TranscodeError_ErrorCode" json:"code,omitempty"`
+	Message      string                   `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	FfmpegStderr string                   `protobuf:"bytes,3,opt,name=ffmpeg_stderr,json=ffmpegStderr,proto3" json:"ffmpeg_stderr,omitempty"` // Last N lines of FFmpeg stderr
+	Recoverable  bool                     `protobuf:"varint,4,opt,name=recoverable,proto3" json:"recoverable,omitempty"`                      // Can retry with fallback?
+	// Job ID for multi-job stream routing
+	JobId         string `protobuf:"bytes,5,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2799,9 +2856,18 @@ func (x *TranscodeError) GetRecoverable() bool {
 	return false
 }
 
+func (x *TranscodeError) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
 type TranscodeStop struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Reason        string                 `protobuf:"bytes,1,opt,name=reason,proto3" json:"reason,omitempty"` // "session_ended", "client_disconnected", "cancelled"
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Reason string                 `protobuf:"bytes,1,opt,name=reason,proto3" json:"reason,omitempty"` // "session_ended", "client_disconnected", "cancelled"
+	// Job ID for multi-job stream routing
+	JobId         string `protobuf:"bytes,2,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2843,6 +2909,13 @@ func (x *TranscodeStop) GetReason() string {
 	return ""
 }
 
+func (x *TranscodeStop) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
 // TranscodeInputComplete signals that all input has been sent (source EOF).
 // This allows the daemon to let FFmpeg flush its encoder and produce remaining
 // output, without immediately killing the FFmpeg process.
@@ -2851,7 +2924,9 @@ func (x *TranscodeStop) GetReason() string {
 type TranscodeInputComplete struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Reason for input completion (for logging)
-	Reason        string `protobuf:"bytes,1,opt,name=reason,proto3" json:"reason,omitempty"` // "source_eof", "stream_ended"
+	Reason string `protobuf:"bytes,1,opt,name=reason,proto3" json:"reason,omitempty"` // "source_eof", "stream_ended"
+	// Job ID for multi-job stream routing
+	JobId         string `protobuf:"bytes,2,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2889,6 +2964,13 @@ func (*TranscodeInputComplete) Descriptor() ([]byte, []int) {
 func (x *TranscodeInputComplete) GetReason() string {
 	if x != nil {
 		return x.Reason
+	}
+	return ""
+}
+
+func (x *TranscodeInputComplete) GetJobId() string {
+	if x != nil {
+		return x.JobId
 	}
 	return ""
 }
@@ -3318,7 +3400,7 @@ const file_pkg_ffmpegd_proto_ffmpegd_proto_rawDesc = "" +
 	"session_id\x18\x02 \x01(\tR\tsessionId\x12!\n" +
 	"\fchannel_name\x18\x03 \x01(\tR\vchannelName\x12-\n" +
 	"\x05stats\x18\x04 \x01(\v2\x17.ffmpegd.TranscodeStatsR\x05stats\x12<\n" +
-	"\frunning_time\x18\x05 \x01(\v2\x19.google.protobuf.DurationR\vrunningTime\"\xf2\x02\n" +
+	"\frunning_time\x18\x05 \x01(\v2\x19.google.protobuf.DurationR\vrunningTime\"\xdc\x03\n" +
 	"\fCapabilities\x121\n" +
 	"\thw_accels\x18\x01 \x03(\v2\x14.ffmpegd.HWAccelInfoR\bhwAccels\x12$\n" +
 	"\x04gpus\x18\x02 \x03(\v2\x10.ffmpegd.GPUInfoR\x04gpus\x12%\n" +
@@ -3327,7 +3409,13 @@ const file_pkg_ffmpegd_proto_ffmpegd_proto_rawDesc = "" +
 	"\x0eaudio_encoders\x18\x05 \x03(\tR\raudioEncoders\x12%\n" +
 	"\x0eaudio_decoders\x18\x06 \x03(\tR\raudioDecoders\x12.\n" +
 	"\x13max_concurrent_jobs\x18\a \x01(\x05R\x11maxConcurrentJobs\x12=\n" +
-	"\vperformance\x18\b \x01(\v2\x1b.ffmpegd.PerformanceMetricsR\vperformance\"\xe0\x01\n" +
+	"\vperformance\x18\b \x01(\v2\x1b.ffmpegd.PerformanceMetricsR\vperformance\x12 \n" +
+	"\fmax_cpu_jobs\x18\t \x01(\x05R\n" +
+	"maxCpuJobs\x12 \n" +
+	"\fmax_gpu_jobs\x18\n" +
+	" \x01(\x05R\n" +
+	"maxGpuJobs\x12$\n" +
+	"\x0emax_probe_jobs\x18\v \x01(\x05R\fmaxProbeJobs\"\xe0\x01\n" +
 	"\vHWAccelInfo\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x16\n" +
 	"\x06device\x18\x02 \x01(\tR\x06device\x12\x1c\n" +
@@ -3475,25 +3563,27 @@ const file_pkg_ffmpegd_proto_ffmpegd_proto_rawDesc = "" +
 	"\x0etarget_encoder\x18\x03 \x01(\tR\rtargetEncoder\x12$\n" +
 	"\x0ehw_accel_match\x18\x04 \x01(\tR\fhwAccelMatch\x12\x1b\n" +
 	"\tcpu_match\x18\x05 \x01(\tR\bcpuMatch\x12\x1a\n" +
-	"\bpriority\x18\x06 \x01(\x05R\bpriority\"\xca\x01\n" +
+	"\bpriority\x18\x06 \x01(\x05R\bpriority\"\xe1\x01\n" +
 	"\fTranscodeAck\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x120\n" +
 	"\x14actual_video_encoder\x18\x03 \x01(\tR\x12actualVideoEncoder\x120\n" +
 	"\x14actual_audio_encoder\x18\x04 \x01(\tR\x12actualAudioEncoder\x12&\n" +
-	"\x0factual_hw_accel\x18\x05 \x01(\tR\ractualHwAccel\"\xc3\x01\n" +
+	"\x0factual_hw_accel\x18\x05 \x01(\tR\ractualHwAccel\x12\x15\n" +
+	"\x06job_id\x18\x06 \x01(\tR\x05jobId\"\xda\x01\n" +
 	"\rESSampleBatch\x126\n" +
 	"\rvideo_samples\x18\x01 \x03(\v2\x11.ffmpegd.ESSampleR\fvideoSamples\x126\n" +
 	"\raudio_samples\x18\x02 \x03(\v2\x11.ffmpegd.ESSampleR\faudioSamples\x12\x1b\n" +
 	"\tis_source\x18\x03 \x01(\bR\bisSource\x12%\n" +
-	"\x0ebatch_sequence\x18\x04 \x01(\x04R\rbatchSequence\"\x7f\n" +
+	"\x0ebatch_sequence\x18\x04 \x01(\x04R\rbatchSequence\x12\x15\n" +
+	"\x06job_id\x18\x05 \x01(\tR\x05jobId\"\x7f\n" +
 	"\bESSample\x12\x10\n" +
 	"\x03pts\x18\x01 \x01(\x03R\x03pts\x12\x10\n" +
 	"\x03dts\x18\x02 \x01(\x03R\x03dts\x12\x12\n" +
 	"\x04data\x18\x03 \x01(\fR\x04data\x12\x1f\n" +
 	"\vis_keyframe\x18\x04 \x01(\bR\n" +
 	"isKeyframe\x12\x1a\n" +
-	"\bsequence\x18\x05 \x01(\x04R\bsequence\"\xa9\x03\n" +
+	"\bsequence\x18\x05 \x01(\x04R\bsequence\"\xc0\x03\n" +
 	"\x0eTranscodeStats\x12\x1d\n" +
 	"\n" +
 	"samples_in\x18\x01 \x01(\x04R\tsamplesIn\x12\x1f\n" +
@@ -3511,12 +3601,14 @@ const file_pkg_ffmpegd_proto_ffmpegd_proto_rawDesc = "" +
 	"\bhw_accel\x18\n" +
 	" \x01(\tR\ahwAccel\x12\x1b\n" +
 	"\thw_device\x18\v \x01(\tR\bhwDevice\x12%\n" +
-	"\x0effmpeg_command\x18\f \x01(\tR\rffmpegCommand\"\xe1\x02\n" +
+	"\x0effmpeg_command\x18\f \x01(\tR\rffmpegCommand\x12\x15\n" +
+	"\x06job_id\x18\r \x01(\tR\x05jobId\"\xf8\x02\n" +
 	"\x0eTranscodeError\x125\n" +
 	"\x04code\x18\x01 \x01(\x0e2!.ffmpegd.TranscodeError.ErrorCodeR\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12#\n" +
 	"\rffmpeg_stderr\x18\x03 \x01(\tR\fffmpegStderr\x12 \n" +
-	"\vrecoverable\x18\x04 \x01(\bR\vrecoverable\"\xb6\x01\n" +
+	"\vrecoverable\x18\x04 \x01(\bR\vrecoverable\x12\x15\n" +
+	"\x06job_id\x18\x05 \x01(\tR\x05jobId\"\xb6\x01\n" +
 	"\tErrorCode\x12\x15\n" +
 	"\x11ERROR_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13FFMPEG_START_FAILED\x10\x01\x12\x12\n" +
@@ -3525,11 +3617,13 @@ const file_pkg_ffmpegd_proto_ffmpegd_proto_rawDesc = "" +
 	"\x0fHW_ACCEL_FAILED\x10\x04\x12\x19\n" +
 	"\x15SESSION_LIMIT_REACHED\x10\x05\x12\x11\n" +
 	"\rOUT_OF_MEMORY\x10\x06\x12\v\n" +
-	"\aTIMEOUT\x10\a\"'\n" +
+	"\aTIMEOUT\x10\a\">\n" +
 	"\rTranscodeStop\x12\x16\n" +
-	"\x06reason\x18\x01 \x01(\tR\x06reason\"0\n" +
+	"\x06reason\x18\x01 \x01(\tR\x06reason\x12\x15\n" +
+	"\x06job_id\x18\x02 \x01(\tR\x05jobId\"G\n" +
 	"\x16TranscodeInputComplete\x12\x16\n" +
-	"\x06reason\x18\x01 \x01(\tR\x06reason\"^\n" +
+	"\x06reason\x18\x01 \x01(\tR\x06reason\x12\x15\n" +
+	"\x06job_id\x18\x02 \x01(\tR\x05jobId\"^\n" +
 	"\x0fGetStatsRequest\x12\x1b\n" +
 	"\tdaemon_id\x18\x01 \x01(\tR\bdaemonId\x12.\n" +
 	"\x13include_job_details\x18\x02 \x01(\bR\x11includeJobDetails\"\x98\x03\n" +

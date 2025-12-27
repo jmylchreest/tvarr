@@ -16,6 +16,14 @@ type SelectionCriteria struct {
 	// Required decoder (e.g., "h264_cuvid", "hevc")
 	RequiredDecoder string
 
+	// Source codec for HW transcode preference (e.g., "h264", "hevc")
+	// Used to check if daemon has HW decoder for source
+	SourceCodec string
+
+	// Target codec for HW transcode preference (e.g., "h264", "hevc")
+	// Used to check if daemon has HW encoder for target
+	TargetCodec string
+
 	// Required HW accel type (e.g., "nvenc", "vaapi", "qsv")
 	RequiredHWAccel types.HWAccelType
 
@@ -271,6 +279,99 @@ func (s *StrategyGPUAware) Select(daemons []*types.Daemon, criteria SelectionCri
 	return candidates[0].daemon
 }
 
+// StrategyFullHWTranscode prefers daemons that can do full hardware transcoding
+// (HW decode of source + HW encode of target). This is optimal as frames stay on GPU.
+// Falls back to HW encode only, then any capable daemon.
+type StrategyFullHWTranscode struct{}
+
+func NewStrategyFullHWTranscode() *StrategyFullHWTranscode {
+	return &StrategyFullHWTranscode{}
+}
+
+func (s *StrategyFullHWTranscode) Name() string {
+	return "full-hw-transcode"
+}
+
+func (s *StrategyFullHWTranscode) Select(daemons []*types.Daemon, criteria SelectionCriteria) *types.Daemon {
+	// Need source and target codecs to evaluate HW transcode capability
+	if criteria.SourceCodec == "" || criteria.TargetCodec == "" {
+		return nil // Can't evaluate without codec info
+	}
+
+	type scored struct {
+		daemon         *types.Daemon
+		hasFullHW      bool // Has both HW decoder and HW encoder
+		hasHWEncode    bool // Has HW encoder only
+		availSessions  int
+		jobLoadPercent float64
+	}
+
+	var candidates []scored
+
+	for _, d := range daemons {
+		if d.Capabilities == nil || !d.CanAcceptJobs() {
+			continue
+		}
+
+		// Check required encoder if specified
+		if criteria.RequiredEncoder != "" && !d.Capabilities.HasEncoder(criteria.RequiredEncoder) {
+			continue
+		}
+
+		// Check required decoder if specified
+		if criteria.RequiredDecoder != "" && !d.Capabilities.HasDecoder(criteria.RequiredDecoder) {
+			continue
+		}
+
+		// Calculate GPU session availability
+		avail, _ := d.GPUSessionAvailability()
+		if criteria.RequireGPU && avail == 0 {
+			continue
+		}
+
+		// Check HW capabilities using the helper functions
+		hasFullHW := CanDoFullHWTranscode(criteria.SourceCodec, criteria.TargetCodec, d)
+		hasHWEncode := HasHWEncoder(criteria.TargetCodec, d)
+
+		jobLoad := float64(0)
+		if d.Capabilities.MaxConcurrentJobs > 0 {
+			jobLoad = float64(d.ActiveJobs) / float64(d.Capabilities.MaxConcurrentJobs)
+		}
+
+		candidates = append(candidates, scored{
+			daemon:         d,
+			hasFullHW:      hasFullHW,
+			hasHWEncode:    hasHWEncode,
+			availSessions:  avail,
+			jobLoadPercent: jobLoad,
+		})
+	}
+
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	// Sort by: full HW transcode > HW encode only > most sessions > least loaded
+	sort.Slice(candidates, func(i, j int) bool {
+		// Prefer full HW transcode
+		if candidates[i].hasFullHW != candidates[j].hasFullHW {
+			return candidates[i].hasFullHW
+		}
+		// Then prefer HW encode
+		if candidates[i].hasHWEncode != candidates[j].hasHWEncode {
+			return candidates[i].hasHWEncode
+		}
+		// Then prefer more available sessions
+		if candidates[i].availSessions != candidates[j].availSessions {
+			return candidates[i].availSessions > candidates[j].availSessions
+		}
+		// Finally, prefer least loaded
+		return candidates[i].jobLoadPercent < candidates[j].jobLoadPercent
+	})
+
+	return candidates[0].daemon
+}
+
 // StrategyRoundRobin cycles through daemons in order.
 // Maintains state across calls to distribute load evenly.
 type StrategyRoundRobin struct {
@@ -408,9 +509,20 @@ func selectLeastLoaded(daemons []*types.Daemon) *types.Daemon {
 // Uses capability matching with GPU awareness for hardware encoders.
 func DefaultSelectionStrategy() SelectionStrategy {
 	return NewStrategyChain(
+		NewStrategyFullHWTranscode(), // Prefer full HW transcode (decode+encode on GPU)
+		NewStrategyGPUAware(),        // Then prefer GPU encode
+		NewStrategyCapabilityMatch(), // Then capability match
+		NewStrategyLeastLoaded(),     // Finally least loaded
+	)
+}
+
+// TranscodingSelectionStrategy returns a strategy optimized for transcoding.
+// Prefers full hardware transcode path (HW decode + HW encode) when available.
+func TranscodingSelectionStrategy() SelectionStrategy {
+	return NewStrategyChain(
+		NewStrategyFullHWTranscode(),
 		NewStrategyGPUAware(),
 		NewStrategyCapabilityMatch(),
-		NewStrategyLeastLoaded(),
 	)
 }
 

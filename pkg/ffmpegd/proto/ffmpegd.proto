@@ -176,11 +176,19 @@ message Capabilities {
   // Supported audio decoders (e.g., aac, ac3, eac3, mp3)
   repeated string audio_decoders = 6;
 
-  // Maximum concurrent transcoding jobs this daemon will accept
+  // Maximum concurrent transcoding jobs this daemon will accept (overall guard)
   int32 max_concurrent_jobs = 7;
 
   // Optional performance benchmark results
   PerformanceMetrics performance = 8;
+
+  // Optional overrides for type-specific job limits (0 = use detected defaults)
+  // max_cpu_jobs: defaults to detected CPU cores
+  // max_gpu_jobs: defaults to sum of GPU encode sessions
+  // max_probe_jobs: defaults to max_concurrent_jobs
+  int32 max_cpu_jobs = 9;
+  int32 max_gpu_jobs = 10;
+  int32 max_probe_jobs = 11;
 }
 
 // HWAccelInfo describes a hardware acceleration method.
@@ -452,6 +460,9 @@ message TranscodeAck {
   string actual_video_encoder = 3;
   string actual_audio_encoder = 4;
   string actual_hw_accel = 5;
+
+  // Job ID for multi-job stream routing
+  string job_id = 6;
 }
 
 // ESSampleBatch groups elementary stream samples for efficient transport
@@ -465,6 +476,9 @@ message ESSampleBatch {
 
   // Batch sequence for ordering
   uint64 batch_sequence = 4;
+
+  // Job ID for multi-job stream routing
+  string job_id = 5;
 }
 
 // ESSample represents a single elementary stream sample
@@ -493,6 +507,9 @@ message TranscodeStats {
 
   // FFmpeg command for debugging
   string ffmpeg_command = 12;  // Full FFmpeg command line being executed
+
+  // Job ID for multi-job stream routing
+  string job_id = 13;
 }
 
 message TranscodeError {
@@ -510,10 +527,16 @@ message TranscodeError {
   string message = 2;
   string ffmpeg_stderr = 3;  // Last N lines of FFmpeg stderr
   bool recoverable = 4;      // Can retry with fallback?
+
+  // Job ID for multi-job stream routing
+  string job_id = 5;
 }
 
 message TranscodeStop {
   string reason = 1;  // "session_ended", "client_disconnected", "cancelled"
+
+  // Job ID for multi-job stream routing
+  string job_id = 2;
 }
 
 // TranscodeInputComplete signals that all input has been sent (source EOF).
@@ -524,6 +547,9 @@ message TranscodeStop {
 message TranscodeInputComplete {
   // Reason for input completion (for logging)
   string reason = 1;  // "source_eof", "stream_ended"
+
+  // Job ID for multi-job stream routing
+  string job_id = 2;
 }
 
 // =============================================================================

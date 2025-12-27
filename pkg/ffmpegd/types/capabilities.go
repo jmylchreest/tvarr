@@ -12,8 +12,16 @@ type Capabilities struct {
 	AudioEncoders []string `json:"audio_encoders"`
 	AudioDecoders []string `json:"audio_decoders"`
 
-	// Capacity
+	// Capacity limits - MaxConcurrentJobs is the overall guard limit
 	MaxConcurrentJobs int `json:"max_concurrent_jobs"`
+
+	// Optional overrides for CPU/GPU job limits (if 0, use detected defaults)
+	// MaxCPUJobs: defaults to detected CPU cores
+	// MaxGPUJobs: defaults to sum of GPU encode sessions
+	// MaxProbeJobs: defaults to MaxConcurrentJobs
+	MaxCPUJobs   int `json:"max_cpu_jobs,omitempty"`
+	MaxGPUJobs   int `json:"max_gpu_jobs,omitempty"`
+	MaxProbeJobs int `json:"max_probe_jobs,omitempty"`
 
 	// Performance baseline (optional benchmarks)
 	Performance *PerformanceMetrics `json:"performance,omitempty"`

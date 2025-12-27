@@ -78,6 +78,10 @@ type ESTranscoderConfig struct {
 	// Default: auto-select based on target codec (fmp4 for av1/vp9, mpegts for h264/h265)
 	OutputFormat string
 
+	// JobType indicates whether this job uses CPU (software) or GPU (hardware) encoding.
+	// Used for slot-type-aware load balancing.
+	JobType JobType
+
 	// Logger for structured logging.
 	Logger *slog.Logger
 }
@@ -398,6 +402,7 @@ func (t *ESTranscoder) startLocal(sourceKey CodecVariant) (*DaemonStream, error)
 		t.config.ChannelName,
 		t.buffer,
 		startConfig,
+		t.config.JobType,
 	)
 	if err != nil {
 		t.cleanup()
@@ -409,10 +414,10 @@ func (t *ESTranscoder) startLocal(sourceKey CodecVariant) (*DaemonStream, error)
 
 // startRemote uses an existing daemon's stream to start a transcode job.
 func (t *ESTranscoder) startRemote(sourceKey CodecVariant) (*DaemonStream, error) {
-	// Get the daemon's idle stream
-	stream, ok := t.streamMgr.GetIdleStream(t.daemonID)
+	// Get a stream with capacity for this daemon and job type
+	stream, ok := t.streamMgr.GetStreamWithCapacityForType(t.daemonID, t.config.JobType)
 	if !ok {
-		return nil, fmt.Errorf("daemon %s stream not available or busy", t.daemonID)
+		return nil, fmt.Errorf("daemon %s stream not available or at capacity for %s jobs", t.daemonID, t.config.JobType)
 	}
 
 	// Create the active job to track transcoded output
@@ -424,6 +429,7 @@ func (t *ESTranscoder) startRemote(sourceKey CodecVariant) (*DaemonStream, error
 		t.daemonID,
 		stream,
 		t.buffer,
+		t.config.JobType,
 	)
 
 	// Wait for audio init data (AudioSpecificConfig for AAC) from demuxer
@@ -533,6 +539,7 @@ func (t *ESTranscoder) Stop() {
 			stopMsg := &proto.TranscodeMessage{
 				Payload: &proto.TranscodeMessage_Stop{
 					Stop: &proto.TranscodeStop{
+						JobId:  t.id, // Include job_id for routing on daemon side
 						Reason: "stop requested",
 					},
 				},
@@ -796,6 +803,7 @@ func (t *ESTranscoder) runInputLoop(source *ESVariant, stream *DaemonStream) {
 						inputCompleteMsg := &proto.TranscodeMessage{
 							Payload: &proto.TranscodeMessage_InputComplete{
 								InputComplete: &proto.TranscodeInputComplete{
+									JobId:  t.id, // Include job_id for routing on daemon side
 									Reason: "source_eof",
 								},
 							},
@@ -912,6 +920,7 @@ func (t *ESTranscoder) processSourceSamples(videoTrack, audioTrack *ESTrack, str
 		msg := &proto.TranscodeMessage{
 			Payload: &proto.TranscodeMessage_Samples{
 				Samples: &proto.ESSampleBatch{
+					JobId:        t.id, // Include job_id for routing on daemon side
 					VideoSamples: protoVideoSamples,
 					AudioSamples: protoAudioSamples,
 					IsSource:     true,

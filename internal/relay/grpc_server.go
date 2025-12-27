@@ -365,13 +365,10 @@ func (s *GRPCServer) Transcode(stream grpc.BidiStreamingServer[proto.TranscodeMe
 
 		switch payload := msg.Payload.(type) {
 		case *proto.TranscodeMessage_Samples:
-			// Transcoded samples from daemon - route to the active job
-			daemonStream.mu.Lock()
-			jobID := daemonStream.activeJob
-			daemonStream.mu.Unlock()
-
+			// Transcoded samples from daemon - route by job_id
+			jobID := payload.Samples.JobId
 			if jobID == "" {
-				s.logger.Warn("Received samples but no active job",
+				s.logger.Warn("Received samples without job_id",
 					slog.String("daemon_id", string(daemonID)),
 				)
 				continue
@@ -389,11 +386,8 @@ func (s *GRPCServer) Transcode(stream grpc.BidiStreamingServer[proto.TranscodeMe
 			job.SendSamples(payload.Samples)
 
 		case *proto.TranscodeMessage_Stats:
-			// Stats from daemon - update the active job
-			daemonStream.mu.Lock()
-			jobID := daemonStream.activeJob
-			daemonStream.mu.Unlock()
-
+			// Stats from daemon - route by job_id
+			jobID := payload.Stats.JobId
 			if jobID != "" {
 				if job, ok := s.jobMgr.GetJob(jobID); ok {
 					// Convert proto stats to types.TranscodeStats
@@ -420,6 +414,7 @@ func (s *GRPCServer) Transcode(stream grpc.BidiStreamingServer[proto.TranscodeMe
 
 			s.logger.Log(stream.Context(), observability.LevelTrace, "Transcode stats from daemon",
 				slog.String("daemon_id", string(daemonID)),
+				slog.String("job_id", jobID),
 				slog.Uint64("samples_in", payload.Stats.SamplesIn),
 				slog.Uint64("samples_out", payload.Stats.SamplesOut),
 				slog.Float64("encoding_speed", payload.Stats.EncodingSpeed),
@@ -429,22 +424,20 @@ func (s *GRPCServer) Transcode(stream grpc.BidiStreamingServer[proto.TranscodeMe
 			// Acknowledgment from daemon (e.g., job started)
 			s.logger.Debug("Transcode ack from daemon",
 				slog.String("daemon_id", string(daemonID)),
+				slog.String("job_id", payload.Ack.JobId),
 				slog.Bool("success", payload.Ack.Success),
 				slog.String("actual_video_encoder", payload.Ack.ActualVideoEncoder),
 			)
 
 		case *proto.TranscodeMessage_Error:
-			// Error from daemon
+			// Error from daemon - route by job_id
+			jobID := payload.Error.JobId
 			s.logger.Error("Transcode error from daemon",
 				slog.String("daemon_id", string(daemonID)),
+				slog.String("job_id", jobID),
 				slog.String("message", payload.Error.Message),
 				slog.Int("code", int(payload.Error.Code)),
 			)
-
-			// If there's an active job, signal the error
-			daemonStream.mu.Lock()
-			jobID := daemonStream.activeJob
-			daemonStream.mu.Unlock()
 
 			if jobID != "" {
 				if job, ok := s.jobMgr.GetJob(jobID); ok {
@@ -453,15 +446,13 @@ func (s *GRPCServer) Transcode(stream grpc.BidiStreamingServer[proto.TranscodeMe
 			}
 
 		case *proto.TranscodeMessage_Stop:
-			// Daemon signaling job completion
+			// Daemon signaling job completion - route by job_id
+			jobID := payload.Stop.JobId
 			s.logger.Debug("Transcode stop from daemon",
 				slog.String("daemon_id", string(daemonID)),
+				slog.String("job_id", jobID),
 				slog.String("reason", payload.Stop.Reason),
 			)
-
-			daemonStream.mu.Lock()
-			jobID := daemonStream.activeJob
-			daemonStream.mu.Unlock()
 
 			if jobID != "" {
 				s.jobMgr.RemoveJob(jobID)

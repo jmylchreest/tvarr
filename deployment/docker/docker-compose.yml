@@ -12,10 +12,10 @@
 
 services:
   # =============================================================================
-  # tvarr - Main application (coordinator)
+  # tvarr - Coordinator (distributed mode - relies on ffmpegd workers)
   # =============================================================================
   tvarr:
-    image: ghcr.io/jmylchreest/tvarr:latest
+    image: ghcr.io/jmylchreest/tvarr-coordinator:latest
     restart: unless-stopped
     networks:
       - tvarr-net

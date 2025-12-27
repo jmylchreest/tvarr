@@ -79,7 +79,10 @@ func setDaemonDefaults() {
 	hostname, _ := os.Hostname()
 	daemonViper.SetDefault("daemon.name", hostname)
 	daemonViper.SetDefault("daemon.id", "")                     // Auto-generated if empty
-	daemonViper.SetDefault("daemon.max_jobs", 4)
+	daemonViper.SetDefault("daemon.max_jobs", 4)                // Overall guard limit
+	daemonViper.SetDefault("daemon.max_cpu_jobs", 0)            // 0 = auto-detect from CPU cores
+	daemonViper.SetDefault("daemon.max_gpu_jobs", 0)            // 0 = auto-detect from GPU sessions
+	daemonViper.SetDefault("daemon.max_probe_jobs", 0)          // 0 = use max_jobs
 
 	// Coordinator connection
 	daemonViper.SetDefault("coordinator.url", "")               // Required for remote mode

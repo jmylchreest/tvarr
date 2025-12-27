@@ -542,10 +542,11 @@ type TranscodeStreamHandler struct {
 	client   proto.FFmpegDaemonClient
 	daemonID string
 	binInfo  *ffmpeg.BinaryInfo
+	maxJobs  int
 
 	mu         sync.RWMutex
 	stream     proto.FFmpegDaemon_TranscodeClient
-	activeJob  *TranscodeJob
+	activeJobs map[string]*TranscodeJob // Active jobs by job_id
 	cancelFunc context.CancelFunc
 
 	// sendMu protects stream.Send() calls - gRPC streams are not thread-safe for concurrent sends
@@ -558,12 +559,18 @@ func NewTranscodeStreamHandler(
 	client proto.FFmpegDaemonClient,
 	daemonID string,
 	binInfo *ffmpeg.BinaryInfo,
+	maxJobs int,
 ) *TranscodeStreamHandler {
+	if maxJobs <= 0 {
+		maxJobs = 4 // Default to 4 concurrent jobs
+	}
 	return &TranscodeStreamHandler{
-		logger:   logger,
-		client:   client,
-		daemonID: daemonID,
-		binInfo:  binInfo,
+		logger:     logger,
+		client:     client,
+		daemonID:   daemonID,
+		binInfo:    binInfo,
+		maxJobs:    maxJobs,
+		activeJobs: make(map[string]*TranscodeJob),
 	}
 }
 
@@ -608,16 +615,19 @@ func (h *TranscodeStreamHandler) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop closes the transcode stream.
+// Stop closes the transcode stream and stops all active jobs.
 func (h *TranscodeStreamHandler) Stop() {
 	h.mu.Lock()
 	if h.cancelFunc != nil {
 		h.cancelFunc()
 	}
-	if h.activeJob != nil {
-		h.activeJob.Stop()
-		h.activeJob = nil
+	// Stop all active jobs
+	for jobID, job := range h.activeJobs {
+		h.logger.Debug("Stopping job during handler shutdown",
+			slog.String("job_id", jobID))
+		job.Stop()
 	}
+	h.activeJobs = make(map[string]*TranscodeJob)
 	h.mu.Unlock()
 }
 
@@ -625,10 +635,13 @@ func (h *TranscodeStreamHandler) Stop() {
 func (h *TranscodeStreamHandler) processMessages(ctx context.Context) {
 	defer func() {
 		h.mu.Lock()
-		if h.activeJob != nil {
-			h.activeJob.Stop()
-			h.activeJob = nil
+		// Stop all active jobs on stream disconnect
+		for jobID, job := range h.activeJobs {
+			h.logger.Debug("Stopping job on stream disconnect",
+				slog.String("job_id", jobID))
+			job.Stop()
 		}
+		h.activeJobs = make(map[string]*TranscodeJob)
 		h.mu.Unlock()
 	}()
 
@@ -682,46 +695,75 @@ func (h *TranscodeStreamHandler) processMessages(ctx context.Context) {
 
 // handleTranscodeStart starts a new transcode job.
 func (h *TranscodeStreamHandler) handleTranscodeStart(ctx context.Context, start *proto.TranscodeStart) {
+	jobID := start.JobId
+
+	h.mu.Lock()
+	activeCount := len(h.activeJobs)
+
+	// Check if we're at capacity
+	if activeCount >= h.maxJobs {
+		h.mu.Unlock()
+		h.logger.Warn("Rejecting job - at capacity",
+			slog.String("job_id", jobID),
+			slog.Int("active_jobs", activeCount),
+			slog.Int("max_jobs", h.maxJobs),
+		)
+		h.sendErrorWithJobID(jobID, proto.TranscodeError_FFMPEG_START_FAILED,
+			fmt.Sprintf("daemon at capacity (%d/%d jobs)", activeCount, h.maxJobs))
+		return
+	}
+
+	// Check if job already exists
+	if _, exists := h.activeJobs[jobID]; exists {
+		h.mu.Unlock()
+		h.logger.Warn("Job already exists",
+			slog.String("job_id", jobID),
+		)
+		h.sendErrorWithJobID(jobID, proto.TranscodeError_FFMPEG_START_FAILED, "job already exists")
+		return
+	}
+	h.mu.Unlock()
+
 	h.logger.Info("Received transcode job from coordinator",
-		slog.String("job_id", start.JobId),
+		slog.String("job_id", jobID),
 		slog.String("channel", start.ChannelName),
 		slog.String("target_video", start.TargetVideoCodec),
 		slog.String("target_audio", start.TargetAudioCodec),
+		slog.Int("active_jobs", activeCount),
+		slog.Int("max_jobs", h.maxJobs),
 	)
 
-	h.mu.Lock()
-	// Stop any existing job
-	if h.activeJob != nil {
-		h.activeJob.Stop()
-	}
-
 	// Create new transcode job with proper binInfo
-	h.activeJob = NewTranscodeJob(start.JobId, start, h.binInfo, h.logger)
-	h.mu.Unlock()
+	job := NewTranscodeJob(jobID, start, h.binInfo, h.logger)
 
 	// Start the job
-	ack, err := h.activeJob.Start(ctx)
+	ack, err := job.Start(ctx)
 	if err != nil {
 		h.logger.Error("Failed to start transcode job",
-			slog.String("job_id", start.JobId),
+			slog.String("job_id", jobID),
 			slog.String("error", err.Error()),
 		)
-		// Send error back to coordinator
-		h.sendError(proto.TranscodeError_FFMPEG_START_FAILED, err.Error())
+		h.sendErrorWithJobID(jobID, proto.TranscodeError_FFMPEG_START_FAILED, err.Error())
 		return
 	}
 
 	// Check if job start succeeded (ack may have Success=false even with nil error)
 	if !ack.Success {
 		h.logger.Error("Transcode job start failed",
-			slog.String("job_id", start.JobId),
+			slog.String("job_id", jobID),
 			slog.String("error", ack.Error),
 		)
-		h.sendError(proto.TranscodeError_FFMPEG_START_FAILED, ack.Error)
+		h.sendErrorWithJobID(jobID, proto.TranscodeError_FFMPEG_START_FAILED, ack.Error)
 		return
 	}
 
-	// Send acknowledgment to coordinator
+	// Add job to active jobs map
+	h.mu.Lock()
+	h.activeJobs[jobID] = job
+	h.mu.Unlock()
+
+	// Send acknowledgment to coordinator with job_id
+	ack.JobId = jobID
 	h.mu.RLock()
 	stream := h.stream
 	h.mu.RUnlock()
@@ -736,71 +778,98 @@ func (h *TranscodeStreamHandler) handleTranscodeStart(ctx context.Context, start
 		h.sendMu.Unlock()
 		if err != nil {
 			h.logger.Error("Failed to send ack",
-				slog.String("job_id", start.JobId),
+				slog.String("job_id", jobID),
 				slog.String("error", err.Error()),
 			)
 		}
 	}
 
 	// Start forwarding transcoded output to coordinator
-	go h.forwardTranscodedOutput(ctx, start.JobId)
+	go h.forwardTranscodedOutput(ctx, jobID, job)
 
 	// Start sending stats to coordinator
-	go h.sendStatsLoop(ctx, start.JobId)
+	go h.sendStatsLoop(ctx, jobID, job)
 }
 
-// handleSourceSamples feeds source samples to the active transcode job.
+// handleSourceSamples feeds source samples to the correct transcode job by job_id.
 func (h *TranscodeStreamHandler) handleSourceSamples(samples *proto.ESSampleBatch) {
+	jobID := samples.JobId
+	if jobID == "" {
+		h.logger.Warn("Received samples without job_id")
+		return
+	}
+
 	h.mu.RLock()
-	job := h.activeJob
+	job, exists := h.activeJobs[jobID]
 	h.mu.RUnlock()
 
-	if job == nil {
-		h.logger.Warn("Received samples but no active job")
+	if !exists {
+		h.logger.Warn("Received samples for unknown job",
+			slog.String("job_id", jobID))
 		return
 	}
 
 	if err := job.ProcessSamples(samples); err != nil {
 		h.logger.Warn("Error processing samples",
+			slog.String("job_id", jobID),
 			slog.String("error", err.Error()),
 		)
 	}
 }
 
-// handleStop stops the current transcode job (forced shutdown).
+// handleStop stops a specific transcode job by job_id (forced shutdown).
 func (h *TranscodeStreamHandler) handleStop(stop *proto.TranscodeStop) {
+	jobID := stop.JobId
 	h.logger.Info("Received stop signal from coordinator",
+		slog.String("job_id", jobID),
 		slog.String("reason", stop.Reason),
 	)
 
 	h.mu.Lock()
-	if h.activeJob != nil {
-		h.activeJob.Stop()
-		h.activeJob = nil
+	if job, exists := h.activeJobs[jobID]; exists {
+		job.Stop()
+		delete(h.activeJobs, jobID)
+	} else if jobID == "" {
+		// Legacy: if no job_id, stop all jobs
+		h.logger.Warn("Stop without job_id - stopping all jobs")
+		for id, job := range h.activeJobs {
+			h.logger.Debug("Stopping job", slog.String("job_id", id))
+			job.Stop()
+		}
+		h.activeJobs = make(map[string]*TranscodeJob)
 	}
 	h.mu.Unlock()
 }
 
-// handleInputComplete signals that input is complete (graceful shutdown).
+// handleInputComplete signals that input is complete for a specific job (graceful shutdown).
 // Unlike handleStop, this allows FFmpeg to flush its encoder before stopping.
 func (h *TranscodeStreamHandler) handleInputComplete(inputComplete *proto.TranscodeInputComplete) {
+	jobID := inputComplete.JobId
 	h.logger.Info("Received input complete signal from coordinator",
+		slog.String("job_id", jobID),
 		slog.String("reason", inputComplete.Reason),
 	)
 
 	h.mu.RLock()
-	job := h.activeJob
+	job, exists := h.activeJobs[jobID]
 	h.mu.RUnlock()
 
-	if job != nil {
+	if exists && job != nil {
 		job.SignalInputComplete()
+	} else if jobID == "" {
+		// Legacy: if no job_id, signal all jobs
+		h.logger.Warn("InputComplete without job_id - signaling all jobs")
+		h.mu.RLock()
+		for _, j := range h.activeJobs {
+			j.SignalInputComplete()
+		}
+		h.mu.RUnlock()
 	}
 }
 
 // forwardTranscodedOutput reads transcoded samples from the job and sends them to coordinator.
-func (h *TranscodeStreamHandler) forwardTranscodedOutput(ctx context.Context, jobID string) {
+func (h *TranscodeStreamHandler) forwardTranscodedOutput(ctx context.Context, jobID string, job *TranscodeJob) {
 	h.mu.RLock()
-	job := h.activeJob
 	stream := h.stream
 	h.mu.RUnlock()
 
@@ -815,9 +884,17 @@ func (h *TranscodeStreamHandler) forwardTranscodedOutput(ctx context.Context, jo
 		case batch, ok := <-job.OutputChannel():
 			if !ok {
 				// Job output channel closed, job is done
-				h.sendStop("job_completed")
+				// Remove job from active jobs
+				h.mu.Lock()
+				delete(h.activeJobs, jobID)
+				h.mu.Unlock()
+
+				h.sendStopWithJobID(jobID, "job_completed")
 				return
 			}
+
+			// Include job_id in the batch for routing on coordinator side
+			batch.JobId = jobID
 
 			h.sendMu.Lock()
 			err := stream.Send(&proto.TranscodeMessage{
@@ -837,8 +914,13 @@ func (h *TranscodeStreamHandler) forwardTranscodedOutput(ctx context.Context, jo
 	}
 }
 
-// sendError sends an error message to the coordinator.
+// sendError sends an error message to the coordinator (legacy, no job_id).
 func (h *TranscodeStreamHandler) sendError(code proto.TranscodeError_ErrorCode, message string) {
+	h.sendErrorWithJobID("", code, message)
+}
+
+// sendErrorWithJobID sends an error message to the coordinator with job_id.
+func (h *TranscodeStreamHandler) sendErrorWithJobID(jobID string, code proto.TranscodeError_ErrorCode, message string) {
 	h.mu.RLock()
 	stream := h.stream
 	h.mu.RUnlock()
@@ -848,6 +930,7 @@ func (h *TranscodeStreamHandler) sendError(code proto.TranscodeError_ErrorCode, 
 		_ = stream.Send(&proto.TranscodeMessage{
 			Payload: &proto.TranscodeMessage_Error{
 				Error: &proto.TranscodeError{
+					JobId:   jobID,
 					Code:    code,
 					Message: message,
 				},
@@ -857,8 +940,13 @@ func (h *TranscodeStreamHandler) sendError(code proto.TranscodeError_ErrorCode, 
 	}
 }
 
-// sendStop sends a stop message to the coordinator.
+// sendStop sends a stop message to the coordinator (legacy, no job_id).
 func (h *TranscodeStreamHandler) sendStop(reason string) {
+	h.sendStopWithJobID("", reason)
+}
+
+// sendStopWithJobID sends a stop message to the coordinator with job_id.
+func (h *TranscodeStreamHandler) sendStopWithJobID(jobID string, reason string) {
 	h.mu.RLock()
 	stream := h.stream
 	h.mu.RUnlock()
@@ -868,6 +956,7 @@ func (h *TranscodeStreamHandler) sendStop(reason string) {
 		_ = stream.Send(&proto.TranscodeMessage{
 			Payload: &proto.TranscodeMessage_Stop{
 				Stop: &proto.TranscodeStop{
+					JobId:  jobID,
 					Reason: reason,
 				},
 			},
@@ -877,7 +966,7 @@ func (h *TranscodeStreamHandler) sendStop(reason string) {
 }
 
 // sendStatsLoop periodically sends transcode stats to the coordinator.
-func (h *TranscodeStreamHandler) sendStatsLoop(ctx context.Context, jobID string) {
+func (h *TranscodeStreamHandler) sendStatsLoop(ctx context.Context, jobID string, job *TranscodeJob) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
@@ -889,11 +978,12 @@ func (h *TranscodeStreamHandler) sendStatsLoop(ctx context.Context, jobID string
 			return
 		case <-ticker.C:
 			h.mu.RLock()
-			job := h.activeJob
 			stream := h.stream
+			// Check if job is still in active jobs
+			_, stillActive := h.activeJobs[jobID]
 			h.mu.RUnlock()
 
-			if job == nil || stream == nil {
+			if job == nil || stream == nil || !stillActive {
 				return
 			}
 
@@ -902,6 +992,7 @@ func (h *TranscodeStreamHandler) sendStatsLoop(ctx context.Context, jobID string
 			}
 
 			stats := job.Stats()
+			stats.JobId = jobID // Include job_id for routing
 			stats.RunningTime = durationpb.New(time.Since(startTime))
 
 			h.sendMu.Lock()
@@ -927,13 +1018,14 @@ func (h *TranscodeStreamHandler) sendStatsLoop(ctx context.Context, jobID string
 func (c *RegistrationClient) StartTranscodeStream(ctx context.Context, binInfo *ffmpeg.BinaryInfo) error {
 	c.mu.RLock()
 	client := c.client
+	maxJobs := c.config.MaxConcurrentJobs
 	c.mu.RUnlock()
 
 	if client == nil {
 		return fmt.Errorf("not connected to coordinator")
 	}
 
-	handler := NewTranscodeStreamHandler(c.logger, client, c.config.DaemonID, binInfo)
+	handler := NewTranscodeStreamHandler(c.logger, client, c.config.DaemonID, binInfo, maxJobs)
 	return handler.Start(ctx)
 }
 

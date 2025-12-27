@@ -480,6 +480,20 @@ func (h *RelayStreamHandler) handleRawSmartMode(w http.ResponseWriter, r *http.R
 	// Detect client capabilities (codecs, formats)
 	clientCaps := h.detectClientCapabilities(r)
 
+	// If client detection matched a rule with an encoding profile, use it
+	// This allows client detection rules to override the proxy's default profile
+	if clientCaps.EncodingProfile != nil {
+		h.logger.Debug("Using client detection rule's encoding profile",
+			"proxy_id", info.Proxy.ID,
+			"channel_id", info.Channel.ID,
+			"rule_name", clientCaps.MatchedRuleName,
+			"profile_name", clientCaps.EncodingProfile.Name,
+			"target_video", clientCaps.EncodingProfile.TargetVideoCodec,
+			"target_audio", clientCaps.EncodingProfile.TargetAudioCodec,
+		)
+		info.EncodingProfile = clientCaps.EncodingProfile
+	}
+
 	// Determine client's desired format
 	clientFormat := h.capsToClientFormat(clientCaps)
 
@@ -512,6 +526,35 @@ func (h *RelayStreamHandler) handleRawSmartMode(w http.ResponseWriter, r *http.R
 		"client_format", clientFormat,
 		"client_player", clientCaps.PlayerName,
 	)
+
+	// If routing decision is transcode but we have no encoding profile, create a dynamic one
+	// from the client's preferred codecs. This handles X-Video-Codec/X-Audio-Codec headers.
+	// Must be done BEFORE computeTargetVariant since that uses the encoding profile.
+	if routingResult.Decision == relay.RouteTranscode && info.EncodingProfile == nil {
+		if clientCaps.PreferredVideoCodec != "" || clientCaps.PreferredAudioCodec != "" {
+			// Create a dynamic profile based on client preferences
+			// Empty codec string means copy/passthrough for that stream
+			videoCodec := models.VideoCodec(clientCaps.PreferredVideoCodec)
+			audioCodec := models.AudioCodec(clientCaps.PreferredAudioCodec)
+
+			info.EncodingProfile = &models.EncodingProfile{
+				Name:             "Dynamic Client Request",
+				TargetVideoCodec: videoCodec,
+				TargetAudioCodec: audioCodec,
+				QualityPreset:    models.QualityPresetMedium,
+			}
+
+			h.logger.Debug("Created dynamic encoding profile from client preferences",
+				"proxy_id", info.Proxy.ID,
+				"channel_id", info.Channel.ID,
+				"rule_name", clientCaps.MatchedRuleName,
+				"target_video", videoCodec,
+				"target_audio", audioCodec,
+				"source_video", sourceVideoCodec,
+				"source_audio", sourceAudioCodec,
+			)
+		}
+	}
 
 	// Compute target codec variant based on client detection or encoding profile
 	// This determines what codecs to transcode TO (if transcoding is needed)
@@ -565,6 +608,11 @@ func (h *RelayStreamHandler) detectClientCapabilities(r *http.Request) relay.Cli
 		}
 		if result.MatchedRule != nil {
 			caps.MatchedRuleName = result.MatchedRule.Name
+			// If the matched rule has an encoding profile, use it for transcoding
+			// This overrides the proxy's default encoding profile
+			if result.MatchedRule.EncodingProfile != nil {
+				caps.EncodingProfile = result.MatchedRule.EncodingProfile
+			}
 		}
 
 		// Handle format override from query param (takes precedence)
@@ -708,6 +756,13 @@ func (h *RelayStreamHandler) computeTargetVariant(
 			// Fall back to client's preferred codec
 			videoCodec = clientCaps.PreferredVideoCodec
 		}
+	} else {
+		// Source unknown (no ffprobe) - use profile or client preference
+		if profileVideoCodec != "" {
+			videoCodec = profileVideoCodec
+		} else if clientCaps.PreferredVideoCodec != "" {
+			videoCodec = clientCaps.PreferredVideoCodec
+		}
 	}
 
 	// Determine audio codec based on client compatibility
@@ -720,6 +775,13 @@ func (h *RelayStreamHandler) computeTargetVariant(
 			audioCodec = profileAudioCodec
 		} else if clientCaps.PreferredAudioCodec != "" {
 			// Fall back to client's preferred codec
+			audioCodec = clientCaps.PreferredAudioCodec
+		}
+	} else {
+		// Source unknown (no ffprobe) - use profile or client preference
+		if profileAudioCodec != "" {
+			audioCodec = profileAudioCodec
+		} else if clientCaps.PreferredAudioCodec != "" {
 			audioCodec = clientCaps.PreferredAudioCodec
 		}
 	}

@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import { Daemon, DaemonState, EncoderOverride } from '@/types/api';
 import { GPUSessionStatus } from './GPUSessionStatus';
+import { JobSlotsStatus } from './JobSlotsStatus';
 import { ActiveJobStats } from './ActiveJobStats';
 import { BadgeGroup, BadgeItem, BadgePriority } from '@/components/shared/BadgeGroup';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -239,9 +240,13 @@ export function TranscoderDetailPanel({ daemon, onDrain, onActivate }: Transcode
               )}
             </div>
 
-            {/* GPU Sessions */}
-            {gpus.length > 0 && (
-              <div className="space-y-2">
+            {/* Job Slots - Two-tone stacked bar showing CPU + GPU usage */}
+            <JobSlotsStatus daemon={daemon} />
+
+            {/* GPU Details - Shows per-GPU session info when multiple GPUs */}
+            {gpus.length > 1 && (
+              <div className="space-y-2 pt-2 border-t">
+                <p className="text-xs text-muted-foreground">GPU Sessions</p>
                 {gpus.map((gpu) => (
                   <GPUSessionStatus key={gpu.index} gpu={gpu} />
                 ))}

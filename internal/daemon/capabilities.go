@@ -3,6 +3,7 @@ package daemon
 
 import (
 	"context"
+	"runtime"
 	"strings"
 
 	"github.com/jmylchreest/tvarr/pkg/ffmpeg"
@@ -29,14 +30,28 @@ func (d *CapabilityDetector) Detect(ctx context.Context) (*proto.Capabilities, *
 		return nil, nil, err
 	}
 
+	gpus := detectGPUs(binInfo.HWAccels)
+
+	// Calculate max GPU jobs as sum of all GPU encode sessions
+	maxGPUJobs := int32(0)
+	for _, gpu := range gpus {
+		maxGPUJobs += gpu.MaxEncodeSessions
+	}
+
+	// Max CPU jobs defaults to number of CPU cores
+	maxCPUJobs := int32(runtime.NumCPU())
+
 	caps := &proto.Capabilities{
 		VideoEncoders:     filterVideoEncoders(binInfo.Encoders),
 		VideoDecoders:     filterVideoDecoders(binInfo.Decoders),
 		AudioEncoders:     filterAudioEncoders(binInfo.Encoders),
 		AudioDecoders:     filterAudioDecoders(binInfo.Decoders),
 		MaxConcurrentJobs: 4, // Default, can be overridden by config
+		MaxCpuJobs:        maxCPUJobs,
+		MaxGpuJobs:        maxGPUJobs,
+		MaxProbeJobs:      4, // Default same as MaxConcurrentJobs
 		HwAccels:          convertHWAccels(binInfo.HWAccels),
-		Gpus:              detectGPUs(binInfo.HWAccels),
+		Gpus:              gpus,
 	}
 
 	return caps, binInfo, nil
@@ -49,14 +64,25 @@ func (d *CapabilityDetector) DetectTypes(ctx context.Context) (*types.Capabiliti
 		return nil, nil, err
 	}
 
+	gpus := detectGPUsToTypes(binInfo.HWAccels)
+
+	// Calculate max GPU jobs as sum of all GPU encode sessions
+	maxGPUJobs := 0
+	for _, gpu := range gpus {
+		maxGPUJobs += gpu.MaxEncodeSessions
+	}
+
 	caps := &types.Capabilities{
 		VideoEncoders:     filterVideoEncoders(binInfo.Encoders),
 		VideoDecoders:     filterVideoDecoders(binInfo.Decoders),
 		AudioEncoders:     filterAudioEncoders(binInfo.Encoders),
 		AudioDecoders:     filterAudioDecoders(binInfo.Decoders),
 		MaxConcurrentJobs: 4,
+		MaxCPUJobs:        runtime.NumCPU(),
+		MaxGPUJobs:        maxGPUJobs,
+		MaxProbeJobs:      4,
 		HWAccels:          convertHWAccelsToTypes(binInfo.HWAccels),
-		GPUs:              detectGPUsToTypes(binInfo.HWAccels),
+		GPUs:              gpus,
 	}
 
 	return caps, binInfo, nil

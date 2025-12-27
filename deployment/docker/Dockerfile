@@ -65,12 +65,14 @@ ENV TVARR_BUILD_VERSION=${VERSION} \
 # CI=true is required for pnpm to run without TTY
 RUN CI=true task frontend:embed
 
-# Build tvarr binary
+# Build tvarr and tvarr-ffmpegd binaries
 # CGO_ENABLED=1 is required for go-sqlite3
 RUN GOOS=linux task build && mv dist/debug/tvarr /tvarr
+RUN GOOS=linux task build:ffmpegd && mv dist/debug/tvarr-ffmpegd /tvarr-ffmpegd
 
-# Compress binary with UPX
+# Compress binaries with UPX
 RUN task upx:compress:file FILE=/tvarr
+RUN task upx:compress:file FILE=/tvarr-ffmpegd
 
 # =============================================================================
 # Stage 2: Runtime image based on FFmpeg base
@@ -82,8 +84,9 @@ LABEL org.opencontainers.image.title="tvarr" \
       org.opencontainers.image.source="https://github.com/jmylchreest/tvarr" \
       org.opencontainers.image.licenses="MIT"
 
-# Copy compressed binary (frontend is embedded in tvarr)
+# Copy compressed binaries (frontend is embedded in tvarr)
 COPY --from=builder /tvarr /app/tvarr
+COPY --from=builder /tvarr-ffmpegd /app/tvarr-ffmpegd
 
 # Copy entrypoint script
 COPY deployment/docker/scripts/entrypoint-tvarr.sh /entrypoint.sh
@@ -96,7 +99,8 @@ ENV PUID=1000 \
     TVARR_SERVER_PORT=8080 \
     TVARR_DATABASE_DSN=file:/data/tvarr.db \
     TVARR_LOGGING_LEVEL=info \
-    TVARR_STORAGE_BASE_DIR=/data
+    TVARR_STORAGE_BASE_DIR=/data \
+    TVARR_FFMPEGD_BINARY=/app/tvarr-ffmpegd
 
 # Volume for persistent data
 VOLUME ["/data"]

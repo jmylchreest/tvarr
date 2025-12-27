@@ -2,8 +2,8 @@
 # AMD VAAPI (RDNA 3/4), Intel QSV/VAAPI, NVIDIA NVENC/NVDEC
 # Tags: YYYY.MM.DD-N, latest
 
-# Stage 1: Build tvarr-ffmpeg package
-FROM archlinux:base AS builder
+# Stage 1a: Build tvarr-ffmpeg package
+FROM archlinux:base AS ffmpeg-builder
 
 RUN pacman-key --init && pacman -Syu --noconfirm && \
     pacman -S --noconfirm base-devel git sudo
@@ -17,6 +17,22 @@ RUN chown -R builder:builder /home/builder/pkgbuild
 USER builder
 WORKDIR /home/builder/pkgbuild
 
+RUN makepkg -s --noconfirm
+
+# Stage 1b: Build gosu package
+FROM archlinux:base AS gosu-builder
+
+RUN pacman-key --init && pacman -Syu --noconfirm && \
+    pacman -S --noconfirm base-devel go sudo
+
+RUN useradd -m builder && \
+    echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+COPY deployment/docker/pkgbuild/gosu /home/builder/pkgbuild-gosu
+RUN chown -R builder:builder /home/builder/pkgbuild-gosu
+
+USER builder
+WORKDIR /home/builder/pkgbuild-gosu
 RUN makepkg -s --noconfirm
 
 # Stage 2: Build minimal rootfs
@@ -48,20 +64,22 @@ RUN pacman-key --init && pacman -Syu --noconfirm
 
 RUN mkdir -p /rootfs/var/lib/pacman /localrepo
 
-COPY --from=builder /home/builder/pkgbuild/*.pkg.tar.zst /localrepo/
+COPY --from=ffmpeg-builder /home/builder/pkgbuild/*.pkg.tar.zst /localrepo/
+COPY --from=gosu-builder /home/builder/pkgbuild-gosu/*.pkg.tar.zst /localrepo/
 
 RUN repo-add /localrepo/localrepo.db.tar.gz /localrepo/*.pkg.tar.zst && \
     echo -e '\n[localrepo]\nSigLevel = Optional TrustAll\nServer = file:///localrepo' >> /etc/pacman.conf
 
-# Install minimal base system + FFmpeg
+# Install minimal base system + FFmpeg + gosu
 # - tzdata: timezone data for TZ environment variable
+# - gosu: privilege dropping for PUID/PGID support in containers
 # Note: curl/jq/yq are installed in the tvarr image, not here (keeps FFmpeg image minimal)
 RUN pacman -Sy --noconfirm --needed -r /rootfs \
     --dbpath /rootfs/var/lib/pacman \
     --cachedir /var/cache/pacman/pkg \
     filesystem glibc gcc-libs bash coreutils shadow \
-    tzdata \
-    tvarr-ffmpeg
+    tzdata inetutils procps-ng \
+    tvarr-ffmpeg gosu
 
 RUN rm -rf /rootfs/var/cache/pacman/pkg/* /rootfs/var/lib/pacman/sync/*
 
@@ -99,11 +117,12 @@ LABEL org.opencontainers.image.title="tvarr-ffmpeg" \
 
 RUN pacman-key --init && pacman -Syu --noconfirm
 
-COPY --from=builder /home/builder/pkgbuild/*.pkg.tar.zst /tmp/
+COPY --from=ffmpeg-builder /home/builder/pkgbuild/*.pkg.tar.zst /tmp/
+COPY --from=gosu-builder /home/builder/pkgbuild-gosu/*.pkg.tar.zst /tmp/
 
 RUN repo-add /tmp/localrepo.db.tar.gz /tmp/*.pkg.tar.zst && \
     echo -e '\n[localrepo]\nSigLevel = Optional TrustAll\nServer = file:///tmp' >> /etc/pacman.conf && \
-    pacman -Sy --noconfirm tvarr-ffmpeg && \
+    pacman -Sy --noconfirm tvarr-ffmpeg gosu inetutils procps-ng && \
     pacman -Scc --noconfirm
 
 ENV NVIDIA_VISIBLE_DEVICES=all \

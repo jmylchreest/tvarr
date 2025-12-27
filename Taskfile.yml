@@ -241,6 +241,7 @@ tasks:
         - PLATFORM: Target platform (default: auto-detected {{.LOCAL_ARCH}})
         - TAG: Image tag (default: latest)
         - FFMPEG_IMAGE: FFmpeg base image (default: ghcr.io/jmylchreest/tvarr-ffmpeg:latest)
+        - LOCAL: Use local images only, don't pull from registry (default: false)
 
       Local builds also create a version-tagged image ({{.VERSION}}).
 
@@ -250,11 +251,13 @@ tasks:
       TAG: '{{.TAG | default "latest"}}'
       PLATFORM: '{{.PLATFORM | default .LOCAL_ARCH}}'
       FFMPEG_IMAGE: '{{.FFMPEG_IMAGE | default "ghcr.io/jmylchreest/tvarr-ffmpeg:latest"}}'
+      LOCAL: '{{.LOCAL | default "false"}}'
     cmds:
       - |
         {{.CONTAINER_RUNTIME}} build \
           -f deployment/docker/Dockerfile \
           --platform {{.PLATFORM}} \
+          $([ "{{.LOCAL}}" = "true" ] && echo "--pull=never") \
           --build-arg FFMPEG_IMAGE={{.FFMPEG_IMAGE}} \
           --build-arg VERSION={{.VERSION}} \
           --build-arg COMMIT={{.COMMIT}} \
@@ -276,19 +279,22 @@ tasks:
         - PLATFORM: Target platform (default: auto-detected {{.LOCAL_ARCH}})
         - TAG: Image tag (default: latest)
         - FFMPEG_IMAGE: FFmpeg base image (default: ghcr.io/jmylchreest/tvarr-ffmpeg:latest)
+        - LOCAL: Use local images only, don't pull from registry (default: false)
 
       Note: If you've built the FFmpeg image locally with container:build:ffmpeg,
-      it will be used automatically (Docker/Podman uses local images when available).
+      use LOCAL=true to ensure the local image is used.
       Local builds also create a version-tagged image ({{.VERSION}}).
     vars:
       TAG: '{{.TAG | default "latest"}}'
       PLATFORM: '{{.PLATFORM | default .LOCAL_ARCH}}'
       FFMPEG_IMAGE: '{{.FFMPEG_IMAGE | default "ghcr.io/jmylchreest/tvarr-ffmpeg:latest"}}'
+      LOCAL: '{{.LOCAL | default "false"}}'
     cmds:
       - |
         {{.CONTAINER_RUNTIME}} build \
           -f deployment/docker/Dockerfile.ffmpegd \
           --platform {{.PLATFORM}} \
+          $([ "{{.LOCAL}}" = "true" ] && echo "--pull=never") \
           --build-arg FFMPEG_IMAGE={{.FFMPEG_IMAGE}} \
           --build-arg VERSION={{.VERSION}} \
           --build-arg COMMIT={{.COMMIT}} \
@@ -509,25 +515,70 @@ tasks:
     desc: View logs from tvarr stack
     summary: |
       Shows logs from the tvarr stack containers.
+      Uses podman logs directly to properly aggregate logs from all containers.
 
       Variables:
         - FOLLOW: Set to "false" to not follow logs (default: true)
-        - SERVICE: Specific service to show logs for (default: all)
+        - TAIL: Number of lines to show (default: 100, use "all" for full history)
+        - SERVICE: Specific service to show logs for: tvarr, ffmpegd (default: all)
 
       Examples:
-        task compose:logs                  # Follow all logs
+        task compose:logs                  # Follow all logs (last 100 lines)
+        task compose:logs TAIL=all         # Follow all logs from start
         task compose:logs SERVICE=tvarr    # Only coordinator logs
         task compose:logs SERVICE=ffmpegd  # Only transcoder logs
         task compose:logs FOLLOW=false     # Show logs without following
     vars:
       FOLLOW: '{{.FOLLOW | default "true"}}'
+      TAIL: '{{.TAIL | default "100"}}'
       SERVICE: '{{.SERVICE | default ""}}'
     cmds:
       - |
-        cd deployment/docker
-        {{.CONTAINER_RUNTIME}} compose logs \
-          $([ "{{.FOLLOW}}" = "true" ] && echo "-f") \
-          {{.SERVICE}}
+        TAIL_ARG=""
+        if [ "{{.TAIL}}" != "all" ]; then
+          TAIL_ARG="--tail={{.TAIL}}"
+        fi
+        FOLLOW_ARG=""
+        if [ "{{.FOLLOW}}" = "true" ]; then
+          FOLLOW_ARG="-f"
+        fi
+
+        # Get container names (use -a to include containers that aren't running yet)
+        TVARR_CONTAINER=$({{.CONTAINER_RUNTIME}} ps -a --filter "name=docker_tvarr" --format "{{`{{.Names}}`}}" 2>/dev/null | head -1)
+        FFMPEGD_CONTAINER=$({{.CONTAINER_RUNTIME}} ps -a --filter "name=docker_ffmpegd" --format "{{`{{.Names}}`}}" 2>/dev/null | head -1)
+
+        if [ -n "{{.SERVICE}}" ]; then
+          # Single service requested
+          case "{{.SERVICE}}" in
+            tvarr)
+              [ -n "$TVARR_CONTAINER" ] && {{.CONTAINER_RUNTIME}} logs $FOLLOW_ARG $TAIL_ARG "$TVARR_CONTAINER"
+              ;;
+            ffmpegd)
+              [ -n "$FFMPEGD_CONTAINER" ] && {{.CONTAINER_RUNTIME}} logs $FOLLOW_ARG $TAIL_ARG "$FFMPEGD_CONTAINER"
+              ;;
+            *)
+              echo "Unknown service: {{.SERVICE}}. Use 'tvarr' or 'ffmpegd'"
+              exit 1
+              ;;
+          esac
+        else
+          # All services - use tail to merge logs
+          if [ "{{.FOLLOW}}" = "true" ]; then
+            # Follow mode: run both in background and merge output
+            (
+              [ -n "$TVARR_CONTAINER" ] && {{.CONTAINER_RUNTIME}} logs $FOLLOW_ARG $TAIL_ARG "$TVARR_CONTAINER" 2>&1 | sed -u 's/^/[tvarr] /' &
+              [ -n "$FFMPEGD_CONTAINER" ] && {{.CONTAINER_RUNTIME}} logs $FOLLOW_ARG $TAIL_ARG "$FFMPEGD_CONTAINER" 2>&1 | sed -u 's/^/[ffmpegd] /' &
+              wait
+            )
+          else
+            # Non-follow mode: show each sequentially
+            echo "=== tvarr (coordinator) ==="
+            [ -n "$TVARR_CONTAINER" ] && {{.CONTAINER_RUNTIME}} logs $TAIL_ARG "$TVARR_CONTAINER"
+            echo ""
+            echo "=== ffmpegd (transcoder) ==="
+            [ -n "$FFMPEGD_CONTAINER" ] && {{.CONTAINER_RUNTIME}} logs $TAIL_ARG "$FFMPEGD_CONTAINER"
+          fi
+        fi
 
   compose:ps:
     desc: Show status of tvarr stack containers

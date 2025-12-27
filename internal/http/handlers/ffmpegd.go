@@ -55,6 +55,8 @@ type DaemonDTO struct {
 	LastHeartbeat      string            `json:"last_heartbeat"`
 	HeartbeatsMissed   int               `json:"heartbeats_missed"`
 	ActiveJobs         int               `json:"active_jobs"`
+	ActiveCPUJobs      int               `json:"active_cpu_jobs"`      // Software encoding jobs
+	ActiveGPUJobs      int               `json:"active_gpu_jobs"`      // Hardware encoding jobs
 	ActiveJobDetails   []ActiveJobDTO    `json:"active_job_details,omitempty"`
 	TotalJobsCompleted uint64            `json:"total_jobs_completed"`
 	TotalJobsFailed    uint64            `json:"total_jobs_failed"`
@@ -68,7 +70,10 @@ type CapabilitiesDTO struct {
 	VideoDecoders     []string       `json:"video_decoders"`
 	AudioEncoders     []string       `json:"audio_encoders"`
 	AudioDecoders     []string       `json:"audio_decoders"`
-	MaxConcurrentJobs int            `json:"max_concurrent_jobs"`
+	MaxConcurrentJobs int            `json:"max_concurrent_jobs"`          // Overall guard limit
+	MaxCPUJobs        int            `json:"max_cpu_jobs,omitempty"`       // Max CPU (software) jobs (0 = use guard)
+	MaxGPUJobs        int            `json:"max_gpu_jobs,omitempty"`       // Max GPU (hardware) jobs (0 = no GPU)
+	MaxProbeJobs      int            `json:"max_probe_jobs,omitempty"`     // Max probe operations
 	HWAccels          []HWAccelDTO   `json:"hw_accels,omitempty"`
 	GPUs              []GPUInfoDTO   `json:"gpus,omitempty"`
 }
@@ -139,6 +144,11 @@ type ClusterStatsDTO struct {
 	DrainingDaemons      int     `json:"draining_daemons"`
 	DisconnectedDaemons  int     `json:"disconnected_daemons"`
 	TotalActiveJobs      int     `json:"total_active_jobs"`
+	TotalCPUJobs         int     `json:"total_cpu_jobs"`         // Current CPU jobs across cluster
+	TotalGPUJobs         int     `json:"total_gpu_jobs"`         // Current GPU jobs across cluster
+	MaxConcurrentJobs    int     `json:"max_concurrent_jobs"`    // Sum of all daemon guard limits
+	MaxCPUJobs           int     `json:"max_cpu_jobs"`           // Sum of all daemon CPU job limits
+	MaxGPUJobs           int     `json:"max_gpu_jobs"`           // Sum of all daemon GPU job limits
 	TotalGPUs            int     `json:"total_gpus"`
 	AvailableGPUSessions int     `json:"available_gpu_sessions"`
 	TotalGPUSessions     int     `json:"total_gpu_sessions"`
@@ -217,11 +227,16 @@ func daemonToDTOWithJobs(d *types.Daemon, jobs []service.ActiveJobInfo) DaemonDT
 		effectiveState = "transcoding"
 	}
 
-	// Count GPU sessions by device from active jobs
+	// Count GPU sessions by device and CPU vs GPU jobs
 	gpuSessions := make(map[string]int) // device -> session count
+	cpuJobCount := 0
+	gpuJobCount := 0
 	for _, job := range jobs {
 		if job.HWDevice != "" {
 			gpuSessions[job.HWDevice]++
+			gpuJobCount++
+		} else {
+			cpuJobCount++
 		}
 	}
 
@@ -235,6 +250,8 @@ func daemonToDTOWithJobs(d *types.Daemon, jobs []service.ActiveJobInfo) DaemonDT
 		LastHeartbeat:      d.LastHeartbeat.Format(time.RFC3339),
 		HeartbeatsMissed:   d.HeartbeatsMissed,
 		ActiveJobs:         actualJobCount, // Use actual count, not heartbeat-reported
+		ActiveCPUJobs:      cpuJobCount,
+		ActiveGPUJobs:      gpuJobCount,
 		TotalJobsCompleted: d.TotalJobsCompleted,
 		TotalJobsFailed:    d.TotalJobsFailed,
 	}
@@ -282,6 +299,9 @@ func capabilitiesToDTOWithSessions(c *types.Capabilities, gpuSessions map[string
 		AudioEncoders:     c.AudioEncoders,
 		AudioDecoders:     c.AudioDecoders,
 		MaxConcurrentJobs: c.MaxConcurrentJobs,
+		MaxCPUJobs:        c.MaxCPUJobs,
+		MaxGPUJobs:        c.MaxGPUJobs,
+		MaxProbeJobs:      c.MaxProbeJobs,
 	}
 
 	// Build device-to-GPU-index mapping from hw_accels
@@ -394,6 +414,11 @@ func clusterStatsToDTO(s service.ClusterStats) ClusterStatsDTO {
 		DrainingDaemons:      s.DrainingDaemons,
 		DisconnectedDaemons:  s.DisconnectedDaemons,
 		TotalActiveJobs:      s.TotalActiveJobs,
+		TotalCPUJobs:         s.TotalCPUJobs,
+		TotalGPUJobs:         s.TotalGPUJobs,
+		MaxConcurrentJobs:    s.MaxConcurrentJobs,
+		MaxCPUJobs:           s.MaxCPUJobs,
+		MaxGPUJobs:           s.MaxGPUJobs,
 		TotalGPUs:            s.TotalGPUs,
 		AvailableGPUSessions: s.AvailableGPUSessions,
 		TotalGPUSessions:     s.TotalGPUSessions,

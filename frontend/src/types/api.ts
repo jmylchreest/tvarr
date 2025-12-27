@@ -1297,7 +1297,10 @@ export interface DaemonCapabilities {
   video_decoders: string[];
   audio_encoders: string[];
   audio_decoders: string[];
-  max_concurrent_jobs: number;
+  max_concurrent_jobs: number;  // Overall guard limit
+  max_cpu_jobs?: number;        // Max CPU (software) jobs (0 = use guard)
+  max_gpu_jobs?: number;        // Max GPU (hardware) jobs (0 = no GPU)
+  max_probe_jobs?: number;      // Max probe operations
   hw_accels?: HWAccelInfo[];
   gpus?: GPUInfo[];
 }
@@ -1330,6 +1333,8 @@ export interface Daemon {
   last_heartbeat: string;
   heartbeats_missed: number;
   active_jobs: number;
+  active_cpu_jobs: number;        // Software encoding jobs
+  active_gpu_jobs: number;        // Hardware encoding jobs
   active_job_details?: ActiveJobDetail[];
   total_jobs_completed: number;
   total_jobs_failed: number;
@@ -1349,6 +1354,11 @@ export interface ClusterStats {
   draining_daemons: number;
   disconnected_daemons: number;
   total_active_jobs: number;
+  total_cpu_jobs: number;           // Current CPU jobs across cluster
+  total_gpu_jobs: number;           // Current GPU jobs across cluster
+  max_concurrent_jobs: number;      // Sum of all daemon guard limits
+  max_cpu_jobs: number;             // Sum of all daemon CPU job limits
+  max_gpu_jobs: number;             // Sum of all daemon GPU job limits
   total_gpus: number;
   available_gpu_sessions: number;
   total_gpu_sessions: number;

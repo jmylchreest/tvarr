@@ -363,6 +363,9 @@ func (f *TranscoderFactory) createLocalTranscoder(
 		outputFormat = target.DaemonOutputFormat()
 	}
 
+	// Determine job type from encoder (for local subprocess tracking)
+	jobType := JobTypeFromEncoder(videoEncoder)
+
 	config := ESTranscoderConfig{
 		SourceVariant:    sourceVariant,
 		TargetVariant:    targetVariant,
@@ -379,6 +382,7 @@ func (f *TranscoderFactory) createLocalTranscoder(
 		OutputFlags:      opts.OutputFlags,
 		OutputFormat:     outputFormat,
 		EncoderOverrides: encoderOverrides,
+		JobType:          jobType,
 		Logger:           f.Logger,
 	}
 
@@ -387,6 +391,7 @@ func (f *TranscoderFactory) createLocalTranscoder(
 		slog.String("source", sourceVariant.String()),
 		slog.String("target", targetVariant.String()),
 		slog.String("output_format", outputFormat),
+		slog.String("job_type", jobType.String()),
 		slog.Bool("direct_input", opts.UseDirectInput),
 		slog.Int("encoder_overrides", len(encoderOverrides)))
 
@@ -422,12 +427,17 @@ func (f *TranscoderFactory) createRemoteTranscoder(
 		return nil, fmt.Errorf("no transcoding backend available: tvarr-ffmpegd binary not found")
 	}
 
-	// Check if the daemon has an active stream
-	if _, ok := f.DaemonStreamManager.GetIdleStream(daemon.ID); !ok {
-		f.Logger.Log(context.Background(), observability.LevelTrace, "Daemon has no idle stream, falling back to local subprocess",
+	// Determine job type based on encoder
+	jobType := JobTypeFromEncoder(videoEncoder)
+
+	// Check if the daemon has capacity for this job type
+	if _, ok := f.DaemonStreamManager.GetStreamWithCapacityForType(daemon.ID, jobType); !ok {
+		f.Logger.Log(context.Background(), observability.LevelTrace, "Daemon has no capacity for job type, falling back to local subprocess",
 			slog.String("id", id),
 			slog.String("daemon_id", string(daemon.ID)),
 			slog.String("daemon_name", daemon.Name),
+			slog.String("job_type", jobType.String()),
+			slog.String("video_encoder", videoEncoder),
 		)
 		// Fall back to local ffmpegd subprocess
 		if f.CanCreateLocalTranscoder() {
@@ -472,6 +482,7 @@ func (f *TranscoderFactory) createRemoteTranscoder(
 		OutputFlags:      opts.OutputFlags,
 		OutputFormat:     outputFormat,
 		EncoderOverrides: encoderOverrides,
+		JobType:          jobType,
 		Logger:           f.Logger,
 	}
 
@@ -484,6 +495,7 @@ func (f *TranscoderFactory) createRemoteTranscoder(
 		slog.String("output_format", outputFormat),
 		slog.String("video_encoder", videoEncoder),
 		slog.String("audio_encoder", audioEncoder),
+		slog.String("job_type", jobType.String()),
 		slog.Int("encoder_overrides", len(encoderOverrides)),
 	)
 
@@ -505,6 +517,172 @@ func isHardwareEncoder(encoder string) bool {
 
 	for _, pattern := range hwPatterns {
 		if len(encoder) > len(pattern) && encoder[len(encoder)-len(pattern):] == pattern {
+			return true
+		}
+	}
+	return false
+}
+
+// JobTypeFromEncoder returns the job type (CPU or GPU) based on the encoder.
+func JobTypeFromEncoder(encoder string) JobType {
+	if isHardwareEncoder(encoder) {
+		return JobTypeGPU
+	}
+	return JobTypeCPU
+}
+
+// isHardwareDecoder returns true if the decoder name indicates hardware decoding.
+func isHardwareDecoder(decoder string) bool {
+	// Common hardware decoder suffixes/patterns
+	hwPatterns := []string{
+		"_cuvid",        // NVIDIA CUDA Video Decoder
+		"_qsv",          // Intel QuickSync
+		"_vaapi",        // VA-API
+		"_videotoolbox", // Apple VideoToolbox
+		"_mediacodec",   // Android MediaCodec
+		"_mmal",         // Raspberry Pi MMAL
+		"_v4l2m2m",      // V4L2 Memory-to-Memory
+		"_rkmpp",        // Rockchip MPP
+	}
+
+	for _, pattern := range hwPatterns {
+		if len(decoder) > len(pattern) && decoder[len(decoder)-len(pattern):] == pattern {
+			return true
+		}
+	}
+	return false
+}
+
+// daemonHasHWDecoderForCodec checks if the daemon's decoder list contains
+// a hardware decoder for the given codec.
+// e.g., for codec "h264", checks for "h264_cuvid", "h264_qsv", etc.
+func daemonHasHWDecoderForCodec(decoders []string, codec string) bool {
+	// Normalize codec aliases to match FFmpeg decoder naming
+	normalizedCodec := codec
+	switch codec {
+	case "avc":
+		normalizedCodec = "h264"
+	case "h265":
+		normalizedCodec = "hevc"
+	}
+
+	codecPrefix := normalizedCodec + "_"
+
+	for _, dec := range decoders {
+		// Check if decoder starts with codec_ and is a HW decoder
+		if len(dec) > len(codecPrefix) &&
+			dec[:len(codecPrefix)] == codecPrefix &&
+			isHardwareDecoder(dec) {
+			return true
+		}
+	}
+	return false
+}
+
+// CanDoFullHWTranscode returns true if the daemon can do hardware decoding
+// of the source codec AND hardware encoding of the target codec.
+// This is the optimal case where frames stay on the GPU throughout.
+func CanDoFullHWTranscode(sourceCodec, targetCodec string, daemon *types.Daemon) bool {
+	if daemon == nil || daemon.Capabilities == nil || len(daemon.Capabilities.GPUs) == 0 {
+		return false
+	}
+
+	// Check if daemon has any GPU with encode capacity
+	hasGPUWithCapacity := false
+	for _, gpu := range daemon.Capabilities.GPUs {
+		if gpu.MaxEncodeSessions > 0 {
+			hasGPUWithCapacity = true
+			break
+		}
+	}
+	if !hasGPUWithCapacity {
+		return false
+	}
+
+	// Check for HW decoder for source AND HW encoder for target
+	hasHWDecoder := daemonHasHWDecoderForCodec(daemon.Capabilities.VideoDecoders, sourceCodec)
+	hasHWEncoder := daemonHasHWEncoderForCodec(daemon.Capabilities.VideoEncoders, targetCodec)
+
+	return hasHWDecoder && hasHWEncoder
+}
+
+// HasHWEncoder returns true if the daemon has a hardware encoder for the target codec.
+func HasHWEncoder(targetCodec string, daemon *types.Daemon) bool {
+	if daemon == nil || daemon.Capabilities == nil {
+		return false
+	}
+	return daemonHasHWEncoderForCodec(daemon.Capabilities.VideoEncoders, targetCodec)
+}
+
+// HasHWDecoder returns true if the daemon has a hardware decoder for the source codec.
+func HasHWDecoder(sourceCodec string, daemon *types.Daemon) bool {
+	if daemon == nil || daemon.Capabilities == nil {
+		return false
+	}
+	return daemonHasHWDecoderForCodec(daemon.Capabilities.VideoDecoders, sourceCodec)
+}
+
+// PredictJobType predicts the job type based on video encoder and daemon capabilities.
+// Video encoding determines the job type since GPU acceleration is video-focused.
+// Audio is almost always CPU and doesn't affect the decision.
+//
+// Rules:
+// 1. If video encoder is explicitly HW (e.g., h264_nvenc), returns GPU
+// 2. If video encoder is bare codec (e.g., "h264") and daemon has HW encoder for it, returns GPU
+// 3. Otherwise returns CPU
+func PredictJobType(videoEncoder string, daemon *types.Daemon) JobType {
+	// If encoder is explicitly hardware, it's GPU
+	if isHardwareEncoder(videoEncoder) {
+		return JobTypeGPU
+	}
+
+	// For bare codec names or unknown encoders, check daemon capabilities
+	// If daemon has GPU capacity and HW encoder for this codec, predict GPU
+	if daemon != nil && daemon.Capabilities != nil && len(daemon.Capabilities.GPUs) > 0 {
+		// Check if daemon has any GPU with encode capacity
+		hasGPUWithCapacity := false
+		for _, gpu := range daemon.Capabilities.GPUs {
+			if gpu.MaxEncodeSessions > 0 {
+				hasGPUWithCapacity = true
+				break
+			}
+		}
+
+		// Check if daemon has a HW encoder for this codec
+		if hasGPUWithCapacity && daemonHasHWEncoderForCodec(daemon.Capabilities.VideoEncoders, videoEncoder) {
+			return JobTypeGPU
+		}
+	}
+
+	// Default to CPU
+	return JobTypeCPU
+}
+
+// daemonHasHWEncoderForCodec checks if the daemon's encoder list contains
+// a hardware encoder that can encode the given codec.
+// It works by checking if any encoder starts with "codec_" and is a HW encoder.
+// e.g., for codec "h264", checks for "h264_nvenc", "h264_qsv", etc.
+//
+// Handles codec aliases to match FFmpeg's encoder naming:
+//   - avc → h264 (FFmpeg uses h264_nvenc, not avc_nvenc)
+//   - h265 → hevc (FFmpeg uses hevc_nvenc, not h265_nvenc)
+func daemonHasHWEncoderForCodec(encoders []string, codec string) bool {
+	// Normalize codec aliases to match FFmpeg encoder naming
+	normalizedCodec := codec
+	switch codec {
+	case "avc":
+		normalizedCodec = "h264"
+	case "h265":
+		normalizedCodec = "hevc"
+	}
+
+	codecPrefix := normalizedCodec + "_"
+
+	for _, enc := range encoders {
+		// Check if encoder starts with codec_ and is a HW encoder
+		if len(enc) > len(codecPrefix) &&
+			enc[:len(codecPrefix)] == codecPrefix &&
+			isHardwareEncoder(enc) {
 			return true
 		}
 	}

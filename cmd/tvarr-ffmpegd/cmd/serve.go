@@ -49,7 +49,10 @@ func init() {
 	serveCmd.Flags().Bool("standalone", false, "run in standalone mode (don't connect to coordinator)")
 	serveCmd.Flags().String("daemon-id", "", "daemon ID (overrides auto-generated UUID)")
 	serveCmd.Flags().String("name", "", "daemon name (overrides TVARR_DAEMON_NAME)")
-	serveCmd.Flags().Int("max-jobs", 0, "max concurrent jobs (0 = use config/default)")
+	serveCmd.Flags().Int("max-jobs", 0, "max concurrent jobs - overall guard limit (0 = use config/default)")
+	serveCmd.Flags().Int("max-cpu-jobs", 0, "max concurrent CPU (software) encoding jobs (0 = auto-detect from CPU cores)")
+	serveCmd.Flags().Int("max-gpu-jobs", 0, "max concurrent GPU (hardware) encoding jobs (0 = auto-detect from GPU sessions)")
+	serveCmd.Flags().Int("max-probe-jobs", 0, "max concurrent probe operations (0 = use max-jobs)")
 	serveCmd.Flags().String("listen", "", "gRPC listen address (e.g., :9091)")
 	serveCmd.Flags().String("coordinator-url", "", "coordinator gRPC URL (overrides TVARR_COORDINATOR_URL)")
 	serveCmd.Flags().String("auth-token", "", "authentication token (overrides TVARR_AUTH_TOKEN)")
@@ -76,6 +79,21 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	maxJobs := v.GetInt("daemon.max_jobs")
 	if max, _ := cmd.Flags().GetInt("max-jobs"); max > 0 {
 		maxJobs = max
+	}
+
+	maxCPUJobs := v.GetInt("daemon.max_cpu_jobs")
+	if max, _ := cmd.Flags().GetInt("max-cpu-jobs"); max > 0 {
+		maxCPUJobs = max
+	}
+
+	maxGPUJobs := v.GetInt("daemon.max_gpu_jobs")
+	if max, _ := cmd.Flags().GetInt("max-gpu-jobs"); max > 0 {
+		maxGPUJobs = max
+	}
+
+	maxProbeJobs := v.GetInt("daemon.max_probe_jobs")
+	if max, _ := cmd.Flags().GetInt("max-probe-jobs"); max > 0 {
+		maxProbeJobs = max
 	}
 
 	coordinatorURL := v.GetString("coordinator.url")
@@ -130,8 +148,19 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("detecting FFmpeg: %w", err)
 	}
 
-	// Update max concurrent jobs from config
-	caps.MaxConcurrentJobs = int32(maxJobs)
+	// Update job limits from config (only if explicitly set, preserve auto-detected values)
+	if maxJobs > 0 {
+		caps.MaxConcurrentJobs = int32(maxJobs)
+	}
+	if maxCPUJobs > 0 {
+		caps.MaxCpuJobs = int32(maxCPUJobs)
+	}
+	if maxGPUJobs > 0 {
+		caps.MaxGpuJobs = int32(maxGPUJobs)
+	}
+	if maxProbeJobs > 0 {
+		caps.MaxProbeJobs = int32(maxProbeJobs)
+	}
 
 	logger.Info("FFmpeg detected",
 		slog.String("version", binInfo.Version),

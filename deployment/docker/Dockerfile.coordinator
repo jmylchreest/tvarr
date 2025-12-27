@@ -56,6 +56,7 @@ RUN repo-add /localrepo/localrepo.db.tar.gz /localrepo/*.pkg.tar.zst && \
     echo -e '\n[localrepo]\nSigLevel = Optional TrustAll\nServer = file:///localrepo' >> /etc/pacman.conf
 
 # Create minimal rootfs with only what tvarr needs:
+# - filesystem, glibc, gcc-libs: base system libs for binaries
 # - curl: health checks
 # - gosu: user switching
 # - shadow: user management (useradd, usermod, groupmod)
@@ -64,6 +65,7 @@ RUN mkdir -p /rootfs/var/lib/pacman && \
     pacman -Sy --noconfirm --needed -r /rootfs \
     --dbpath /rootfs/var/lib/pacman \
     --cachedir /var/cache/pacman/pkg \
+    filesystem glibc gcc-libs bash coreutils \
     curl gosu shadow tzdata && \
     rm -rf /rootfs/var/cache/pacman/pkg/* /rootfs/var/lib/pacman/*
 
@@ -133,10 +135,11 @@ LABEL org.opencontainers.image.title="tvarr-coordinator" \
       org.opencontainers.image.source="https://github.com/jmylchreest/tvarr" \
       org.opencontainers.image.licenses="MIT"
 
-# Copy minimal rootfs (curl, gosu, shadow, tzdata)
-COPY --from=rootfs-builder /rootfs/usr/bin/ /usr/bin/
-COPY --from=rootfs-builder /rootfs/usr/lib/ /usr/lib/
-COPY --from=rootfs-builder /rootfs/usr/share/zoneinfo /usr/share/zoneinfo
+# Copy minimal rootfs
+COPY --from=rootfs-builder /rootfs/ /
+
+# Ensure dynamic linker cache is updated
+RUN ldconfig
 
 # Copy compressed tvarr binary (frontend is embedded)
 COPY --from=builder /tvarr /app/tvarr
@@ -145,9 +148,10 @@ COPY --from=builder /tvarr /app/tvarr
 COPY deployment/docker/scripts/entrypoint-tvarr.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Create tvarr user and data directory
-RUN useradd -r -u 1000 -g users -s /sbin/nologin tvarr && \
-    mkdir -p /data && chown -R tvarr:users /data
+# Create tvarr group and user, and data directory
+RUN groupadd -g 1000 tvarr && \
+    useradd -u 1000 -g tvarr -d /data -s /sbin/nologin tvarr && \
+    mkdir -p /data && chown -R tvarr:tvarr /data
 
 # Environment defaults
 ENV PUID=1000 \
