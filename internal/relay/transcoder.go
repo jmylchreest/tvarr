@@ -40,6 +40,38 @@ type Transcoder interface {
 	ClosedChan() <-chan struct{}
 }
 
+// TranscoderStats contains statistics about transcoder operation.
+type TranscoderStats struct {
+	ID            string
+	SourceVariant CodecVariant
+	TargetVariant CodecVariant
+	StartedAt     time.Time
+	LastActivity  time.Time
+	SamplesIn     uint64
+	SamplesOut    uint64
+	BytesIn       uint64
+	BytesOut      uint64
+	Errors        uint64
+	VideoCodec    string
+	AudioCodec    string
+	VideoEncoder  string
+	AudioEncoder  string
+	HWAccel       string
+	HWAccelDevice string
+	EncodingSpeed float64
+	FFmpegCommand string
+}
+
+// TranscoderProcessStats contains process-level statistics for the transcoder.
+type TranscoderProcessStats struct {
+	PID           int
+	CPUPercent    float64
+	MemoryRSSMB   float64
+	MemoryPercent float64
+	BytesWritten  uint64
+	WriteRateMbps float64
+}
+
 // EncoderOverridesProvider is a function that returns the current enabled encoder overrides.
 // This allows the transcoder factory to fetch overrides from the service layer without
 // having a direct dependency on it.
