@@ -96,44 +96,70 @@ func TestDefaultRoutingDecider_DecideWithTranscodingProfile(t *testing.T) {
 		name             string
 		sourceFormat     SourceFormat
 		sourceCodecs     []string
+		client           ClientCapabilities
 		profile          *models.EncodingProfile
 		expectedDecision RoutingDecision
 	}{
 		{
-			name:         "profile requires transcoding - HLS source",
+			name:         "client accepts source codecs - skip transcoding, repackage HLS",
 			sourceFormat: SourceFormatHLS,
-			sourceCodecs: []string{"avc1.64001f", "mp4a.40.2"},
+			sourceCodecs: []string{"avc1.64001f", "mp4a.40.2"}, // h264/aac
+			client: ClientCapabilities{
+				PlayerName:   "test-player",
+				SupportsFMP4: true,
+				// No codec restrictions = accepts all
+			},
 			profile: &models.EncodingProfile{
 				Name:             "Transcode Profile",
 				TargetVideoCodec: models.VideoCodecH264,
 				TargetAudioCodec: models.AudioCodecAAC,
 				QualityPreset:    models.QualityPresetMedium,
 			},
+			// Client accepts source (h264/aac), so no transcoding needed
+			expectedDecision: RouteRepackage,
+		},
+		{
+			name:         "client does not accept source audio - transcode required",
+			sourceFormat: SourceFormatHLS,
+			sourceCodecs: []string{"h264", "eac3"},
+			client: ClientCapabilities{
+				PlayerName:          "test-player",
+				SupportsFMP4:        true,
+				AcceptedVideoCodecs: []string{"h264", "h265"},
+				AcceptedAudioCodecs: []string{"aac", "mp3"}, // Does NOT accept eac3
+			},
+			profile: &models.EncodingProfile{
+				Name:             "Transcode Profile",
+				TargetVideoCodec: models.VideoCodecH264,
+				TargetAudioCodec: models.AudioCodecAAC,
+				QualityPreset:    models.QualityPresetMedium,
+			},
+			// Client does NOT accept eac3, so must transcode
 			expectedDecision: RouteTranscode,
 		},
 		{
-			name:         "profile requires transcoding - MPEGTS source",
+			name:         "MPEGTS source always needs transcoding for segmentation",
 			sourceFormat: SourceFormatMPEGTS,
 			sourceCodecs: []string{"h264", "aac"},
+			client: ClientCapabilities{
+				PlayerName:   "test-player",
+				SupportsFMP4: true,
+				// No codec restrictions = accepts all
+			},
 			profile: &models.EncodingProfile{
 				Name:             "Transcode Profile",
 				TargetVideoCodec: models.VideoCodecH265,
 				TargetAudioCodec: models.AudioCodecOpus,
 				QualityPreset:    models.QualityPresetHigh,
 			},
+			// Raw MPEGTS is not segmented, needs FFmpeg for segmentation
 			expectedDecision: RouteTranscode,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := ClientCapabilities{
-				PlayerName:      "test-player",
-				PreferredFormat: "",
-				SupportsFMP4:    true,
-			}
-
-			result := decider.Decide(tt.sourceFormat, tt.sourceCodecs, client, tt.profile)
+			result := decider.Decide(tt.sourceFormat, tt.sourceCodecs, tt.client, tt.profile)
 
 			assert.Equal(t, tt.expectedDecision, result.Decision, "unexpected routing decision")
 			assert.NotEmpty(t, result.Reasons, "reasons should not be empty")
