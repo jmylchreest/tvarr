@@ -140,7 +140,8 @@ func (s *RelayService) WithHLSConfig(hlsCfg config.HLSConfig) *RelayService {
 // - streamMgr: DaemonStreamManager for communicating with connected daemons (optional)
 // - jobMgr: ActiveJobManager for tracking active transcode jobs (optional)
 // - spawner: FFmpegDSpawner for local subprocess transcoding (optional)
-// - preferRemote: Whether to prefer remote daemons over local FFmpeg
+// - preferRemote: Whether to prefer remote daemons over local FFmpeg for transcoding
+// - preferRemoteProbe: Whether to prefer remote daemons for stream probing (ffprobe)
 //
 // When streamMgr and jobMgr are provided, remote transcoding uses the persistent daemon streams.
 // When spawner is provided, local subprocess transcoding is available.
@@ -150,6 +151,7 @@ func (s *RelayService) WithDistributedTranscoding(
 	jobMgr *relay.ActiveJobManager,
 	spawner *relay.FFmpegDSpawner,
 	preferRemote bool,
+	preferRemoteProbe bool,
 ) *RelayService {
 	managerConfig := relay.DefaultManagerConfig()
 	managerConfig.CodecRepo = s.lastKnownCodecRepo
@@ -158,6 +160,7 @@ func (s *RelayService) WithDistributedTranscoding(
 	managerConfig.ActiveJobManager = jobMgr
 	managerConfig.FFmpegDSpawner = spawner
 	managerConfig.PreferRemote = preferRemote
+	managerConfig.PreferRemoteProbe = preferRemoteProbe
 	managerConfig.EncoderOverridesProvider = s.encoderOverridesProvider
 
 	s.relayManager.Close()
@@ -165,6 +168,7 @@ func (s *RelayService) WithDistributedTranscoding(
 
 	s.logger.Info("Distributed transcoding configured",
 		"prefer_remote", preferRemote,
+		"prefer_remote_probe", preferRemoteProbe,
 		"stream_manager", streamMgr != nil,
 		"job_manager", jobMgr != nil,
 		"spawner", spawner != nil,

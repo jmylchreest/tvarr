@@ -13,6 +13,7 @@ import (
 	"github.com/jmylchreest/tvarr/internal/ffmpeg"
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/repository"
+	"github.com/jmylchreest/tvarr/pkg/ffmpegd/proto"
 )
 
 // ErrSessionNotFound is returned when a relay session is not found.
@@ -73,8 +74,12 @@ type ManagerConfig struct {
 	// FFmpegDSpawner for spawning local ffmpegd subprocesses.
 	// Used when transcoding is needed but no remote daemons are available.
 	FFmpegDSpawner *FFmpegDSpawner
-	// PreferRemote indicates whether to prefer remote daemons over local FFmpeg.
+	// PreferRemote indicates whether to prefer remote daemons over local FFmpeg for transcoding.
 	PreferRemote bool
+	// PreferRemoteProbe indicates whether to prefer remote daemons for stream probing.
+	// If true, uses connected daemons for ffprobe even when local ffprobe is available.
+	// Defaults to false (prefer local ffprobe when available).
+	PreferRemoteProbe bool
 	// EncoderOverridesProvider fetches enabled encoder overrides for transcoding.
 	EncoderOverridesProvider EncoderOverridesProvider
 	// HLSConfig for HLS streaming settings.
@@ -500,24 +505,97 @@ func (m *Manager) HTTPClient() *http.Client {
 // ProbeAndStoreCodecInfo always probes the stream fresh and stores the result.
 // The stored result is used by the channel UI to display codec information.
 // Returns nil if probing is not available or fails (non-fatal).
+//
+// Probing strategy (controlled by PreferRemoteProbe config):
+// - If PreferRemoteProbe is false (default): Use local ffprobe if available, fall back to remote
+// - If PreferRemoteProbe is true: Use remote daemons if available, fall back to local
 func (m *Manager) ProbeAndStoreCodecInfo(ctx context.Context, streamURL string) *models.LastKnownCodec {
-	// If no prober available, skip
-	if m.prober == nil {
-		m.logger.Debug("Skipping probe - prober not available (ffprobe not detected)",
+	var codecInfo *models.LastKnownCodec
+	var probeMs int64
+	var probeErr error
+	var probeSource string
+
+	start := time.Now()
+
+	hasLocalProber := m.prober != nil
+	hasRemoteDaemons := m.daemonStreamMgr != nil && m.daemonStreamMgr.Count() > 0
+
+	// Determine probe order based on preference
+	tryRemoteFirst := m.config.PreferRemoteProbe && hasRemoteDaemons
+
+	if tryRemoteFirst {
+		// Prefer remote probing
+		probeSource = "remote"
+		m.logger.Debug("Attempting remote probe via daemon (preferred)",
+			slog.String("stream_url", streamURL))
+
+		probeResp, err := m.daemonStreamMgr.Probe(ctx, streamURL, 10000)
+		probeMs = time.Since(start).Milliseconds()
+
+		if err != nil {
+			probeErr = err
+		} else if !probeResp.Success {
+			probeErr = fmt.Errorf("remote probe failed: %s", probeResp.Error)
+		} else {
+			codecInfo = m.probeResponseToCodecInfo(streamURL, probeResp, probeMs)
+		}
+
+		// Fall back to local if remote failed and local is available
+		if probeErr != nil && hasLocalProber {
+			m.logger.Debug("Remote probe failed, falling back to local",
+				slog.String("stream_url", streamURL),
+				slog.String("error", probeErr.Error()))
+
+			start = time.Now()
+			probeSource = "local"
+			streamInfo, err := m.prober.QuickProbe(ctx, streamURL)
+			probeMs = time.Since(start).Milliseconds()
+
+			if err != nil {
+				probeErr = err
+			} else {
+				probeErr = nil
+				codecInfo = m.streamInfoToCodecInfo(streamURL, streamInfo, probeMs)
+			}
+		}
+	} else if hasLocalProber {
+		// Prefer local probing (default)
+		probeSource = "local"
+		streamInfo, err := m.prober.QuickProbe(ctx, streamURL)
+		probeMs = time.Since(start).Milliseconds()
+
+		if err != nil {
+			probeErr = err
+		} else {
+			codecInfo = m.streamInfoToCodecInfo(streamURL, streamInfo, probeMs)
+		}
+	} else if hasRemoteDaemons {
+		// No local prober - try remote probing via connected daemon
+		probeSource = "remote"
+		m.logger.Debug("No local ffprobe, attempting remote probe via daemon",
+			slog.String("stream_url", streamURL))
+
+		probeResp, err := m.daemonStreamMgr.Probe(ctx, streamURL, 10000)
+		probeMs = time.Since(start).Milliseconds()
+
+		if err != nil {
+			probeErr = err
+		} else if !probeResp.Success {
+			probeErr = fmt.Errorf("remote probe failed: %s", probeResp.Error)
+		} else {
+			codecInfo = m.probeResponseToCodecInfo(streamURL, probeResp, probeMs)
+		}
+	} else {
+		m.logger.Debug("Skipping probe - no local ffprobe and no connected daemons",
 			slog.String("stream_url", streamURL))
 		return nil
 	}
 
-	// Always probe fresh - no cache lookup
-	// Probe the stream using QuickProbe for fast detection
-	start := time.Now()
-	streamInfo, err := m.prober.QuickProbe(ctx, streamURL)
-	probeMs := time.Since(start).Milliseconds()
-
-	if err != nil {
+	if probeErr != nil {
 		m.logger.Debug("Failed to probe stream codec",
 			slog.String("stream_url", streamURL),
-			slog.String("error", err.Error()),
+			slog.String("source", probeSource),
+			slog.String("error", probeErr.Error()),
 			slog.Int64("probe_ms", probeMs))
 
 		// Store the error in cache to avoid repeated failed probes
@@ -525,7 +603,7 @@ func (m *Manager) ProbeAndStoreCodecInfo(ctx context.Context, streamURL string) 
 			errorCodec := &models.LastKnownCodec{
 				StreamURL:  streamURL,
 				ProbedAt:   models.Now(),
-				ProbeError: err.Error(),
+				ProbeError: probeErr.Error(),
 				ProbeMs:    probeMs,
 			}
 			// Set short expiry for errors (retry in 5 minutes)
@@ -537,36 +615,12 @@ func (m *Manager) ProbeAndStoreCodecInfo(ctx context.Context, streamURL string) 
 		return nil
 	}
 
-	// Create codec info from probe result
-	codecInfo := &models.LastKnownCodec{
-		StreamURL:       streamURL,
-		VideoCodec:      streamInfo.VideoCodec,
-		VideoProfile:    streamInfo.VideoProfile,
-		VideoLevel:      streamInfo.VideoLevel,
-		VideoWidth:      streamInfo.VideoWidth,
-		VideoHeight:     streamInfo.VideoHeight,
-		VideoFramerate:  streamInfo.VideoFramerate,
-		VideoBitrate:    streamInfo.VideoBitrate,
-		VideoPixFmt:     streamInfo.VideoPixFmt,
-		AudioCodec:      streamInfo.AudioCodec,
-		AudioSampleRate: streamInfo.AudioSampleRate,
-		AudioChannels:   streamInfo.AudioChannels,
-		AudioBitrate:    streamInfo.AudioBitrate,
-		ContainerFormat: streamInfo.ContainerFormat,
-		Duration:        streamInfo.Duration,
-		IsLiveStream:    streamInfo.IsLiveStream,
-		HasSubtitles:    streamInfo.HasSubtitles,
-		StreamCount:     streamInfo.StreamCount,
-		Title:           streamInfo.Title,
-		ProbedAt:        models.Now(),
-		ProbeMs:         probeMs,
-	}
-
 	// Set cache expiry
 	codecInfo.SetExpiry(m.config.CodecCacheTTL)
 
 	m.logger.Info("Probed stream codec",
 		slog.String("stream_url", streamURL),
+		slog.String("source", probeSource),
 		slog.String("container", codecInfo.ContainerFormat),
 		slog.String("video_codec", codecInfo.VideoCodec),
 		slog.String("video_profile", codecInfo.VideoProfile),
@@ -589,6 +643,54 @@ func (m *Manager) ProbeAndStoreCodecInfo(ctx context.Context, streamURL string) 
 	}
 
 	return codecInfo
+}
+
+// streamInfoToCodecInfo converts local ffprobe StreamInfo to LastKnownCodec.
+func (m *Manager) streamInfoToCodecInfo(streamURL string, info *ffmpeg.StreamInfo, probeMs int64) *models.LastKnownCodec {
+	return &models.LastKnownCodec{
+		StreamURL:       streamURL,
+		VideoCodec:      info.VideoCodec,
+		VideoProfile:    info.VideoProfile,
+		VideoLevel:      info.VideoLevel,
+		VideoWidth:      info.VideoWidth,
+		VideoHeight:     info.VideoHeight,
+		VideoFramerate:  info.VideoFramerate,
+		VideoBitrate:    info.VideoBitrate,
+		VideoPixFmt:     info.VideoPixFmt,
+		AudioCodec:      info.AudioCodec,
+		AudioSampleRate: info.AudioSampleRate,
+		AudioChannels:   info.AudioChannels,
+		AudioBitrate:    info.AudioBitrate,
+		ContainerFormat: info.ContainerFormat,
+		Duration:        info.Duration,
+		IsLiveStream:    info.IsLiveStream,
+		HasSubtitles:    info.HasSubtitles,
+		StreamCount:     info.StreamCount,
+		Title:           info.Title,
+		ProbedAt:        models.Now(),
+		ProbeMs:         probeMs,
+	}
+}
+
+// probeResponseToCodecInfo converts remote ProbeResponse to LastKnownCodec.
+func (m *Manager) probeResponseToCodecInfo(streamURL string, resp *proto.ProbeResponse, probeMs int64) *models.LastKnownCodec {
+	return &models.LastKnownCodec{
+		StreamURL:       streamURL,
+		VideoCodec:      resp.VideoCodec,
+		VideoProfile:    resp.VideoProfile,
+		VideoWidth:      int(resp.VideoWidth),
+		VideoHeight:     int(resp.VideoHeight),
+		VideoFramerate:  resp.VideoFramerate,
+		VideoBitrate:    int(resp.VideoBitrateBps),
+		AudioCodec:      resp.AudioCodec,
+		AudioSampleRate: int(resp.AudioSampleRate),
+		AudioChannels:   int(resp.AudioChannels),
+		AudioBitrate:    int(resp.AudioBitrateBps),
+		ContainerFormat: resp.ContainerFormat,
+		IsLiveStream:    resp.IsLiveStream,
+		ProbedAt:        models.Now(),
+		ProbeMs:         probeMs,
+	}
 }
 
 // GetOrProbeCodecInfo intelligently retrieves codec information using this priority:

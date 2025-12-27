@@ -1837,6 +1837,8 @@ type TranscodeMessage struct {
 	//	*TranscodeMessage_Error
 	//	*TranscodeMessage_Stop
 	//	*TranscodeMessage_InputComplete
+	//	*TranscodeMessage_ProbeRequest
+	//	*TranscodeMessage_ProbeResponse
 	Payload       isTranscodeMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1942,6 +1944,24 @@ func (x *TranscodeMessage) GetInputComplete() *TranscodeInputComplete {
 	return nil
 }
 
+func (x *TranscodeMessage) GetProbeRequest() *ProbeRequest {
+	if x != nil {
+		if x, ok := x.Payload.(*TranscodeMessage_ProbeRequest); ok {
+			return x.ProbeRequest
+		}
+	}
+	return nil
+}
+
+func (x *TranscodeMessage) GetProbeResponse() *ProbeResponse {
+	if x != nil {
+		if x, ok := x.Payload.(*TranscodeMessage_ProbeResponse); ok {
+			return x.ProbeResponse
+		}
+	}
+	return nil
+}
+
 type isTranscodeMessage_Payload interface {
 	isTranscodeMessage_Payload()
 }
@@ -1974,6 +1994,14 @@ type TranscodeMessage_InputComplete struct {
 	InputComplete *TranscodeInputComplete `protobuf:"bytes,7,opt,name=input_complete,json=inputComplete,proto3,oneof"` // Input complete signal (client -> daemon)
 }
 
+type TranscodeMessage_ProbeRequest struct {
+	ProbeRequest *ProbeRequest `protobuf:"bytes,8,opt,name=probe_request,json=probeRequest,proto3,oneof"` // Probe request (coordinator -> daemon)
+}
+
+type TranscodeMessage_ProbeResponse struct {
+	ProbeResponse *ProbeResponse `protobuf:"bytes,9,opt,name=probe_response,json=probeResponse,proto3,oneof"` // Probe response (daemon -> coordinator)
+}
+
 func (*TranscodeMessage_Start) isTranscodeMessage_Payload() {}
 
 func (*TranscodeMessage_Ack) isTranscodeMessage_Payload() {}
@@ -1987,6 +2015,10 @@ func (*TranscodeMessage_Error) isTranscodeMessage_Payload() {}
 func (*TranscodeMessage_Stop) isTranscodeMessage_Payload() {}
 
 func (*TranscodeMessage_InputComplete) isTranscodeMessage_Payload() {}
+
+func (*TranscodeMessage_ProbeRequest) isTranscodeMessage_Payload() {}
+
+func (*TranscodeMessage_ProbeResponse) isTranscodeMessage_Payload() {}
 
 type TranscodeStart struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -3006,6 +3038,222 @@ func (x *GetStatsResponse) GetTotalEncodingTime() *durationpb.Duration {
 	return nil
 }
 
+// ProbeRequest asks a daemon to probe a stream URL for codec information.
+type ProbeRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Stream URL to probe
+	StreamUrl string `protobuf:"bytes,1,opt,name=stream_url,json=streamUrl,proto3" json:"stream_url,omitempty"`
+	// Timeout in milliseconds (0 = use default)
+	TimeoutMs     int32 `protobuf:"varint,2,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProbeRequest) Reset() {
+	*x = ProbeRequest{}
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProbeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProbeRequest) ProtoMessage() {}
+
+func (x *ProbeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProbeRequest.ProtoReflect.Descriptor instead.
+func (*ProbeRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *ProbeRequest) GetStreamUrl() string {
+	if x != nil {
+		return x.StreamUrl
+	}
+	return ""
+}
+
+func (x *ProbeRequest) GetTimeoutMs() int32 {
+	if x != nil {
+		return x.TimeoutMs
+	}
+	return 0
+}
+
+// ProbeResponse contains codec information from ffprobe.
+type ProbeResponse struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Success bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Error   string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	// Video codec info
+	VideoCodec      string  `protobuf:"bytes,3,opt,name=video_codec,json=videoCodec,proto3" json:"video_codec,omitempty"`       // h264, hevc, vp9, av1
+	VideoProfile    string  `protobuf:"bytes,4,opt,name=video_profile,json=videoProfile,proto3" json:"video_profile,omitempty"` // High, Main, etc.
+	VideoWidth      int32   `protobuf:"varint,5,opt,name=video_width,json=videoWidth,proto3" json:"video_width,omitempty"`
+	VideoHeight     int32   `protobuf:"varint,6,opt,name=video_height,json=videoHeight,proto3" json:"video_height,omitempty"`
+	VideoFramerate  float64 `protobuf:"fixed64,7,opt,name=video_framerate,json=videoFramerate,proto3" json:"video_framerate,omitempty"`
+	VideoBitrateBps int64   `protobuf:"varint,8,opt,name=video_bitrate_bps,json=videoBitrateBps,proto3" json:"video_bitrate_bps,omitempty"`
+	// Audio codec info
+	AudioCodec      string `protobuf:"bytes,9,opt,name=audio_codec,json=audioCodec,proto3" json:"audio_codec,omitempty"` // aac, ac3, eac3, mp3, opus
+	AudioChannels   int32  `protobuf:"varint,10,opt,name=audio_channels,json=audioChannels,proto3" json:"audio_channels,omitempty"`
+	AudioSampleRate int32  `protobuf:"varint,11,opt,name=audio_sample_rate,json=audioSampleRate,proto3" json:"audio_sample_rate,omitempty"`
+	AudioBitrateBps int64  `protobuf:"varint,12,opt,name=audio_bitrate_bps,json=audioBitrateBps,proto3" json:"audio_bitrate_bps,omitempty"`
+	// Container info
+	ContainerFormat string `protobuf:"bytes,13,opt,name=container_format,json=containerFormat,proto3" json:"container_format,omitempty"` // mpegts, hls, mp4
+	IsLiveStream    bool   `protobuf:"varint,14,opt,name=is_live_stream,json=isLiveStream,proto3" json:"is_live_stream,omitempty"`
+	// Probe duration in milliseconds
+	ProbeDurationMs int32 `protobuf:"varint,15,opt,name=probe_duration_ms,json=probeDurationMs,proto3" json:"probe_duration_ms,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *ProbeResponse) Reset() {
+	*x = ProbeResponse{}
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProbeResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProbeResponse) ProtoMessage() {}
+
+func (x *ProbeResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProbeResponse.ProtoReflect.Descriptor instead.
+func (*ProbeResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *ProbeResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *ProbeResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *ProbeResponse) GetVideoCodec() string {
+	if x != nil {
+		return x.VideoCodec
+	}
+	return ""
+}
+
+func (x *ProbeResponse) GetVideoProfile() string {
+	if x != nil {
+		return x.VideoProfile
+	}
+	return ""
+}
+
+func (x *ProbeResponse) GetVideoWidth() int32 {
+	if x != nil {
+		return x.VideoWidth
+	}
+	return 0
+}
+
+func (x *ProbeResponse) GetVideoHeight() int32 {
+	if x != nil {
+		return x.VideoHeight
+	}
+	return 0
+}
+
+func (x *ProbeResponse) GetVideoFramerate() float64 {
+	if x != nil {
+		return x.VideoFramerate
+	}
+	return 0
+}
+
+func (x *ProbeResponse) GetVideoBitrateBps() int64 {
+	if x != nil {
+		return x.VideoBitrateBps
+	}
+	return 0
+}
+
+func (x *ProbeResponse) GetAudioCodec() string {
+	if x != nil {
+		return x.AudioCodec
+	}
+	return ""
+}
+
+func (x *ProbeResponse) GetAudioChannels() int32 {
+	if x != nil {
+		return x.AudioChannels
+	}
+	return 0
+}
+
+func (x *ProbeResponse) GetAudioSampleRate() int32 {
+	if x != nil {
+		return x.AudioSampleRate
+	}
+	return 0
+}
+
+func (x *ProbeResponse) GetAudioBitrateBps() int64 {
+	if x != nil {
+		return x.AudioBitrateBps
+	}
+	return 0
+}
+
+func (x *ProbeResponse) GetContainerFormat() string {
+	if x != nil {
+		return x.ContainerFormat
+	}
+	return ""
+}
+
+func (x *ProbeResponse) GetIsLiveStream() bool {
+	if x != nil {
+		return x.IsLiveStream
+	}
+	return false
+}
+
+func (x *ProbeResponse) GetProbeDurationMs() int32 {
+	if x != nil {
+		return x.ProbeDurationMs
+	}
+	return 0
+}
+
 var File_pkg_ffmpegd_proto_ffmpegd_proto protoreflect.FileDescriptor
 
 const file_pkg_ffmpegd_proto_ffmpegd_proto_rawDesc = "" +
@@ -3172,7 +3420,7 @@ const file_pkg_ffmpegd_proto_ffmpegd_proto_rawDesc = "" +
 	"\x05avg10\x18\x01 \x01(\x01R\x05avg10\x12\x14\n" +
 	"\x05avg60\x18\x02 \x01(\x01R\x05avg60\x12\x16\n" +
 	"\x06avg300\x18\x03 \x01(\x01R\x06avg300\x12\x19\n" +
-	"\btotal_us\x18\x04 \x01(\x04R\atotalUs\"\x87\x03\n" +
+	"\btotal_us\x18\x04 \x01(\x04R\atotalUs\"\x86\x04\n" +
 	"\x10TranscodeMessage\x12/\n" +
 	"\x05start\x18\x01 \x01(\v2\x17.ffmpegd.TranscodeStartH\x00R\x05start\x12)\n" +
 	"\x03ack\x18\x02 \x01(\v2\x15.ffmpegd.TranscodeAckH\x00R\x03ack\x122\n" +
@@ -3180,7 +3428,9 @@ const file_pkg_ffmpegd_proto_ffmpegd_proto_rawDesc = "" +
 	"\x05stats\x18\x04 \x01(\v2\x17.ffmpegd.TranscodeStatsH\x00R\x05stats\x12/\n" +
 	"\x05error\x18\x05 \x01(\v2\x17.ffmpegd.TranscodeErrorH\x00R\x05error\x12,\n" +
 	"\x04stop\x18\x06 \x01(\v2\x16.ffmpegd.TranscodeStopH\x00R\x04stop\x12H\n" +
-	"\x0einput_complete\x18\a \x01(\v2\x1f.ffmpegd.TranscodeInputCompleteH\x00R\rinputCompleteB\t\n" +
+	"\x0einput_complete\x18\a \x01(\v2\x1f.ffmpegd.TranscodeInputCompleteH\x00R\rinputComplete\x12<\n" +
+	"\rprobe_request\x18\b \x01(\v2\x15.ffmpegd.ProbeRequestH\x00R\fprobeRequest\x12?\n" +
+	"\x0eprobe_response\x18\t \x01(\v2\x16.ffmpegd.ProbeResponseH\x00R\rprobeResponseB\t\n" +
 	"\apayload\"\x84\t\n" +
 	"\x0eTranscodeStart\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x1d\n" +
@@ -3291,7 +3541,32 @@ const file_pkg_ffmpegd_proto_ffmpegd_proto_rawDesc = "" +
 	"\x14total_jobs_completed\x18\x04 \x01(\x04R\x12totalJobsCompleted\x12*\n" +
 	"\x11total_jobs_failed\x18\x05 \x01(\x04R\x0ftotalJobsFailed\x122\n" +
 	"\x15total_bytes_processed\x18\x06 \x01(\x04R\x13totalBytesProcessed\x12I\n" +
-	"\x13total_encoding_time\x18\a \x01(\v2\x19.google.protobuf.DurationR\x11totalEncodingTime*\x89\x01\n" +
+	"\x13total_encoding_time\x18\a \x01(\v2\x19.google.protobuf.DurationR\x11totalEncodingTime\"L\n" +
+	"\fProbeRequest\x12\x1d\n" +
+	"\n" +
+	"stream_url\x18\x01 \x01(\tR\tstreamUrl\x12\x1d\n" +
+	"\n" +
+	"timeout_ms\x18\x02 \x01(\x05R\ttimeoutMs\"\xbb\x04\n" +
+	"\rProbeResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\x12\x1f\n" +
+	"\vvideo_codec\x18\x03 \x01(\tR\n" +
+	"videoCodec\x12#\n" +
+	"\rvideo_profile\x18\x04 \x01(\tR\fvideoProfile\x12\x1f\n" +
+	"\vvideo_width\x18\x05 \x01(\x05R\n" +
+	"videoWidth\x12!\n" +
+	"\fvideo_height\x18\x06 \x01(\x05R\vvideoHeight\x12'\n" +
+	"\x0fvideo_framerate\x18\a \x01(\x01R\x0evideoFramerate\x12*\n" +
+	"\x11video_bitrate_bps\x18\b \x01(\x03R\x0fvideoBitrateBps\x12\x1f\n" +
+	"\vaudio_codec\x18\t \x01(\tR\n" +
+	"audioCodec\x12%\n" +
+	"\x0eaudio_channels\x18\n" +
+	" \x01(\x05R\raudioChannels\x12*\n" +
+	"\x11audio_sample_rate\x18\v \x01(\x05R\x0faudioSampleRate\x12*\n" +
+	"\x11audio_bitrate_bps\x18\f \x01(\x03R\x0faudioBitrateBps\x12)\n" +
+	"\x10container_format\x18\r \x01(\tR\x0fcontainerFormat\x12$\n" +
+	"\x0eis_live_stream\x18\x0e \x01(\bR\fisLiveStream\x12*\n" +
+	"\x11probe_duration_ms\x18\x0f \x01(\x05R\x0fprobeDurationMs*\x89\x01\n" +
 	"\bGPUClass\x12\x15\n" +
 	"\x11GPU_CLASS_UNKNOWN\x10\x00\x12\x16\n" +
 	"\x12GPU_CLASS_CONSUMER\x10\x01\x12\x1a\n" +
@@ -3319,7 +3594,7 @@ func file_pkg_ffmpegd_proto_ffmpegd_proto_rawDescGZIP() []byte {
 }
 
 var file_pkg_ffmpegd_proto_ffmpegd_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
+var file_pkg_ffmpegd_proto_ffmpegd_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
 var file_pkg_ffmpegd_proto_ffmpegd_proto_goTypes = []any{
 	(GPUClass)(0),                  // 0: ffmpegd.GPUClass
 	(DaemonCommand_CommandType)(0), // 1: ffmpegd.DaemonCommand.CommandType
@@ -3353,18 +3628,20 @@ var file_pkg_ffmpegd_proto_ffmpegd_proto_goTypes = []any{
 	(*TranscodeInputComplete)(nil), // 29: ffmpegd.TranscodeInputComplete
 	(*GetStatsRequest)(nil),        // 30: ffmpegd.GetStatsRequest
 	(*GetStatsResponse)(nil),       // 31: ffmpegd.GetStatsResponse
-	nil,                            // 32: ffmpegd.TranscodeStart.ExtraOptionsEntry
-	(*durationpb.Duration)(nil),    // 33: google.protobuf.Duration
+	(*ProbeRequest)(nil),           // 32: ffmpegd.ProbeRequest
+	(*ProbeResponse)(nil),          // 33: ffmpegd.ProbeResponse
+	nil,                            // 34: ffmpegd.TranscodeStart.ExtraOptionsEntry
+	(*durationpb.Duration)(nil),    // 35: google.protobuf.Duration
 }
 var file_pkg_ffmpegd_proto_ffmpegd_proto_depIdxs = []int32{
 	12, // 0: ffmpegd.RegisterRequest.capabilities:type_name -> ffmpegd.Capabilities
-	33, // 1: ffmpegd.RegisterResponse.heartbeat_interval:type_name -> google.protobuf.Duration
+	35, // 1: ffmpegd.RegisterResponse.heartbeat_interval:type_name -> google.protobuf.Duration
 	17, // 2: ffmpegd.HeartbeatRequest.system_stats:type_name -> ffmpegd.SystemStats
 	11, // 3: ffmpegd.HeartbeatRequest.active_jobs:type_name -> ffmpegd.JobStatus
 	9,  // 4: ffmpegd.HeartbeatResponse.commands:type_name -> ffmpegd.DaemonCommand
 	1,  // 5: ffmpegd.DaemonCommand.type:type_name -> ffmpegd.DaemonCommand.CommandType
 	26, // 6: ffmpegd.JobStatus.stats:type_name -> ffmpegd.TranscodeStats
-	33, // 7: ffmpegd.JobStatus.running_time:type_name -> google.protobuf.Duration
+	35, // 7: ffmpegd.JobStatus.running_time:type_name -> google.protobuf.Duration
 	13, // 8: ffmpegd.Capabilities.hw_accels:type_name -> ffmpegd.HWAccelInfo
 	15, // 9: ffmpegd.Capabilities.gpus:type_name -> ffmpegd.GPUInfo
 	16, // 10: ffmpegd.Capabilities.performance:type_name -> ffmpegd.PerformanceMetrics
@@ -3382,31 +3659,33 @@ var file_pkg_ffmpegd_proto_ffmpegd_proto_depIdxs = []int32{
 	27, // 22: ffmpegd.TranscodeMessage.error:type_name -> ffmpegd.TranscodeError
 	28, // 23: ffmpegd.TranscodeMessage.stop:type_name -> ffmpegd.TranscodeStop
 	29, // 24: ffmpegd.TranscodeMessage.input_complete:type_name -> ffmpegd.TranscodeInputComplete
-	32, // 25: ffmpegd.TranscodeStart.extra_options:type_name -> ffmpegd.TranscodeStart.ExtraOptionsEntry
-	22, // 26: ffmpegd.TranscodeStart.encoder_overrides:type_name -> ffmpegd.EncoderOverride
-	25, // 27: ffmpegd.ESSampleBatch.video_samples:type_name -> ffmpegd.ESSample
-	25, // 28: ffmpegd.ESSampleBatch.audio_samples:type_name -> ffmpegd.ESSample
-	33, // 29: ffmpegd.TranscodeStats.running_time:type_name -> google.protobuf.Duration
-	2,  // 30: ffmpegd.TranscodeError.code:type_name -> ffmpegd.TranscodeError.ErrorCode
-	12, // 31: ffmpegd.GetStatsResponse.capabilities:type_name -> ffmpegd.Capabilities
-	17, // 32: ffmpegd.GetStatsResponse.system_stats:type_name -> ffmpegd.SystemStats
-	11, // 33: ffmpegd.GetStatsResponse.active_jobs:type_name -> ffmpegd.JobStatus
-	33, // 34: ffmpegd.GetStatsResponse.total_encoding_time:type_name -> google.protobuf.Duration
-	3,  // 35: ffmpegd.FFmpegDaemon.Register:input_type -> ffmpegd.RegisterRequest
-	7,  // 36: ffmpegd.FFmpegDaemon.Heartbeat:input_type -> ffmpegd.HeartbeatRequest
-	5,  // 37: ffmpegd.FFmpegDaemon.Unregister:input_type -> ffmpegd.UnregisterRequest
-	20, // 38: ffmpegd.FFmpegDaemon.Transcode:input_type -> ffmpegd.TranscodeMessage
-	30, // 39: ffmpegd.FFmpegDaemon.GetStats:input_type -> ffmpegd.GetStatsRequest
-	4,  // 40: ffmpegd.FFmpegDaemon.Register:output_type -> ffmpegd.RegisterResponse
-	8,  // 41: ffmpegd.FFmpegDaemon.Heartbeat:output_type -> ffmpegd.HeartbeatResponse
-	6,  // 42: ffmpegd.FFmpegDaemon.Unregister:output_type -> ffmpegd.UnregisterResponse
-	20, // 43: ffmpegd.FFmpegDaemon.Transcode:output_type -> ffmpegd.TranscodeMessage
-	31, // 44: ffmpegd.FFmpegDaemon.GetStats:output_type -> ffmpegd.GetStatsResponse
-	40, // [40:45] is the sub-list for method output_type
-	35, // [35:40] is the sub-list for method input_type
-	35, // [35:35] is the sub-list for extension type_name
-	35, // [35:35] is the sub-list for extension extendee
-	0,  // [0:35] is the sub-list for field type_name
+	32, // 25: ffmpegd.TranscodeMessage.probe_request:type_name -> ffmpegd.ProbeRequest
+	33, // 26: ffmpegd.TranscodeMessage.probe_response:type_name -> ffmpegd.ProbeResponse
+	34, // 27: ffmpegd.TranscodeStart.extra_options:type_name -> ffmpegd.TranscodeStart.ExtraOptionsEntry
+	22, // 28: ffmpegd.TranscodeStart.encoder_overrides:type_name -> ffmpegd.EncoderOverride
+	25, // 29: ffmpegd.ESSampleBatch.video_samples:type_name -> ffmpegd.ESSample
+	25, // 30: ffmpegd.ESSampleBatch.audio_samples:type_name -> ffmpegd.ESSample
+	35, // 31: ffmpegd.TranscodeStats.running_time:type_name -> google.protobuf.Duration
+	2,  // 32: ffmpegd.TranscodeError.code:type_name -> ffmpegd.TranscodeError.ErrorCode
+	12, // 33: ffmpegd.GetStatsResponse.capabilities:type_name -> ffmpegd.Capabilities
+	17, // 34: ffmpegd.GetStatsResponse.system_stats:type_name -> ffmpegd.SystemStats
+	11, // 35: ffmpegd.GetStatsResponse.active_jobs:type_name -> ffmpegd.JobStatus
+	35, // 36: ffmpegd.GetStatsResponse.total_encoding_time:type_name -> google.protobuf.Duration
+	3,  // 37: ffmpegd.FFmpegDaemon.Register:input_type -> ffmpegd.RegisterRequest
+	7,  // 38: ffmpegd.FFmpegDaemon.Heartbeat:input_type -> ffmpegd.HeartbeatRequest
+	5,  // 39: ffmpegd.FFmpegDaemon.Unregister:input_type -> ffmpegd.UnregisterRequest
+	20, // 40: ffmpegd.FFmpegDaemon.Transcode:input_type -> ffmpegd.TranscodeMessage
+	30, // 41: ffmpegd.FFmpegDaemon.GetStats:input_type -> ffmpegd.GetStatsRequest
+	4,  // 42: ffmpegd.FFmpegDaemon.Register:output_type -> ffmpegd.RegisterResponse
+	8,  // 43: ffmpegd.FFmpegDaemon.Heartbeat:output_type -> ffmpegd.HeartbeatResponse
+	6,  // 44: ffmpegd.FFmpegDaemon.Unregister:output_type -> ffmpegd.UnregisterResponse
+	20, // 45: ffmpegd.FFmpegDaemon.Transcode:output_type -> ffmpegd.TranscodeMessage
+	31, // 46: ffmpegd.FFmpegDaemon.GetStats:output_type -> ffmpegd.GetStatsResponse
+	42, // [42:47] is the sub-list for method output_type
+	37, // [37:42] is the sub-list for method input_type
+	37, // [37:37] is the sub-list for extension type_name
+	37, // [37:37] is the sub-list for extension extendee
+	0,  // [0:37] is the sub-list for field type_name
 }
 
 func init() { file_pkg_ffmpegd_proto_ffmpegd_proto_init() }
@@ -3422,6 +3701,8 @@ func file_pkg_ffmpegd_proto_ffmpegd_proto_init() {
 		(*TranscodeMessage_Error)(nil),
 		(*TranscodeMessage_Stop)(nil),
 		(*TranscodeMessage_InputComplete)(nil),
+		(*TranscodeMessage_ProbeRequest)(nil),
+		(*TranscodeMessage_ProbeResponse)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -3429,7 +3710,7 @@ func file_pkg_ffmpegd_proto_ffmpegd_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_ffmpegd_proto_ffmpegd_proto_rawDesc), len(file_pkg_ffmpegd_proto_ffmpegd_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   30,
+			NumMessages:   32,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

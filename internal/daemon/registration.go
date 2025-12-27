@@ -672,6 +672,10 @@ func (h *TranscodeStreamHandler) processMessages(ctx context.Context) {
 		case *proto.TranscodeMessage_InputComplete:
 			// Coordinator signaling input is complete (graceful shutdown)
 			h.handleInputComplete(payload.InputComplete)
+
+		case *proto.TranscodeMessage_ProbeRequest:
+			// Coordinator requesting stream probe
+			h.handleProbeRequest(ctx, payload.ProbeRequest)
 		}
 	}
 }
@@ -931,4 +935,88 @@ func (c *RegistrationClient) StartTranscodeStream(ctx context.Context, binInfo *
 
 	handler := NewTranscodeStreamHandler(c.logger, client, c.config.DaemonID, binInfo)
 	return handler.Start(ctx)
+}
+
+// handleProbeRequest handles a probe request from the coordinator.
+// Uses local ffprobe to probe the stream and sends the result back.
+func (h *TranscodeStreamHandler) handleProbeRequest(ctx context.Context, req *proto.ProbeRequest) {
+	h.logger.Debug("Received probe request from coordinator",
+		slog.String("stream_url", req.StreamUrl),
+		slog.Int("timeout_ms", int(req.TimeoutMs)),
+	)
+
+	start := time.Now()
+
+	// Check if ffprobe is available
+	if h.binInfo == nil || h.binInfo.FFprobePath == "" {
+		h.sendProbeResponse(&proto.ProbeResponse{
+			Success:         false,
+			Error:           "ffprobe not available on this daemon",
+			ProbeDurationMs: int32(time.Since(start).Milliseconds()),
+		})
+		return
+	}
+
+	// Create prober with the configured timeout
+	prober := ffmpeg.NewProber(h.binInfo.FFprobePath)
+	if req.TimeoutMs > 0 {
+		prober = prober.WithTimeout(time.Duration(req.TimeoutMs) * time.Millisecond)
+	}
+
+	// Probe the stream
+	info, err := prober.ProbeSimple(ctx, req.StreamUrl)
+	if err != nil {
+		h.logger.Warn("Probe failed",
+			slog.String("stream_url", req.StreamUrl),
+			slog.String("error", err.Error()),
+			slog.Duration("duration", time.Since(start)),
+		)
+		h.sendProbeResponse(&proto.ProbeResponse{
+			Success:         false,
+			Error:           err.Error(),
+			ProbeDurationMs: int32(time.Since(start).Milliseconds()),
+		})
+		return
+	}
+
+	h.logger.Info("Probe completed",
+		slog.String("stream_url", req.StreamUrl),
+		slog.String("video_codec", info.VideoCodec),
+		slog.String("audio_codec", info.AudioCodec),
+		slog.Duration("duration", time.Since(start)),
+	)
+
+	h.sendProbeResponse(&proto.ProbeResponse{
+		Success:         true,
+		VideoCodec:      info.VideoCodec,
+		VideoProfile:    info.VideoProfile,
+		VideoWidth:      int32(info.VideoWidth),
+		VideoHeight:     int32(info.VideoHeight),
+		VideoFramerate:  info.VideoFramerate,
+		VideoBitrateBps: int64(info.VideoBitrate),
+		AudioCodec:      info.AudioCodec,
+		AudioChannels:   int32(info.AudioChannels),
+		AudioSampleRate: int32(info.AudioSampleRate),
+		AudioBitrateBps: int64(info.AudioBitrate),
+		ContainerFormat: info.ContainerFormat,
+		IsLiveStream:    info.IsLiveStream,
+		ProbeDurationMs: int32(time.Since(start).Milliseconds()),
+	})
+}
+
+// sendProbeResponse sends a probe response to the coordinator.
+func (h *TranscodeStreamHandler) sendProbeResponse(resp *proto.ProbeResponse) {
+	h.mu.RLock()
+	stream := h.stream
+	h.mu.RUnlock()
+
+	if stream != nil {
+		h.sendMu.Lock()
+		_ = stream.Send(&proto.TranscodeMessage{
+			Payload: &proto.TranscodeMessage_ProbeResponse{
+				ProbeResponse: resp,
+			},
+		})
+		h.sendMu.Unlock()
+	}
 }

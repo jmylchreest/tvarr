@@ -358,6 +358,8 @@ message TranscodeMessage {
     TranscodeError error = 5;                // Error notification (daemon -> client)
     TranscodeStop stop = 6;                  // Stop signal (client -> daemon)
     TranscodeInputComplete input_complete = 7; // Input complete signal (client -> daemon)
+    ProbeRequest probe_request = 8;          // Probe request (coordinator -> daemon)
+    ProbeResponse probe_response = 9;        // Probe response (daemon -> coordinator)
   }
 }
 
@@ -543,4 +545,44 @@ message GetStatsResponse {
   uint64 total_jobs_failed = 5;
   uint64 total_bytes_processed = 6;
   google.protobuf.Duration total_encoding_time = 7;
+}
+
+// =============================================================================
+// Probe Messages
+// =============================================================================
+
+// ProbeRequest asks a daemon to probe a stream URL for codec information.
+message ProbeRequest {
+  // Stream URL to probe
+  string stream_url = 1;
+
+  // Timeout in milliseconds (0 = use default)
+  int32 timeout_ms = 2;
+}
+
+// ProbeResponse contains codec information from ffprobe.
+message ProbeResponse {
+  bool success = 1;
+  string error = 2;
+
+  // Video codec info
+  string video_codec = 3;      // h264, hevc, vp9, av1
+  string video_profile = 4;    // High, Main, etc.
+  int32 video_width = 5;
+  int32 video_height = 6;
+  double video_framerate = 7;
+  int64 video_bitrate_bps = 8;
+
+  // Audio codec info
+  string audio_codec = 9;      // aac, ac3, eac3, mp3, opus
+  int32 audio_channels = 10;
+  int32 audio_sample_rate = 11;
+  int64 audio_bitrate_bps = 12;
+
+  // Container info
+  string container_format = 13;  // mpegts, hls, mp4
+  bool is_live_stream = 14;
+
+  // Probe duration in milliseconds
+  int32 probe_duration_ms = 15;
 }

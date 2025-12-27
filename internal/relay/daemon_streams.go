@@ -23,6 +23,9 @@ type DaemonStream struct {
 	mu        sync.Mutex
 	closed    bool
 	activeJob string // Currently active job ID (empty if idle)
+
+	// Pending probe requests waiting for responses
+	pendingProbes map[string]chan *proto.ProbeResponse
 }
 
 // Send sends a message to the daemon through the stream.
@@ -63,6 +66,84 @@ func (s *DaemonStream) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
+
+	// Cancel any pending probes
+	for _, ch := range s.pendingProbes {
+		close(ch)
+	}
+	s.pendingProbes = nil
+}
+
+// Probe sends a probe request to the daemon and waits for the response.
+// Uses the stream URL as the request ID for matching responses.
+func (s *DaemonStream) Probe(ctx context.Context, streamURL string, timeoutMs int32) (*proto.ProbeResponse, error) {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, errors.New("stream closed")
+	}
+
+	// Create response channel
+	if s.pendingProbes == nil {
+		s.pendingProbes = make(map[string]chan *proto.ProbeResponse)
+	}
+	responseCh := make(chan *proto.ProbeResponse, 1)
+	s.pendingProbes[streamURL] = responseCh
+	s.mu.Unlock()
+
+	// Cleanup on exit
+	defer func() {
+		s.mu.Lock()
+		delete(s.pendingProbes, streamURL)
+		s.mu.Unlock()
+	}()
+
+	// Send probe request
+	err := s.Stream.Send(&proto.TranscodeMessage{
+		Payload: &proto.TranscodeMessage_ProbeRequest{
+			ProbeRequest: &proto.ProbeRequest{
+				StreamUrl: streamURL,
+				TimeoutMs: timeoutMs,
+			},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Wait for response with timeout
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case resp, ok := <-responseCh:
+		if !ok {
+			return nil, errors.New("stream closed while waiting for probe response")
+		}
+		return resp, nil
+	}
+}
+
+// DeliverProbeResponse delivers a probe response to the waiting caller.
+// Returns true if a caller was waiting for this response.
+func (s *DaemonStream) DeliverProbeResponse(resp *proto.ProbeResponse, streamURL string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.pendingProbes == nil {
+		return false
+	}
+
+	ch, ok := s.pendingProbes[streamURL]
+	if !ok {
+		return false
+	}
+
+	select {
+	case ch <- resp:
+		return true
+	default:
+		return false
+	}
 }
 
 // DaemonStreamManager manages active transcode streams from daemons.
@@ -71,14 +152,28 @@ type DaemonStreamManager struct {
 
 	mu      sync.RWMutex
 	streams map[types.DaemonID]*DaemonStream
+
+	// Registry for strategy-based daemon selection
+	registry *DaemonRegistry
+
+	// Strategy provider for probe operations
+	probeStrategyProvider ProbeStrategyProvider
 }
 
 // NewDaemonStreamManager creates a new stream manager.
-func NewDaemonStreamManager(logger *slog.Logger) *DaemonStreamManager {
+func NewDaemonStreamManager(logger *slog.Logger, registry *DaemonRegistry) *DaemonStreamManager {
 	return &DaemonStreamManager{
-		logger:  logger,
-		streams: make(map[types.DaemonID]*DaemonStream),
+		logger:                logger,
+		streams:               make(map[types.DaemonID]*DaemonStream),
+		registry:              registry,
+		probeStrategyProvider: NewDefaultProbeStrategyProvider(),
 	}
+}
+
+// WithProbeStrategyProvider sets a custom probe strategy provider.
+func (m *DaemonStreamManager) WithProbeStrategyProvider(provider ProbeStrategyProvider) *DaemonStreamManager {
+	m.probeStrategyProvider = provider
+	return m
 }
 
 // RegisterStream registers a new daemon stream.
@@ -182,6 +277,48 @@ func (m *DaemonStreamManager) WaitForStream(ctx context.Context, daemonID types.
 			}
 		}
 	}
+}
+
+// Probe sends a probe request to a daemon stream selected via strategy.
+// Uses the configured probe strategy (defaults to LeastLoaded) to select
+// the most appropriate daemon for probing.
+func (m *DaemonStreamManager) Probe(ctx context.Context, streamURL string, timeoutMs int32) (*proto.ProbeResponse, error) {
+	var selectedDaemonID types.DaemonID
+	var stream *DaemonStream
+
+	// Use strategy-based selection if registry is available
+	if m.registry != nil && m.probeStrategyProvider != nil {
+		strategy := m.probeStrategyProvider.GetProbeStrategy()
+		// Empty criteria - we just want the least loaded daemon for probing
+		daemon := m.registry.SelectDaemon(strategy, SelectionCriteria{})
+		if daemon != nil {
+			selectedDaemonID = daemon.ID
+			m.logger.Debug("selected daemon for probe via strategy",
+				slog.String("daemon_id", string(daemon.ID)),
+				slog.String("strategy", strategy.Name()),
+			)
+		}
+	}
+
+	m.mu.RLock()
+	if selectedDaemonID != "" {
+		// Use the strategy-selected daemon
+		stream = m.streams[selectedDaemonID]
+	}
+	// Fallback: if strategy selection failed or stream not found, pick any available
+	if stream == nil {
+		for _, ds := range m.streams {
+			stream = ds
+			break
+		}
+	}
+	m.mu.RUnlock()
+
+	if stream == nil {
+		return nil, errors.New("no daemon streams available for probing")
+	}
+
+	return stream.Probe(ctx, streamURL, timeoutMs)
 }
 
 // Count returns the number of active streams.

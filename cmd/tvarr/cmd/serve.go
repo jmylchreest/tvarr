@@ -75,6 +75,9 @@ func init() {
 	serveCmd.Flags().Int("grpc-port", 9090, "Port for gRPC server")
 	serveCmd.Flags().String("grpc-auth-token", "", "Authentication token for ffmpegd daemons (optional)")
 
+	// Relay flags
+	serveCmd.Flags().Bool("prefer-remote-probe", false, "Prefer remote daemons for stream probing (ffprobe) even when local ffprobe is available")
+
 	// Bind flags to viper
 	mustBindPFlag("server.host", serveCmd.Flags().Lookup("host"))
 	mustBindPFlag("server.port", serveCmd.Flags().Lookup("port"))
@@ -89,6 +92,7 @@ func init() {
 	mustBindPFlag("grpc.enabled", serveCmd.Flags().Lookup("grpc-enabled"))
 	mustBindPFlag("grpc.port", serveCmd.Flags().Lookup("grpc-port"))
 	mustBindPFlag("grpc.auth_token", serveCmd.Flags().Lookup("grpc-auth-token"))
+	mustBindPFlag("relay.prefer_remote_probe", serveCmd.Flags().Lookup("prefer-remote-probe"))
 }
 
 func runServe(_ *cobra.Command, _ []string) error {
@@ -728,12 +732,14 @@ func runServe(_ *cobra.Command, _ []string) error {
 	// - streamMgr/jobMgr: for routing jobs through coordinator's gRPC streams
 	// - spawner: for local subprocess transcoding
 	// - preferRemote: true if external gRPC is enabled (remote daemons available)
+	// - preferRemoteProbe: prefer remote daemons for ffprobe (TVARR_PREFER_REMOTE_PROBE)
 	relayService.WithDistributedTranscoding(
 		daemonRegistry,
 		grpcServer.GetStreamManager(),
 		grpcServer.GetJobManager(),
 		spawner,
-		viper.GetBool("grpc.enabled"), // prefer remote if external port is enabled
+		viper.GetBool("grpc.enabled"),         // prefer remote if external port is enabled
+		viper.GetBool("relay.prefer_remote_probe"), // prefer remote probing
 	)
 
 	// Start server

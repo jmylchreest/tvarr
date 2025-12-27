@@ -79,7 +79,7 @@ func NewGRPCServer(logger *slog.Logger, cfg *GRPCServerConfig, registry *DaemonR
 		logger:       logger,
 		config:       cfg,
 		registry:     registry,
-		streamMgr:    NewDaemonStreamManager(logger),
+		streamMgr:    NewDaemonStreamManager(logger, registry),
 		jobMgr:       NewActiveJobManager(logger),
 		internalAddr: internalAddr,
 	}
@@ -466,6 +466,27 @@ func (s *GRPCServer) Transcode(stream grpc.BidiStreamingServer[proto.TranscodeMe
 			if jobID != "" {
 				s.jobMgr.RemoveJob(jobID)
 			}
+
+		case *proto.TranscodeMessage_ProbeResponse:
+			// Probe response from daemon
+			s.logger.Debug("Probe response from daemon",
+				slog.String("daemon_id", string(daemonID)),
+				slog.Bool("success", payload.ProbeResponse.Success),
+				slog.String("video_codec", payload.ProbeResponse.VideoCodec),
+				slog.String("audio_codec", payload.ProbeResponse.AudioCodec),
+			)
+
+			// Deliver to waiting caller (the stream URL isn't in response, so we need to track it)
+			// For now, we use the fact that there's typically only one pending probe per daemon
+			daemonStream.mu.Lock()
+			for streamURL := range daemonStream.pendingProbes {
+				// Deliver to first (and typically only) pending probe
+				daemonStream.mu.Unlock()
+				daemonStream.DeliverProbeResponse(payload.ProbeResponse, streamURL)
+				daemonStream.mu.Lock()
+				break
+			}
+			daemonStream.mu.Unlock()
 		}
 	}
 }

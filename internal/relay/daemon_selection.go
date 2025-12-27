@@ -425,3 +425,30 @@ func HWEncoderSelectionStrategy() SelectionStrategy {
 func SoftwareEncoderSelectionStrategy() SelectionStrategy {
 	return NewStrategyCapabilityMatch()
 }
+
+// ProbeSelectionStrategy returns the default strategy for probe operations.
+// Probing is lightweight so we just pick the least loaded daemon.
+func ProbeSelectionStrategy() SelectionStrategy {
+	return NewStrategyLeastLoaded()
+}
+
+// ProbeStrategyProvider provides the selection strategy for probe operations.
+// This abstraction allows for future configuration-based strategy selection.
+type ProbeStrategyProvider interface {
+	// GetProbeStrategy returns the strategy to use for daemon selection during probing.
+	GetProbeStrategy() SelectionStrategy
+}
+
+// DefaultProbeStrategyProvider returns the default probe strategy (LeastLoaded).
+// This can be replaced with a configurable provider in the future.
+type DefaultProbeStrategyProvider struct{}
+
+// NewDefaultProbeStrategyProvider creates a new default probe strategy provider.
+func NewDefaultProbeStrategyProvider() *DefaultProbeStrategyProvider {
+	return &DefaultProbeStrategyProvider{}
+}
+
+// GetProbeStrategy returns the LeastLoaded strategy for probing.
+func (p *DefaultProbeStrategyProvider) GetProbeStrategy() SelectionStrategy {
+	return ProbeSelectionStrategy()
+}
