@@ -1,3 +1,7 @@
+# Build tvarr-coordinator Docker Image
+# NOTE: This workflow waits for the Test workflow to pass before building (on push events)
+# PRs skip the test gate.
+
 name: Build tvarr-coordinator Docker Image
 
 on:
@@ -47,8 +51,60 @@ env:
   IMAGE_NAME: ${{ github.repository_owner }}/tvarr-coordinator
 
 jobs:
+  # Wait for Test workflow to pass before building (only on push events)
+  verify-test:
+    name: Verify Tests Passed
+    runs-on: ubuntu-latest
+    # Skip for PRs and manual triggers
+    if: github.event_name == 'push'
+    steps:
+      - name: Wait for Test workflow to pass
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          COMMIT="${{ github.sha }}"
+          REPO="${{ github.repository }}"
+          echo "Waiting for Test workflow to pass for commit $COMMIT"
+
+          for i in {1..60}; do
+            RESULT=$(gh run list --repo "$REPO" --workflow=test.yml --commit="$COMMIT" --json status,conclusion -q '.[0]' 2>/dev/null || echo '{}')
+            STATUS=$(echo "$RESULT" | jq -r '.status // "not_found"')
+            CONCLUSION=$(echo "$RESULT" | jq -r '.conclusion // "pending"')
+
+            if [[ "$STATUS" == "completed" ]]; then
+              if [[ "$CONCLUSION" == "success" ]]; then
+                echo "Tests passed"
+                exit 0
+              else
+                echo "Tests failed with conclusion: $CONCLUSION"
+                exit 1
+              fi
+            fi
+
+            if [[ "$STATUS" == "not_found" ]] && [[ $i -gt 5 ]]; then
+              echo "No Test workflow found for this commit after 5 attempts"
+              echo "This may indicate the Test workflow was not triggered"
+              exit 1
+            fi
+
+            echo "Test workflow status: $STATUS (attempt $i/60), waiting..."
+            sleep 30
+          done
+
+          echo "Timeout waiting for Test workflow after 30 minutes"
+          exit 1
+
   build:
     # Note: ARM64 not supported - Arch Linux base is amd64 only
+    needs: verify-test
+    # Run if gate passed/skipped, or on PRs (which skip gate)
+    if: |
+      always() && (
+        github.event_name == 'pull_request' ||
+        github.event_name == 'workflow_dispatch' ||
+        needs.verify-test.result == 'success' ||
+        needs.verify-test.result == 'skipped'
+      )
     strategy:
       fail-fast: false
       matrix:

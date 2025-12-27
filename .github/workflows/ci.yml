@@ -1,6 +1,7 @@
 # Continuous Integration workflow for tvarr
-# Runs linting, testing, security scanning, and verification on pull requests and pushes
-# Build artifacts are handled by separate snapshot/release workflows
+# Runs linting, security scanning, and verification on pull requests and pushes
+# NOTE: Tests are in a separate test.yml workflow which blocks build workflows
+# This workflow is informational only - failures do NOT block builds
 
 name: CI
 
@@ -54,34 +55,6 @@ jobs:
             gofmt -d .
             exit 1
           fi
-
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Run tests with race detector
-        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
-
-      - name: Upload coverage
-        uses: codecov/codecov-action@v5
-        with:
-          files: coverage.out
-          fail_ci_if_error: false
-          verbose: true
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   security:
     name: Security Scan

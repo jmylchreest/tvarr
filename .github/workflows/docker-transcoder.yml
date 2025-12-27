@@ -1,3 +1,7 @@
+# Build tvarr-transcoder Docker Image
+# NOTE: This workflow waits for the Test workflow to pass and FFmpeg workflow to complete
+# before building (on push events). PRs skip the dependency gates.
+
 name: Build tvarr-transcoder Docker Image
 
 on:
@@ -46,8 +50,107 @@ env:
   FFMPEG_IMAGE: ghcr.io/${{ github.repository_owner }}/tvarr-ffmpeg
 
 jobs:
+  # Wait for Test workflow to pass before building (only on push events)
+  verify-test:
+    name: Verify Tests Passed
+    runs-on: ubuntu-latest
+    # Skip for PRs and manual triggers
+    if: github.event_name == 'push'
+    steps:
+      - name: Wait for Test workflow to pass
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          COMMIT="${{ github.sha }}"
+          REPO="${{ github.repository }}"
+          echo "Waiting for Test workflow to pass for commit $COMMIT"
+
+          for i in {1..60}; do
+            RESULT=$(gh run list --repo "$REPO" --workflow=test.yml --commit="$COMMIT" --json status,conclusion -q '.[0]' 2>/dev/null || echo '{}')
+            STATUS=$(echo "$RESULT" | jq -r '.status // "not_found"')
+            CONCLUSION=$(echo "$RESULT" | jq -r '.conclusion // "pending"')
+
+            if [[ "$STATUS" == "completed" ]]; then
+              if [[ "$CONCLUSION" == "success" ]]; then
+                echo "Tests passed"
+                exit 0
+              else
+                echo "Tests failed with conclusion: $CONCLUSION"
+                exit 1
+              fi
+            fi
+
+            if [[ "$STATUS" == "not_found" ]] && [[ $i -gt 5 ]]; then
+              echo "No Test workflow found for this commit after 5 attempts"
+              echo "This may indicate the Test workflow was not triggered"
+              exit 1
+            fi
+
+            echo "Test workflow status: $STATUS (attempt $i/60), waiting..."
+            sleep 30
+          done
+
+          echo "Timeout waiting for Test workflow after 30 minutes"
+          exit 1
+
+  # Wait for FFmpeg workflow to complete (if running) before building
+  verify-ffmpeg:
+    name: Verify FFmpeg Ready
+    needs: verify-test
+    runs-on: ubuntu-latest
+    # Skip for PRs and manual triggers
+    if: always() && github.event_name == 'push' && (needs.verify-test.result == 'success' || needs.verify-test.result == 'skipped')
+    steps:
+      - name: Wait for FFmpeg workflow to complete
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          COMMIT="${{ github.sha }}"
+          REPO="${{ github.repository }}"
+          echo "Checking FFmpeg workflow status for commit $COMMIT"
+
+          for i in {1..60}; do
+            RESULT=$(gh run list --repo "$REPO" --workflow=docker-ffmpeg.yml --commit="$COMMIT" --json status,conclusion -q '.[0]' 2>/dev/null || echo '{}')
+            STATUS=$(echo "$RESULT" | jq -r '.status // "not_found"')
+            CONCLUSION=$(echo "$RESULT" | jq -r '.conclusion // "pending"')
+
+            if [[ "$STATUS" == "completed" ]]; then
+              if [[ "$CONCLUSION" == "success" ]] || [[ "$CONCLUSION" == "skipped" ]]; then
+                echo "FFmpeg workflow completed successfully"
+                exit 0
+              else
+                echo "FFmpeg workflow failed with conclusion: $CONCLUSION"
+                exit 1
+              fi
+            fi
+
+            # FFmpeg workflow may not run if paths didn't change
+            if [[ "$STATUS" == "not_found" ]]; then
+              echo "No FFmpeg workflow found for this commit - paths likely didn't change"
+              echo "Proceeding with existing FFmpeg image"
+              exit 0
+            fi
+
+            echo "FFmpeg workflow status: $STATUS (attempt $i/60), waiting..."
+            sleep 30
+          done
+
+          echo "Timeout waiting for FFmpeg workflow after 30 minutes"
+          exit 1
+
   build:
     # Note: ARM64 not supported - FFmpeg base image (Arch Linux) is amd64 only
+    needs: [verify-test, verify-ffmpeg]
+    # Run if both gates passed/skipped, or on PRs (which skip gates)
+    if: |
+      always() && (
+        github.event_name == 'pull_request' ||
+        github.event_name == 'workflow_dispatch' ||
+        (
+          (needs.verify-test.result == 'success' || needs.verify-test.result == 'skipped') &&
+          (needs.verify-ffmpeg.result == 'success' || needs.verify-ffmpeg.result == 'skipped')
+        )
+      )
     strategy:
       fail-fast: false
       matrix:
