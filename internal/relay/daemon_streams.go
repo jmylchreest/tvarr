@@ -57,10 +57,9 @@ type DaemonStream struct {
 	// Probe capacity (lightweight operations, separate from encoding)
 	MaxProbeJobs int // Maximum concurrent probe jobs (typically 2-3x MaxJobs)
 
-	mu           sync.Mutex
-	closed       bool
-	activeJobs   map[string]JobType // Active encoding job IDs with their type (CPU or GPU)
-	activeProbes int                // Count of active probe operations
+	mu         sync.Mutex
+	closed     bool
+	activeJobs map[string]JobType // Active encoding job IDs with their type (CPU or GPU)
 
 	// Pending probe requests waiting for responses
 	pendingProbes map[string]chan *proto.ProbeResponse

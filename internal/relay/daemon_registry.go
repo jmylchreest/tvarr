@@ -48,6 +48,12 @@ func (r *DaemonRegistry) WithRemoveTimeout(timeout time.Duration) *DaemonRegistr
 	return r
 }
 
+// WithCleanupInterval sets the interval for checking daemon health.
+func (r *DaemonRegistry) WithCleanupInterval(interval time.Duration) *DaemonRegistry {
+	r.cleanupInterval = interval
+	return r
+}
+
 // Start starts the daemon registry cleanup goroutine.
 func (r *DaemonRegistry) Start(ctx context.Context) {
 	cleanupCtx, cancel := context.WithCancel(ctx)

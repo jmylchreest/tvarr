@@ -476,13 +476,23 @@ func (s *FFmpegDSpawner) GetSpawnedDaemonID(jobID string) (types.DaemonID, bool)
 	return "", false
 }
 
-// findBinary locates the tvarr-ffmpegd binary using the shared FindBinary utility.
+// findBinary locates the tvarr-ffmpegd binary.
 // Search order:
-//  1. TVARR_FFMPEGD_BINARY env var
-//  2. ./tvarr-ffmpegd (local development)
-//  3. tvarr-ffmpegd on PATH
+//  1. Config.BinaryPath (if set and file exists)
+//  2. TVARR_FFMPEGD_BINARY env var
+//  3. ./tvarr-ffmpegd (local development)
+//  4. tvarr-ffmpegd on PATH
 func (s *FFmpegDSpawner) findBinary() string {
 	s.binaryPathOnce.Do(func() {
+		// 1. Check config first
+		if s.config.BinaryPath != "" {
+			if _, err := os.Stat(s.config.BinaryPath); err == nil {
+				s.binaryPath = s.config.BinaryPath
+				return
+			}
+		}
+
+		// 2-4. Fall back to standard search
 		path, err := util.FindBinary("tvarr-ffmpegd", "TVARR_FFMPEGD_BINARY")
 		if err == nil {
 			s.binaryPath = path

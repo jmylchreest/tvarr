@@ -122,8 +122,10 @@ func TestNetworkPartition(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	// Create coordinator with short heartbeat timeout to speed up test
-	registry := relay.NewDaemonRegistry(logger).WithHeartbeatTimeout(2 * time.Second)
+	// Create coordinator with short heartbeat timeout and cleanup interval to speed up test
+	registry := relay.NewDaemonRegistry(logger).
+		WithHeartbeatTimeout(2 * time.Second).
+		WithCleanupInterval(500 * time.Millisecond)
 	registry.Start(ctx)
 	defer registry.Stop()
 
@@ -201,8 +203,10 @@ func TestDaemonCrashRecovery(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	// Create coordinator with short timeouts
-	registry := relay.NewDaemonRegistry(logger).WithHeartbeatTimeout(2 * time.Second)
+	// Create coordinator with short timeouts and cleanup interval
+	registry := relay.NewDaemonRegistry(logger).
+		WithHeartbeatTimeout(2 * time.Second).
+		WithCleanupInterval(500 * time.Millisecond)
 	registry.Start(ctx)
 	defer registry.Stop()
 

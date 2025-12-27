@@ -914,11 +914,6 @@ func (h *TranscodeStreamHandler) forwardTranscodedOutput(ctx context.Context, jo
 	}
 }
 
-// sendError sends an error message to the coordinator (legacy, no job_id).
-func (h *TranscodeStreamHandler) sendError(code proto.TranscodeError_ErrorCode, message string) {
-	h.sendErrorWithJobID("", code, message)
-}
-
 // sendErrorWithJobID sends an error message to the coordinator with job_id.
 func (h *TranscodeStreamHandler) sendErrorWithJobID(jobID string, code proto.TranscodeError_ErrorCode, message string) {
 	h.mu.RLock()
@@ -938,11 +933,6 @@ func (h *TranscodeStreamHandler) sendErrorWithJobID(jobID string, code proto.Tra
 		})
 		h.sendMu.Unlock()
 	}
-}
-
-// sendStop sends a stop message to the coordinator (legacy, no job_id).
-func (h *TranscodeStreamHandler) sendStop(reason string) {
-	h.sendStopWithJobID("", reason)
 }
 
 // sendStopWithJobID sends a stop message to the coordinator with job_id.

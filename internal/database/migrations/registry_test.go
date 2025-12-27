@@ -48,7 +48,10 @@ func TestAllMigrations_ReturnsExpectedCount(t *testing.T) {
 	// 019: Fix duplicate Exclude Adult Content filters and upgrade expression
 	// 020: Add ffmpegd_config table for distributed transcoding configuration
 	// 021: Add max_concurrent_streams column to stream_sources table
-	assert.Len(t, migrations, 21)
+	// 022: Add encoder_overrides table for hardware encoder workarounds
+	// 023: Remove deprecated client_detection_enabled column from stream_proxies
+	// 024: Fix dynamic codec rules to only contribute their own field
+	assert.Len(t, migrations, 24)
 }
 
 func TestAllMigrations_VersionsAreUnique(t *testing.T) {
@@ -118,10 +121,10 @@ func TestMigrator_Status(t *testing.T) {
 	migrator := NewMigrator(db, nil)
 	migrator.RegisterAll(AllMigrations())
 
-	// Before running migrations (21 migrations total)
+	// Before running migrations (24 migrations total)
 	statuses, err := migrator.Status(ctx)
 	require.NoError(t, err)
-	assert.Len(t, statuses, 21)
+	assert.Len(t, statuses, 24)
 
 	for _, s := range statuses {
 		assert.False(t, s.Applied)
@@ -158,6 +161,31 @@ func TestMigrator_Down_RollsBackLastMigration(t *testing.T) {
 	assert.True(t, db.Migrator().HasTable("client_detection_rules"))
 	assert.True(t, db.Migrator().HasTable("backup_settings"))
 	assert.True(t, db.Migrator().HasTable("ffmpegd_config"))
+	assert.True(t, db.Migrator().HasTable("encoder_overrides"))
+
+	// Roll back migration 024 (fix dynamic codec rules)
+	err = migrator.Down(ctx)
+	require.NoError(t, err)
+
+	// Tables still exist after rolling back codec rule fix
+	assert.True(t, db.Migrator().HasTable("client_detection_rules"))
+	assert.True(t, db.Migrator().HasTable("encoder_overrides"))
+
+	// Roll back migration 023 (remove deprecated column)
+	err = migrator.Down(ctx)
+	require.NoError(t, err)
+
+	// Tables still exist after rolling back column removal
+	assert.True(t, db.Migrator().HasTable("stream_proxies"))
+	assert.True(t, db.Migrator().HasTable("encoder_overrides"))
+
+	// Roll back migration 022 (encoder_overrides table)
+	err = migrator.Down(ctx)
+	require.NoError(t, err)
+
+	// encoder_overrides table should be removed
+	assert.False(t, db.Migrator().HasTable("encoder_overrides"))
+	assert.True(t, db.Migrator().HasTable("stream_sources"))
 
 	// Roll back migration 021 (max_concurrent_streams column)
 	err = migrator.Down(ctx)
@@ -341,10 +369,10 @@ func TestMigrator_Pending(t *testing.T) {
 	migrator := NewMigrator(db, nil)
 	migrator.RegisterAll(AllMigrations())
 
-	// All should be pending initially (21 migrations total)
+	// All should be pending initially (24 migrations total)
 	pending, err := migrator.Pending(ctx)
 	require.NoError(t, err)
-	assert.Len(t, pending, 21)
+	assert.Len(t, pending, 24)
 
 	// Run migrations
 	err = migrator.Up(ctx)

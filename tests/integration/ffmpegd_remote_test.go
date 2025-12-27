@@ -293,7 +293,9 @@ func TestRemoteDaemonHealthTracking(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	// Create registry with short timeout for testing
-	registry := relay.NewDaemonRegistry(logger).WithHeartbeatTimeout(2 * time.Second)
+	registry := relay.NewDaemonRegistry(logger).
+		WithHeartbeatTimeout(2 * time.Second).
+		WithCleanupInterval(500 * time.Millisecond)
 	registry.Start(ctx)
 	defer registry.Stop()
 

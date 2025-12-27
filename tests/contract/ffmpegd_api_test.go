@@ -291,7 +291,7 @@ func TestTypesToDTOConversion(t *testing.T) {
 			state    types.DaemonState
 			expected string
 		}{
-			{types.DaemonStateConnected, "active"},
+			{types.DaemonStateConnected, "connected"},
 			{types.DaemonStateDraining, "draining"},
 			{types.DaemonStateUnhealthy, "unhealthy"},
 			{types.DaemonStateDisconnected, "disconnected"},
