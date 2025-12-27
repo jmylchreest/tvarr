@@ -17,21 +17,32 @@ vars:
 
   # Version detection: Docker ENV vars (TVARR_BUILD_*) take priority over git
   # This allows Docker builds to inject version info since .git is excluded
+  # Format: X.Y.Z for releases, X.Y.Z-dev.N-HASH for dev builds (using - not + for GitHub compatibility)
   VERSION:
     sh: |
       if [ -n "${TVARR_BUILD_VERSION:-}" ]; then
         echo "$TVARR_BUILD_VERSION"
       elif TAG=$(git describe --tags --exact-match 2>/dev/null); then
+        # On an exact tag - use it directly
         echo "$TAG" | sed 's/^v//'
-      elif DESC=$(git describe --tags --always --long 2>/dev/null) && echo "$DESC" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+-[0-9]+-g[a-f0-9]+$'; then
-        MAJOR=$(echo "$DESC" | sed -E 's/^v([0-9]+)\..*$/\1/')
-        MINOR=$(echo "$DESC" | sed -E 's/^v[0-9]+\.([0-9]+)\..*$/\1/')
-        PATCH=$(echo "$DESC" | sed -E 's/^v[0-9]+\.[0-9]+\.([0-9]+)-.*$/\1/')
-        COMMITS=$(echo "$DESC" | sed -E 's/^.*-([0-9]+)-g[a-f0-9]+$/\1/')
-        HASH=$(echo "$DESC" | sed -E 's/^.*-g([a-f0-9]+)$/\1/')
-        echo "${MAJOR}.${MINOR}.$((PATCH + 1))-dev.${COMMITS}+${HASH}"
       else
-        echo "0.0.1-dev.0+$(git rev-parse --short=7 HEAD 2>/dev/null || echo unknown)"
+        # Find latest release tag (only vX.Y.Z, no prerelease)
+        LATEST_RELEASE=$(git tag --list 'v*' 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+        SHORT_SHA=$(git rev-parse --short=7 HEAD 2>/dev/null || echo "unknown")
+        if [ -n "$LATEST_RELEASE" ]; then
+          # Count commits since latest release
+          COMMITS=$(git rev-list "${LATEST_RELEASE}..HEAD" --count 2>/dev/null || echo "0")
+          # Parse and increment patch version
+          VERSION_NUM="${LATEST_RELEASE#v}"
+          MAJOR=$(echo "$VERSION_NUM" | cut -d. -f1)
+          MINOR=$(echo "$VERSION_NUM" | cut -d. -f2)
+          PATCH=$(echo "$VERSION_NUM" | cut -d. -f3)
+          NEXT_PATCH=$((PATCH + 1))
+          echo "${MAJOR}.${MINOR}.${NEXT_PATCH}-dev.${COMMITS}-${SHORT_SHA}"
+        else
+          # No release tags found - use 0.0.1-dev.0-HASH
+          echo "0.0.1-dev.0-${SHORT_SHA}"
+        fi
       fi
   COMMIT:
     sh: echo "${TVARR_BUILD_COMMIT:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"

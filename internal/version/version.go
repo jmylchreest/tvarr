@@ -23,7 +23,8 @@ import (
 var (
 	// Version is the semantic version following SemVer 2.0.0.
 	// Release format: "1.2.3"
-	// Prerelease format: "1.2.3-SNAPSHOT.abc1234" (next patch + SNAPSHOT + short SHA)
+	// Dev format: "1.2.3-dev.N-HASH" (next patch + dev + commits since release + short SHA)
+	// Uses "-" instead of "+" for GitHub releases compatibility
 	Version = "dev"
 
 	// Commit is the full git commit SHA.
@@ -152,9 +153,9 @@ func UserAgent() string {
 }
 
 // IsSnapshot returns true if this is a snapshot/prerelease build.
-// Snapshots use SemVer prerelease format: X.Y.Z-SNAPSHOT.commitsha
+// Dev builds use format: X.Y.Z-dev.N-HASH
 func IsSnapshot() bool {
-	return Version == "dev" || strings.Contains(Version, "-SNAPSHOT")
+	return Version == "dev" || strings.Contains(Version, "-dev.")
 }
 
 // IsRelease returns true if this is a tagged release build.

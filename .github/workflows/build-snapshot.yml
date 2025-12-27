@@ -1,6 +1,7 @@
 # Snapshot Build workflow for tvarr
 # Builds development binaries on main branch pushes
-# Uses SemVer pre-release format: {major}.{minor}.{next_patch}-dev.{commits}+{hash}
+# Uses format: {major}.{minor}.{next_patch}-dev.{commits}-{hash}
+# Uses "-" instead of "+" for GitHub releases compatibility
 # NOTE: This workflow waits for the Test workflow to pass before building
 
 name: Build Snapshot
@@ -102,34 +103,31 @@ jobs:
       - name: Determine version
         id: version
         run: |
-          # SemVer pre-release format: {major}.{minor}.{patch}-dev.{commits}+{hash}
-          # The pre-release identifier is "dev.{commits}"
-          # The build metadata is the commit hash (after +)
+          # Version format: X.Y.Z-dev.N-HASH
+          # Uses "-" instead of "+" for GitHub releases compatibility
+          # Finds latest release tag (vX.Y.Z only, no prereleases), increments patch,
+          # and adds dev.N where N is commits since that release
 
-          if git describe --tags --always --long 2>/dev/null | grep -q '^v'; then
-            DESCRIBE=$(git describe --tags --always --long 2>/dev/null)
-            # Parse: vMAJOR.MINOR.PATCH-COMMITS-gHASH
-            if [[ $DESCRIBE =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9]+)-g([a-f0-9]+)$ ]]; then
-              MAJOR=${BASH_REMATCH[1]}
-              MINOR=${BASH_REMATCH[2]}
-              PATCH=${BASH_REMATCH[3]}
-              COMMITS=${BASH_REMATCH[4]}
-              HASH=${BASH_REMATCH[5]}
-              # Increment patch for dev version
-              NEXT_PATCH=$((PATCH + 1))
-              # SemVer format: pre-release after -, build metadata after +
-              VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}-dev.${COMMITS}+${HASH}"
-              VERSION_TAG="v${MAJOR}.${MINOR}.${NEXT_PATCH}-dev.${COMMITS}"
-            else
-              # Fallback if pattern doesn't match
-              SHORT_SHA=$(git rev-parse --short=7 HEAD)
-              VERSION="0.0.1-dev.0+${SHORT_SHA}"
-              VERSION_TAG="v0.0.1-dev.0-${SHORT_SHA}"
-            fi
+          SHORT_SHA=$(git rev-parse --short=7 HEAD)
+
+          # Find the latest release tag (only clean vX.Y.Z, no prerelease suffixes)
+          LATEST_RELEASE=$(git tag --list 'v*' 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+
+          if [ -n "$LATEST_RELEASE" ]; then
+            # Count commits since that release tag
+            COMMITS=$(git rev-list "${LATEST_RELEASE}..HEAD" --count 2>/dev/null || echo "0")
+            # Parse version from tag
+            VERSION_NUM="${LATEST_RELEASE#v}"
+            MAJOR=$(echo "$VERSION_NUM" | cut -d. -f1)
+            MINOR=$(echo "$VERSION_NUM" | cut -d. -f2)
+            PATCH=$(echo "$VERSION_NUM" | cut -d. -f3)
+            NEXT_PATCH=$((PATCH + 1))
+            # Format: X.Y.Z-dev.N-HASH (using - for GitHub compatibility)
+            VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}-dev.${COMMITS}-${SHORT_SHA}"
+            VERSION_TAG="v${MAJOR}.${MINOR}.${NEXT_PATCH}-dev.${COMMITS}-${SHORT_SHA}"
           else
-            # No tags: initial dev version
-            SHORT_SHA=$(git rev-parse --short=7 HEAD)
-            VERSION="0.0.1-dev.0+${SHORT_SHA}"
+            # No release tags found - use initial dev version
+            VERSION="0.0.1-dev.0-${SHORT_SHA}"
             VERSION_TAG="v0.0.1-dev.0-${SHORT_SHA}"
           fi
 

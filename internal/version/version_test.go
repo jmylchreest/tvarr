@@ -71,10 +71,11 @@ func TestIsSnapshot(t *testing.T) {
 	}{
 		{"dev", true},
 		{"1.0.0", false},
-		{"1.0.1-SNAPSHOT.abc1234", true}, // SemVer 2.0.0 prerelease format
+		{"0.0.19-dev.60-53bbc61", true}, // Dev build format
 		{"0.1.0", false},
-		{"2.0.0-SNAPSHOT.def5678", true}, // Another snapshot
-		{"1.2.3-alpha.1", false},         // Other prerelease, not snapshot
+		{"1.2.3-dev.5-abc1234", true},  // Another dev build
+		{"1.2.3-alpha.1", false},       // Other prerelease, not dev
+		{"0.0.1-dev.0-unknown", true},  // Fallback dev format
 	}
 
 	for _, tt := range tests {
@@ -98,7 +99,7 @@ func TestIsRelease(t *testing.T) {
 	}{
 		{"dev", false},
 		{"1.0.0", true},
-		{"1.0.1-SNAPSHOT.abc1234", false}, // SemVer 2.0.0 prerelease format
+		{"0.0.19-dev.60-53bbc61", false}, // Dev build format
 		{"0.1.0", true},
 		{"1.2.3-alpha.1", true}, // Other prerelease is still a "release"
 	}
