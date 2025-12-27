@@ -217,7 +217,7 @@ jobs:
 
   manifest:
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
+    if: always() && github.event_name != 'pull_request' && needs.build.result == 'success'
     needs: build
     permissions:
       contents: read
