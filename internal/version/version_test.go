@@ -73,9 +73,9 @@ func TestIsSnapshot(t *testing.T) {
 		{"1.0.0", false},
 		{"0.0.19-dev.60-53bbc61", true}, // Dev build format
 		{"0.1.0", false},
-		{"1.2.3-dev.5-abc1234", true},  // Another dev build
-		{"1.2.3-alpha.1", false},       // Other prerelease, not dev
-		{"0.0.1-dev.0-unknown", true},  // Fallback dev format
+		{"1.2.3-dev.5-abc1234", true}, // Another dev build
+		{"1.2.3-alpha.1", false},      // Other prerelease, not dev
+		{"0.0.1-dev.0-unknown", true}, // Fallback dev format
 	}
 
 	for _, tt := range tests {
