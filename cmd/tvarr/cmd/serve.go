@@ -697,7 +697,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	if err := grpcServer.Start(ctx); err != nil {
 		return fmt.Errorf("starting gRPC server: %w", err)
 	}
-	defer grpcServer.Stop(ctx)
+	defer func() { _ = grpcServer.Stop(ctx) }()
 
 	if viper.GetBool("grpc.enabled") {
 		logger.Info("gRPC server started for ffmpegd daemon registration",
@@ -738,7 +738,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 		grpcServer.GetStreamManager(),
 		grpcServer.GetJobManager(),
 		spawner,
-		viper.GetBool("grpc.enabled"),         // prefer remote if external port is enabled
+		viper.GetBool("grpc.enabled"),              // prefer remote if external port is enabled
 		viper.GetBool("relay.prefer_remote_probe"), // prefer remote probing
 	)
 

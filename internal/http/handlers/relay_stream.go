@@ -717,9 +717,10 @@ func (h *RelayStreamHandler) capsToClientFormat(caps relay.ClientCapabilities) s
 // 2. Source codecs define what we HAVE
 // 3. Encoding profile defines what we WANT to transcode to
 // 4. Priority: client compatibility > profile preferences
-//    - If client accepts source codec, use source (no transcoding needed for that track)
-//    - If client doesn't accept source, use profile target if client accepts it
-//    - Otherwise use client's preferred codec
+//   - If client accepts source codec, use source (no transcoding needed for that track)
+//   - If client doesn't accept source, use profile target if client accepts it
+//   - Otherwise use client's preferred codec
+//
 // The returned variant always contains actual codec names (e.g., "h265/aac"), never "copy".
 func (h *RelayStreamHandler) computeTargetVariant(
 	info *service.StreamInfo,

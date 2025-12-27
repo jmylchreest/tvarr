@@ -242,7 +242,7 @@ func CronDescription(cronExpr string) string {
 
 // stepInfo holds start and interval for cron step expressions
 type stepInfo struct {
-	start    int  // -1 means '*' (no specific start)
+	start    int // -1 means '*' (no specific start)
 	interval int
 }
 

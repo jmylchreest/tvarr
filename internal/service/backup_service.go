@@ -304,7 +304,6 @@ func (s *BackupService) createTarGzArchive(archivePath, dbPath string, meta *mod
 	return nil
 }
 
-
 // ListBackups returns all available backups sorted by creation time (newest first).
 // Supports both new .tar.gz format and legacy .db.gz format.
 func (s *BackupService) ListBackups(ctx context.Context) ([]*models.BackupMetadata, error) {
@@ -484,8 +483,8 @@ func (s *BackupService) RestoreBackup(ctx context.Context, filename string) erro
 	}
 
 	if err := os.Rename(tempPath, currentDBPath); err != nil {
-		// Try to restore the old database
-		os.Rename(oldPath, currentDBPath)
+		// Try to restore the old database (best effort - ignore error)
+		_ = os.Rename(oldPath, currentDBPath)
 		return fmt.Errorf("installing restored database: %w", err)
 	}
 

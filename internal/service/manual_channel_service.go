@@ -28,11 +28,11 @@ type ManualChannelRepository interface {
 
 // M3UImportResult represents the result of an M3U import operation.
 type M3UImportResult struct {
-	ParsedCount  int                             `json:"parsed_count"`
-	SkippedCount int                             `json:"skipped_count"`
-	Applied      bool                            `json:"applied"`
-	Channels     []*models.ManualStreamChannel   `json:"channels"`
-	Errors       []string                        `json:"errors,omitempty"`
+	ParsedCount  int                           `json:"parsed_count"`
+	SkippedCount int                           `json:"skipped_count"`
+	Applied      bool                          `json:"applied"`
+	Channels     []*models.ManualStreamChannel `json:"channels"`
+	Errors       []string                      `json:"errors,omitempty"`
 }
 
 // ManualChannelServiceInterface defines the service interface for manual channels.

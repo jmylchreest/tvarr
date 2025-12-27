@@ -46,36 +46,36 @@ type ActiveJobDTO struct {
 
 // DaemonDTO is the API representation of a daemon.
 type DaemonDTO struct {
-	ID                 string            `json:"id"`
-	Name               string            `json:"name"`
-	Version            string            `json:"version"`
-	Address            string            `json:"address"`
-	State              string            `json:"state"`
-	ConnectedAt        string            `json:"connected_at"`
-	LastHeartbeat      string            `json:"last_heartbeat"`
-	HeartbeatsMissed   int               `json:"heartbeats_missed"`
-	ActiveJobs         int               `json:"active_jobs"`
-	ActiveCPUJobs      int               `json:"active_cpu_jobs"`      // Software encoding jobs
-	ActiveGPUJobs      int               `json:"active_gpu_jobs"`      // Hardware encoding jobs
-	ActiveJobDetails   []ActiveJobDTO    `json:"active_job_details,omitempty"`
-	TotalJobsCompleted uint64            `json:"total_jobs_completed"`
-	TotalJobsFailed    uint64            `json:"total_jobs_failed"`
-	Capabilities       *CapabilitiesDTO  `json:"capabilities,omitempty"`
-	SystemStats        *SystemStatsDTO   `json:"system_stats,omitempty"`
+	ID                 string           `json:"id"`
+	Name               string           `json:"name"`
+	Version            string           `json:"version"`
+	Address            string           `json:"address"`
+	State              string           `json:"state"`
+	ConnectedAt        string           `json:"connected_at"`
+	LastHeartbeat      string           `json:"last_heartbeat"`
+	HeartbeatsMissed   int              `json:"heartbeats_missed"`
+	ActiveJobs         int              `json:"active_jobs"`
+	ActiveCPUJobs      int              `json:"active_cpu_jobs"` // Software encoding jobs
+	ActiveGPUJobs      int              `json:"active_gpu_jobs"` // Hardware encoding jobs
+	ActiveJobDetails   []ActiveJobDTO   `json:"active_job_details,omitempty"`
+	TotalJobsCompleted uint64           `json:"total_jobs_completed"`
+	TotalJobsFailed    uint64           `json:"total_jobs_failed"`
+	Capabilities       *CapabilitiesDTO `json:"capabilities,omitempty"`
+	SystemStats        *SystemStatsDTO  `json:"system_stats,omitempty"`
 }
 
 // CapabilitiesDTO is the API representation of daemon capabilities.
 type CapabilitiesDTO struct {
-	VideoEncoders     []string       `json:"video_encoders"`
-	VideoDecoders     []string       `json:"video_decoders"`
-	AudioEncoders     []string       `json:"audio_encoders"`
-	AudioDecoders     []string       `json:"audio_decoders"`
-	MaxConcurrentJobs int            `json:"max_concurrent_jobs"`          // Overall guard limit
-	MaxCPUJobs        int            `json:"max_cpu_jobs,omitempty"`       // Max CPU (software) jobs (0 = use guard)
-	MaxGPUJobs        int            `json:"max_gpu_jobs,omitempty"`       // Max GPU (hardware) jobs (0 = no GPU)
-	MaxProbeJobs      int            `json:"max_probe_jobs,omitempty"`     // Max probe operations
-	HWAccels          []HWAccelDTO   `json:"hw_accels,omitempty"`
-	GPUs              []GPUInfoDTO   `json:"gpus,omitempty"`
+	VideoEncoders     []string     `json:"video_encoders"`
+	VideoDecoders     []string     `json:"video_decoders"`
+	AudioEncoders     []string     `json:"audio_encoders"`
+	AudioDecoders     []string     `json:"audio_decoders"`
+	MaxConcurrentJobs int          `json:"max_concurrent_jobs"`      // Overall guard limit
+	MaxCPUJobs        int          `json:"max_cpu_jobs,omitempty"`   // Max CPU (software) jobs (0 = use guard)
+	MaxGPUJobs        int          `json:"max_gpu_jobs,omitempty"`   // Max GPU (hardware) jobs (0 = no GPU)
+	MaxProbeJobs      int          `json:"max_probe_jobs,omitempty"` // Max probe operations
+	HWAccels          []HWAccelDTO `json:"hw_accels,omitempty"`
+	GPUs              []GPUInfoDTO `json:"gpus,omitempty"`
 }
 
 // FilteredEncoderDTO represents an encoder that was filtered out.
@@ -109,16 +109,16 @@ type GPUInfoDTO struct {
 
 // SystemStatsDTO is the API representation of system stats.
 type SystemStatsDTO struct {
-	Hostname        string         `json:"hostname"`
-	OS              string         `json:"os,omitempty"`
-	Arch            string         `json:"arch,omitempty"`
-	CPUCores        int            `json:"cpu_cores"`
-	CPUPercent      float64        `json:"cpu_percent"`
-	MemoryTotal     uint64         `json:"memory_total"`
-	MemoryUsed      uint64         `json:"memory_used"`
-	MemoryAvailable uint64         `json:"memory_available"`
-	MemoryPercent   float64        `json:"memory_percent"`
-	GPUs            []GPUStatsDTO  `json:"gpus,omitempty"`
+	Hostname        string        `json:"hostname"`
+	OS              string        `json:"os,omitempty"`
+	Arch            string        `json:"arch,omitempty"`
+	CPUCores        int           `json:"cpu_cores"`
+	CPUPercent      float64       `json:"cpu_percent"`
+	MemoryTotal     uint64        `json:"memory_total"`
+	MemoryUsed      uint64        `json:"memory_used"`
+	MemoryAvailable uint64        `json:"memory_available"`
+	MemoryPercent   float64       `json:"memory_percent"`
+	GPUs            []GPUStatsDTO `json:"gpus,omitempty"`
 }
 
 // GPUStatsDTO is the API representation of GPU stats.
@@ -144,11 +144,11 @@ type ClusterStatsDTO struct {
 	DrainingDaemons      int     `json:"draining_daemons"`
 	DisconnectedDaemons  int     `json:"disconnected_daemons"`
 	TotalActiveJobs      int     `json:"total_active_jobs"`
-	TotalCPUJobs         int     `json:"total_cpu_jobs"`         // Current CPU jobs across cluster
-	TotalGPUJobs         int     `json:"total_gpu_jobs"`         // Current GPU jobs across cluster
-	MaxConcurrentJobs    int     `json:"max_concurrent_jobs"`    // Sum of all daemon guard limits
-	MaxCPUJobs           int     `json:"max_cpu_jobs"`           // Sum of all daemon CPU job limits
-	MaxGPUJobs           int     `json:"max_gpu_jobs"`           // Sum of all daemon GPU job limits
+	TotalCPUJobs         int     `json:"total_cpu_jobs"`      // Current CPU jobs across cluster
+	TotalGPUJobs         int     `json:"total_gpu_jobs"`      // Current GPU jobs across cluster
+	MaxConcurrentJobs    int     `json:"max_concurrent_jobs"` // Sum of all daemon guard limits
+	MaxCPUJobs           int     `json:"max_cpu_jobs"`        // Sum of all daemon CPU job limits
+	MaxGPUJobs           int     `json:"max_gpu_jobs"`        // Sum of all daemon GPU job limits
 	TotalGPUs            int     `json:"total_gpus"`
 	AvailableGPUSessions int     `json:"available_gpu_sessions"`
 	TotalGPUSessions     int     `json:"total_gpu_sessions"`
@@ -160,8 +160,8 @@ type ClusterStatsDTO struct {
 
 // ListDaemonsInput is the input for listing daemons.
 type ListDaemonsInput struct {
-	State    string `query:"state" doc:"Filter by daemon state (active, draining, unhealthy, disconnected)"`
-	Encoder  string `query:"encoder" doc:"Filter by encoder capability"`
+	State   string `query:"state" doc:"Filter by daemon state (active, draining, unhealthy, disconnected)"`
+	Encoder string `query:"encoder" doc:"Filter by encoder capability"`
 }
 
 // ListDaemonsOutput is the output for listing daemons.
@@ -372,7 +372,6 @@ func capabilitiesToDTOWithSessions(c *types.Capabilities, gpuSessions map[string
 
 	return dto
 }
-
 
 func systemStatsToDTO(s *types.SystemStats) *SystemStatsDTO {
 	dto := &SystemStatsDTO{

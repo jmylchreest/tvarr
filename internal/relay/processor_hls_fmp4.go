@@ -48,10 +48,10 @@ type HLSfMP4ProcessorConfig struct {
 // DefaultHLSfMP4ProcessorConfig returns sensible defaults.
 func DefaultHLSfMP4ProcessorConfig() HLSfMP4ProcessorConfig {
 	return HLSfMP4ProcessorConfig{
-		TargetSegmentDuration: 4.0,  // Cut on every keyframe for faster segment availability
-		MaxSegments:           30,   // Keep ~2 minutes of segments for slow clients
-		PlaylistSegments:      5,    // More segments in playlist = more buffer before live edge
-		PlaylistType:          "",   // Live
+		TargetSegmentDuration: 4.0, // Cut on every keyframe for faster segment availability
+		MaxSegments:           30,  // Keep ~2 minutes of segments for slow clients
+		PlaylistSegments:      5,   // More segments in playlist = more buffer before live edge
+		PlaylistType:          "",  // Live
 		Logger:                slog.Default(),
 	}
 }
@@ -716,8 +716,7 @@ func (p *HLSfMP4Processor) flushSegment(videoSamples, audioSamples []ESSample) b
 
 		// Log what params we have before attempting init segment generation
 		videoParams := p.adapter.VideoParams()
-		hasValidVideoParams := videoParams != nil && (
-			(videoParams.Codec == "h264" && videoParams.H264SPS != nil && videoParams.H264PPS != nil) ||
+		hasValidVideoParams := videoParams != nil && ((videoParams.Codec == "h264" && videoParams.H264SPS != nil && videoParams.H264PPS != nil) ||
 			(videoParams.Codec == "h265" && videoParams.H265SPS != nil && videoParams.H265PPS != nil) ||
 			(videoParams.Codec == "av1" && videoParams.AV1SequenceHeader != nil) ||
 			(videoParams.Codec == "vp9" && videoParams.VP9Width > 0))

@@ -118,7 +118,7 @@ func (d *FMP4Demuxer) parse() error {
 
 		// Extract the complete box
 		boxData := make([]byte, boxSize)
-		d.buf.Read(boxData)
+		_, _ = d.buf.Read(boxData)
 
 		// Process based on box type
 		switch boxType {
@@ -183,7 +183,7 @@ func (d *FMP4Demuxer) tryParseMoofMdat() error {
 
 	// Extract moof+mdat
 	fragment := make([]byte, totalSize)
-	d.buf.Read(fragment)
+	_, _ = d.buf.Read(fragment)
 
 	// Parse the fragment
 	return d.parseFragment(fragment)

@@ -143,4 +143,3 @@ func extractXMLElement(xml, element string) string {
 	}
 	return strings.TrimSpace(xml[contentStart : contentStart+endIdx])
 }
-

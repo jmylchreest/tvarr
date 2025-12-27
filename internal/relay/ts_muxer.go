@@ -457,10 +457,10 @@ func (m *TSMuxer) InitializeAndGetHeader() ([]byte, error) {
 		// Create null packets for padding
 		// Null packet: sync(0x47) + PID 0x1FFF + no adaptation + CC=0 + stuffing(0xFF)
 		nullPacket := make([]byte, TSPacketSize)
-		nullPacket[0] = TSSyncByte      // 0x47
-		nullPacket[1] = 0x1F            // PID high bits (0x1FFF = null)
-		nullPacket[2] = 0xFF            // PID low bits
-		nullPacket[3] = 0x10            // No adaptation field, payload only, CC=0
+		nullPacket[0] = TSSyncByte // 0x47
+		nullPacket[1] = 0x1F       // PID high bits (0x1FFF = null)
+		nullPacket[2] = 0xFF       // PID low bits
+		nullPacket[3] = 0x10       // No adaptation field, payload only, CC=0
 		for i := 4; i < TSPacketSize; i++ {
 			nullPacket[i] = 0xFF // Stuffing bytes
 		}

@@ -20,10 +20,10 @@ func (FFmpegdConfig) TableName() string {
 
 // FFmpegdConfigKey constants for known configuration keys.
 const (
-	FFmpegdConfigKeyAuthToken        = "auth_token"
-	FFmpegdConfigKeyListenAddress    = "listen_address"
-	FFmpegdConfigKeySelectionStrategy = "selection_strategy"
-	FFmpegdConfigKeyHeartbeatInterval = "heartbeat_interval"
+	FFmpegdConfigKeyAuthToken          = "auth_token"
+	FFmpegdConfigKeyListenAddress      = "listen_address"
+	FFmpegdConfigKeySelectionStrategy  = "selection_strategy"
+	FFmpegdConfigKeyHeartbeatInterval  = "heartbeat_interval"
 	FFmpegdConfigKeyUnhealthyThreshold = "unhealthy_threshold"
 )
 

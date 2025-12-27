@@ -538,13 +538,13 @@ func (f *TranscoderFactory) createRemoteTranscoder(
 func isHardwareEncoder(encoder string) bool {
 	// Common hardware encoder suffixes/patterns
 	hwPatterns := []string{
-		"_nvenc",  // NVIDIA NVENC
-		"_qsv",    // Intel QuickSync
-		"_vaapi",  // VA-API
+		"_nvenc",        // NVIDIA NVENC
+		"_qsv",          // Intel QuickSync
+		"_vaapi",        // VA-API
 		"_videotoolbox", // Apple VideoToolbox
-		"_amf",    // AMD AMF
-		"_mf",     // Windows Media Foundation
-		"_cuvid",  // NVIDIA CUVID (decoder but check anyway)
+		"_amf",          // AMD AMF
+		"_mf",           // Windows Media Foundation
+		"_cuvid",        // NVIDIA CUVID (decoder but check anyway)
 	}
 
 	for _, pattern := range hwPatterns {

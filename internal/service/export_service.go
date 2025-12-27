@@ -13,11 +13,11 @@ import (
 
 // ExportService provides business logic for exporting configuration items.
 type ExportService struct {
-	filterRepo               repository.FilterRepository
-	dataMappingRuleRepo      repository.DataMappingRuleRepository
-	clientDetectionRuleRepo  repository.ClientDetectionRuleRepository
-	encodingProfileRepo      repository.EncodingProfileRepository
-	logger                   *slog.Logger
+	filterRepo              repository.FilterRepository
+	dataMappingRuleRepo     repository.DataMappingRuleRepository
+	clientDetectionRuleRepo repository.ClientDetectionRuleRepository
+	encodingProfileRepo     repository.EncodingProfileRepository
+	logger                  *slog.Logger
 }
 
 // NewExportService creates a new export service.
@@ -28,11 +28,11 @@ func NewExportService(
 	encodingProfileRepo repository.EncodingProfileRepository,
 ) *ExportService {
 	return &ExportService{
-		filterRepo:               filterRepo,
-		dataMappingRuleRepo:      dataMappingRuleRepo,
-		clientDetectionRuleRepo:  clientDetectionRuleRepo,
-		encodingProfileRepo:      encodingProfileRepo,
-		logger:                   slog.Default(),
+		filterRepo:              filterRepo,
+		dataMappingRuleRepo:     dataMappingRuleRepo,
+		clientDetectionRuleRepo: clientDetectionRuleRepo,
+		encodingProfileRepo:     encodingProfileRepo,
+		logger:                  slog.Default(),
 	}
 }
 

@@ -102,11 +102,11 @@ func registerSQLiteDriver() {
 			// This ensures consistent behavior regardless of which connection
 			// handles a particular request.
 			pragmas := []string{
-				"PRAGMA busy_timeout = 30000",   // Wait 30s when database is locked
-				"PRAGMA journal_mode = WAL",     // Better read/write concurrency
-				"PRAGMA synchronous = NORMAL",   // Better performance with WAL
-				"PRAGMA foreign_keys = ON",      // Enable foreign key constraints
-				"PRAGMA cache_size = -64000",    // 64MB cache (negative = KB)
+				"PRAGMA busy_timeout = 30000", // Wait 30s when database is locked
+				"PRAGMA journal_mode = WAL",   // Better read/write concurrency
+				"PRAGMA synchronous = NORMAL", // Better performance with WAL
+				"PRAGMA foreign_keys = ON",    // Enable foreign key constraints
+				"PRAGMA cache_size = -64000",  // 64MB cache (negative = KB)
 			}
 
 			for _, pragma := range pragmas {

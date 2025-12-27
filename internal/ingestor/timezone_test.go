@@ -7,10 +7,10 @@ import (
 
 func TestParseTimezoneOffset(t *testing.T) {
 	tests := []struct {
-		name     string
-		offset   string
-		wantDur  time.Duration
-		wantErr  bool
+		name    string
+		offset  string
+		wantDur time.Duration
+		wantErr bool
 	}{
 		// Valid formats
 		{

@@ -78,23 +78,23 @@ func setDaemonDefaults() {
 	// Daemon identification
 	hostname, _ := os.Hostname()
 	daemonViper.SetDefault("daemon.name", hostname)
-	daemonViper.SetDefault("daemon.id", "")                     // Auto-generated if empty
-	daemonViper.SetDefault("daemon.max_jobs", 4)                // Overall guard limit
-	daemonViper.SetDefault("daemon.max_cpu_jobs", 0)            // 0 = auto-detect from CPU cores
-	daemonViper.SetDefault("daemon.max_gpu_jobs", 0)            // 0 = auto-detect from GPU sessions
-	daemonViper.SetDefault("daemon.max_probe_jobs", 0)          // 0 = use max_jobs
+	daemonViper.SetDefault("daemon.id", "")            // Auto-generated if empty
+	daemonViper.SetDefault("daemon.max_jobs", 4)       // Overall guard limit
+	daemonViper.SetDefault("daemon.max_cpu_jobs", 0)   // 0 = auto-detect from CPU cores
+	daemonViper.SetDefault("daemon.max_gpu_jobs", 0)   // 0 = auto-detect from GPU sessions
+	daemonViper.SetDefault("daemon.max_probe_jobs", 0) // 0 = use max_jobs
 
 	// Coordinator connection
-	daemonViper.SetDefault("coordinator.url", "")               // Required for remote mode
-	daemonViper.SetDefault("coordinator.auth_token", "")        // Required for auth
+	daemonViper.SetDefault("coordinator.url", "")        // Required for remote mode
+	daemonViper.SetDefault("coordinator.auth_token", "") // Required for auth
 	daemonViper.SetDefault("coordinator.heartbeat_interval", "5s")
 	daemonViper.SetDefault("coordinator.reconnect_delay", "5s")
 	daemonViper.SetDefault("coordinator.reconnect_max_delay", "60s")
 
 	// Hardware detection
-	daemonViper.SetDefault("hw.accel", "auto")                  // auto, cuda, vaapi, qsv, none
-	daemonViper.SetDefault("hw.device", "")                     // e.g., /dev/dri/renderD128
-	daemonViper.SetDefault("hw.gpu_max_sessions", 0)            // 0 = auto-detect
+	daemonViper.SetDefault("hw.accel", "auto")       // auto, cuda, vaapi, qsv, none
+	daemonViper.SetDefault("hw.device", "")          // e.g., /dev/dri/renderD128
+	daemonViper.SetDefault("hw.gpu_max_sessions", 0) // 0 = auto-detect
 
 	// Logging defaults (shared with main tvarr)
 	daemonViper.SetDefault("logging.level", "info")

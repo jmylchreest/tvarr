@@ -48,11 +48,11 @@ type ClusterStats struct {
 	DrainingDaemons      int     `json:"draining_daemons"`
 	DisconnectedDaemons  int     `json:"disconnected_daemons"`
 	TotalActiveJobs      int     `json:"total_active_jobs"`
-	TotalCPUJobs         int     `json:"total_cpu_jobs"`         // Current CPU jobs across cluster
-	TotalGPUJobs         int     `json:"total_gpu_jobs"`         // Current GPU jobs across cluster
-	MaxConcurrentJobs    int     `json:"max_concurrent_jobs"`    // Sum of all daemon guard limits
-	MaxCPUJobs           int     `json:"max_cpu_jobs"`           // Sum of all daemon CPU job limits
-	MaxGPUJobs           int     `json:"max_gpu_jobs"`           // Sum of all daemon GPU job limits
+	TotalCPUJobs         int     `json:"total_cpu_jobs"`      // Current CPU jobs across cluster
+	TotalGPUJobs         int     `json:"total_gpu_jobs"`      // Current GPU jobs across cluster
+	MaxConcurrentJobs    int     `json:"max_concurrent_jobs"` // Sum of all daemon guard limits
+	MaxCPUJobs           int     `json:"max_cpu_jobs"`        // Sum of all daemon CPU job limits
+	MaxGPUJobs           int     `json:"max_gpu_jobs"`        // Sum of all daemon GPU job limits
 	TotalGPUs            int     `json:"total_gpus"`
 	AvailableGPUSessions int     `json:"available_gpu_sessions"`
 	TotalGPUSessions     int     `json:"total_gpu_sessions"`

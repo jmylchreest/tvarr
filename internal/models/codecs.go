@@ -154,7 +154,7 @@ var ValidPreferredFormats = map[string]string{
 	"hls-fmp4": "hls-fmp4",
 	"hls-ts":   "hls-ts",
 	"dash":     "dash",
-	"mpegts":   "mpegts", // Raw MPEG-TS stream (for VLC, mpv, etc.)
+	"mpegts":   "mpegts",   // Raw MPEG-TS stream (for VLC, mpv, etc.)
 	"fmp4":     "hls-fmp4", // Alias
 	"ts":       "hls-ts",   // Alias (HLS with TS segments, not raw TS)
 }

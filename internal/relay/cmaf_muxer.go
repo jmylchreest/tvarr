@@ -30,12 +30,12 @@ type FMP4Writer struct {
 	audioTrack *fmp4.InitTrack
 
 	// Codec params
-	h264SPS       []byte
-	h264PPS       []byte
-	h265VPS       []byte
-	h265SPS       []byte
-	h265PPS       []byte
-	av1SeqHeader  []byte
+	h264SPS      []byte
+	h264PPS      []byte
+	h265VPS      []byte
+	h265SPS      []byte
+	h265PPS      []byte
+	av1SeqHeader []byte
 	// VP9 params
 	vp9Width             int
 	vp9Height            int

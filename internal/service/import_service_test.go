@@ -276,8 +276,8 @@ func TestImportService_ImportFilters_BulkResolution(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, 4, result.TotalItems)
-	assert.Equal(t, 1, result.Imported)   // New filter
-	assert.Equal(t, 0, result.Skipped)    // None skipped
+	assert.Equal(t, 1, result.Imported)    // New filter
+	assert.Equal(t, 0, result.Skipped)     // None skipped
 	assert.Equal(t, 3, result.Overwritten) // All existing overwritten
 	assert.Equal(t, 0, result.Renamed)
 }
@@ -402,32 +402,32 @@ func TestImportService_ImportDataMappingRules_AllResolutions(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name           string
-		bulkResolution models.ConflictResolution
-		wantSkipped    int
+		name            string
+		bulkResolution  models.ConflictResolution
+		wantSkipped     int
 		wantOverwritten int
-		wantRenamed    int
+		wantRenamed     int
 	}{
 		{
-			name:           "bulk skip",
-			bulkResolution: models.ConflictResolutionSkip,
-			wantSkipped:    1,
+			name:            "bulk skip",
+			bulkResolution:  models.ConflictResolutionSkip,
+			wantSkipped:     1,
 			wantOverwritten: 0,
-			wantRenamed:    0,
+			wantRenamed:     0,
 		},
 		{
-			name:           "bulk overwrite",
-			bulkResolution: models.ConflictResolutionOverwrite,
-			wantSkipped:    0,
+			name:            "bulk overwrite",
+			bulkResolution:  models.ConflictResolutionOverwrite,
+			wantSkipped:     0,
 			wantOverwritten: 1,
-			wantRenamed:    0,
+			wantRenamed:     0,
 		},
 		{
-			name:           "bulk rename",
-			bulkResolution: models.ConflictResolutionRename,
-			wantSkipped:    0,
+			name:            "bulk rename",
+			bulkResolution:  models.ConflictResolutionRename,
+			wantSkipped:     0,
 			wantOverwritten: 0,
-			wantRenamed:    1,
+			wantRenamed:     1,
 		},
 	}
 

@@ -350,9 +350,9 @@ func (p *ESProcessorBase) SetLastAudioSeq(seq uint64) {
 }
 
 // ErrProcessorAlreadyStarted is returned when Start is called on an already started processor.
-var ErrProcessorAlreadyStarted = errorString("processor already started")
+var ErrProcessorAlreadyStarted = stringError("processor already started")
 
-// errorString is a simple error type.
-type errorString string
+// stringError is a simple error type.
+type stringError string
 
-func (e errorString) Error() string { return string(e) }
+func (e stringError) Error() string { return string(e) }

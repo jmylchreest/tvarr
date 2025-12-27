@@ -18,9 +18,9 @@ type DaemonState int
 
 const (
 	DaemonStateConnecting DaemonState = iota
-	DaemonStateConnected               // Successfully registered and ready for jobs
-	DaemonStateDraining                // Not accepting new jobs, finishing existing
-	DaemonStateUnhealthy               // Missed heartbeats
+	DaemonStateConnected              // Successfully registered and ready for jobs
+	DaemonStateDraining               // Not accepting new jobs, finishing existing
+	DaemonStateUnhealthy              // Missed heartbeats
 	DaemonStateDisconnected
 )
 

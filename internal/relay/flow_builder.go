@@ -477,19 +477,19 @@ func (b *FlowBuilder) buildESTranscoderNode(session RelaySessionInfo, transcoder
 	label := fmt.Sprintf("FFmpeg (%s)", transcoder.TargetVariant)
 
 	data := FlowNodeData{
-		Label:            label,
-		SessionID:        session.SessionID,
-		ChannelID:        session.ChannelID,
-		ChannelName:      session.ChannelName,
-		OriginConnected:  session.OriginConnected,
-		SourceVideoCodec: sourceVideo,
-		SourceAudioCodec: sourceAudio,
-		TargetVideoCodec: targetVideo,
-		TargetAudioCodec: targetAudio,
-		VideoEncoder:     transcoder.VideoEncoder,
-		AudioEncoder:     transcoder.AudioEncoder,
-		HWAccelType:      transcoder.HWAccel,
-		HWAccelDevice:    transcoder.HWAccelDevice,
+		Label:             label,
+		SessionID:         session.SessionID,
+		ChannelID:         session.ChannelID,
+		ChannelName:       session.ChannelName,
+		OriginConnected:   session.OriginConnected,
+		SourceVideoCodec:  sourceVideo,
+		SourceAudioCodec:  sourceAudio,
+		TargetVideoCodec:  targetVideo,
+		TargetAudioCodec:  targetAudio,
+		VideoEncoder:      transcoder.VideoEncoder,
+		AudioEncoder:      transcoder.AudioEncoder,
+		HWAccelType:       transcoder.HWAccel,
+		HWAccelDevice:     transcoder.HWAccelDevice,
 		TranscoderBytesIn: transcoder.BytesIn,
 	}
 

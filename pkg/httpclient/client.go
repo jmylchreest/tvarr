@@ -490,7 +490,6 @@ func (c *Client) isAcceptableStatus(code int) bool {
 	return code >= 200 && code < 300
 }
 
-
 // CircuitState represents the state of a circuit breaker.
 type CircuitState int
 

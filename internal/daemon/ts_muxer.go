@@ -319,11 +319,11 @@ func reorderNALUnits(nalus [][]byte, isH265 bool) [][]byte {
 	}
 
 	// Categorize NAL units
-	var paramSets [][]byte   // VPS, SPS, PPS
-	var audNALs [][]byte     // Access Unit Delimiter
-	var seiNALs [][]byte     // Supplemental Enhancement Information
-	var sliceNALs [][]byte   // Picture data (IDR, non-IDR slices)
-	var otherNALs [][]byte   // Everything else
+	var paramSets [][]byte // VPS, SPS, PPS
+	var audNALs [][]byte   // Access Unit Delimiter
+	var seiNALs [][]byte   // Supplemental Enhancement Information
+	var sliceNALs [][]byte // Picture data (IDR, non-IDR slices)
+	var otherNALs [][]byte // Everything else
 
 	for _, nalu := range nalus {
 		if len(nalu) == 0 {
@@ -373,11 +373,11 @@ func reorderNALUnits(nalus [][]byte, isH265 bool) [][]byte {
 	// Rebuild in correct order: AUD, param sets, SEI, slices, other
 	// Note: AUD should technically come first if present, but it's optional
 	result := make([][]byte, 0, len(nalus))
-	result = append(result, audNALs...)      // AUD first (if present)
-	result = append(result, paramSets...)    // VPS/SPS/PPS
-	result = append(result, seiNALs...)      // SEI (now after SPS/PPS so references work)
-	result = append(result, sliceNALs...)    // IDR/slice data
-	result = append(result, otherNALs...)    // Anything else
+	result = append(result, audNALs...)   // AUD first (if present)
+	result = append(result, paramSets...) // VPS/SPS/PPS
+	result = append(result, seiNALs...)   // SEI (now after SPS/PPS so references work)
+	result = append(result, sliceNALs...) // IDR/slice data
+	result = append(result, otherNALs...) // Anything else
 
 	return result
 }

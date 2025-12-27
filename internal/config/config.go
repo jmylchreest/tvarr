@@ -32,14 +32,14 @@ const (
 	defaultLogoTimeout           = 30 * time.Second
 	defaultLogoRetryAttempts     = 3
 	defaultLogoCircuitBreaker    = "logos"
-	defaultMaxConcurrentStreams    = 10
-	defaultCircuitBreakerThresh    = 3
-	defaultCircuitBreakerTimeout   = 30 * time.Second
-	defaultConnectionPoolSize      = 100
-	defaultStreamTimeout           = 5 * time.Minute
-	defaultHLSSegmentDuration      = 4.0 // seconds, cut on every keyframe
-	defaultHLSMaxSegments          = 30  // segments in ring buffer (2+ minutes at 4s/segment)
-	defaultHLSPlaylistSegments     = 5   // segments in playlist for new clients
+	defaultMaxConcurrentStreams  = 10
+	defaultCircuitBreakerThresh  = 3
+	defaultCircuitBreakerTimeout = 30 * time.Second
+	defaultConnectionPoolSize    = 100
+	defaultStreamTimeout         = 5 * time.Minute
+	defaultHLSSegmentDuration    = 4.0 // seconds, cut on every keyframe
+	defaultHLSMaxSegments        = 30  // segments in ring buffer (2+ minutes at 4s/segment)
+	defaultHLSPlaylistSegments   = 5   // segments in playlist for new clients
 )
 
 // Config holds all configuration for the application.

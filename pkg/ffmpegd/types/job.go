@@ -60,7 +60,7 @@ func (s JobState) IsActive() bool {
 // TranscodeJob represents an active transcoding session.
 type TranscodeJob struct {
 	ID          JobID  `json:"id"`
-	SessionID   string `json:"session_id"`   // RelaySession ID
+	SessionID   string `json:"session_id"` // RelaySession ID
 	ChannelID   string `json:"channel_id"`
 	ChannelName string `json:"channel_name"`
 
@@ -110,19 +110,19 @@ type TranscodeConfig struct {
 	// Encoding parameters
 	VideoBitrateKbps int    `json:"video_bitrate_kbps"`
 	AudioBitrateKbps int    `json:"audio_bitrate_kbps"`
-	VideoPreset      string `json:"video_preset"` // ultrafast, fast, medium
-	VideoCRF         int    `json:"video_crf"`    // Quality-based encoding (0-51)
+	VideoPreset      string `json:"video_preset"`  // ultrafast, fast, medium
+	VideoCRF         int    `json:"video_crf"`     // Quality-based encoding (0-51)
 	VideoProfile     string `json:"video_profile"` // baseline, main, high
 	VideoLevel       string `json:"video_level"`   // 3.0, 4.0, 4.1, etc.
 
 	// Resolution scaling (optional)
-	ScaleWidth  int `json:"scale_width,omitempty"`  // 0 = no scaling
+	ScaleWidth  int `json:"scale_width,omitempty"` // 0 = no scaling
 	ScaleHeight int `json:"scale_height,omitempty"`
 
 	// Hardware preference
-	PreferredHWAccel   string `json:"preferred_hw_accel,omitempty"`
-	HWDevice           string `json:"hw_device,omitempty"`
-	FallbackEncoder    string `json:"fallback_encoder,omitempty"`
+	PreferredHWAccel string `json:"preferred_hw_accel,omitempty"`
+	HWDevice         string `json:"hw_device,omitempty"`
+	FallbackEncoder  string `json:"fallback_encoder,omitempty"`
 
 	// Policy
 	GPUExhaustedPolicy GPUExhaustedPolicy `json:"gpu_exhausted_policy"`
@@ -141,8 +141,8 @@ type GPUExhaustedPolicy int
 
 const (
 	GPUPolicyFallback GPUExhaustedPolicy = iota // Use software encoder
-	GPUPolicyQueue                               // Wait for GPU
-	GPUPolicyReject                              // Fail immediately
+	GPUPolicyQueue                              // Wait for GPU
+	GPUPolicyReject                             // Fail immediately
 )
 
 // String returns a human-readable policy name.

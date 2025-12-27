@@ -38,18 +38,18 @@ type FMP4Muxer struct {
 	audioInitData []byte // AudioSpecificConfig for AAC
 
 	// fMP4 state
-	mu              sync.Mutex
-	initialized     bool
-	initWritten     bool
-	videoTrackID    int
-	audioTrackID    int
-	videoTimeScale  uint32
-	audioTimeScale  uint32
-	sequenceNumber  uint32
-	videoBaseTime   uint64
-	audioBaseTime   uint64
-	lastVideoPTS    int64
-	lastAudioPTS    int64
+	mu             sync.Mutex
+	initialized    bool
+	initWritten    bool
+	videoTrackID   int
+	audioTrackID   int
+	videoTimeScale uint32
+	audioTimeScale uint32
+	sequenceNumber uint32
+	videoBaseTime  uint64
+	audioBaseTime  uint64
+	lastVideoPTS   int64
+	lastAudioPTS   int64
 
 	// Buffered samples for current fragment
 	videoSamples []*fmp4.Sample

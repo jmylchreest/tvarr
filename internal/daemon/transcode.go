@@ -37,9 +37,9 @@ type OutputDemuxer interface {
 // TranscodeJob handles a single transcoding job with FFmpeg process management.
 // It receives ES samples via gRPC, feeds them to FFmpeg, and returns transcoded samples.
 type TranscodeJob struct {
-	id     string
-	logger *slog.Logger
-	config *proto.TranscodeStart
+	id      string
+	logger  *slog.Logger
+	config  *proto.TranscodeStart
 	binInfo *ffmpeg.BinaryInfo
 
 	// FFmpeg process
@@ -59,9 +59,9 @@ type TranscodeJob struct {
 	inputBuf   bytes.Buffer
 
 	// Async input writer (decouples gRPC receive from FFmpeg stdin writes)
-	inputCh       chan []byte
-	inputDone     chan struct{}
-	inputDropped  atomic.Uint64
+	inputCh      chan []byte
+	inputDone    chan struct{}
+	inputDropped atomic.Uint64
 
 	// Output demuxer for parsing FFmpeg output (stdout -> ES samples)
 	// Can be TSDemuxer for MPEG-TS or FMP4Demuxer for fragmented MP4
@@ -404,7 +404,7 @@ func (t *TranscodeJob) Stop() {
 		// Close input channel if not already closed by SignalInputComplete
 		// Use a recover to handle the case where it's already closed
 		func() {
-			defer func() { recover() }()
+			defer func() { _ = recover() }()
 			close(t.inputCh)
 		}()
 

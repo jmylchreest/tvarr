@@ -313,10 +313,10 @@ func TestSystemStats_JSON(t *testing.T) {
 		MemoryUsed:  8 * 1024 * 1024 * 1024,
 		GPUs: []GPUStats{
 			{
-				Index:              0,
-				Name:               "NVIDIA GeForce RTX 3080",
-				Utilization:        75.0,
-				MaxEncodeSessions:  5,
+				Index:                0,
+				Name:                 "NVIDIA GeForce RTX 3080",
+				Utilization:          75.0,
+				MaxEncodeSessions:    5,
 				ActiveEncodeSessions: 3,
 			},
 		},

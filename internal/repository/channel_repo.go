@@ -295,7 +295,7 @@ func (r *channelRepo) GetDistinctFieldValues(ctx context.Context, field string, 
 	var results []FieldValueResult
 	db := r.db.WithContext(ctx).
 		Model(&models.Channel{}).
-		Select(columnName+" AS value, COUNT(*) AS count").
+		Select(columnName + " AS value, COUNT(*) AS count").
 		Where(columnName + " IS NOT NULL AND " + columnName + " != ''").
 		Group(columnName).
 		Order("count DESC").

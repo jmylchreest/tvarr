@@ -28,12 +28,12 @@ type Server struct {
 	grpcServer *grpc.Server
 
 	// Daemon state
-	mu           sync.RWMutex
-	id           string
-	name         string
-	state        types.DaemonState
-	capabilities *proto.Capabilities
-	binInfo      *ffmpeg.BinaryInfo
+	mu             sync.RWMutex
+	id             string
+	name           string
+	state          types.DaemonState
+	capabilities   *proto.Capabilities
+	binInfo        *ffmpeg.BinaryInfo
 	statsCollector *StatsCollector
 
 	// Job tracking

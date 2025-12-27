@@ -54,8 +54,8 @@ type FilterExportItem struct {
 	Name        string  `json:"name"`
 	Description string  `json:"description,omitempty"`
 	Expression  string  `json:"expression"`
-	SourceType  string  `json:"source_type"` // "stream" or "epg"
-	Action      string  `json:"action"`      // "include" or "exclude"
+	SourceType  string  `json:"source_type"`         // "stream" or "epg"
+	Action      string  `json:"action"`              // "include" or "exclude"
 	SourceID    *string `json:"source_id,omitempty"` // Optional source restriction
 }
 

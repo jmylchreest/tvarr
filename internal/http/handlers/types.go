@@ -315,56 +315,56 @@ func (r *UpdateEpgSourceRequest) ApplyToModel(s *models.EpgSource) {
 
 // StreamProxyResponse represents a stream proxy in API responses.
 type StreamProxyResponse struct {
-	ID                     models.ULID              `json:"id"`
-	CreatedAt              time.Time                `json:"created_at"`
-	UpdatedAt              time.Time                `json:"updated_at"`
-	Name                   string                   `json:"name"`
-	Description            string                   `json:"description,omitempty"`
-	ProxyMode              models.StreamProxyMode   `json:"proxy_mode"`
-	IsActive               bool                     `json:"is_active"`
-	AutoRegenerate         bool                     `json:"auto_regenerate"`
-	StartingChannelNumber  int                      `json:"starting_channel_number"`
-	UpstreamTimeout        int                      `json:"upstream_timeout,omitempty"`
-	BufferSize             int                      `json:"buffer_size,omitempty"`
-	MaxConcurrentStreams   int                      `json:"max_concurrent_streams,omitempty"`
-	CacheChannelLogos bool                     `json:"cache_channel_logos"`
-	CacheProgramLogos bool                     `json:"cache_program_logos"`
-	EncodingProfileID *models.ULID             `json:"encoding_profile_id,omitempty"`
-	Status                 models.StreamProxyStatus `json:"status"`
-	LastGeneratedAt        *time.Time               `json:"last_generated_at,omitempty"`
-	LastError              string                   `json:"last_error,omitempty"`
-	ChannelCount           int                      `json:"channel_count"`
-	ProgramCount           int                      `json:"program_count"`
-	OutputPath             string                   `json:"output_path,omitempty"`
-	M3U8URL                string                   `json:"m3u8_url,omitempty"`
-	XMLTVURL               string                   `json:"xmltv_url,omitempty"`
+	ID                    models.ULID              `json:"id"`
+	CreatedAt             time.Time                `json:"created_at"`
+	UpdatedAt             time.Time                `json:"updated_at"`
+	Name                  string                   `json:"name"`
+	Description           string                   `json:"description,omitempty"`
+	ProxyMode             models.StreamProxyMode   `json:"proxy_mode"`
+	IsActive              bool                     `json:"is_active"`
+	AutoRegenerate        bool                     `json:"auto_regenerate"`
+	StartingChannelNumber int                      `json:"starting_channel_number"`
+	UpstreamTimeout       int                      `json:"upstream_timeout,omitempty"`
+	BufferSize            int                      `json:"buffer_size,omitempty"`
+	MaxConcurrentStreams  int                      `json:"max_concurrent_streams,omitempty"`
+	CacheChannelLogos     bool                     `json:"cache_channel_logos"`
+	CacheProgramLogos     bool                     `json:"cache_program_logos"`
+	EncodingProfileID     *models.ULID             `json:"encoding_profile_id,omitempty"`
+	Status                models.StreamProxyStatus `json:"status"`
+	LastGeneratedAt       *time.Time               `json:"last_generated_at,omitempty"`
+	LastError             string                   `json:"last_error,omitempty"`
+	ChannelCount          int                      `json:"channel_count"`
+	ProgramCount          int                      `json:"program_count"`
+	OutputPath            string                   `json:"output_path,omitempty"`
+	M3U8URL               string                   `json:"m3u8_url,omitempty"`
+	XMLTVURL              string                   `json:"xmltv_url,omitempty"`
 }
 
 // StreamProxyFromModel converts a model to a response.
 // The baseURL parameter is optional; if empty, relative URLs are used.
 func StreamProxyFromModel(p *models.StreamProxy, baseURL string) StreamProxyResponse {
 	resp := StreamProxyResponse{
-		ID:                     p.ID,
-		CreatedAt:              p.CreatedAt,
-		UpdatedAt:              p.UpdatedAt,
-		Name:                   p.Name,
-		Description:            p.Description,
-		ProxyMode:              p.ProxyMode,
-		IsActive:               models.BoolVal(p.IsActive),
-		AutoRegenerate:         p.AutoRegenerate,
-		StartingChannelNumber:  p.StartingChannelNumber,
-		UpstreamTimeout:        p.UpstreamTimeout,
-		BufferSize:             p.BufferSize,
-		MaxConcurrentStreams:   p.MaxConcurrentStreams,
-		CacheChannelLogos: p.CacheChannelLogos,
-		CacheProgramLogos: p.CacheProgramLogos,
-		EncodingProfileID: p.EncodingProfileID,
-		Status:                 p.Status,
-		LastGeneratedAt:        p.LastGeneratedAt,
-		LastError:              p.LastError,
-		ChannelCount:           p.ChannelCount,
-		ProgramCount:           p.ProgramCount,
-		OutputPath:             p.OutputPath,
+		ID:                    p.ID,
+		CreatedAt:             p.CreatedAt,
+		UpdatedAt:             p.UpdatedAt,
+		Name:                  p.Name,
+		Description:           p.Description,
+		ProxyMode:             p.ProxyMode,
+		IsActive:              models.BoolVal(p.IsActive),
+		AutoRegenerate:        p.AutoRegenerate,
+		StartingChannelNumber: p.StartingChannelNumber,
+		UpstreamTimeout:       p.UpstreamTimeout,
+		BufferSize:            p.BufferSize,
+		MaxConcurrentStreams:  p.MaxConcurrentStreams,
+		CacheChannelLogos:     p.CacheChannelLogos,
+		CacheProgramLogos:     p.CacheProgramLogos,
+		EncodingProfileID:     p.EncodingProfileID,
+		Status:                p.Status,
+		LastGeneratedAt:       p.LastGeneratedAt,
+		LastError:             p.LastError,
+		ChannelCount:          p.ChannelCount,
+		ProgramCount:          p.ProgramCount,
+		OutputPath:            p.OutputPath,
 	}
 
 	// Only populate URLs if the proxy has been generated (has a last_generated_at timestamp)
@@ -474,44 +474,44 @@ func StreamProxyDetailFromModel(p *models.StreamProxy, baseURL string) StreamPro
 
 // CreateStreamProxyRequest is the request body for creating a stream proxy.
 type CreateStreamProxyRequest struct {
-	Name                   string                 `json:"name" doc:"Unique name for the proxy" minLength:"1" maxLength:"255"`
-	Description            string                 `json:"description,omitempty" doc:"Optional description" maxLength:"1024"`
-	ProxyMode              models.StreamProxyMode `json:"proxy_mode,omitempty" doc:"How to serve streams: direct (302 redirect) or smart (auto-optimize)" enum:"direct,smart"`
-	IsActive               *bool                  `json:"is_active,omitempty" doc:"Whether the proxy is active (default: true)"`
-	AutoRegenerate         *bool                  `json:"auto_regenerate,omitempty" doc:"Auto-regenerate when sources change (default: false)"`
-	StartingChannelNumber  *int                   `json:"starting_channel_number,omitempty" doc:"Base channel number (default: 1)"`
-	NumberingMode          *models.NumberingMode  `json:"numbering_mode,omitempty" doc:"How to assign channel numbers: sequential, preserve, or group" enum:"sequential,preserve,group"`
-	GroupNumberingSize     *int                   `json:"group_numbering_size,omitempty" doc:"Size of each group range when using group numbering mode (default: 100)"`
-	UpstreamTimeout        *int                   `json:"upstream_timeout,omitempty" doc:"Timeout in seconds for upstream connections"`
-	BufferSize             *int                   `json:"buffer_size,omitempty" doc:"Buffer size in bytes for proxy mode"`
-	MaxConcurrentStreams   *int                   `json:"max_concurrent_streams,omitempty" doc:"Max concurrent streams (0 = unlimited)"`
-	CacheChannelLogos *bool        `json:"cache_channel_logos,omitempty" doc:"Cache channel logos locally"`
-	CacheProgramLogos *bool        `json:"cache_program_logos,omitempty" doc:"Cache EPG program logos locally"`
-	EncodingProfileID *models.ULID `json:"encoding_profile_id,omitempty" doc:"Fallback encoding profile when no client detection rule matches"`
-	OutputPath             string                        `json:"output_path,omitempty" doc:"Path for generated files" maxLength:"512"`
-	SourceIDs              []models.ULID                 `json:"source_ids,omitempty" doc:"Stream source IDs to include"`
-	EpgSourceIDs           []models.ULID                 `json:"epg_source_ids,omitempty" doc:"EPG source IDs to include"`
-	FilterIDs              []models.ULID                 `json:"filter_ids,omitempty" doc:"Filter IDs to include (deprecated, use filters)"`
-	Filters                []ProxyFilterAssignmentRequest `json:"filters,omitempty" doc:"Filter assignments with priority and active state"`
+	Name                  string                         `json:"name" doc:"Unique name for the proxy" minLength:"1" maxLength:"255"`
+	Description           string                         `json:"description,omitempty" doc:"Optional description" maxLength:"1024"`
+	ProxyMode             models.StreamProxyMode         `json:"proxy_mode,omitempty" doc:"How to serve streams: direct (302 redirect) or smart (auto-optimize)" enum:"direct,smart"`
+	IsActive              *bool                          `json:"is_active,omitempty" doc:"Whether the proxy is active (default: true)"`
+	AutoRegenerate        *bool                          `json:"auto_regenerate,omitempty" doc:"Auto-regenerate when sources change (default: false)"`
+	StartingChannelNumber *int                           `json:"starting_channel_number,omitempty" doc:"Base channel number (default: 1)"`
+	NumberingMode         *models.NumberingMode          `json:"numbering_mode,omitempty" doc:"How to assign channel numbers: sequential, preserve, or group" enum:"sequential,preserve,group"`
+	GroupNumberingSize    *int                           `json:"group_numbering_size,omitempty" doc:"Size of each group range when using group numbering mode (default: 100)"`
+	UpstreamTimeout       *int                           `json:"upstream_timeout,omitempty" doc:"Timeout in seconds for upstream connections"`
+	BufferSize            *int                           `json:"buffer_size,omitempty" doc:"Buffer size in bytes for proxy mode"`
+	MaxConcurrentStreams  *int                           `json:"max_concurrent_streams,omitempty" doc:"Max concurrent streams (0 = unlimited)"`
+	CacheChannelLogos     *bool                          `json:"cache_channel_logos,omitempty" doc:"Cache channel logos locally"`
+	CacheProgramLogos     *bool                          `json:"cache_program_logos,omitempty" doc:"Cache EPG program logos locally"`
+	EncodingProfileID     *models.ULID                   `json:"encoding_profile_id,omitempty" doc:"Fallback encoding profile when no client detection rule matches"`
+	OutputPath            string                         `json:"output_path,omitempty" doc:"Path for generated files" maxLength:"512"`
+	SourceIDs             []models.ULID                  `json:"source_ids,omitempty" doc:"Stream source IDs to include"`
+	EpgSourceIDs          []models.ULID                  `json:"epg_source_ids,omitempty" doc:"EPG source IDs to include"`
+	FilterIDs             []models.ULID                  `json:"filter_ids,omitempty" doc:"Filter IDs to include (deprecated, use filters)"`
+	Filters               []ProxyFilterAssignmentRequest `json:"filters,omitempty" doc:"Filter assignments with priority and active state"`
 }
 
 // ToModel converts the request to a model.
 func (r *CreateStreamProxyRequest) ToModel() *models.StreamProxy {
 	proxy := &models.StreamProxy{
-		Name:                   r.Name,
-		Description:            r.Description,
-		ProxyMode:              models.StreamProxyModeDirect, // Default
-		IsActive:               models.BoolPtr(true),
-		AutoRegenerate:         false,
-		StartingChannelNumber:  1,
-		NumberingMode:          models.NumberingModePreserve, // Default
-		GroupNumberingSize:     100,                          // Default
-		UpstreamTimeout:        30,
-		BufferSize:             8192,
-		MaxConcurrentStreams:   0,
-		CacheChannelLogos: true,
-		CacheProgramLogos: true,
-		OutputPath:        r.OutputPath,
+		Name:                  r.Name,
+		Description:           r.Description,
+		ProxyMode:             models.StreamProxyModeDirect, // Default
+		IsActive:              models.BoolPtr(true),
+		AutoRegenerate:        false,
+		StartingChannelNumber: 1,
+		NumberingMode:         models.NumberingModePreserve, // Default
+		GroupNumberingSize:    100,                          // Default
+		UpstreamTimeout:       30,
+		BufferSize:            8192,
+		MaxConcurrentStreams:  0,
+		CacheChannelLogos:     true,
+		CacheProgramLogos:     true,
+		OutputPath:            r.OutputPath,
 	}
 	if r.ProxyMode != "" && models.IsValidProxyMode(r.ProxyMode) {
 		proxy.ProxyMode = r.ProxyMode
@@ -554,25 +554,25 @@ func (r *CreateStreamProxyRequest) ToModel() *models.StreamProxy {
 
 // UpdateStreamProxyRequest is the request body for updating a stream proxy.
 type UpdateStreamProxyRequest struct {
-	Name                   *string                 `json:"name,omitempty" doc:"Unique name for the proxy" maxLength:"255"`
-	Description            *string                 `json:"description,omitempty" doc:"Optional description" maxLength:"1024"`
-	ProxyMode              *models.StreamProxyMode `json:"proxy_mode,omitempty" doc:"How to serve streams: direct (302 redirect) or smart (auto-optimize)" enum:"direct,smart"`
-	IsActive               *bool                   `json:"is_active,omitempty" doc:"Whether the proxy is active"`
-	AutoRegenerate         *bool                   `json:"auto_regenerate,omitempty" doc:"Auto-regenerate when sources change"`
-	StartingChannelNumber  *int                    `json:"starting_channel_number,omitempty" doc:"Base channel number"`
-	NumberingMode          *models.NumberingMode   `json:"numbering_mode,omitempty" doc:"How to assign channel numbers: sequential, preserve, or group" enum:"sequential,preserve,group"`
-	GroupNumberingSize     *int                    `json:"group_numbering_size,omitempty" doc:"Size of each group range when using group numbering mode"`
-	UpstreamTimeout        *int                    `json:"upstream_timeout,omitempty" doc:"Timeout in seconds for upstream connections"`
-	BufferSize             *int                    `json:"buffer_size,omitempty" doc:"Buffer size in bytes for proxy mode"`
-	MaxConcurrentStreams   *int                    `json:"max_concurrent_streams,omitempty" doc:"Max concurrent streams (0 = unlimited)"`
-	CacheChannelLogos *bool        `json:"cache_channel_logos,omitempty" doc:"Cache channel logos locally"`
-	CacheProgramLogos *bool        `json:"cache_program_logos,omitempty" doc:"Cache EPG program logos locally"`
-	EncodingProfileID *models.ULID `json:"encoding_profile_id,omitempty" doc:"Fallback encoding profile when no client detection rule matches"`
-	OutputPath             *string                        `json:"output_path,omitempty" doc:"Path for generated files" maxLength:"512"`
-	SourceIDs              []models.ULID                  `json:"source_ids,omitempty" doc:"Stream source IDs to include"`
-	EpgSourceIDs           []models.ULID                  `json:"epg_source_ids,omitempty" doc:"EPG source IDs to include"`
-	FilterIDs              []models.ULID                  `json:"filter_ids,omitempty" doc:"Filter IDs to include (deprecated, use filters)"`
-	Filters                []ProxyFilterAssignmentRequest `json:"filters,omitempty" doc:"Filter assignments with priority and active state"`
+	Name                  *string                        `json:"name,omitempty" doc:"Unique name for the proxy" maxLength:"255"`
+	Description           *string                        `json:"description,omitempty" doc:"Optional description" maxLength:"1024"`
+	ProxyMode             *models.StreamProxyMode        `json:"proxy_mode,omitempty" doc:"How to serve streams: direct (302 redirect) or smart (auto-optimize)" enum:"direct,smart"`
+	IsActive              *bool                          `json:"is_active,omitempty" doc:"Whether the proxy is active"`
+	AutoRegenerate        *bool                          `json:"auto_regenerate,omitempty" doc:"Auto-regenerate when sources change"`
+	StartingChannelNumber *int                           `json:"starting_channel_number,omitempty" doc:"Base channel number"`
+	NumberingMode         *models.NumberingMode          `json:"numbering_mode,omitempty" doc:"How to assign channel numbers: sequential, preserve, or group" enum:"sequential,preserve,group"`
+	GroupNumberingSize    *int                           `json:"group_numbering_size,omitempty" doc:"Size of each group range when using group numbering mode"`
+	UpstreamTimeout       *int                           `json:"upstream_timeout,omitempty" doc:"Timeout in seconds for upstream connections"`
+	BufferSize            *int                           `json:"buffer_size,omitempty" doc:"Buffer size in bytes for proxy mode"`
+	MaxConcurrentStreams  *int                           `json:"max_concurrent_streams,omitempty" doc:"Max concurrent streams (0 = unlimited)"`
+	CacheChannelLogos     *bool                          `json:"cache_channel_logos,omitempty" doc:"Cache channel logos locally"`
+	CacheProgramLogos     *bool                          `json:"cache_program_logos,omitempty" doc:"Cache EPG program logos locally"`
+	EncodingProfileID     *models.ULID                   `json:"encoding_profile_id,omitempty" doc:"Fallback encoding profile when no client detection rule matches"`
+	OutputPath            *string                        `json:"output_path,omitempty" doc:"Path for generated files" maxLength:"512"`
+	SourceIDs             []models.ULID                  `json:"source_ids,omitempty" doc:"Stream source IDs to include"`
+	EpgSourceIDs          []models.ULID                  `json:"epg_source_ids,omitempty" doc:"EPG source IDs to include"`
+	FilterIDs             []models.ULID                  `json:"filter_ids,omitempty" doc:"Filter IDs to include (deprecated, use filters)"`
+	Filters               []ProxyFilterAssignmentRequest `json:"filters,omitempty" doc:"Filter assignments with priority and active state"`
 }
 
 // ApplyToModel applies the update request to an existing model.

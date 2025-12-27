@@ -144,37 +144,37 @@ func TestDaemonListResponse(t *testing.T) {
 // TestDaemonDetailResponse tests the contract for single daemon API response.
 func TestDaemonDetailResponse(t *testing.T) {
 	type DaemonDetailResponse struct {
-		ID                   string  `json:"id"`
-		Name                 string  `json:"name"`
-		Version              string  `json:"version"`
-		Address              string  `json:"address"`
-		State                string  `json:"state"`
-		ConnectedAt          string  `json:"connected_at"`
-		LastHeartbeat        string  `json:"last_heartbeat"`
-		HeartbeatsMissed     int     `json:"heartbeats_missed"`
-		ActiveJobs           int     `json:"active_jobs"`
-		TotalJobsCompleted   uint64  `json:"total_jobs_completed"`
-		TotalJobsFailed      uint64  `json:"total_jobs_failed"`
-		UptimeSeconds        int64   `json:"uptime_seconds"`
-		Capabilities         any     `json:"capabilities,omitempty"`
-		SystemStats          any     `json:"system_stats,omitempty"`
-		ActiveJobDetails     []any   `json:"active_job_details,omitempty"`
+		ID                 string `json:"id"`
+		Name               string `json:"name"`
+		Version            string `json:"version"`
+		Address            string `json:"address"`
+		State              string `json:"state"`
+		ConnectedAt        string `json:"connected_at"`
+		LastHeartbeat      string `json:"last_heartbeat"`
+		HeartbeatsMissed   int    `json:"heartbeats_missed"`
+		ActiveJobs         int    `json:"active_jobs"`
+		TotalJobsCompleted uint64 `json:"total_jobs_completed"`
+		TotalJobsFailed    uint64 `json:"total_jobs_failed"`
+		UptimeSeconds      int64  `json:"uptime_seconds"`
+		Capabilities       any    `json:"capabilities,omitempty"`
+		SystemStats        any    `json:"system_stats,omitempty"`
+		ActiveJobDetails   []any  `json:"active_job_details,omitempty"`
 	}
 
 	t.Run("daemon_detail_includes_all_fields", func(t *testing.T) {
 		response := DaemonDetailResponse{
-			ID:                   "daemon-1",
-			Name:                 "Worker 1",
-			Version:              "1.0.0",
-			Address:              "192.168.1.100:50051",
-			State:                "active",
-			ConnectedAt:          "2024-01-15T10:30:00Z",
-			LastHeartbeat:        "2024-01-15T10:35:00Z",
-			HeartbeatsMissed:     0,
-			ActiveJobs:           2,
-			TotalJobsCompleted:   150,
-			TotalJobsFailed:      3,
-			UptimeSeconds:        86400,
+			ID:                 "daemon-1",
+			Name:               "Worker 1",
+			Version:            "1.0.0",
+			Address:            "192.168.1.100:50051",
+			State:              "active",
+			ConnectedAt:        "2024-01-15T10:30:00Z",
+			LastHeartbeat:      "2024-01-15T10:35:00Z",
+			HeartbeatsMissed:   0,
+			ActiveJobs:         2,
+			TotalJobsCompleted: 150,
+			TotalJobsFailed:    3,
+			UptimeSeconds:      86400,
 		}
 
 		data, err := json.Marshal(response)
@@ -196,16 +196,16 @@ func TestDaemonDetailResponse(t *testing.T) {
 // TestClusterStatsResponse tests the contract for cluster stats API response.
 func TestClusterStatsResponse(t *testing.T) {
 	type ClusterStatsResponse struct {
-		TotalDaemons       int     `json:"total_daemons"`
-		ActiveDaemons      int     `json:"active_daemons"`
-		UnhealthyDaemons   int     `json:"unhealthy_daemons"`
-		DrainingDaemons    int     `json:"draining_daemons"`
-		TotalActiveJobs    int     `json:"total_active_jobs"`
-		TotalGPUs          int     `json:"total_gpus"`
-		AvailableGPUSessions int  `json:"available_gpu_sessions"`
-		TotalGPUSessions   int     `json:"total_gpu_sessions"`
-		AverageCPUPercent  float64 `json:"average_cpu_percent"`
-		AverageMemPercent  float64 `json:"average_memory_percent"`
+		TotalDaemons         int     `json:"total_daemons"`
+		ActiveDaemons        int     `json:"active_daemons"`
+		UnhealthyDaemons     int     `json:"unhealthy_daemons"`
+		DrainingDaemons      int     `json:"draining_daemons"`
+		TotalActiveJobs      int     `json:"total_active_jobs"`
+		TotalGPUs            int     `json:"total_gpus"`
+		AvailableGPUSessions int     `json:"available_gpu_sessions"`
+		TotalGPUSessions     int     `json:"total_gpu_sessions"`
+		AverageCPUPercent    float64 `json:"average_cpu_percent"`
+		AverageMemPercent    float64 `json:"average_memory_percent"`
 	}
 
 	t.Run("cluster_stats_serializes_correctly", func(t *testing.T) {

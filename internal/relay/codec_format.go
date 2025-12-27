@@ -76,15 +76,15 @@ func (t StreamTarget) NeedsAudioTranscode(sourceAudioCodec string) bool {
 // CodecFormatCompatibility maps video codecs to their compatible container formats.
 // This is the authoritative source for codec/format compatibility decisions.
 var CodecFormatCompatibility = map[string][]string{
-	"av1":  {"hls-fmp4", "dash", "fmp4"},                           // AV1 requires fMP4
-	"vp9":  {"hls-fmp4", "dash", "fmp4"},                           // VP9 requires fMP4
-	"h264": {"hls-fmp4", "hls-ts", "dash", "mpegts", "fmp4"},       // H.264 works everywhere
-	"h265": {"hls-fmp4", "hls-ts", "dash", "mpegts", "fmp4"},       // H.265 works everywhere
-	"opus": {"hls-fmp4", "dash", "fmp4"},                           // Opus requires fMP4
-	"aac":  {"hls-fmp4", "hls-ts", "dash", "mpegts", "fmp4"},       // AAC works everywhere
-	"ac3":  {"hls-fmp4", "hls-ts", "dash", "mpegts", "fmp4"},       // AC3 works everywhere
-	"eac3": {"hls-fmp4", "hls-ts", "dash", "mpegts", "fmp4"},       // EAC3 works everywhere
-	"mp3":  {"hls-fmp4", "hls-ts", "dash", "mpegts", "fmp4"},       // MP3 works everywhere
+	"av1":  {"hls-fmp4", "dash", "fmp4"},                     // AV1 requires fMP4
+	"vp9":  {"hls-fmp4", "dash", "fmp4"},                     // VP9 requires fMP4
+	"h264": {"hls-fmp4", "hls-ts", "dash", "mpegts", "fmp4"}, // H.264 works everywhere
+	"h265": {"hls-fmp4", "hls-ts", "dash", "mpegts", "fmp4"}, // H.265 works everywhere
+	"opus": {"hls-fmp4", "dash", "fmp4"},                     // Opus requires fMP4
+	"aac":  {"hls-fmp4", "hls-ts", "dash", "mpegts", "fmp4"}, // AAC works everywhere
+	"ac3":  {"hls-fmp4", "hls-ts", "dash", "mpegts", "fmp4"}, // AC3 works everywhere
+	"eac3": {"hls-fmp4", "hls-ts", "dash", "mpegts", "fmp4"}, // EAC3 works everywhere
+	"mp3":  {"hls-fmp4", "hls-ts", "dash", "mpegts", "fmp4"}, // MP3 works everywhere
 }
 
 // IsFormatCompatibleWithCodec checks if a format is compatible with a codec.

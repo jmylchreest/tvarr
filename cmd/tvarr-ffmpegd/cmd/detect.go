@@ -55,13 +55,13 @@ type FFmpegInfo struct {
 
 // CapabilitiesInfo contains detected capabilities.
 type CapabilitiesInfo struct {
-	VideoEncoders     []string       `json:"video_encoders"`
-	VideoDecoders     []string       `json:"video_decoders"`
-	AudioEncoders     []string       `json:"audio_encoders"`
-	AudioDecoders     []string       `json:"audio_decoders"`
-	HardwareAccels    []HWAccelInfo  `json:"hardware_accels"`
-	GPUs              []GPUInfo      `json:"gpus"`
-	MaxConcurrentJobs int            `json:"max_concurrent_jobs"`
+	VideoEncoders     []string      `json:"video_encoders"`
+	VideoDecoders     []string      `json:"video_decoders"`
+	AudioEncoders     []string      `json:"audio_encoders"`
+	AudioDecoders     []string      `json:"audio_decoders"`
+	HardwareAccels    []HWAccelInfo `json:"hardware_accels"`
+	GPUs              []GPUInfo     `json:"gpus"`
+	MaxConcurrentJobs int           `json:"max_concurrent_jobs"`
 }
 
 // FilteredEncoderInfo describes an encoder that was filtered out.

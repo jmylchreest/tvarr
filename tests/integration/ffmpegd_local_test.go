@@ -44,9 +44,9 @@ func TestLocalDaemonAutoRegistration(t *testing.T) {
 
 	// Create and start gRPC server
 	grpcConfig := &relay.GRPCServerConfig{
-		ExternalListenAddr:        addr,
-		AuthToken:         "", // No auth for test
-		HeartbeatInterval: 5 * time.Second,
+		ExternalListenAddr: addr,
+		AuthToken:          "", // No auth for test
+		HeartbeatInterval:  5 * time.Second,
 	}
 	grpcServer := relay.NewGRPCServer(logger, grpcConfig, registry)
 
@@ -177,9 +177,9 @@ func TestLocalDaemonReconnection(t *testing.T) {
 
 	// Create and start gRPC server
 	grpcConfig := &relay.GRPCServerConfig{
-		ExternalListenAddr:        addr,
-		AuthToken:         "",
-		HeartbeatInterval: 5 * time.Second,
+		ExternalListenAddr: addr,
+		AuthToken:          "",
+		HeartbeatInterval:  5 * time.Second,
 	}
 	grpcServer := relay.NewGRPCServer(logger, grpcConfig, registry)
 
@@ -258,9 +258,9 @@ func TestLocalDaemonAuthToken(t *testing.T) {
 	registry := relay.NewDaemonRegistry(logger)
 
 	grpcConfig := &relay.GRPCServerConfig{
-		ExternalListenAddr:        addr,
-		AuthToken:         authToken,
-		HeartbeatInterval: 5 * time.Second,
+		ExternalListenAddr: addr,
+		AuthToken:          authToken,
+		HeartbeatInterval:  5 * time.Second,
 	}
 	grpcServer := relay.NewGRPCServer(logger, grpcConfig, registry)
 

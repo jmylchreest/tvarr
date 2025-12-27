@@ -117,8 +117,8 @@ func TestStrategyLeastLoaded(t *testing.T) {
 
 	t.Run("still_filters_by_encoder_requirement", func(t *testing.T) {
 		daemons := []*types.Daemon{
-			makeDaemon("d1", []string{"libx265"}, 0, 4),        // 0% load but wrong encoder
-			makeDaemon("d2", []string{"libx264"}, 1, 4),        // 25% load
+			makeDaemon("d1", []string{"libx265"}, 0, 4),            // 0% load but wrong encoder
+			makeDaemon("d2", []string{"libx264"}, 1, 4),            // 25% load
 			makeDaemon("d3", []string{"libx264", "libx265"}, 2, 4), // 50% load
 		}
 

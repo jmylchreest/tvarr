@@ -14,12 +14,12 @@ import (
 
 // ImportService provides business logic for importing configuration items.
 type ImportService struct {
-	db                       *gorm.DB
-	filterRepo               repository.FilterRepository
-	dataMappingRuleRepo      repository.DataMappingRuleRepository
-	clientDetectionRuleRepo  repository.ClientDetectionRuleRepository
-	encodingProfileRepo      repository.EncodingProfileRepository
-	logger                   *slog.Logger
+	db                      *gorm.DB
+	filterRepo              repository.FilterRepository
+	dataMappingRuleRepo     repository.DataMappingRuleRepository
+	clientDetectionRuleRepo repository.ClientDetectionRuleRepository
+	encodingProfileRepo     repository.EncodingProfileRepository
+	logger                  *slog.Logger
 }
 
 // NewImportService creates a new import service.
@@ -31,12 +31,12 @@ func NewImportService(
 	encodingProfileRepo repository.EncodingProfileRepository,
 ) *ImportService {
 	return &ImportService{
-		db:                       db,
-		filterRepo:               filterRepo,
-		dataMappingRuleRepo:      dataMappingRuleRepo,
-		clientDetectionRuleRepo:  clientDetectionRuleRepo,
-		encodingProfileRepo:      encodingProfileRepo,
-		logger:                   slog.Default(),
+		db:                      db,
+		filterRepo:              filterRepo,
+		dataMappingRuleRepo:     dataMappingRuleRepo,
+		clientDetectionRuleRepo: clientDetectionRuleRepo,
+		encodingProfileRepo:     encodingProfileRepo,
+		logger:                  slog.Default(),
 	}
 }
 

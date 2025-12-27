@@ -53,18 +53,18 @@ type FlowNodeData struct {
 	ChannelName string `json:"channelName,omitempty"`
 
 	// Origin node fields
-	SourceName      string  `json:"sourceName,omitempty"`      // Name of the stream source (e.g., "s8k")
+	SourceName      string  `json:"sourceName,omitempty"` // Name of the stream source (e.g., "s8k")
 	SourceURL       string  `json:"sourceUrl,omitempty"`
-	SourceFormat    string  `json:"sourceFormat,omitempty"`    // hls, dash, mpegts
+	SourceFormat    string  `json:"sourceFormat,omitempty"` // hls, dash, mpegts
 	VideoCodec      string  `json:"videoCodec,omitempty"`
 	AudioCodec      string  `json:"audioCodec,omitempty"`
-	Framerate       float64 `json:"framerate,omitempty"`       // Video framerate (fps)
-	VideoWidth      int     `json:"videoWidth,omitempty"`      // Video width in pixels
-	VideoHeight     int     `json:"videoHeight,omitempty"`     // Video height in pixels
-	IngressBps      uint64  `json:"ingressBps,omitempty"`      // Bytes per second from origin
-	TotalBytesIn    uint64  `json:"totalBytesIn,omitempty"`    // Total bytes received from upstream
-	DurationSecs    float64 `json:"durationSecs,omitempty"`    // Session duration in seconds
-	OriginConnected bool    `json:"originConnected"` // True if origin is still streaming (false after EOF)
+	Framerate       float64 `json:"framerate,omitempty"`    // Video framerate (fps)
+	VideoWidth      int     `json:"videoWidth,omitempty"`   // Video width in pixels
+	VideoHeight     int     `json:"videoHeight,omitempty"`  // Video height in pixels
+	IngressBps      uint64  `json:"ingressBps,omitempty"`   // Bytes per second from origin
+	TotalBytesIn    uint64  `json:"totalBytesIn,omitempty"` // Total bytes received from upstream
+	DurationSecs    float64 `json:"durationSecs,omitempty"` // Session duration in seconds
+	OriginConnected bool    `json:"originConnected"`        // True if origin is still streaming (false after EOF)
 
 	// Bandwidth history for sparkline (last 30 samples, ~1 sample/sec)
 	IngressHistory []uint64 `json:"ingressHistory,omitempty"` // Historical ingress bps values
@@ -98,14 +98,14 @@ type FlowNodeData struct {
 
 	// Processor node fields
 	RouteType        RoutingDecision `json:"routeType,omitempty"` // passthrough, repackage, transcode
-	ProfileName      string    `json:"profileName,omitempty"`
-	OutputFormat     string    `json:"outputFormat,omitempty"`     // hls, dash, mpegts
-	OutputVideoCodec string    `json:"outputVideoCodec,omitempty"` // Output video codec (same as input for passthrough/repackage)
-	OutputAudioCodec string    `json:"outputAudioCodec,omitempty"` // Output audio codec (same as input for passthrough/repackage)
-	CPUPercent       *float64  `json:"cpuPercent,omitempty"`       // Only for FFmpeg
-	MemoryMB         *float64  `json:"memoryMB,omitempty"`         // Only for FFmpeg
-	ProcessingBps    uint64    `json:"processingBps,omitempty"`
-	TotalBytesOut    uint64    `json:"totalBytesOut,omitempty"` // Total bytes sent to clients
+	ProfileName      string          `json:"profileName,omitempty"`
+	OutputFormat     string          `json:"outputFormat,omitempty"`     // hls, dash, mpegts
+	OutputVideoCodec string          `json:"outputVideoCodec,omitempty"` // Output video codec (same as input for passthrough/repackage)
+	OutputAudioCodec string          `json:"outputAudioCodec,omitempty"` // Output audio codec (same as input for passthrough/repackage)
+	CPUPercent       *float64        `json:"cpuPercent,omitempty"`       // Only for FFmpeg
+	MemoryMB         *float64        `json:"memoryMB,omitempty"`         // Only for FFmpeg
+	ProcessingBps    uint64          `json:"processingBps,omitempty"`
+	TotalBytesOut    uint64          `json:"totalBytesOut,omitempty"` // Total bytes sent to clients
 
 	// Bandwidth history for sparkline (last 30 samples, ~1 sample/sec)
 	EgressHistory []uint64 `json:"egressHistory,omitempty"` // Historical egress bps values

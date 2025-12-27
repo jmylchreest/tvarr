@@ -181,11 +181,11 @@ type EdgeBandwidthTrackers struct {
 	TranscoderToBuffer *BandwidthTracker
 
 	// Buffer to processor edges (keyed by processor format, e.g., "hls", "mpegts")
-	BufferToProcessor map[string]*BandwidthTracker
+	BufferToProcessor   map[string]*BandwidthTracker
 	bufferToProcessorMu sync.RWMutex
 
 	// Processor to client edges (keyed by client ID)
-	ProcessorToClient map[string]*BandwidthTracker
+	ProcessorToClient   map[string]*BandwidthTracker
 	processorToClientMu sync.RWMutex
 }
 

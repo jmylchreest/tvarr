@@ -24,8 +24,8 @@ type BackupScheduleUpdater interface {
 
 // BackupHandler handles backup and restore API endpoints.
 type BackupHandler struct {
-	backupService    *service.BackupService
-	scheduleUpdater  BackupScheduleUpdater
+	backupService   *service.BackupService
+	scheduleUpdater BackupScheduleUpdater
 }
 
 // NewBackupHandler creates a new backup handler.
@@ -247,9 +247,9 @@ type RestoreBackupInput struct {
 // RestoreBackupOutput is the output for restoring from a backup.
 type RestoreBackupOutput struct {
 	Body struct {
-		Message           string `json:"message"`
-		PreRestoreBackup  string `json:"pre_restore_backup,omitempty"`
-		RestartRequired   bool   `json:"restart_required"`
+		Message          string `json:"message"`
+		PreRestoreBackup string `json:"pre_restore_backup,omitempty"`
+		RestartRequired  bool   `json:"restart_required"`
 	}
 }
 
@@ -269,9 +269,9 @@ func (h *BackupHandler) RestoreBackup(ctx context.Context, input *RestoreBackupI
 
 	return &RestoreBackupOutput{
 		Body: struct {
-			Message           string `json:"message"`
-			PreRestoreBackup  string `json:"pre_restore_backup,omitempty"`
-			RestartRequired   bool   `json:"restart_required"`
+			Message          string `json:"message"`
+			PreRestoreBackup string `json:"pre_restore_backup,omitempty"`
+			RestartRequired  bool   `json:"restart_required"`
 		}{
 			Message:         fmt.Sprintf("database restored from %s", input.Filename),
 			RestartRequired: true, // SQLite requires app restart after restore
@@ -399,14 +399,14 @@ func (h *BackupHandler) UploadBackup(w http.ResponseWriter, r *http.Request) {
 	// Return success with metadata
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(meta)
+	_ = json.NewEncoder(w).Encode(meta)
 }
 
 // writeJSONError writes an error response in JSON format for consistency with API clients.
 func writeJSONError(w http.ResponseWriter, message string, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": message})
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
 // containsAny checks if the string contains any of the substrings.

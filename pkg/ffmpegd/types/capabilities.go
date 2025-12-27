@@ -75,8 +75,8 @@ type FilteredEncoder struct {
 
 // HWAccelInfo describes a hardware acceleration method.
 type HWAccelInfo struct {
-	Type             HWAccelType       `json:"type"`              // vaapi, cuda, qsv, videotoolbox
-	Device           string            `json:"device"`            // /dev/dri/renderD128, etc.
+	Type             HWAccelType       `json:"type"`   // vaapi, cuda, qsv, videotoolbox
+	Device           string            `json:"device"` // /dev/dri/renderD128, etc.
 	Available        bool              `json:"available"`
 	Encoders         []string          `json:"encoders"`          // Validated HW encoders: h264_nvenc, hevc_vaapi
 	Decoders         []string          `json:"decoders"`          // HW decoders: h264_cuvid, hevc_qsv
@@ -106,7 +106,7 @@ func (t HWAccelType) String() string {
 // GPUInfo describes a GPU and its session limits.
 type GPUInfo struct {
 	Index  int      `json:"index"`
-	Name   string   `json:"name"`   // "NVIDIA GeForce RTX 3080"
+	Name   string   `json:"name"` // "NVIDIA GeForce RTX 3080"
 	Class  GPUClass `json:"class"`
 	Driver string   `json:"driver"` // Driver version
 
@@ -117,12 +117,12 @@ type GPUInfo struct {
 	ActiveDecodeSessions int `json:"active_decode_sessions"`
 
 	// Utilization (from heartbeat)
-	Utilization float64 `json:"utilization"`     // 0-100%
-	MemoryTotal uint64  `json:"memory_total"`    // bytes
-	MemoryUsed  uint64  `json:"memory_used"`     // bytes
-	EncoderUtil float64 `json:"encoder_util"`    // 0-100%
-	DecoderUtil float64 `json:"decoder_util"`    // 0-100%
-	Temperature int     `json:"temperature"`     // Celsius
+	Utilization float64 `json:"utilization"`  // 0-100%
+	MemoryTotal uint64  `json:"memory_total"` // bytes
+	MemoryUsed  uint64  `json:"memory_used"`  // bytes
+	EncoderUtil float64 `json:"encoder_util"` // 0-100%
+	DecoderUtil float64 `json:"decoder_util"` // 0-100%
+	Temperature int     `json:"temperature"`  // Celsius
 	PowerWatts  int     `json:"power_watts"`
 }
 

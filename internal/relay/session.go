@@ -122,17 +122,17 @@ type ProcessorConfig struct {
 
 // RelaySession represents an active relay session.
 type RelaySession struct {
-	ID                        models.ULID
-	ChannelID                 models.ULID
-	ChannelName               string      // Display name of the channel
-	SourceID                  models.ULID // ID of the stream source (for connection tracking)
-	StreamSourceName          string      // Name of the stream source (e.g., "s8k")
-	StreamURL                 string
-	SourceMaxConcurrentStreams int    // Max concurrent streams for the source (0 = unlimited)
-	EncodingProfile           *models.EncodingProfile
-	Classification       ClassificationResult
-	CachedCodecInfo      *models.LastKnownCodec // Pre-probed codec info for faster startup
-	StartedAt            time.Time
+	ID                         models.ULID
+	ChannelID                  models.ULID
+	ChannelName                string      // Display name of the channel
+	SourceID                   models.ULID // ID of the stream source (for connection tracking)
+	StreamSourceName           string      // Name of the stream source (e.g., "s8k")
+	StreamURL                  string
+	SourceMaxConcurrentStreams int // Max concurrent streams for the source (0 = unlimited)
+	EncodingProfile            *models.EncodingProfile
+	Classification             ClassificationResult
+	CachedCodecInfo            *models.LastKnownCodec // Pre-probed codec info for faster startup
+	StartedAt                  time.Time
 
 	// Use atomic values for frequently updated fields to avoid mutex contention
 	// These are updated by the ingest loop on every read, which would block stats collection
@@ -151,7 +151,7 @@ type RelaySession struct {
 	// Per-edge bandwidth tracking for flow visualization
 	edgeBandwidth *EdgeBandwidthTrackers
 
-	manager *Manager
+	manager            *Manager
 	ctx                context.Context
 	cancel             context.CancelFunc
 	fallbackController *FallbackController
@@ -2156,8 +2156,8 @@ type SessionStats struct {
 	BytesWritten      uint64    `json:"bytes_written"`
 	BytesFromUpstream uint64    `json:"bytes_from_upstream"`
 	Closed            bool      `json:"closed"`
-	IngestCompleted   bool      `json:"ingest_completed"`    // True if origin ingest finished (EOF received)
-	OriginConnected   bool      `json:"origin_connected"`    // True if origin is still streaming data
+	IngestCompleted   bool      `json:"ingest_completed"` // True if origin ingest finished (EOF received)
+	OriginConnected   bool      `json:"origin_connected"` // True if origin is still streaming data
 	Error             string    `json:"error,omitempty"`
 	// Smart delivery information (only present when using smart mode)
 	DeliveryDecision       string   `json:"delivery_decision,omitempty"`        // passthrough, repackage, or transcode

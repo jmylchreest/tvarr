@@ -42,26 +42,26 @@ func TestTranscodeStart_ValidatesRequiredFields(t *testing.T) {
 
 	t.Run("full_transcode_start_with_hw_accel", func(t *testing.T) {
 		start := &pb.TranscodeStart{
-			JobId:             "job-123",
-			SessionId:         "session-456",
-			ChannelId:         "channel-789",
-			ChannelName:       "HD Movie Channel",
-			SourceVideoCodec:  "h264",
-			SourceAudioCodec:  "ac3",
-			VideoInitData:     []byte{0x00, 0x00, 0x00, 0x01, 0x67}, // SPS start
-			AudioInitData:     []byte{0x11, 0x90},                   // AAC config
-			TargetVideoCodec:  "h265",
-			TargetAudioCodec:  "aac",
-			VideoBitrateKbps:  8000,
-			AudioBitrateKbps:  192,
-			VideoPreset:       "fast",
-			VideoCrf:          23,
-			VideoProfile:      "main",
-			VideoLevel:        "4.1",
-			PreferredHwAccel:  "cuda",
-			HwDevice:          "GPU 0",
-			ScaleWidth:        1920,
-			ScaleHeight:       1080,
+			JobId:            "job-123",
+			SessionId:        "session-456",
+			ChannelId:        "channel-789",
+			ChannelName:      "HD Movie Channel",
+			SourceVideoCodec: "h264",
+			SourceAudioCodec: "ac3",
+			VideoInitData:    []byte{0x00, 0x00, 0x00, 0x01, 0x67}, // SPS start
+			AudioInitData:    []byte{0x11, 0x90},                   // AAC config
+			TargetVideoCodec: "h265",
+			TargetAudioCodec: "aac",
+			VideoBitrateKbps: 8000,
+			AudioBitrateKbps: 192,
+			VideoPreset:      "fast",
+			VideoCrf:         23,
+			VideoProfile:     "main",
+			VideoLevel:       "4.1",
+			PreferredHwAccel: "cuda",
+			HwDevice:         "GPU 0",
+			ScaleWidth:       1920,
+			ScaleHeight:      1080,
 			ExtraOptions: map[string]string{
 				"b_adapt": "2",
 			},
@@ -147,7 +147,7 @@ func TestTranscodeAck_Serialization(t *testing.T) {
 func TestESSample_Serialization(t *testing.T) {
 	t.Run("video_keyframe", func(t *testing.T) {
 		sample := &pb.ESSample{
-			Pts:        90000,  // 1 second at 90kHz
+			Pts:        90000, // 1 second at 90kHz
 			Dts:        90000,
 			Data:       []byte{0x00, 0x00, 0x00, 0x01, 0x65}, // IDR NAL
 			IsKeyframe: true,

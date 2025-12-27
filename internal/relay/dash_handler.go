@@ -407,10 +407,10 @@ func (d *DASHHandler) GenerateManifest(baseURL string) string {
 		`timeShiftBufferDepth="PT%dS">`,
 		availabilityStartTime.UTC().Format(time.RFC3339),
 		publishTime.UTC().Format(time.RFC3339),
-		targetDuration,      // minimumUpdatePeriod
-		targetDuration*2,    // minBufferTime
-		targetDuration*3,    // suggestedPresentationDelay (3 segments behind live)
-		timeShiftBuffer,     // timeShiftBufferDepth
+		targetDuration,   // minimumUpdatePeriod
+		targetDuration*2, // minBufferTime
+		targetDuration*3, // suggestedPresentationDelay (3 segments behind live)
+		timeShiftBuffer,  // timeShiftBufferDepth
 	))
 	sb.WriteString("\n")
 
@@ -575,7 +575,7 @@ func (d *DASHHandler) GenerateManifest(baseURL string) string {
 		sb.WriteString("\n")
 
 		// Audio AdaptationSet
-		sb.WriteString(fmt.Sprintf(`    <AdaptationSet id="1" mimeType="audio/mp4" codecs="mp4a.40.2" `+
+		sb.WriteString(fmt.Sprintf(`    <AdaptationSet id="1" mimeType="audio/mp4" codecs="mp4a.40.2" ` +
 			`audioSamplingRate="48000" segmentAlignment="true" startWithSAP="1">`,
 		))
 		sb.WriteString("\n")

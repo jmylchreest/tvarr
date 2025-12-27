@@ -49,10 +49,10 @@ type DASHProcessorConfig struct {
 // DefaultDASHProcessorConfig returns sensible defaults.
 func DefaultDASHProcessorConfig() DASHProcessorConfig {
 	return DASHProcessorConfig{
-		TargetSegmentDuration: 4.0,  // Shorter segments for faster startup
-		MaxSegments:           30,   // Keep ~2 minutes of segments for slow clients
-		PlaylistSegments:      5,    // Segments in playlist
-		MinBufferTime:         4.0,  // Match target segment duration
+		TargetSegmentDuration: 4.0, // Shorter segments for faster startup
+		MaxSegments:           30,  // Keep ~2 minutes of segments for slow clients
+		PlaylistSegments:      5,   // Segments in playlist
+		MinBufferTime:         4.0, // Match target segment duration
 		Logger:                slog.Default(),
 	}
 }

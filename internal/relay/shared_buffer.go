@@ -1004,9 +1004,9 @@ type SharedESBuffer struct {
 	onVariantRequest func(source, target CodecVariant) error
 
 	// Lifecycle
-	closed          atomic.Bool
-	closedCh        chan struct{}
-	sourceCompleted atomic.Bool   // True when source ingest has finished (EOF received)
+	closed            atomic.Bool
+	closedCh          chan struct{}
+	sourceCompleted   atomic.Bool   // True when source ingest has finished (EOF received)
 	sourceCompletedCh chan struct{} // Closed when source ingest completes
 }
 

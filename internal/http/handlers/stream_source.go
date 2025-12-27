@@ -33,9 +33,9 @@ type ProxyUsageChecker interface {
 
 // StreamSourceHandler handles stream source API endpoints.
 type StreamSourceHandler struct {
-	sourceService      *service.SourceService
-	scheduleSyncer     ScheduleSyncer
-	proxyUsageChecker  ProxyUsageChecker
+	sourceService     *service.SourceService
+	scheduleSyncer    ScheduleSyncer
+	proxyUsageChecker ProxyUsageChecker
 }
 
 // NewStreamSourceHandler creates a new stream source handler.
