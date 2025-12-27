@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -207,8 +208,11 @@ func TestProgressHandler_SSEEvents(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/progress/events", nil).WithContext(ctx)
 		rec := httptest.NewRecorder()
 
-		// Run handler in goroutine
+		// Run handler in goroutine with WaitGroup to ensure completion
+		var wg sync.WaitGroup
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			router.ServeHTTP(rec, req)
 		}()
 
@@ -221,8 +225,8 @@ func TestProgressHandler_SSEEvents(t *testing.T) {
 		_, err := svc.StartOperation(progress.OpStreamIngestion, ownerID, "stream_source", "Test Source", stages)
 		require.NoError(t, err)
 
-		// Wait for context to cancel
-		<-ctx.Done()
+		// Wait for handler to complete (context cancellation + cleanup)
+		wg.Wait()
 
 		// Check response contains SSE data
 		body := rec.Body.String()
@@ -241,7 +245,10 @@ func TestProgressHandler_SSEEvents(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/progress/events?operation_type=stream_ingestion", nil).WithContext(ctx)
 		rec := httptest.NewRecorder()
 
+		var wg sync.WaitGroup
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			router.ServeHTTP(rec, req)
 		}()
 
@@ -256,7 +263,8 @@ func TestProgressHandler_SSEEvents(t *testing.T) {
 		_, err = svc.StartOperation(progress.OpEpgIngestion, owner2, "epg_source", "Test EPG", stages)
 		require.NoError(t, err)
 
-		<-ctx.Done()
+		// Wait for handler to complete
+		wg.Wait()
 
 		body := rec.Body.String()
 		// Should contain stream ingestion events
@@ -279,11 +287,15 @@ func TestProgressHandler_SSEHeartbeat(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/progress/events", nil).WithContext(ctx)
 		rec := httptest.NewRecorder()
 
+		var wg sync.WaitGroup
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			router.ServeHTTP(rec, req)
 		}()
 
-		<-ctx.Done()
+		// Wait for handler to complete
+		wg.Wait()
 
 		// Check for heartbeat comments (SSE comments start with :)
 		body := rec.Body.String()
@@ -337,7 +349,10 @@ func TestProgressHandler_SSEIntegration(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/progress/events", nil).WithContext(ctx)
 		rec := httptest.NewRecorder()
 
+		var wg sync.WaitGroup
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			router.ServeHTTP(rec, req)
 		}()
 
@@ -366,7 +381,8 @@ func TestProgressHandler_SSEIntegration(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		mgr.Complete("All done")
 
-		<-ctx.Done()
+		// Wait for handler to complete
+		wg.Wait()
 
 		body := rec.Body.String()
 		events := parseSSEEvents(body)
@@ -399,8 +415,16 @@ func TestProgressHandler_SSEIntegration(t *testing.T) {
 		req2 := httptest.NewRequest("GET", "/api/v1/progress/events", nil).WithContext(ctx)
 		rec2 := httptest.NewRecorder()
 
-		go func() { router.ServeHTTP(rec1, req1) }()
-		go func() { router.ServeHTTP(rec2, req2) }()
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			router.ServeHTTP(rec1, req1)
+		}()
+		go func() {
+			defer wg.Done()
+			router.ServeHTTP(rec2, req2)
+		}()
 
 		// Wait for handlers to start
 		time.Sleep(50 * time.Millisecond)
@@ -411,7 +435,8 @@ func TestProgressHandler_SSEIntegration(t *testing.T) {
 		_, err := svc.StartOperation(progress.OpStreamIngestion, ownerID, "stream_source", "Test Source", stages)
 		require.NoError(t, err)
 
-		<-ctx.Done()
+		// Wait for handlers to complete
+		wg.Wait()
 
 		// Both subscribers should have received events
 		body1 := rec1.Body.String()
