@@ -284,18 +284,28 @@ func (m *Manager) GetOrCreateSession(ctx context.Context, channelID models.ULID,
 			ingestCompleted := session.IngestCompleted()
 			if !isClosed {
 				// Session is not closed - check if we can reuse it
-				if !ingestCompleted {
-					// Origin is still connected - reuse it
+				// IMPORTANT: Only reuse if the stream URL matches. If the client requests
+				// a different stream on the same channel, we must create a new session.
+				urlMatches := session.StreamURL == streamURL
+				if !ingestCompleted && urlMatches {
+					// Origin is still connected with same URL - reuse it
 					m.mu.RUnlock()
 					return session, nil
 				}
 				// Ingest completed (finite stream EOF) - but check if we still have active content
 				// This handles IPTV error videos where transcoding is still in progress
-				if session.HasActiveContent() {
+				if session.HasActiveContent() && urlMatches {
 					m.mu.RUnlock()
 					return session, nil
 				}
-				// Origin disconnected and no active content - will create new session
+				// Origin disconnected, no active content, or URL mismatch - will create new session
+				if !urlMatches {
+					m.logger.Info("session URL mismatch - creating new session",
+						slog.String("channel_id", channelID.String()),
+						slog.String("existing_session_id", session.ID.String()),
+						slog.String("existing_url", session.StreamURL),
+						slog.String("requested_url", streamURL))
+				}
 			}
 			// Session is closed - will create new session
 		}
@@ -330,14 +340,23 @@ func (m *Manager) GetOrCreateSession(ctx context.Context, channelID models.ULID,
 		if existingSession, ok := m.sessions[existingSessionID]; ok {
 			if !existingSession.closed.Load() {
 				// Check if we should reuse the existing session
-				if !existingSession.IngestCompleted() || existingSession.HasActiveContent() {
+				// Only reuse if URL matches - different stream URL means we need a new session
+				urlMatches := existingSession.StreamURL == streamURL
+				if urlMatches && (!existingSession.IngestCompleted() || existingSession.HasActiveContent()) {
 					// Another goroutine won the race - close our session and return the existing one
 					// Reuse if origin is still connected OR if there's active content (finite stream with active transcoders)
 					session.Close()
 					return existingSession, nil
 				}
 			}
-			// Existing session is closed or has no active content, remove it
+			// Existing session is closed, has no active content, or URL mismatch - close and remove it
+			m.logger.Info("replacing stale session",
+				slog.String("channel_id", channelID.String()),
+				slog.String("old_session_id", existingSession.ID.String()),
+				slog.String("new_session_id", session.ID.String()),
+				slog.Bool("was_closed", existingSession.closed.Load()),
+				slog.Bool("url_matches", existingSession.StreamURL == streamURL))
+			existingSession.Close()
 			delete(m.sessions, existingSessionID)
 			delete(m.channelSessions, channelID)
 		}
