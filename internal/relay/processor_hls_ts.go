@@ -9,10 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"time"
-
-	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
 )
 
 // HLS-TS Processor errors.
@@ -47,8 +44,8 @@ type HLSTSProcessorConfig struct {
 func DefaultHLSTSProcessorConfig() HLSTSProcessorConfig {
 	return HLSTSProcessorConfig{
 		TargetSegmentDuration: 6.0,
-		MaxSegments:           7,
-		PlaylistSegments:      3,  // New clients start near live edge
+		MaxSegments:           30, // Keep ~3 minutes of segments for slow clients
+		PlaylistSegments:      5,  // Segments in playlist
 		PlaylistType:          "", // Live
 		Logger:                slog.Default(),
 	}
@@ -67,11 +64,9 @@ type hlsTSSegment struct {
 // HLSTSProcessor reads from a SharedESBuffer variant and produces HLS with MPEG-TS segments.
 // It implements the Processor interface.
 type HLSTSProcessor struct {
-	*BaseProcessor
+	*ESProcessorBase
 
-	config   HLSTSProcessorConfig
-	esBuffer *SharedESBuffer
-	variant  CodecVariant
+	config HLSTSProcessorConfig
 
 	// Segment management
 	segments      []*hlsTSSegment
@@ -92,28 +87,8 @@ type HLSTSProcessor struct {
 		startTime time.Time
 	}
 
-	// ES reading state
-	lastVideoSeq uint64
-	lastAudioSeq uint64
-
-	// Reference to the ES variant for consumer tracking
-	esVariant *ESVariant
-
-	// Resolved codec names from the ES variant (handles VariantCopy → source codecs)
-	resolvedVideoCodec string
-	resolvedAudioCodec string
-
-	// AAC config for proper sample rate/channel count in ADTS headers
-	aacConfig *mpeg4audio.AudioSpecificConfig
-
 	// Video parameter helper - persists across segments to retain SPS/PPS
 	videoParams *VideoParamHelper
-
-	// Lifecycle
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-	started atomic.Bool
 }
 
 // NewHLSTSProcessor creates a new HLS-TS processor.
@@ -127,16 +102,16 @@ func NewHLSTSProcessor(
 		config.Logger = slog.Default()
 	}
 
-	base := NewBaseProcessor(id, OutputFormatHLSTS, nil) // nil buffer - we use esBuffer instead
+	esBase := NewESProcessorBase(id, OutputFormatHLSTS, esBuffer, variant, ESProcessorConfig{
+		Logger: config.Logger,
+	})
 
 	p := &HLSTSProcessor{
-		BaseProcessor: base,
-		config:        config,
-		esBuffer:      esBuffer,
-		variant:       variant,
-		segments:      make([]*hlsTSSegment, 0, config.MaxSegments),
-		segmentNotify: make(chan struct{}, 1),
-		videoParams:   NewVideoParamHelper(), // Persists across segments
+		ESProcessorBase: esBase,
+		config:          config,
+		segments:        make([]*hlsTSSegment, 0, config.MaxSegments),
+		segmentNotify:   make(chan struct{}, 1),
+		videoParams:     NewVideoParamHelper(), // Persists across segments
 	}
 
 	return p
@@ -144,111 +119,33 @@ func NewHLSTSProcessor(
 
 // Start begins processing data from the shared buffer.
 func (p *HLSTSProcessor) Start(ctx context.Context) error {
-	if !p.started.CompareAndSwap(false, true) {
-		return errors.New("processor already started")
-	}
-
-	p.ctx, p.cancel = context.WithCancel(ctx)
-	p.BaseProcessor.startedAt = time.Now()
-
-	// Get or create the variant we'll read from
-	// This will wait for the source variant to be ready if requesting VariantCopy
-	esVariant, err := p.esBuffer.GetOrCreateVariantWithContext(p.ctx, p.variant)
+	// Initialize ES processor base (get variant, register consumer, detect codecs)
+	esVariant, err := p.InitES(ctx)
 	if err != nil {
-		return fmt.Errorf("getting variant: %w", err)
+		return fmt.Errorf("initializing ES processor: %w", err)
 	}
 
-	// Register with buffer
-	p.esBuffer.RegisterProcessor(p.id)
+	// Wait for audio codec detection if not already available
+	p.WaitForAudioCodec()
 
-	// Store variant reference and register as a consumer to prevent eviction of unread samples
-	p.esVariant = esVariant
-	esVariant.RegisterConsumer(p.id)
-
-	// Resolve actual codecs from the ES variant's tracks
-	// The variant key (e.g., "h265/") may not include audio if it wasn't detected
-	// when the source was created, but the track codec gets updated when audio arrives.
-	p.resolvedVideoCodec = esVariant.VideoTrack().Codec()
-	p.resolvedAudioCodec = esVariant.AudioTrack().Codec()
-
-	// If audio codec is empty, wait briefly for audio detection
-	if p.resolvedAudioCodec == "" {
-		p.config.Logger.Debug("Waiting for audio codec detection")
-		waitCtx, waitCancel := context.WithTimeout(p.ctx, 2*time.Second)
-		ticker := time.NewTicker(50 * time.Millisecond)
-		for p.resolvedAudioCodec == "" {
-			select {
-			case <-waitCtx.Done():
-				p.config.Logger.Debug("Audio codec detection timeout, proceeding without audio")
-				ticker.Stop()
-				waitCancel()
-				goto initMuxer
-			case <-ticker.C:
-				p.resolvedAudioCodec = esVariant.AudioTrack().Codec()
-			}
-		}
-		ticker.Stop()
-		waitCancel()
-		p.config.Logger.Debug("Audio codec detected", slog.String("audio_codec", p.resolvedAudioCodec))
-	}
-
-initMuxer:
-	// Get AAC config from initData if available
-	// For AAC, we need the initData to get correct sample rate/channels
-	// Wait briefly for it since the demuxer may not have parsed the first ADTS packet yet
-	if p.resolvedAudioCodec == "aac" {
-		initData := esVariant.AudioTrack().GetInitData()
-		if initData == nil {
-			p.config.Logger.Debug("Waiting for AAC initData from demuxer")
-			waitCtx, waitCancel := context.WithTimeout(p.ctx, 2*time.Second)
-			ticker := time.NewTicker(50 * time.Millisecond)
-		waitLoop:
-			for {
-				select {
-				case <-waitCtx.Done():
-					p.config.Logger.Debug("AAC initData timeout, using defaults")
-					break waitLoop
-				case <-ticker.C:
-					initData = esVariant.AudioTrack().GetInitData()
-					if initData != nil {
-						break waitLoop
-					}
-				}
-			}
-			ticker.Stop()
-			waitCancel()
-		}
-
-		if initData != nil {
-			p.aacConfig = &mpeg4audio.AudioSpecificConfig{}
-			if err := p.aacConfig.Unmarshal(initData); err != nil {
-				p.config.Logger.Debug("Failed to unmarshal AAC config from initData, using defaults",
-					slog.String("error", err.Error()))
-				p.aacConfig = nil
-			} else {
-				p.config.Logger.Debug("AAC config from initData",
-					slog.Int("type", int(p.aacConfig.Type)),
-					slog.Int("sample_rate", p.aacConfig.SampleRate),
-					slog.Int("channel_count", p.aacConfig.ChannelCount))
-			}
-		}
-	}
+	// Wait for AAC init data if using AAC
+	p.WaitForAACInitData()
 
 	// Initialize TS muxer for current segment
 	p.initNewSegment()
 
 	p.config.Logger.Debug("Starting HLS-TS processor",
 		slog.String("id", p.id),
-		slog.String("requested_variant", p.variant.String()),
+		slog.String("requested_variant", p.Variant().String()),
 		slog.String("resolved_variant", esVariant.Variant().String()),
-		slog.String("video_codec", p.resolvedVideoCodec),
-		slog.String("audio_codec", p.resolvedAudioCodec),
-		slog.Bool("has_aac_config", p.aacConfig != nil))
+		slog.String("video_codec", p.ResolvedVideoCodec()),
+		slog.String("audio_codec", p.ResolvedAudioCodec()),
+		slog.Bool("has_aac_config", p.AACConfig() != nil))
 
 	// Start processing loop
-	p.wg.Add(1)
+	p.WaitGroup().Add(1)
 	go func() {
-		defer p.wg.Done()
+		defer p.WaitGroup().Done()
 		p.runProcessingLoop(esVariant)
 	}()
 
@@ -257,21 +154,7 @@ initMuxer:
 
 // Stop stops the processor and cleans up resources.
 func (p *HLSTSProcessor) Stop() {
-	if p.cancel != nil {
-		p.cancel()
-	}
-	p.wg.Wait()
-
-	// Unregister as a consumer to allow eviction of our unread samples
-	if p.esVariant != nil {
-		p.esVariant.UnregisterConsumer(p.id)
-	}
-
-	p.esBuffer.UnregisterProcessor(p.id)
-	p.BaseProcessor.Close()
-
-	p.config.Logger.Debug("Processor stopped",
-		slog.String("id", p.id))
+	p.StopES()
 }
 
 // RegisterClient adds a client to receive output from this processor.
@@ -300,7 +183,7 @@ func (p *HLSTSProcessor) WaitForSegments(ctx context.Context, minSegments int) e
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-p.ctx.Done():
+		case <-p.Context().Done():
 			return errors.New("processor stopped")
 		case <-p.segmentNotify:
 			// New segment added, check again
@@ -316,10 +199,10 @@ func (p *HLSTSProcessor) SegmentCount() int {
 }
 
 // ServeManifest serves the HLS playlist.
-// If no segments are available, it waits up to 15 seconds for the first segment.
+// If no segments are available, it waits up to SegmentWaitTimeout for the first segment.
 func (p *HLSTSProcessor) ServeManifest(w http.ResponseWriter, r *http.Request) error {
-	// Wait for at least 1 segment to be available (with timeout)
-	waitCtx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	// Wait for at least 1 segment to be available (timeout matching HTTP WriteTimeout)
+	waitCtx, cancel := context.WithTimeout(r.Context(), SegmentWaitTimeout)
 	defer cancel()
 
 	if err := p.WaitForSegments(waitCtx, 1); err != nil {
@@ -370,6 +253,12 @@ func (p *HLSTSProcessor) ServeManifest(w http.ResponseWriter, r *http.Request) e
 		}
 		buf.WriteString(fmt.Sprintf("#EXTINF:%.3f,\n", seg.duration))
 		buf.WriteString(fmt.Sprintf("segment%d.ts\n", seg.sequence))
+	}
+
+	// Add #EXT-X-ENDLIST if source stream has completed (VOD mode)
+	// This signals to players that no more segments will be added
+	if p.ESBuffer() != nil && p.ESBuffer().IsSourceCompleted() {
+		buf.WriteString("#EXT-X-ENDLIST\n")
 	}
 
 	p.SetStreamHeaders(w)
@@ -485,9 +374,9 @@ func (p *HLSTSProcessor) initNewSegment() {
 		// Use resolved codecs (handles VariantCopy → source codecs like "h265/eac3")
 		p.muxer = NewTSMuxer(p.swappableWriter, TSMuxerConfig{
 			Logger:      p.config.Logger,
-			VideoCodec:  p.resolvedVideoCodec,
-			AudioCodec:  p.resolvedAudioCodec,
-			AACConfig:   p.aacConfig,
+			VideoCodec:  p.ResolvedVideoCodec(),
+			AudioCodec:  p.ResolvedAudioCodec(),
+			AACConfig:   p.AACConfig(),
 			VideoParams: p.videoParams,
 		})
 	} else {
@@ -501,20 +390,9 @@ func (p *HLSTSProcessor) runProcessingLoop(esVariant *ESVariant) {
 	videoTrack := esVariant.VideoTrack()
 	audioTrack := esVariant.AudioTrack()
 
-	// Wait for initial video keyframe
-	p.config.Logger.Debug("Waiting for initial keyframe")
-	for {
-		select {
-		case <-p.ctx.Done():
-			return
-		case <-videoTrack.NotifyChan():
-		}
-
-		samples := videoTrack.ReadFromKeyframe(p.lastVideoSeq, 1)
-		if len(samples) > 0 {
-			p.lastVideoSeq = samples[0].Sequence - 1 // Process this sample next
-			break
-		}
+	// Wait for initial video keyframe using base class method
+	if _, ok := p.WaitForKeyframe(videoTrack); !ok {
+		return // Context cancelled
 	}
 
 	ticker := time.NewTicker(10 * time.Millisecond)
@@ -522,7 +400,7 @@ func (p *HLSTSProcessor) runProcessingLoop(esVariant *ESVariant) {
 
 	for {
 		select {
-		case <-p.ctx.Done():
+		case <-p.Context().Done():
 			// Flush any remaining segment
 			p.flushSegment()
 			return
@@ -537,22 +415,30 @@ func (p *HLSTSProcessor) runProcessingLoop(esVariant *ESVariant) {
 // processAvailableSamples reads and processes available ES samples.
 func (p *HLSTSProcessor) processAvailableSamples(videoTrack, audioTrack *ESTrack) {
 	// Read video samples
-	videoSamples := videoTrack.ReadFrom(p.lastVideoSeq, 100)
+	videoSamples := videoTrack.ReadFrom(p.LastVideoSeq(), 100)
+	var bytesRead uint64
 	for _, sample := range videoSamples {
+		bytesRead += uint64(len(sample.Data))
 		p.processVideoSample(sample)
-		p.lastVideoSeq = sample.Sequence
+		p.SetLastVideoSeq(sample.Sequence)
 	}
 
 	// Read audio samples
-	audioSamples := audioTrack.ReadFrom(p.lastAudioSeq, 200)
+	audioSamples := audioTrack.ReadFrom(p.LastAudioSeq(), 200)
 	for _, sample := range audioSamples {
+		bytesRead += uint64(len(sample.Data))
 		p.processAudioSample(sample)
-		p.lastAudioSeq = sample.Sequence
+		p.SetLastAudioSeq(sample.Sequence)
+	}
+
+	// Track bytes read from buffer for bandwidth stats
+	if bytesRead > 0 {
+		p.TrackBytesFromBuffer(bytesRead)
 	}
 
 	// Update consumer position to allow eviction of samples we've processed
-	if p.esVariant != nil && (len(videoSamples) > 0 || len(audioSamples) > 0) {
-		p.esVariant.UpdateConsumerPosition(p.id, p.lastVideoSeq, p.lastAudioSeq)
+	if len(videoSamples) > 0 || len(audioSamples) > 0 {
+		p.UpdateConsumerPosition()
 	}
 
 	// Check if we should finalize current segment

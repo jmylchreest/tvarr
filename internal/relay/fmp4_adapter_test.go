@@ -382,6 +382,57 @@ func TestConvertToAnnexB(t *testing.T) {
 	}
 }
 
+func TestConvertAnnexBToAVCC(t *testing.T) {
+	tests := []struct {
+		name           string
+		data           []byte
+		expectLength   bool // should have length prefix at beginning
+		expectedPrefix []byte
+	}{
+		{
+			name:           "Single NAL unit Annex B (4-byte start code)",
+			data:           []byte{0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xC0},
+			expectLength:   true,
+			expectedPrefix: []byte{0x00, 0x00, 0x00, 0x03}, // 3 bytes NAL
+		},
+		{
+			name:           "Single NAL unit Annex B (3-byte start code)",
+			data:           []byte{0x00, 0x00, 0x01, 0x67, 0x42, 0xC0},
+			expectLength:   true,
+			expectedPrefix: []byte{0x00, 0x00, 0x00, 0x03}, // 3 bytes NAL
+		},
+		{
+			name:         "Empty",
+			data:         []byte{},
+			expectLength: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := convertAnnexBToAVCC(tt.data)
+
+			if tt.expectLength && len(result) >= 4 {
+				// Should have length prefix (NOT start code)
+				// Start code would be 0x00, 0x00, 0x00, 0x01 or 0x00, 0x00, 0x01
+				// AVCC has the NAL length in the first 4 bytes
+				if result[0] == 0x00 && result[1] == 0x00 && (result[2] == 0x00 && result[3] == 0x01) {
+					t.Error("Result should NOT have start code, should have length prefix")
+				}
+				// Check length prefix matches expected NAL length
+				nalLen := uint32(result[0])<<24 | uint32(result[1])<<16 | uint32(result[2])<<8 | uint32(result[3])
+				expectedLen := uint32(len(tt.data) - 4) // Original minus start code
+				if tt.data[2] == 0x01 {
+					expectedLen = uint32(len(tt.data) - 3) // 3-byte start code
+				}
+				if nalLen != expectedLen {
+					t.Errorf("Expected NAL length %d, got %d", expectedLen, nalLen)
+				}
+			}
+		})
+	}
+}
+
 func TestESSampleAdapter(t *testing.T) {
 	adapter := NewESSampleAdapter(DefaultESSampleAdapterConfig())
 
@@ -451,11 +502,12 @@ func TestESSampleAdapter_ConfigureWriter(t *testing.T) {
 	adapter := NewESSampleAdapter(DefaultESSampleAdapterConfig())
 	writer := NewFMP4Writer()
 
-	// Set up params manually
+	// Set up params manually with a valid minimal H.264 SPS/PPS
+	// SPS: baseline profile, level 3.0, 640x480
 	adapter.videoParams = &VideoCodecParams{
 		Codec:   "h264",
-		H264SPS: []byte{0x67, 0x42, 0xC0, 0x1E, 0x8C, 0x8D, 0x40},
-		H264PPS: []byte{0x68, 0xCE, 0x3C, 0x80},
+		H264SPS: []byte{0x67, 0x42, 0xc0, 0x1e, 0xd9, 0x00, 0x50, 0x1e, 0xd8, 0x08, 0x00, 0x00, 0x03, 0x00, 0x08, 0x00, 0x00, 0x03, 0x00, 0x3c, 0x8f, 0x16, 0x2d, 0x96},
+		H264PPS: []byte{0x68, 0xce, 0x06, 0xe2},
 	}
 	adapter.audioParams = &AudioCodecParams{
 		Codec: "aac",

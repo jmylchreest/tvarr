@@ -1,6 +1,8 @@
 // Package relay provides streaming relay functionality for tvarr.
 package relay
 
+import "github.com/jmylchreest/tvarr/internal/models"
+
 // ClientCapabilities represents detected client information.
 type ClientCapabilities struct {
 	// PlayerName is the player identifier (e.g., "hls.js", "mpegts.js")
@@ -37,6 +39,10 @@ type ClientCapabilities struct {
 
 	// MatchedRuleName is the name of the matched rule (if detection was rule-based).
 	MatchedRuleName string
+
+	// EncodingProfile is the encoding profile from the matched client detection rule.
+	// If set, this overrides the proxy's default encoding profile for transcoding.
+	EncodingProfile *models.EncodingProfile
 }
 
 // AcceptsVideoCodec returns true if the client accepts the given video codec.

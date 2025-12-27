@@ -1,6 +1,8 @@
 // Package relay provides streaming relay functionality for tvarr.
 package relay
 
+import "time"
+
 // Header constants for client identification.
 const (
 	// HeaderXTvarrPlayer is the custom header for player identification.
@@ -49,6 +51,11 @@ const (
 
 	// QueryParamInit is the query parameter for DASH initialization segment type.
 	QueryParamInit = "init"
+
+	// QueryParamVariant is the query parameter for codec variant selection.
+	// Format: "video/audio" (e.g., "h264/aac", "copy/copy")
+	// This ensures segment requests are routed to the correct processor.
+	QueryParamVariant = "variant"
 )
 
 // Format parameter values.
@@ -87,4 +94,27 @@ const (
 
 	// DefaultMaxBufferSize is the default maximum buffer size in bytes (100MB).
 	DefaultMaxBufferSize = 100 * 1024 * 1024
+
+	// SegmentWaitTimeout is the maximum time to wait for segments to become available.
+	// This matches the HTTP server WriteTimeout (30s) to ensure we don't exceed
+	// the server's response deadline while waiting for slow transcoders (e.g., VP9/AV1).
+	SegmentWaitTimeout = 30 * time.Second
+)
+
+// Default DASH manifest values when metadata is not available.
+const (
+	// DefaultVideoWidth is the default video width in pixels.
+	DefaultVideoWidth = 1920
+
+	// DefaultVideoHeight is the default video height in pixels.
+	DefaultVideoHeight = 1080
+
+	// DefaultVideoBandwidth is the default video bandwidth in bits per second (5 Mbps).
+	DefaultVideoBandwidth = 5_000_000
+
+	// DefaultAudioBandwidth is the default audio bandwidth in bits per second (128 kbps).
+	DefaultAudioBandwidth = 128_000
+
+	// DefaultAudioChannels is the default number of audio channels.
+	DefaultAudioChannels = 2
 )

@@ -167,17 +167,17 @@ export function NotificationBell({
   const getEventStatusColor = (state: string, event?: NotificationEvent) => {
     switch (state) {
       case 'completed':
-        // T050: Show amber/warning color if there are warnings
+        // Show warning color if there are warnings
         if (event?.warning_count && event.warning_count > 0) {
-          return 'text-amber-600 dark:text-amber-400';
+          return 'text-warning';
         }
-        return 'text-green-600 dark:text-green-400';
+        return 'text-success';
       case 'error':
         return 'text-destructive';
       case 'processing':
-        return 'text-blue-600 dark:text-blue-400';
+        return 'text-info';
       case 'idle':
-        return 'text-amber-600 dark:text-amber-400';
+        return 'text-warning';
       default:
         return 'text-muted-foreground';
     }
@@ -410,7 +410,7 @@ export function NotificationBell({
                     {event.state === 'completed' &&
                       event.warning_count != null &&
                       event.warning_count > 0 && (
-                        <div className="text-xs mt-2 p-2 bg-amber-500/10 border border-amber-500/30 rounded text-amber-600 dark:text-amber-400">
+                        <div className="text-xs mt-2 p-2 bg-warning/10 border border-warning/30 rounded text-warning">
                           <span className="font-medium">Completed with {event.warning_count} warning(s)</span>
                           {event.warnings && event.warnings.length > 0 && (
                             <ul className="mt-1 list-disc list-inside text-muted-foreground">

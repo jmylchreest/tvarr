@@ -41,32 +41,46 @@ const edgeTypes = {
   animated: AnimatedEdge,
 };
 
-interface RelayFlowDiagramProps {
-  pollingInterval?: number;
-  className?: string;
+export interface FlowMetadata {
+  totalSessions: number;
+  totalClients: number;
+  totalIngressBps: number;
+  totalEgressBps: number;
 }
 
-function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: RelayFlowDiagramProps) {
+interface RelayFlowDiagramProps {
+  pollingInterval?: number;
+  /** Whether polling is enabled. When false, no automatic fetching occurs. */
+  enabled?: boolean;
+  className?: string;
+  onMetadataUpdate?: (metadata: FlowMetadata) => void;
+}
+
+function RelayFlowDiagramInner({ pollingInterval = 2000, enabled = true, className = '', onMetadataUpdate }: RelayFlowDiagramProps) {
   const { data, isLoading, error, refetch } = useRelayFlowData({
     pollingInterval,
-    enabled: true,
+    enabled,
   });
 
-  const { fitView, getNodes } = useReactFlow();
+  // Notify parent of metadata updates
+  useEffect(() => {
+    if (data?.metadata && onMetadataUpdate) {
+      onMetadataUpdate({
+        totalSessions: data.metadata.totalSessions ?? 0,
+        totalClients: data.metadata.totalClients ?? 0,
+        totalIngressBps: data.metadata.totalIngressBps ?? 0,
+        totalEgressBps: data.metadata.totalEgressBps ?? 0,
+      });
+    }
+  }, [data?.metadata, onMetadataUpdate]);
 
-  // useNodesInitialized returns true when React Flow has measured all node dimensions
+  const { fitView, getNodes } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
 
-  // Track if this is the initial load (for fitView and layout)
-  const isInitialLoad = useRef(true);
-  // Track if we've applied initial layout (force clean positions on mount)
-  const hasAppliedInitialLayout = useRef(false);
   // Track if we've done the measured layout pass
   const hasDoneMeasuredLayout = useRef(false);
-  // Track known node IDs to detect new nodes
-  const knownNodeIds = useRef<Set<string>>(new Set());
-  // Track manually moved nodes (don't auto-position these)
-  const manuallyMovedNodes = useRef<Set<string>>(new Set());
+  // Debounce timer for re-layout
+  const layoutTimer = useRef<NodeJS.Timeout | null>(null);
 
   // Convert flow graph data to React Flow format
   const { nodes: rawNodes, edges } = useMemo(() => {
@@ -79,7 +93,6 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: Relay
       type: node.type,
       position: { x: 0, y: 0 }, // Will be calculated by layout
       data: node.data as unknown as Record<string, unknown>,
-      parentId: node.parentId,
     }));
 
     const backendEdges = data.edges.map((edge) => ({
@@ -97,7 +110,7 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: Relay
     return { nodes, edges };
   }, [data?.nodes, data?.edges]);
 
-  // Calculate layout for new nodes only
+  // Calculate initial layout
   const layoutedNodes = useMemo((): Node[] => {
     if (rawNodes.length === 0) return [];
     return calculateLayout(rawNodes, edges);
@@ -106,108 +119,59 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: Relay
   const [nodesState, setNodes, onNodesChange] = useNodesState(layoutedNodes);
   const [edgesState, setEdges, onEdgesChange] = useEdgesState(edges);
 
-  // Custom node change handler that tracks manual moves
+  // Handle node changes - detect dimension changes and re-layout
   const handleNodesChange = useCallback(
     (changes: NodeChange[]) => {
-      for (const change of changes) {
-        // Track nodes that the user has manually dragged
-        if (change.type === 'position' && change.dragging === false && change.id) {
-          manuallyMovedNodes.current.add(change.id);
-        }
-      }
+      // Check if any dimension changes occurred
+      const hasDimensionChange = changes.some(
+        (change) => change.type === 'dimensions' && change.dimensions
+      );
+
       onNodesChange(changes);
+
+      // Debounce re-layout when dimensions change
+      if (hasDimensionChange) {
+        if (layoutTimer.current) {
+          clearTimeout(layoutTimer.current);
+        }
+        layoutTimer.current = setTimeout(() => {
+          const measuredNodes = getNodes();
+          if (measuredNodes.length === 0) return;
+
+          const reLayoutedNodes = calculateLayout(measuredNodes, edges);
+          setNodes(reLayoutedNodes);
+
+          // Fit view after re-layout
+          setTimeout(() => {
+            fitView({ padding: 0.1, duration: 200 });
+          }, 50);
+        }, 150);
+      }
     },
-    [onNodesChange]
+    [onNodesChange, edges, getNodes, setNodes, fitView]
   );
 
-  // Update nodes and edges when data changes
-  // On initial load: use layout positions for all nodes (clean slate)
-  // On subsequent updates: only preserve positions for manually-dragged nodes
+  // Update nodes when data changes
   useEffect(() => {
     if (layoutedNodes.length === 0) return;
 
-    // On first mount, force clean layout and clear any stale tracking
-    if (!hasAppliedInitialLayout.current) {
-      hasAppliedInitialLayout.current = true;
-      hasDoneMeasuredLayout.current = false; // Reset for measured pass
-      knownNodeIds.current.clear();
-      manuallyMovedNodes.current.clear();
+    // Reset measured layout flag when nodes change
+    hasDoneMeasuredLayout.current = false;
 
-      // Add all current nodes to known set
-      for (const node of layoutedNodes) {
-        knownNodeIds.current.add(node.id);
-      }
-
-      // Debug: log initial client positions
-      const initialClients = layoutedNodes.filter((n) => n.type === 'client');
-      if (initialClients.length > 0) {
-        console.log('[Initial Layout] Client positions:', initialClients.map((n) => ({ id: n.id, pos: n.position })));
-      }
-
-      // Use layout positions directly - no position preservation on initial load
-      setNodes(layoutedNodes);
-      setEdges(edges);
-
-      // Fit view after initial layout
-      setTimeout(() => {
-        fitView({ padding: 0.1, duration: 200 });
-      }, 100);
-      return;
-    }
-
-    setNodes((currentNodes) => {
-      // Build a map of current node positions
-      const currentPositions = new Map<string, { x: number; y: number }>();
-      for (const node of currentNodes) {
-        currentPositions.set(node.id, node.position);
-      }
-
-      // Identify new nodes (not seen before)
-      const newNodeIds = new Set<string>();
-      for (const node of layoutedNodes) {
-        if (!knownNodeIds.current.has(node.id)) {
-          newNodeIds.add(node.id);
-          knownNodeIds.current.add(node.id);
-          // New nodes need measurement
-          hasDoneMeasuredLayout.current = false;
-        }
-      }
-
-      // Clean up known nodes that no longer exist
-      const currentNodeIds = new Set(layoutedNodes.map((n) => n.id));
-      for (const id of knownNodeIds.current) {
-        if (!currentNodeIds.has(id)) {
-          knownNodeIds.current.delete(id);
-          manuallyMovedNodes.current.delete(id);
-        }
-      }
-
-      // Merge: only preserve positions for nodes the user manually dragged
-      // All other nodes use the calculated layout positions
-      return layoutedNodes.map((layoutedNode) => {
-        const existingPosition = currentPositions.get(layoutedNode.id);
-        const wasManuallyMoved = manuallyMovedNodes.current.has(layoutedNode.id);
-
-        // Only preserve position if user manually dragged this specific node
-        const shouldUseExistingPosition = wasManuallyMoved && existingPosition;
-
-        return {
-          ...layoutedNode,
-          position: shouldUseExistingPosition ? existingPosition : layoutedNode.position,
-        };
-      });
-    });
-
+    setNodes(layoutedNodes);
     setEdges(edges);
+
+    // Fit view after layout
+    setTimeout(() => {
+      fitView({ padding: 0.1, duration: 200 });
+    }, 100);
   }, [layoutedNodes, edges, setNodes, setEdges, fitView]);
 
-  // Re-layout with measured dimensions after React Flow measures the nodes
-  // This is the second pass that uses actual DOM dimensions for accurate spacing
+  // Re-layout with measured dimensions after React Flow measures nodes
   useEffect(() => {
     if (!nodesInitialized || hasDoneMeasuredLayout.current) return;
     if (nodesState.length === 0) return;
 
-    // Get nodes with their measured dimensions from React Flow
     const measuredNodes = getNodes();
     if (measuredNodes.length === 0) return;
 
@@ -219,25 +183,7 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: Relay
 
     // Re-calculate layout using measured dimensions
     const reLayoutedNodes = calculateLayout(measuredNodes, edges);
-
-    // Debug: log client positions from layout
-    const clientNodes = reLayoutedNodes.filter((n) => n.type === 'client');
-    if (clientNodes.length > 0) {
-      console.log('[Measured Layout] Client positions:', clientNodes.map((n) => ({ id: n.id, pos: n.position })));
-    }
-
-    // Apply the new layout, respecting manually moved nodes
-    setNodes((currentNodes) => {
-      return reLayoutedNodes.map((layoutedNode) => {
-        const wasManuallyMoved = manuallyMovedNodes.current.has(layoutedNode.id);
-        const currentNode = currentNodes.find((n) => n.id === layoutedNode.id);
-
-        if (wasManuallyMoved && currentNode) {
-          return { ...layoutedNode, position: currentNode.position };
-        }
-        return layoutedNode;
-      });
-    });
+    setNodes(reLayoutedNodes);
 
     // Fit view after measured layout
     setTimeout(() => {
@@ -246,12 +192,9 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: Relay
   }, [nodesInitialized, nodesState.length, edges, getNodes, setNodes, fitView]);
 
   const onInit = useCallback(() => {
-    // Fit view on initial load
-    if (isInitialLoad.current) {
-      setTimeout(() => {
-        fitView({ padding: 0.1 });
-      }, 100);
-    }
+    setTimeout(() => {
+      fitView({ padding: 0.1 });
+    }, 100);
   }, [fitView]);
 
   if (isLoading && !data) {
@@ -316,11 +259,11 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, className = '' }: Relay
         {!hasActiveSessions ? (
           <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
             <Activity className="h-12 w-12 mb-4 opacity-50" />
-            <p className="text-sm">No active relay sessions</p>
+            <p className="text-sm">No active sessions</p>
             <p className="text-xs mt-1">Sessions will appear here when channels are streaming</p>
           </div>
         ) : (
-          <div className="h-[400px] w-full border rounded-lg overflow-hidden bg-background">
+          <div className="min-h-[400px] h-[calc(100vh-300px)] w-full border rounded-lg overflow-hidden bg-background">
             <ReactFlow
               nodes={nodesState}
               edges={edgesState}

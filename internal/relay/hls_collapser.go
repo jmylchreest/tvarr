@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -168,6 +169,13 @@ func (c *HLSCollapser) onTracks(tracks []*gohlslib.Track) error {
 
 			// Register data callback
 			c.client.OnDataMPEG4Audio(track, c.onAACData)
+
+		default:
+			// Log unsupported codecs (e.g., MP3, AC3, Opus in HLS context)
+			slog.Warn("HLS collapser: unsupported codec discovered",
+				slog.String("session_id", c.sessionID),
+				slog.String("codec_type", fmt.Sprintf("%T", track.Codec)),
+				slog.String("uri", c.uri))
 		}
 	}
 
@@ -638,6 +646,11 @@ func (c *StreamClassifier) classifyTracks(tracks []*gohlslib.Track, result *Clas
 		case *codecs.Opus:
 			hasAudio = true
 			audioCodec = "Opus"
+
+		default:
+			// Log unsupported codec for classification
+			slog.Warn("HLS classifier: unsupported codec in stream",
+				slog.String("codec_type", fmt.Sprintf("%T", track.Codec)))
 		}
 	}
 

@@ -20,7 +20,7 @@ Configuration can be set via:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--config` | `$HOME/.tvarr.yaml` | Path to config file |
-| `--log-level` | `info` | Log level: `debug`, `info`, `warn`, `error` |
+| `--log-level` | `info` | Log level: `trace`, `debug`, `info`, `warn`, `error` |
 | `--log-format` | `text` | Log format: `text`, `json` |
 
 ### Serve Command Flags
@@ -81,7 +81,7 @@ Configuration can be set via:
 
 | Config Key | Environment Variable | Default | Description |
 |------------|---------------------|---------|-------------|
-| `logging.level` | `TVARR_LOGGING_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
+| `logging.level` | `TVARR_LOGGING_LEVEL` | `info` | Log level: `trace`, `debug`, `info`, `warn`, `error` |
 | `logging.format` | `TVARR_LOGGING_FORMAT` | `json` | Log format: `json`, `text` |
 | `logging.add_source` | `TVARR_LOGGING_ADD_SOURCE` | `false` | Include source location in logs |
 | `logging.time_format` | `TVARR_LOGGING_TIME_FORMAT` | `RFC3339` | Timestamp format |
@@ -137,6 +137,16 @@ Controls the stream relay/proxy functionality.
 | Config Key | Environment Variable | Default | Description |
 |------------|---------------------|---------|-------------|
 | `relay.buffer.max_variant_bytes` | `TVARR_RELAY_BUFFER_MAX_VARIANT_BYTES` | `null` | Max bytes per codec variant (supports `100MB`, `1GB`, or raw bytes; null/0 = unlimited) |
+
+### Relay HLS Configuration
+
+Controls HLS segment generation for stream relay.
+
+| Config Key | Environment Variable | Default | Description |
+|------------|---------------------|---------|-------------|
+| `relay.hls.target_segment_duration` | `TVARR_RELAY_HLS_TARGET_SEGMENT_DURATION` | `4.0` | Target segment duration in seconds (actual duration may vary based on keyframe positions) |
+| `relay.hls.max_segments` | `TVARR_RELAY_HLS_MAX_SEGMENTS` | `10` | Maximum segments to keep in the ring buffer for slow clients |
+| `relay.hls.playlist_segments` | `TVARR_RELAY_HLS_PLAYLIST_SEGMENTS` | `5` | Number of segments in playlists for new clients (more = more buffer before live edge) |
 
 ---
 
@@ -224,6 +234,10 @@ relay:
   stream_timeout: 5m
   buffer:
     max_variant_bytes: null  # Supports: 100MB, 1GB, or null for unlimited
+  hls:
+    target_segment_duration: 4.0  # seconds, cut on keyframes
+    max_segments: 10              # ring buffer size for slow clients
+    playlist_segments: 5          # segments in playlist = buffer before live edge
 
 ffmpeg:
   binary_path: ""

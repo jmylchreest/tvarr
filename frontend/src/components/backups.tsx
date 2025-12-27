@@ -695,6 +695,7 @@ export function Backups() {
               isLoading={loading}
               title="Backups"
               searchPlaceholder="Search backups..."
+              storageKey="backups"
               headerAction={
                 <div className="flex items-center gap-1">
                   <Button variant="ghost" size="sm" onClick={handleUploadClick} disabled={uploading || loading}>

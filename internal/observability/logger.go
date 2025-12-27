@@ -29,6 +29,10 @@ const (
 	CorrelationIDKey contextKey = "correlation_id"
 )
 
+// LevelTrace is a custom log level below Debug for very verbose tracing.
+// Use this for high-frequency events like heartbeats that would be too noisy at Debug level.
+const LevelTrace = slog.LevelDebug - 4
+
 // GlobalLogLevel is the shared log level that can be changed at runtime.
 // Use SetLogLevel and GetLogLevel to modify/read this value.
 var GlobalLogLevel = &slog.LevelVar{}
@@ -86,6 +90,14 @@ func NewLoggerWithWriter(cfg config.LoggingConfig, w io.Writer) *slog.Logger {
 			// First apply sensitive data redaction (field-name based)
 			a = redactor(groups, a)
 
+			// Replace custom trace level with readable name
+			// slog displays LevelTrace as "DEBUG-4" by default, we want "TRACE"
+			if a.Key == slog.LevelKey {
+				if lvl, ok := a.Value.Any().(slog.Level); ok && lvl == LevelTrace {
+					return slog.String(slog.LevelKey, "TRACE")
+				}
+			}
+
 			// Then redact sensitive URL query parameters in string values
 			if a.Value.Kind() == slog.KindString {
 				str := a.Value.String()
@@ -123,7 +135,7 @@ func NewLoggerWithWriter(cfg config.LoggingConfig, w io.Writer) *slog.Logger {
 func parseLevel(level string) slog.Level {
 	switch level {
 	case "trace":
-		return slog.LevelDebug - 4 // slog doesn't have trace, use lower than debug
+		return LevelTrace
 	case "debug":
 		return slog.LevelDebug
 	case "info":
@@ -180,6 +192,12 @@ func WithRequestID(logger *slog.Logger, requestID string) *slog.Logger {
 // WithCorrelationID adds a correlation ID to the logger.
 func WithCorrelationID(logger *slog.Logger, correlationID string) *slog.Logger {
 	return logger.With(slog.String("correlation_id", correlationID))
+}
+
+// WithApp adds an application name to the logger for identifying which binary is logging.
+// Use this to distinguish between "tvarr" and "tvarr-ffmpegd" logs.
+func WithApp(logger *slog.Logger, app string) *slog.Logger {
+	return logger.With(slog.String("app", app))
 }
 
 // WithComponent adds a component name to the logger for identifying the source.
@@ -267,6 +285,12 @@ func (l *LogAttrs) Info(ctx context.Context, msg string, attrs ...slog.Attr) {
 // Debug logs a debug message with the given attributes.
 func (l *LogAttrs) Debug(ctx context.Context, msg string, attrs ...slog.Attr) {
 	l.logger.LogAttrs(ctx, slog.LevelDebug, msg, attrs...)
+}
+
+// Trace logs a trace message with the given attributes.
+// Use for very verbose logging like heartbeats that would be too noisy at Debug level.
+func (l *LogAttrs) Trace(ctx context.Context, msg string, attrs ...slog.Attr) {
+	l.logger.LogAttrs(ctx, LevelTrace, msg, attrs...)
 }
 
 // Warn logs a warning message with the given attributes.

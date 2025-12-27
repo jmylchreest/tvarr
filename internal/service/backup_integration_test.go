@@ -65,7 +65,6 @@ func TestBackupRestore_IntegrationRoundTrip(t *testing.T) {
 		Expression: "name contains 'sports'",
 		SourceType: models.FilterSourceTypeStream,
 		Action:     models.FilterActionInclude,
-		IsEnabled:  boolPtr(true),
 		IsSystem:   false,
 	}
 	filter.ID = models.NewULID()
@@ -131,9 +130,6 @@ func TestBackupRestore_IntegrationRoundTrip(t *testing.T) {
 	var filterCount int64
 	db.Model(&models.Filter{}).Count(&filterCount)
 	assert.Zero(t, filterCount, "Fresh database should be empty")
-
-	// Create a new backup service pointing to the same database path
-	backupService = NewBackupService(db, cfg, tempDir)
 
 	// Close the DB connection before restore (simulates real restore scenario)
 	sqlDB, _ = db.DB()

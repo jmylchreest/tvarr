@@ -66,6 +66,12 @@ type StreamSource struct {
 	// Higher priority sources take precedence for duplicate channels.
 	Priority int `gorm:"default:0" json:"priority"`
 
+	// MaxConcurrentStreams is the maximum number of concurrent connections allowed to this source.
+	// Default is 1 (most common for IPTV sources). Set to 0 for unlimited connections.
+	// This is used to prevent UseDirectInput mode from opening additional connections
+	// that would breach the source's connection limit.
+	MaxConcurrentStreams int `gorm:"default:1" json:"max_concurrent_streams"`
+
 	// Status indicates the current ingestion status.
 	Status SourceStatus `gorm:"not null;default:'pending';size:20" json:"status"`
 

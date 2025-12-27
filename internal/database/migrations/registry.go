@@ -28,6 +28,10 @@ import (
 // - 017: Remove is_enabled column from filters (filters are enabled/disabled at proxy level)
 // - 018: Add backup_settings table for user-configurable backup schedule
 // - 019: Fix duplicate "Exclude Adult Content" filters and upgrade expression
+// - 020: Add ffmpegd_config table for distributed transcoding configuration
+// - 021: Add max_concurrent_streams column to stream_sources table
+// - 022: Add encoder_overrides table for hardware encoder workarounds
+// - 023: Remove deprecated client_detection_enabled column from stream_proxies
 func AllMigrations() []Migration {
 	return []Migration{
 		migration001Schema(),
@@ -49,6 +53,11 @@ func AllMigrations() []Migration {
 		migration017RemoveFilterIsEnabled(),
 		migration018BackupSettings(),
 		migration019FixDuplicateFilters(),
+		migration020FFmpegdConfig(),
+		migration021StreamSourceMaxConcurrent(),
+		migration022EncoderOverrides(),
+		migration023RemoveClientDetectionEnabled(),
+		migration024FixDynamicCodecRules(),
 	}
 }
 

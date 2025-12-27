@@ -1,0 +1,87 @@
+# tvarr-ffmpegd: Distributed Transcoding Daemon
+# Based on the tvarr-ffmpeg image with hardware acceleration support
+#
+# Build: docker build -f deployment/docker/Dockerfile.ffmpegd -t ghcr.io/jmylchreest/tvarr-ffmpegd:latest .
+# Run: docker run --network=host -e TVARR_COORDINATOR_URL=localhost:9090 ghcr.io/jmylchreest/tvarr-ffmpegd:latest
+
+ARG FFMPEG_IMAGE=ghcr.io/jmylchreest/tvarr-ffmpeg:latest
+
+# =============================================================================
+# Stage 1: Build tvarr-ffmpegd binary
+# =============================================================================
+FROM golang:latest AS builder
+
+WORKDIR /src
+
+# Install Task and UPX
+RUN sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin && \
+    apt-get update && apt-get install -y --no-install-recommends upx && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy go mod files first for better layer caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy Taskfile for build tasks
+COPY Taskfile.yml ./
+
+# Copy all source code
+COPY . .
+
+# Build arguments for version injection
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
+ARG BRANCH=unknown
+ARG TREE_STATE=clean
+
+# Set version info as environment variables for Task
+ENV TVARR_BUILD_VERSION=${VERSION} \
+    TVARR_BUILD_COMMIT=${COMMIT} \
+    TVARR_BUILD_DATE=${BUILD_DATE} \
+    TVARR_BUILD_BRANCH=${BRANCH} \
+    TVARR_BUILD_TREE_STATE=${TREE_STATE}
+
+# Build tvarr-ffmpegd daemon binary
+RUN GOOS=linux task build:ffmpegd && mv dist/debug/tvarr-ffmpegd /tvarr-ffmpegd
+
+# Compress with UPX
+RUN task upx:compress:file FILE=/tvarr-ffmpegd
+
+# =============================================================================
+# Stage 2: Runtime image based on FFmpeg base
+# =============================================================================
+FROM ${FFMPEG_IMAGE} AS runtime
+
+LABEL org.opencontainers.image.title="tvarr-ffmpegd" \
+      org.opencontainers.image.description="Distributed transcoding daemon for tvarr" \
+      org.opencontainers.image.source="https://github.com/jmylchreest/tvarr" \
+      org.opencontainers.image.licenses="MIT"
+
+# Copy compressed tvarr-ffmpegd binary
+COPY --from=builder /tvarr-ffmpegd /app/tvarr-ffmpegd
+
+# Copy entrypoint script
+COPY deployment/docker/scripts/entrypoint-ffmpegd.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Environment defaults
+ENV PUID=1000 \
+    PGID=1000 \
+    TZ=UTC \
+    TVARR_COORDINATOR_URL="" \
+    TVARR_AUTH_TOKEN="" \
+    TVARR_DAEMON_NAME="" \
+    TVARR_MAX_JOBS=4 \
+    TVARR_LOGGING_LEVEL=info
+
+# No volume needed - ffmpegd is stateless
+# Data is streamed to/from the coordinator
+
+# Health check - verify process is running and can respond
+# Note: ffmpegd doesn't have an HTTP endpoint, so we just check the process
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD pgrep -f tvarr-ffmpegd || exit 1
+
+# Entrypoint handles user setup and starts daemon
+ENTRYPOINT ["/entrypoint.sh"]

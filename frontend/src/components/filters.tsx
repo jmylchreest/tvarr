@@ -54,22 +54,6 @@ interface ErrorState {
   action: string | null;
 }
 
-function formatRelativeTime(dateString: string): string {
-  const now = new Date();
-  const date = new Date(dateString);
-  const diffMs = now.getTime() - date.getTime();
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffDays = Math.floor(diffHours / 24);
-
-  if (diffDays > 0) {
-    return `${diffDays}d ago`;
-  } else if (diffHours > 0) {
-    return `${diffHours}h ago`;
-  } else {
-    return 'Just now';
-  }
-}
-
 // Convert Filter to MasterItem format for MasterDetailLayout
 interface FilterMasterItem extends MasterItem {
   filter: Filter;
@@ -303,9 +287,6 @@ function FilterDetailPanel({
           <Badge variant={filter.action === 'exclude' ? 'destructive' : 'default'}>
             {filter.action.toUpperCase()}
           </Badge>
-          <span className="text-muted-foreground">
-            Created {filter.created_at ? formatRelativeTime(filter.created_at) : 'Unknown'}
-          </span>
         </div>
 
         {/* Edit Form */}
@@ -652,6 +633,7 @@ export function Filters() {
             isLoading={loading.filters}
             title={`Filters (${sortedFilters.length})`}
             searchPlaceholder="Search by name, type, action..."
+            storageKey="filters"
             headerAction={
               <Button
                 size="sm"

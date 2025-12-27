@@ -44,6 +44,7 @@ export interface FlowNodeData {
   ingressBps?: number;
   totalBytesIn?: number;
   durationSecs?: number;
+  originConnected?: boolean; // True if origin is still streaming (false after EOF)
 
   // Bandwidth history for sparkline (last 30 samples, ~1 sample/sec)
   ingressHistory?: number[];

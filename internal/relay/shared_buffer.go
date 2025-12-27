@@ -10,6 +10,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/jmylchreest/tvarr/internal/codec"
+	"github.com/jmylchreest/tvarr/internal/observability"
 )
 
 // Errors for shared buffer operations.
@@ -261,8 +264,15 @@ func (t *ESTrack) binarySearchSequenceLocked(afterSeq uint64) int {
 
 // collectSamplesLocked collects up to maxSamples starting from startIdx.
 // Must be called with t.mu held.
-// IMPORTANT: This makes deep copies of sample Data to prevent corruption when
-// the buffer evicts samples while processors are still using them.
+//
+// SAFETY: Returns slices that reference the buffer's internal data directly (zero-copy).
+// This is safe because the watermark-based eviction system ensures samples are not
+// evicted until ALL consumers have updated their position past that sample.
+// The sequence of operations is:
+//  1. Consumer reads sample (position still at previous seq)
+//  2. Eviction checks: canEvict = (sampleSeq <= minConsumerSeq) - sample is PROTECTED
+//  3. Consumer finishes processing, calls UpdateConsumerPosition()
+//  4. NOW sample can be evicted (sampleSeq <= new minConsumerSeq)
 func (t *ESTrack) collectSamplesLocked(startIdx, maxSamples int) []ESSample {
 	available := len(t.samples) - startIdx
 	if maxSamples > 0 && available > maxSamples {
@@ -272,23 +282,9 @@ func (t *ESTrack) collectSamplesLocked(startIdx, maxSamples int) []ESSample {
 		return nil
 	}
 
-	result := make([]ESSample, available)
-	for i := 0; i < available; i++ {
-		src := t.samples[startIdx+i]
-		// Deep copy the Data slice to prevent corruption from buffer eviction
-		dataCopy := make([]byte, len(src.Data))
-		copy(dataCopy, src.Data)
-		result[i] = ESSample{
-			PTS:        src.PTS,
-			DTS:        src.DTS,
-			Data:       dataCopy,
-			IsKeyframe: src.IsKeyframe,
-			Sequence:   src.Sequence,
-			Timestamp:  src.Timestamp,
-		}
-	}
-
-	return result
+	// Return samples directly - no copy needed due to watermark protection
+	// This is a significant performance optimization for high-throughput streams
+	return t.samples[startIdx : startIdx+available]
 }
 
 // ReadFromKeyframe returns samples starting from the first keyframe after the given sequence.
@@ -409,20 +405,30 @@ const (
 
 // NewCodecVariant creates a CodecVariant from video and audio codec names.
 // Codec names should be like "h264", "h265", "aac" - NOT encoder names like "libx265".
+// Empty or "copy" values are normalized to "copy".
 func NewCodecVariant(videoCodec, audioCodec string) CodecVariant {
 	// Warn if encoder names are passed instead of codec names - this indicates a bug
-	if IsEncoderName(videoCodec) {
+	if codec.IsEncoder(videoCodec) {
 		slog.Warn("NewCodecVariant called with encoder name instead of codec name",
 			slog.String("video_codec", videoCodec),
 			slog.String("expected", "codec name like h264, h265, vp9"),
 			slog.String("caller", getSharedBufferCallerInfo()))
 	}
-	if IsEncoderName(audioCodec) {
+	if codec.IsEncoder(audioCodec) {
 		slog.Warn("NewCodecVariant called with encoder name instead of codec name",
 			slog.String("audio_codec", audioCodec),
 			slog.String("expected", "codec name like aac, opus, mp3"),
 			slog.String("caller", getSharedBufferCallerInfo()))
 	}
+
+	// Handle empty/copy values
+	if videoCodec == "" || videoCodec == "copy" {
+		videoCodec = "copy"
+	}
+	if audioCodec == "" || audioCodec == "copy" {
+		audioCodec = "copy"
+	}
+
 	return CodecVariant(fmt.Sprintf("%s/%s", videoCodec, audioCodec))
 }
 
@@ -433,6 +439,12 @@ func getSharedBufferCallerInfo() string {
 		return "unknown"
 	}
 	return fmt.Sprintf("%s:%d", file, line)
+}
+
+// ParseCodecVariant parses a variant string (e.g., "h264/aac") into a CodecVariant.
+// This is used when parsing variant from URL query parameters.
+func ParseCodecVariant(s string) CodecVariant {
+	return CodecVariant(s)
 }
 
 // VideoCodec returns the video codec part of the variant.
@@ -467,6 +479,10 @@ type ConsumerPosition struct {
 	Updated  time.Time // When this position was last updated
 }
 
+// SourceEOFGracePeriod is how long to preserve source variant data after EOF
+// to allow late-joining transcoders to access the content.
+const SourceEOFGracePeriod = 30 * time.Second
+
 // ESVariant holds the elementary stream tracks for a specific codec variant.
 type ESVariant struct {
 	variant    CodecVariant
@@ -479,6 +495,9 @@ type ESVariant struct {
 	// Variant-level byte limit (combined video + audio)
 	maxBytes uint64 // Maximum total bytes for this variant (0 = unlimited)
 
+	// EOF tracking for source variants - prevents aggressive eviction after finite stream ends
+	eofReceivedAt atomic.Value // time.Time - when EOF was received (zero if not yet)
+
 	// Statistics
 	bytesIngested atomic.Uint64
 
@@ -486,6 +505,13 @@ type ESVariant struct {
 	// Map from consumer ID to their read position
 	consumers   map[string]*ConsumerPosition
 	consumersMu sync.RWMutex
+
+	// Cached watermark for efficient eviction checks
+	// These are the minimum sequences that all consumers have read
+	cachedMinVideoSeq atomic.Uint64
+	cachedMinAudioSeq atomic.Uint64
+	watermarkGen      atomic.Uint64 // Incremented when consumer positions change
+	cachedGen         atomic.Uint64 // Generation when cache was last computed
 
 	// Mutex for coordinated eviction
 	evictMu sync.Mutex
@@ -533,34 +559,54 @@ func (v *ESVariant) IsSource() bool {
 	return v.isSource
 }
 
+// SignalEOF marks that the source stream has finished (EOF received).
+// For source variants, this starts a grace period during which eviction is paused
+// to allow late-joining transcoders to access the buffered content.
+func (v *ESVariant) SignalEOF() {
+	v.eofReceivedAt.Store(time.Now())
+}
+
+// IsInEOFGracePeriod returns true if this is a source variant that recently
+// received EOF and is in the grace period where eviction should be paused.
+func (v *ESVariant) IsInEOFGracePeriod() bool {
+	if !v.isSource {
+		return false
+	}
+	eofTime, ok := v.eofReceivedAt.Load().(time.Time)
+	if !ok || eofTime.IsZero() {
+		return false
+	}
+	return time.Since(eofTime) < SourceEOFGracePeriod
+}
+
 // RegisterConsumer registers a consumer (processor) that will read from this variant.
 // The consumer ID should be unique and stable for the processor's lifetime.
 // Returns the consumer's initial position (current buffer state).
 func (v *ESVariant) RegisterConsumer(consumerID string) {
 	v.consumersMu.Lock()
-	defer v.consumersMu.Unlock()
-
 	// Initialize at sequence 0 - consumer hasn't read anything yet
 	v.consumers[consumerID] = &ConsumerPosition{
 		VideoSeq: 0,
 		AudioSeq: 0,
 		Updated:  time.Now(),
 	}
+	v.consumersMu.Unlock()
+	v.watermarkGen.Add(1) // Invalidate cached watermark
 }
 
 // UnregisterConsumer removes a consumer when it's done reading.
 // This allows eviction of samples that were held for this consumer.
 func (v *ESVariant) UnregisterConsumer(consumerID string) {
 	v.consumersMu.Lock()
-	defer v.consumersMu.Unlock()
 	delete(v.consumers, consumerID)
+	v.consumersMu.Unlock()
+	v.watermarkGen.Add(1) // Invalidate cached watermark
 }
 
 // UpdateConsumerPosition updates the read position for a consumer.
 // Call this after successfully reading samples to allow eviction of older data.
 func (v *ESVariant) UpdateConsumerPosition(consumerID string, videoSeq, audioSeq uint64) {
 	v.consumersMu.Lock()
-	defer v.consumersMu.Unlock()
 
 	pos, ok := v.consumers[consumerID]
 	if !ok {
@@ -570,28 +616,50 @@ func (v *ESVariant) UpdateConsumerPosition(consumerID string, videoSeq, audioSeq
 			AudioSeq: audioSeq,
 			Updated:  time.Now(),
 		}
+		v.consumersMu.Unlock()
+		v.watermarkGen.Add(1) // Invalidate cached watermark
 		return
 	}
 
 	// Only update if new position is ahead (consumers only move forward)
+	changed := false
 	if videoSeq > pos.VideoSeq {
 		pos.VideoSeq = videoSeq
+		changed = true
 	}
 	if audioSeq > pos.AudioSeq {
 		pos.AudioSeq = audioSeq
+		changed = true
 	}
 	pos.Updated = time.Now()
+	v.consumersMu.Unlock()
+
+	if changed {
+		v.watermarkGen.Add(1) // Invalidate cached watermark
+	}
 }
 
 // getMinConsumerSeq returns the minimum video and audio sequence that any consumer
 // has read. Samples at or before these sequences are safe to evict.
 // Returns (0, 0) if no consumers are registered (all samples safe to evict).
+// Uses cached values when consumer positions haven't changed.
 func (v *ESVariant) getMinConsumerSeq() (minVideoSeq, minAudioSeq uint64) {
+	// Fast path: check if cached values are still valid
+	currentGen := v.watermarkGen.Load()
+	if currentGen == v.cachedGen.Load() && currentGen > 0 {
+		return v.cachedMinVideoSeq.Load(), v.cachedMinAudioSeq.Load()
+	}
+
+	// Slow path: need to recalculate
 	v.consumersMu.RLock()
-	defer v.consumersMu.RUnlock()
 
 	if len(v.consumers) == 0 {
-		return 0, 0 // No consumers - eviction unrestricted
+		v.consumersMu.RUnlock()
+		// No consumers - eviction unrestricted
+		v.cachedMinVideoSeq.Store(0)
+		v.cachedMinAudioSeq.Store(0)
+		v.cachedGen.Store(currentGen)
+		return 0, 0
 	}
 
 	// Start with max values
@@ -606,6 +674,12 @@ func (v *ESVariant) getMinConsumerSeq() (minVideoSeq, minAudioSeq uint64) {
 			minAudioSeq = pos.AudioSeq
 		}
 	}
+	v.consumersMu.RUnlock()
+
+	// Cache the computed values
+	v.cachedMinVideoSeq.Store(minVideoSeq)
+	v.cachedMinAudioSeq.Store(minAudioSeq)
+	v.cachedGen.Store(currentGen)
 
 	return minVideoSeq, minAudioSeq
 }
@@ -647,25 +721,56 @@ func (v *ESVariant) MaxBytes() uint64 {
 	return v.maxBytes
 }
 
-// evictIfNeeded performs paired video/audio eviction if the variant exceeds its byte limit.
-// This evicts from whichever track has the older PTS, maintaining A/V sync.
+// evictIfNeeded performs eviction to maintain buffer size and clean up read samples.
+// This is the unified eviction method that handles both:
+// 1. Consumer position-based eviction (free up samples all consumers have read)
+// 2. Size-based eviction (keep buffer under maxBytes limit)
+//
 // IMPORTANT: Eviction respects consumer read positions to prevent removing samples
 // that consumers haven't read yet. This prevents decoder errors from missing reference frames.
 func (v *ESVariant) evictIfNeeded(incomingBytes uint64) {
-	// Always do consumer-position-based eviction first
-	// This ensures samples that all consumers have read are cleaned up
-	v.evictReadSamples()
-
-	if v.maxBytes == 0 {
-		return // No byte limit - consumer position eviction only
+	// For source variants in EOF grace period, don't evict to allow late-joining transcoders
+	// to access the full buffered content.
+	if v.IsInEOFGracePeriod() {
+		return
 	}
 
 	v.evictMu.Lock()
 	defer v.evictMu.Unlock()
 
-	// Get the minimum sequence that all consumers have read
-	// We can only evict samples that ALL consumers have already processed
+	// Get the minimum sequence that all consumers have read (cached for efficiency)
 	minVideoSeq, minAudioSeq := v.getMinConsumerSeq()
+
+	// Phase 1: Consumer position-based eviction
+	// Evict all samples that ALL consumers have already read
+	if minVideoSeq > 0 || minAudioSeq > 0 {
+		// Evict read video samples
+		for {
+			videoSeq := v.videoTrack.OldestSequence()
+			if videoSeq == 0 || videoSeq > minVideoSeq {
+				break
+			}
+			if _, _, ok := v.videoTrack.EvictOldestSample(); !ok {
+				break
+			}
+		}
+
+		// Evict read audio samples
+		for {
+			audioSeq := v.audioTrack.OldestSequence()
+			if audioSeq == 0 || audioSeq > minAudioSeq {
+				break
+			}
+			if _, _, ok := v.audioTrack.EvictOldestSample(); !ok {
+				break
+			}
+		}
+	}
+
+	// Phase 2: Size-based eviction (if maxBytes is set)
+	if v.maxBytes == 0 {
+		return // No byte limit configured
+	}
 
 	// Keep evicting until we have room for the incoming data
 	for v.CurrentBytes()+incomingBytes > v.maxBytes {
@@ -675,76 +780,21 @@ func (v *ESVariant) evictIfNeeded(incomingBytes uint64) {
 		videoSeq := v.videoTrack.OldestSequence()
 		audioSeq := v.audioTrack.OldestSequence()
 
-		// Check if we can evict video (oldest video seq must be <= min consumer video seq)
+		// Check if we can evict (oldest seq must be <= min consumer seq)
 		canEvictVideo := videoPTS > 0 && (minVideoSeq == 0 || videoSeq <= minVideoSeq)
-		// Check if we can evict audio (oldest audio seq must be <= min consumer audio seq)
 		canEvictAudio := audioPTS > 0 && (minAudioSeq == 0 || audioSeq <= minAudioSeq)
 
-		// Evict from the track with the older sample, but only if safe
-		// This keeps video and audio roughly in sync
+		// Evict from the track with the older sample, maintaining A/V sync
 		if canEvictVideo && (audioPTS == 0 || videoPTS <= audioPTS || !canEvictAudio) {
-			// Video is older or audio is empty or can't evict audio - evict video
-			_, _, ok := v.videoTrack.EvictOldestSample()
-			if !ok {
-				break // No more samples to evict
+			if _, _, ok := v.videoTrack.EvictOldestSample(); !ok {
+				break
 			}
 		} else if canEvictAudio {
-			// Audio is older and can be evicted - evict audio
-			_, _, ok := v.audioTrack.EvictOldestSample()
-			if !ok {
-				break // No more samples to evict
+			if _, _, ok := v.audioTrack.EvictOldestSample(); !ok {
+				break
 			}
 		} else {
-			// Cannot evict any samples - consumers are too far behind
-			// This is a backpressure situation - we accept the buffer overflow
-			// rather than corrupt streams by evicting unread samples
-			break
-		}
-	}
-}
-
-// evictReadSamples evicts all samples that have been read by ALL consumers.
-// This is the primary eviction mechanism when maxBytes=0 (unlimited).
-// Evicts samples where the sequence number is <= the minimum consumer position.
-func (v *ESVariant) evictReadSamples() {
-	v.evictMu.Lock()
-	defer v.evictMu.Unlock()
-
-	// Get the minimum sequence that all consumers have read
-	minVideoSeq, minAudioSeq := v.getMinConsumerSeq()
-
-	// If no consumers are registered, we can't safely evict
-	// (we don't know if something will read the data later)
-	if minVideoSeq == 0 && minAudioSeq == 0 {
-		// Check if there are actually consumers - if none, keep all data
-		if v.ConsumerCount() == 0 {
-			return
-		}
-		// If there are consumers but they're at position 0, they haven't read anything yet
-		// Don't evict in this case
-		return
-	}
-
-	// Evict all video samples that have been read by all consumers
-	for {
-		videoSeq := v.videoTrack.OldestSequence()
-		if videoSeq == 0 || videoSeq > minVideoSeq {
-			break // No more video to evict or reached unread samples
-		}
-		_, _, ok := v.videoTrack.EvictOldestSample()
-		if !ok {
-			break
-		}
-	}
-
-	// Evict all audio samples that have been read by all consumers
-	for {
-		audioSeq := v.audioTrack.OldestSequence()
-		if audioSeq == 0 || audioSeq > minAudioSeq {
-			break // No more audio to evict or reached unread samples
-		}
-		_, _, ok := v.audioTrack.EvictOldestSample()
-		if !ok {
+			// Cannot evict - consumers are too far behind (backpressure)
 			break
 		}
 	}
@@ -954,8 +1004,10 @@ type SharedESBuffer struct {
 	onVariantRequest func(source, target CodecVariant) error
 
 	// Lifecycle
-	closed   atomic.Bool
-	closedCh chan struct{}
+	closed          atomic.Bool
+	closedCh        chan struct{}
+	sourceCompleted atomic.Bool   // True when source ingest has finished (EOF received)
+	sourceCompletedCh chan struct{} // Closed when source ingest completes
 }
 
 // NewSharedESBuffer creates a new shared elementary stream buffer.
@@ -968,14 +1020,15 @@ func NewSharedESBuffer(channelID, proxyID string, config SharedESBufferConfig) *
 	}
 
 	b := &SharedESBuffer{
-		channelID:     channelID,
-		proxyID:       proxyID,
-		config:        config,
-		variants:      make(map[CodecVariant]*ESVariant),
-		sourceReadyCh: make(chan struct{}),
-		startTime:     time.Now(),
-		processors:    make(map[string]struct{}),
-		closedCh:      make(chan struct{}),
+		channelID:         channelID,
+		proxyID:           proxyID,
+		config:            config,
+		variants:          make(map[CodecVariant]*ESVariant),
+		sourceReadyCh:     make(chan struct{}),
+		startTime:         time.Now(),
+		processors:        make(map[string]struct{}),
+		closedCh:          make(chan struct{}),
+		sourceCompletedCh: make(chan struct{}),
 	}
 
 	// Pre-create source variant if we have codec hints from probing
@@ -1085,14 +1138,12 @@ func (b *SharedESBuffer) SourceVariantKey() CodecVariant {
 }
 
 // GetVariant returns a specific codec variant, or nil if it doesn't exist.
+// Note: This does NOT update lastAccess - only actual reads should do that.
+// Use RecordAccess() explicitly when consuming samples from the variant.
 func (b *SharedESBuffer) GetVariant(variant CodecVariant) *ESVariant {
 	b.variantsMu.RLock()
 	defer b.variantsMu.RUnlock()
-	v := b.variants[variant]
-	if v != nil {
-		v.RecordAccess()
-	}
-	return v
+	return b.variants[variant]
 }
 
 // GetOrCreateVariant returns an existing variant or creates a new one.
@@ -1163,19 +1214,31 @@ func (b *SharedESBuffer) GetOrCreateVariantWithContext(ctx context.Context, vari
 	b.variants[variant] = v
 	b.variantsMu.Unlock()
 
-	b.config.Logger.Debug("Created new codec variant",
+	b.config.Logger.Log(context.Background(), observability.LevelTrace, "Created new codec variant - triggering transcoding callback",
 		slog.String("channel_id", b.channelID),
 		slog.String("variant", variant.String()),
-		slog.String("source", source.String()))
+		slog.String("source", source.String()),
+		slog.Bool("has_callback", callback != nil),
+		slog.String("variant_ptr", fmt.Sprintf("%p", v)),
+		slog.String("video_track_ptr", fmt.Sprintf("%p", v.VideoTrack())))
 
 	// Trigger transcoding if callback is set
 	if callback != nil {
+		b.config.Logger.Info("Invoking variant request callback to start transcoder",
+			slog.String("source", source.String()),
+			slog.String("target", variant.String()))
 		if err := callback(source, variant); err != nil {
 			b.config.Logger.Error("Failed to start transcoder for variant",
 				slog.String("variant", variant.String()),
 				slog.String("error", err.Error()))
 			// Don't remove the variant - let it exist but be empty until transcoder starts
+		} else {
+			b.config.Logger.Info("Transcoder started successfully for variant",
+				slog.String("variant", variant.String()))
 		}
+	} else {
+		b.config.Logger.Warn("No variant request callback set - cannot start transcoder",
+			slog.String("variant", variant.String()))
 	}
 
 	return v, nil
@@ -1369,6 +1432,11 @@ func (b *SharedESBuffer) CreateVariant(variant CodecVariant) (*ESVariant, error)
 	// Check if variant already exists
 	if v, exists := b.variants[variant]; exists {
 		v.RecordAccess()
+		b.config.Logger.Log(context.Background(), observability.LevelTrace, "CreateVariant: returning existing variant",
+			slog.String("channel_id", b.channelID),
+			slog.String("variant", variant.String()),
+			slog.String("variant_ptr", fmt.Sprintf("%p", v)),
+			slog.String("video_track_ptr", fmt.Sprintf("%p", v.VideoTrack())))
 		return v, nil
 	}
 
@@ -1447,12 +1515,37 @@ func (b *SharedESBuffer) Stats() ESBufferStats {
 	}
 	b.variantsMu.RUnlock()
 
+	// Get source variant's codecs to resolve "copy" references
+	var sourceVideoCodec, sourceAudioCodec string
+	for _, v := range variantList {
+		if v.isSource {
+			sourceVideoCodec = v.videoTrack.Codec()
+			sourceAudioCodec = v.audioTrack.Codec()
+			// Fallback to variant name if track codec is empty
+			if sourceVideoCodec == "" {
+				sourceVideoCodec = v.variant.VideoCodec()
+			}
+			if sourceAudioCodec == "" {
+				sourceAudioCodec = v.variant.AudioCodec()
+			}
+			break
+		}
+	}
+
 	// Collect stats from each variant WITHOUT holding the variants lock.
 	// Each variant.Stats() call acquires its own locks internally.
 	var totalBytes uint64
 	variantStats := make([]ESVariantStats, 0, variantCount)
 	for _, v := range variantList {
 		vs := v.Stats()
+		// Resolve "copy" to actual source codec for display purposes
+		// "copy" means passthrough - the actual codec is the source codec
+		if vs.VideoCodec == "copy" && sourceVideoCodec != "" {
+			vs.VideoCodec = sourceVideoCodec
+		}
+		if vs.AudioCodec == "copy" && sourceAudioCodec != "" {
+			vs.AudioCodec = sourceAudioCodec
+		}
 		variantStats = append(variantStats, vs)
 		totalBytes += vs.BytesIngested
 	}
@@ -1486,12 +1579,44 @@ func (b *SharedESBuffer) ClosedChan() <-chan struct{} {
 	return b.closedCh
 }
 
+// MarkSourceCompleted signals that the origin stream has finished (EOF received).
+// This allows transcoders to know that no more source samples will arrive
+// and they should finish processing remaining samples and shutdown gracefully.
+// Also triggers the EOF grace period on the source variant to prevent eviction
+// during the window when additional transcoders may still join.
+func (b *SharedESBuffer) MarkSourceCompleted() {
+	if b.sourceCompleted.CompareAndSwap(false, true) {
+		close(b.sourceCompletedCh)
+		// Signal EOF on source variant to start grace period (prevents eviction)
+		b.variantsMu.RLock()
+		if source := b.variants[b.sourceVariant]; source != nil {
+			source.SignalEOF()
+		}
+		b.variantsMu.RUnlock()
+		b.config.Logger.Info("ES buffer source completed (EOF received)",
+			slog.String("channel_id", b.channelID))
+	}
+}
+
+// IsSourceCompleted returns true if the origin stream has finished sending data.
+func (b *SharedESBuffer) IsSourceCompleted() bool {
+	return b.sourceCompleted.Load()
+}
+
+// SourceCompletedChan returns a channel that is closed when the source stream finishes.
+// Use this to be notified when no more source samples will arrive.
+func (b *SharedESBuffer) SourceCompletedChan() <-chan struct{} {
+	return b.sourceCompletedCh
+}
+
 // Duration returns how long this buffer has been active.
 func (b *SharedESBuffer) Duration() time.Duration {
 	return time.Since(b.startTime)
 }
 
-// CleanupUnusedVariants removes transcoded variants that haven't been accessed recently.
+// CleanupUnusedVariants removes transcoded variants that haven't been accessed recently
+// and have no active consumers. Variants with registered consumers are never removed,
+// even if idle, because doing so would break active streams.
 func (b *SharedESBuffer) CleanupUnusedVariants(maxIdle time.Duration) int {
 	b.variantsMu.Lock()
 	defer b.variantsMu.Unlock()
@@ -1502,6 +1627,12 @@ func (b *SharedESBuffer) CleanupUnusedVariants(maxIdle time.Duration) int {
 	for variant, v := range b.variants {
 		// Never remove source variant
 		if v.isSource {
+			continue
+		}
+
+		// Never remove variants with active consumers - this would break streams
+		consumerCount := v.ConsumerCount()
+		if consumerCount > 0 {
 			continue
 		}
 

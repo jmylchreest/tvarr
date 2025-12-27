@@ -12,6 +12,93 @@ image:
   # -- Overrides the image tag (default: chart appVersion)
   tag: ""
 
+# =============================================================================
+# ffmpegd - Distributed Transcoding Daemon
+# =============================================================================
+ffmpegd:
+  # -- Enable ffmpegd deployment
+  enabled: false
+
+  # -- Number of ffmpegd replicas (can scale for more transcoding capacity)
+  replicaCount: 1
+
+  image:
+    # -- ffmpegd container image repository
+    repository: ghcr.io/jmylchreest/tvarr-ffmpegd
+    # -- Image pull policy
+    pullPolicy: IfNotPresent
+    # -- Overrides the image tag (default: chart appVersion)
+    tag: ""
+
+  # -- Pod annotations for ffmpegd
+  podAnnotations: {}
+
+  # -- Pod security context for ffmpegd
+  podSecurityContext:
+    fsGroup: 1000
+
+  # -- Container security context for ffmpegd
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+
+  # -- Resource limits and requests for ffmpegd
+  resources: {}
+    # limits:
+    #   cpu: 4000m
+    #   memory: 4Gi
+    # requests:
+    #   cpu: 1000m
+    #   memory: 1Gi
+
+  # GPU configuration for ffmpegd
+  gpu:
+    # -- Enable GPU support for ffmpegd
+    enabled: false
+    # -- GPU type: nvidia, intel, amd
+    type: ""
+    # -- NVIDIA-specific settings
+    nvidia:
+      # -- RuntimeClass for NVIDIA (usually "nvidia")
+      runtimeClassName: nvidia
+    # -- Intel-specific settings
+    intel:
+      # -- Device path for Intel GPU
+      devicePath: /dev/dri
+
+  # -- Node selector for ffmpegd
+  nodeSelector: {}
+
+  # -- Tolerations for ffmpegd
+  tolerations: []
+
+  # -- Affinity rules for ffmpegd
+  # Recommended: Use pod anti-affinity to spread ffmpegd across nodes
+  affinity: {}
+
+  # -- Pod Disruption Budget for ffmpegd
+  # Helps prevent disruption during voluntary disruptions (upgrades, node drain)
+  podDisruptionBudget:
+    # -- Enable PDB
+    enabled: false
+    # -- Minimum available pods (use either minAvailable or maxUnavailable, not both)
+    minAvailable: 1
+    # -- Maximum unavailable pods
+    # maxUnavailable: 0
+
+  # ffmpegd environment variables
+  env:
+    # -- Human-readable daemon name (defaults to pod name)
+    TVARR_DAEMON_NAME: ""
+    # -- Maximum concurrent transcoding jobs per daemon
+    TVARR_MAX_JOBS: "4"
+    # -- Authentication token (optional)
+    TVARR_AUTH_TOKEN: ""
+
+  # -- Extra environment variables for ffmpegd
+  extraEnv: []
+
 # -- Image pull secrets for private registries
 imagePullSecrets: []
 
@@ -48,8 +135,10 @@ securityContext:
 service:
   # -- Service type
   type: ClusterIP
-  # -- Service port
+  # -- HTTP service port
   port: 8080
+  # -- gRPC service port (for ffmpegd connections)
+  grpcPort: 9090
 
 ingress:
   # -- Enable ingress
@@ -133,6 +222,10 @@ env:
   # -- External base URL for M3U proxy URLs (set to your ingress URL, e.g., https://tvarr.example.com)
   # -- IMPORTANT: Required when behind Traefik/nginx ingress for correct M3U playlist URLs
   TVARR_SERVER_BASE_URL: ""
+  # -- gRPC server port (for ffmpegd daemon connections)
+  TVARR_GRPC_PORT: "9090"
+  # -- Enable gRPC server (required for ffmpegd)
+  TVARR_GRPC_ENABLED: "true"
   # -- Database DSN
   TVARR_DATABASE_DSN: "file:/data/tvarr.db"
   # -- Log level (debug, info, warn, error)

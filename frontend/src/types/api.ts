@@ -169,7 +169,6 @@ export interface StreamProxy {
   upstream_timeout?: number;
   cache_channel_logos: boolean;
   cache_program_logos: boolean;
-  client_detection_enabled: boolean;
   encoding_profile_id?: string;
   m3u8_url?: string;
   xmltv_url?: string;
@@ -1231,5 +1230,208 @@ export interface RestoreResult {
   success: boolean;
   message: string;
   pre_restore_backup?: string;
+}
+
+// =============================================================================
+// TRANSCODER TYPES (ffmpegd daemons)
+// =============================================================================
+
+export type DaemonState = 'connected' | 'transcoding' | 'draining' | 'unhealthy' | 'disconnected' | 'connecting';
+
+export interface GPUStats {
+  index: number;
+  name: string;
+  utilization: number;
+  memory_total: number;
+  memory_used: number;
+  memory_percent: number;
+  temperature: number;
+  encoder_utilization: number;
+  decoder_utilization: number;
+  active_encode_sessions: number;
+  max_encode_sessions: number;
+}
+
+export interface SystemStats {
+  hostname: string;
+  os?: string;
+  arch?: string;
+  cpu_cores: number;
+  cpu_percent: number;
+  memory_total: number;
+  memory_used: number;
+  memory_available: number;
+  memory_percent: number;
+  gpus?: GPUStats[];
+}
+
+// FilteredEncoder describes an encoder that was filtered out and why.
+export interface FilteredEncoder {
+  name: string;
+  reason: string;
+}
+
+export interface HWAccelInfo {
+  type: string;
+  device: string;
+  available: boolean;
+  hw_encoders: string[];
+  hw_decoders: string[];
+  filtered_encoders?: FilteredEncoder[];
+}
+
+export interface GPUInfo {
+  index: number;
+  name: string;
+  class: string;
+  driver?: string;
+  max_encode_sessions: number;
+  max_decode_sessions: number;
+  active_encode_sessions: number;
+  active_decode_sessions: number;
+  memory_total?: number;
+}
+
+export interface DaemonCapabilities {
+  video_encoders: string[];
+  video_decoders: string[];
+  audio_encoders: string[];
+  audio_decoders: string[];
+  max_concurrent_jobs: number;  // Overall guard limit
+  max_cpu_jobs?: number;        // Max CPU (software) jobs (0 = use guard)
+  max_gpu_jobs?: number;        // Max GPU (hardware) jobs (0 = no GPU)
+  max_probe_jobs?: number;      // Max probe operations
+  hw_accels?: HWAccelInfo[];
+  gpus?: GPUInfo[];
+}
+
+export interface ActiveJobDetail {
+  id: string;
+  session_id: string;
+  channel_id: string;
+  channel_name: string;
+  cpu_percent: number;
+  memory_mb: number;
+  encoding_speed: number;
+  samples_in: number;
+  samples_out: number;
+  bytes_in: number;
+  bytes_out: number;
+  running_time_ms: number;
+  hw_accel?: string;  // vaapi, cuda, qsv, videotoolbox (empty = software)
+  hw_device?: string; // Device path: /dev/dri/renderD128, cuda:0, etc.
+  ffmpeg_command?: string; // Full FFmpeg command line for debugging
+}
+
+export interface Daemon {
+  id: string;
+  name: string;
+  version: string;
+  address: string;
+  state: DaemonState;
+  connected_at: string;
+  last_heartbeat: string;
+  heartbeats_missed: number;
+  active_jobs: number;
+  active_cpu_jobs: number;        // Software encoding jobs
+  active_gpu_jobs: number;        // Hardware encoding jobs
+  active_job_details?: ActiveJobDetail[];
+  total_jobs_completed: number;
+  total_jobs_failed: number;
+  capabilities?: DaemonCapabilities;
+  system_stats?: SystemStats;
+}
+
+export interface ListDaemonsResponse {
+  daemons: Daemon[];
+  total: number;
+}
+
+export interface ClusterStats {
+  total_daemons: number;
+  active_daemons: number;
+  unhealthy_daemons: number;
+  draining_daemons: number;
+  disconnected_daemons: number;
+  total_active_jobs: number;
+  total_cpu_jobs: number;           // Current CPU jobs across cluster
+  total_gpu_jobs: number;           // Current GPU jobs across cluster
+  max_concurrent_jobs: number;      // Sum of all daemon guard limits
+  max_cpu_jobs: number;             // Sum of all daemon CPU job limits
+  max_gpu_jobs: number;             // Sum of all daemon GPU job limits
+  total_gpus: number;
+  available_gpu_sessions: number;
+  total_gpu_sessions: number;
+  average_cpu_percent: number;
+  average_memory_percent: number;
+}
+
+export interface DrainDaemonResponse {
+  success: boolean;
+  message: string;
+  remaining_jobs: number;
+}
+
+export interface ActivateDaemonResponse {
+  success: boolean;
+  message: string;
+}
+
+// =============================================================================
+// ENCODER OVERRIDE TYPES
+// =============================================================================
+
+export type EncoderOverrideCodecType = 'video' | 'audio';
+
+export interface EncoderOverride {
+  id: string;
+  name: string;
+  description?: string;
+  codec_type: EncoderOverrideCodecType;
+  source_codec: string;
+  target_encoder: string;
+  hw_accel_match?: string;
+  cpu_match?: string;
+  priority: number;
+  is_enabled: boolean;
+  is_system: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EncoderOverridesResponse {
+  overrides: EncoderOverride[];
+  count: number;
+}
+
+export interface EncoderOverrideCreateRequest {
+  name: string;
+  description?: string;
+  codec_type: EncoderOverrideCodecType;
+  source_codec: string;
+  target_encoder: string;
+  hw_accel_match?: string;
+  cpu_match?: string;
+  priority?: number;
+  is_enabled?: boolean;
+}
+
+export interface EncoderOverrideUpdateRequest {
+  name?: string;
+  description?: string;
+  codec_type?: EncoderOverrideCodecType;
+  source_codec?: string;
+  target_encoder?: string;
+  hw_accel_match?: string;
+  cpu_match?: string;
+  priority?: number;
+  is_enabled?: boolean;
+}
+
+export interface EncoderOverrideReorderRequest {
+  reorders: Array<{
+    id: string;
+    priority: number;
+  }>;
 }
 

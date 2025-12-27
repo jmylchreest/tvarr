@@ -110,12 +110,35 @@ interface RuleFormData {
 
 const VIDEO_CODECS = ['h264', 'h265', 'vp9', 'av1'];
 const AUDIO_CODECS = ['aac', 'opus', 'ac3', 'eac3', 'mp3'];
+// Codecs that require fMP4 container (not compatible with MPEG-TS)
+const FMP4_ONLY_VIDEO_CODECS = ['vp9', 'av1'];
+const FMP4_ONLY_AUDIO_CODECS = ['opus'];
 const FORMAT_OPTIONS = [
   { value: 'auto', label: 'Auto' },
   { value: 'hls-fmp4', label: 'HLS (fMP4)' },
-  { value: 'hls-ts', label: 'HLS (MPEG-TS)' },
+  { value: 'hls-ts', label: 'HLS (MPEG-TS segments)' },
+  { value: 'mpegts', label: 'MPEG-TS' },
   { value: 'dash', label: 'DASH' },
 ];
+
+// Check if selected codecs are compatible with the selected format
+const isFormatCompatibleWithCodecs = (
+  format: string,
+  videoCodec: string,
+  audioCodec: string
+): boolean => {
+  // Auto, HLS (fMP4), and DASH support all codecs
+  if (['auto', 'hls-fmp4', 'dash'].includes(format)) {
+    return true;
+  }
+  // MPEG-TS formats (hls-ts, mpegts) don't support VP9/AV1/Opus
+  if (['hls-ts', 'mpegts'].includes(format)) {
+    const hasIncompatibleVideoCodec = FMP4_ONLY_VIDEO_CODECS.includes(videoCodec);
+    const hasIncompatibleAudioCodec = FMP4_ONLY_AUDIO_CODECS.includes(audioCodec);
+    return !hasIncompatibleVideoCodec && !hasIncompatibleAudioCodec;
+  }
+  return true;
+};
 
 // Helper to display codec value or {dynamic} for SET-based rules
 const formatCodec = (codec: string): string => {
@@ -203,9 +226,29 @@ function ClientDetectionRuleCreatePanel({
   const [testUserAgent, setTestUserAgent] = useState('');
   const [testResult, setTestResult] = useState<{ matches: boolean; error?: string } | null>(null);
   const [testing, setTesting] = useState(false);
+  const [warningAcknowledged, setWarningAcknowledged] = useState(false);
+
+  // Check for codec/format compatibility warning
+  const hasCompatibilityWarning = useMemo(() => {
+    return !isFormatCompatibleWithCodecs(
+      formData.preferred_format,
+      formData.preferred_video_codec,
+      formData.preferred_audio_codec
+    );
+  }, [formData.preferred_format, formData.preferred_video_codec, formData.preferred_audio_codec]);
+
+  // Reset warning acknowledgment when relevant fields change
+  useEffect(() => {
+    setWarningAcknowledged(false);
+  }, [formData.preferred_format, formData.preferred_video_codec, formData.preferred_audio_codec]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // If there's a warning and not acknowledged, just acknowledge it (don't save)
+    if (hasCompatibilityWarning && !warningAcknowledged) {
+      setWarningAcknowledged(true);
+      return;
+    }
     await onCreate(formData);
   };
 
@@ -256,9 +299,15 @@ function ClientDetectionRuleCreatePanel({
           <Button variant="outline" size="sm" onClick={onCancel} disabled={loading}>
             Cancel
           </Button>
-          <Button size="sm" onClick={handleSubmit} disabled={loading || !formData.name.trim() || !formData.expression.trim()}>
+          <Button
+            size="sm"
+            onClick={handleSubmit}
+            disabled={loading || !formData.name.trim() || !formData.expression.trim()}
+            variant={hasCompatibilityWarning && !warningAcknowledged ? 'outline' : 'default'}
+            className={hasCompatibilityWarning && !warningAcknowledged ? 'border-orange-500 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950' : ''}
+          >
             {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Create
+            {hasCompatibilityWarning && !warningAcknowledged ? 'Save Anyway' : 'Create'}
           </Button>
         </div>
       }
@@ -268,6 +317,18 @@ function ClientDetectionRuleCreatePanel({
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Error</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {hasCompatibilityWarning && (
+        <Alert className="mb-4 border-orange-500 bg-orange-50 dark:bg-orange-950/20">
+          <AlertCircle className="h-4 w-4 text-orange-600" />
+          <AlertTitle className="text-orange-700 dark:text-orange-400">Codec/Format Incompatibility</AlertTitle>
+          <AlertDescription className="text-orange-600 dark:text-orange-300">
+            {formData.preferred_video_codec.toUpperCase()}/{formData.preferred_audio_codec.toUpperCase()} requires fMP4 container.
+            The selected format ({FORMAT_OPTIONS.find(f => f.value === formData.preferred_format)?.label || formData.preferred_format}) uses MPEG-TS which cannot carry these codecs.
+            {warningAcknowledged && ' Click "Create" to save anyway.'}
+          </AlertDescription>
         </Alert>
       )}
 
@@ -474,7 +535,7 @@ function ClientDetectionRuleCreatePanel({
               onValueChange={(value) => setFormData({ ...formData, preferred_format: value })}
               disabled={loading}
             >
-              <SelectTrigger>
+              <SelectTrigger className={hasCompatibilityWarning ? 'border-orange-500 ring-orange-500/20' : ''}>
                 <SelectValue placeholder="Auto" />
               </SelectTrigger>
               <SelectContent>
@@ -483,6 +544,11 @@ function ClientDetectionRuleCreatePanel({
                 ))}
               </SelectContent>
             </Select>
+            {hasCompatibilityWarning && (
+              <p className="text-xs text-orange-600 dark:text-orange-400">
+                This format cannot carry {formData.preferred_video_codec.toUpperCase()}/{formData.preferred_audio_codec.toUpperCase()}
+              </p>
+            )}
           </div>
         </div>
       </form>
@@ -570,6 +636,16 @@ function ClientDetectionRuleDetailPanel({
     preferred_format: rule.preferred_format || 'auto',
   });
   const [hasChanges, setHasChanges] = useState(false);
+  const [warningAcknowledged, setWarningAcknowledged] = useState(false);
+
+  // Check for codec/format compatibility warning
+  const hasCompatibilityWarning = useMemo(() => {
+    return !isFormatCompatibleWithCodecs(
+      formData.preferred_format,
+      formData.preferred_video_codec,
+      formData.preferred_audio_codec
+    );
+  }, [formData.preferred_format, formData.preferred_video_codec, formData.preferred_audio_codec]);
 
   // Reset form when rule changes
   useEffect(() => {
@@ -588,7 +664,13 @@ function ClientDetectionRuleDetailPanel({
       preferred_format: rule.preferred_format || 'auto',
     });
     setHasChanges(false);
+    setWarningAcknowledged(false);
   }, [rule.id]);
+
+  // Reset warning acknowledgment when relevant fields change
+  useEffect(() => {
+    setWarningAcknowledged(false);
+  }, [formData.preferred_format, formData.preferred_video_codec, formData.preferred_audio_codec]);
 
   const handleFieldChange = (field: keyof RuleFormData, value: any) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -596,6 +678,11 @@ function ClientDetectionRuleDetailPanel({
   };
 
   const handleSave = async () => {
+    // If there's a warning and not acknowledged, just acknowledge it (don't save)
+    if (hasCompatibilityWarning && !warningAcknowledged) {
+      setWarningAcknowledged(true);
+      return;
+    }
     await onUpdate(rule.id, formData);
     setHasChanges(false);
   };
@@ -687,6 +774,23 @@ function ClientDetectionRuleDetailPanel({
             </AlertDescription>
           </Alert>
         )}
+
+        {hasCompatibilityWarning && (
+          <Alert className="border-orange-500 bg-orange-50 dark:bg-orange-950/20">
+            <AlertCircle className="h-4 w-4 text-orange-600" />
+            <AlertTitle className="text-orange-700 dark:text-orange-400">Codec/Format Incompatibility</AlertTitle>
+            <AlertDescription className="text-orange-600 dark:text-orange-300">
+              {formData.preferred_video_codec.toUpperCase()}/{formData.preferred_audio_codec.toUpperCase()} requires fMP4 container.
+              The selected format ({FORMAT_OPTIONS.find(f => f.value === formData.preferred_format)?.label || formData.preferred_format}) uses MPEG-TS which cannot carry these codecs.
+              {warningAcknowledged && ' Click "Save Changes" to save anyway.'}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Compact Status Display */}
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <Badge variant="secondary">Priority {rule.priority}</Badge>
+        </div>
 
         {/* Basic Settings */}
         <CollapsibleSection title="Basic Settings" defaultOpen={true}>
@@ -834,7 +938,7 @@ function ClientDetectionRuleDetailPanel({
                 onValueChange={(value) => handleFieldChange('preferred_format', value)}
                 disabled={loading.edit || isSystem}
               >
-                <SelectTrigger>
+                <SelectTrigger className={hasCompatibilityWarning ? 'border-orange-500 ring-orange-500/20' : ''}>
                   <SelectValue placeholder="Auto" />
                 </SelectTrigger>
                 <SelectContent>
@@ -843,6 +947,11 @@ function ClientDetectionRuleDetailPanel({
                   ))}
                 </SelectContent>
               </Select>
+              {hasCompatibilityWarning && (
+                <p className="text-xs text-orange-600 dark:text-orange-400">
+                  This format cannot carry {formData.preferred_video_codec.toUpperCase()}/{formData.preferred_audio_codec.toUpperCase()}
+                </p>
+              )}
             </div>
           </div>
         </CollapsibleSection>
@@ -850,9 +959,14 @@ function ClientDetectionRuleDetailPanel({
         {/* Save Button */}
         {hasChanges && !isSystem && (
           <div className="flex justify-end pt-4 border-t">
-            <Button onClick={handleSave} disabled={loading.edit}>
+            <Button
+              onClick={handleSave}
+              disabled={loading.edit}
+              variant={hasCompatibilityWarning && !warningAcknowledged ? 'outline' : 'default'}
+              className={hasCompatibilityWarning && !warningAcknowledged ? 'border-orange-500 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950' : ''}
+            >
               {loading.edit && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Save Changes
+              {hasCompatibilityWarning && !warningAcknowledged ? 'Save Anyway' : 'Save Changes'}
             </Button>
           </div>
         )}
@@ -1157,6 +1271,7 @@ export function ClientDetectionRules() {
               isLoading={loading.rules}
               title={`Client Detection Rules (${sortedRules.length})`}
               searchPlaceholder="Search by name, expression..."
+              storageKey="client-detection-rules"
               sortable={true}
               onReorder={handleDragReorder}
               headerAction={

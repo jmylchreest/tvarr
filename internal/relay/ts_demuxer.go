@@ -12,6 +12,7 @@ import (
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h264"
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h265"
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts"
+	"github.com/jmylchreest/tvarr/internal/observability"
 )
 
 // TSDemuxerConfig configures the MPEG-TS demuxer.
@@ -350,6 +351,11 @@ func (d *TSDemuxer) handleH264(pts, dts int64, au [][]byte) error {
 		return nil
 	}
 
+	// Reorder NAL units to ensure SPS/PPS come before SEI.
+	// Many IPTV sources have NAL order like: SEI, SEI, SPS, PPS, IDR
+	// But FFmpeg's decoder expects SPS/PPS before SEI (since SEI may reference SPS).
+	au = ReorderNALUnits(au, false)
+
 	// Check if this AU contains a keyframe (IDR or recovery point)
 	isKeyframe := h264.IsRandomAccess(au)
 
@@ -369,6 +375,11 @@ func (d *TSDemuxer) handleH265(pts, dts int64, au [][]byte) error {
 	if len(au) == 0 {
 		return nil
 	}
+
+	// Reorder NAL units to ensure VPS/SPS/PPS come before SEI.
+	// Many IPTV sources have NAL order like: SEI, SEI, VPS, SPS, PPS, IDR
+	// But FFmpeg's decoder expects VPS/SPS/PPS before SEI (since SEI may reference them).
+	au = ReorderNALUnits(au, true)
 
 	// Check if this AU contains a keyframe (IRAP picture)
 	isKeyframe := h265.IsRandomAccess(au)
@@ -463,6 +474,15 @@ func (d *TSDemuxer) handleOpus(pts int64, packets [][]byte) error {
 
 // emitVideoSample writes a video sample to the buffer and/or callback.
 func (d *TSDemuxer) emitVideoSample(pts, dts int64, data []byte, isKeyframe bool) {
+	// Trace: Log keyframe detection (very verbose)
+	if isKeyframe {
+		d.config.Logger.Log(context.Background(), observability.LevelTrace, "Keyframe detected in demuxer",
+			slog.Int64("pts", pts),
+			slog.Int64("dts", dts),
+			slog.Int("data_len", len(data)),
+			slog.String("video_codec", d.videoCodec))
+	}
+
 	// Write to buffer
 	if d.buffer != nil {
 		if d.config.TargetVariant != "" {

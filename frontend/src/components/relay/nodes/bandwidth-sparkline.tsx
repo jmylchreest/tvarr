@@ -54,16 +54,22 @@ function BandwidthSparkline({
       return { linePath: '', areaPath: '' };
     }
 
+    // Filter out NaN/undefined/null values
+    const validHistory = history.filter((v) => typeof v === 'number' && !isNaN(v) && isFinite(v));
+    if (validHistory.length === 0) {
+      return { linePath: '', areaPath: '' };
+    }
+
     const width = 100;
     const height = 20;
     const padding = 1;
 
     // Find max value for scaling (with minimum to avoid flat lines)
-    const maxValue = Math.max(...history, 1);
+    const maxValue = Math.max(...validHistory, 1);
 
-    // Generate points
-    const points = history.map((value, index) => {
-      const x = padding + (index / (history.length - 1 || 1)) * (width - 2 * padding);
+    // Generate points using filtered valid history
+    const points = validHistory.map((value, index) => {
+      const x = padding + (index / (validHistory.length - 1 || 1)) * (width - 2 * padding);
       const y = height - padding - (value / maxValue) * (height - 2 * padding);
       return { x, y };
     });

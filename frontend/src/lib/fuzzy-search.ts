@@ -496,3 +496,59 @@ export function createMemoizedFuzzyFilter<T>(
     },
   };
 }
+
+/**
+ * Creates a fuzzy matcher function that filters an array of items.
+ * Returns a function that takes items and a search term, returning filtered results.
+ *
+ * @param config - Configuration for the fuzzy matcher
+ * @returns A function (items, searchTerm) => filteredItems
+ *
+ * @example
+ * const matcher = createFuzzyMatcher<Daemon>({
+ *   keys: [{ name: 'name', weight: 0.5 }, { name: 'state', weight: 0.3 }],
+ *   accessor: (item) => ({ name: item.name, state: item.state }),
+ * });
+ * const filtered = matcher(daemons, 'active');
+ */
+export function createFuzzyMatcher<T>(
+  config: FuzzyFilterConfig<T>
+): (items: T[], searchTerm: string) => T[] {
+  const { keys, threshold = 0.4, accessor } = config;
+
+  return (items: T[], searchTerm: string): T[] => {
+    if (!searchTerm || searchTerm.length < 1) {
+      return items;
+    }
+
+    // For very short queries, use simple substring matching
+    if (searchTerm.length < 2) {
+      const lower = searchTerm.toLowerCase();
+      return items.filter((item) => {
+        const searchable = accessor ? accessor(item) : (item as Record<string, unknown>);
+        return keys.some((key) => {
+          const fieldName = typeof key === 'string' ? key : key.name;
+          const value = searchable[fieldName];
+          return value != null && String(value).toLowerCase().includes(lower);
+        });
+      });
+    }
+
+    // Build searchable array with original reference
+    const searchableItems = items.map((item) => ({
+      _original: item,
+      ...(accessor ? accessor(item) : (item as Record<string, unknown>)),
+    }));
+
+    const fuse = new Fuse(searchableItems, {
+      keys: keys as FuseOptionKey<typeof searchableItems[0]>[],
+      threshold,
+      distance: 100,
+      ignoreLocation: true,
+      minMatchCharLength: 2,
+    });
+
+    const results = fuse.search(searchTerm);
+    return results.map((r) => r.item._original);
+  };
+}

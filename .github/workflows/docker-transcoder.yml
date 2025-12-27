@@ -1,0 +1,182 @@
+name: Build tvarr-transcoder Docker Image
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'  # Only release tags (v1.2.3), not dev tags (v1.2.3-dev.N)
+    paths-ignore:
+      - 'deployment/docker/Dockerfile.ffmpeg'
+      - 'deployment/docker/Dockerfile.coordinator'
+      - 'deployment/docker/pkgbuild/**'
+      - '.github/workflows/docker-ffmpeg.yml'
+      - '.github/workflows/docker-transcoder.yml'
+      - '.github/workflows/docker-coordinator.yml'
+      - '.github/workflows/dependency-updates.yml'
+      - '**.md'
+      - 'docs/**'
+      - 'specs/**'
+  pull_request:
+    paths-ignore:
+      - 'deployment/docker/Dockerfile.ffmpeg'
+      - 'deployment/docker/Dockerfile.coordinator'
+      - 'deployment/docker/pkgbuild/**'
+      - '.github/workflows/docker-ffmpeg.yml'
+      - '.github/workflows/docker-transcoder.yml'
+      - '.github/workflows/docker-coordinator.yml'
+      - '.github/workflows/dependency-updates.yml'
+      - '**.md'
+      - 'docs/**'
+      - 'specs/**'
+  workflow_dispatch:
+
+# Cancel in-progress runs for the same branch/tag
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/tvarr-transcoder
+  FFMPEG_IMAGE: ghcr.io/${{ github.repository_owner }}/tvarr-ffmpeg
+
+jobs:
+  build:
+    # Note: ARM64 not supported - FFmpeg base image (Arch Linux) is amd64 only
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # Full history for version detection
+          fetch-tags: true  # Explicitly fetch tags for version detection
+
+      - name: Install Task
+        run: sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
+
+      - name: Debug version info
+        run: |
+          echo "Git tags:"
+          git tag -l | tail -10
+          echo "Git describe (exact):"
+          git describe --tags --exact-match 2>/dev/null || echo "(no exact tag)"
+          echo "Git describe (long):"
+          git describe --tags --always --long
+          echo "Task version:"
+          task version:show 2>/dev/null || echo "(task version:show not available)"
+
+      - name: Log in to Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build tvarr-ffmpegd image
+        run: task container:build:ffmpegd TAG=${{ matrix.arch }} FFMPEG_IMAGE=${{ env.FFMPEG_IMAGE }}:${{ matrix.arch }}
+        env:
+          CONTAINER_RUNTIME: docker
+
+      - name: Push image
+        if: github.event_name != 'pull_request'
+        run: docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.arch }}
+
+  manifest:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    needs: build
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get version info
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            echo "version=${VERSION}" >> $GITHUB_OUTPUT
+            echo "is_release=true" >> $GITHUB_OUTPUT
+          else
+            echo "version=dev-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+            echo "is_release=false" >> $GITHUB_OUTPUT
+          fi
+
+      # Note: Currently amd64 only - ARM64 support pending FFmpeg base image
+
+      - name: Create and push manifest (latest)
+        run: |
+          docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64
+          docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Create and push preview manifest (main branch)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:preview \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64
+          docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:preview
+
+      - name: Create and push version manifest
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION} \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64
+          docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}
+
+      - name: Create and push release manifest (releases only)
+        if: steps.version.outputs.is_release == 'true'
+        run: |
+          docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:release \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64
+          docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:release
+
+      - name: Create and push semver manifests (releases only)
+        if: steps.version.outputs.is_release == 'true'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          MAJOR=$(echo "$VERSION" | cut -d. -f1)
+          MINOR=$(echo "$VERSION" | cut -d. -f1-2)
+
+          # Major version tag (e.g., 1)
+          docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MAJOR} \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64
+          docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MAJOR}
+
+          # Minor version tag (e.g., 1.2)
+          docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MINOR} \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64
+          docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MINOR}
+
+      - name: Inspect manifest
+        run: docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}

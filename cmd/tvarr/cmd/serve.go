@@ -25,6 +25,7 @@ import (
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/observability"
 	"github.com/jmylchreest/tvarr/internal/pipeline"
+	"github.com/jmylchreest/tvarr/internal/relay"
 	"github.com/jmylchreest/tvarr/internal/repository"
 	"github.com/jmylchreest/tvarr/internal/scheduler"
 	"github.com/jmylchreest/tvarr/internal/service"
@@ -69,6 +70,14 @@ func init() {
 	serveCmd.Flags().String("logo-scan-schedule", scheduler.DefaultLogoScanSchedule, "Cron schedule for logo scan job (6-field: sec min hour dom month dow). 7-field with year also accepted for legacy. Empty to disable.")
 	serveCmd.Flags().Duration("job-history-retention", 14*24*time.Hour, "Retention period for job history records (older records are deleted on startup)")
 
+	// gRPC server flags (for ffmpegd daemon registration)
+	serveCmd.Flags().Bool("grpc-enabled", false, "Enable gRPC server for ffmpegd daemon registration")
+	serveCmd.Flags().Int("grpc-port", 9090, "Port for gRPC server")
+	serveCmd.Flags().String("grpc-auth-token", "", "Authentication token for ffmpegd daemons (optional)")
+
+	// Relay flags
+	serveCmd.Flags().Bool("prefer-remote-probe", false, "Prefer remote daemons for stream probing (ffprobe) even when local ffprobe is available")
+
 	// Bind flags to viper
 	mustBindPFlag("server.host", serveCmd.Flags().Lookup("host"))
 	mustBindPFlag("server.port", serveCmd.Flags().Lookup("port"))
@@ -80,6 +89,10 @@ func init() {
 	mustBindPFlag("scheduler.workers", serveCmd.Flags().Lookup("scheduler-workers"))
 	mustBindPFlag("scheduler.logo_scan_schedule", serveCmd.Flags().Lookup("logo-scan-schedule"))
 	mustBindPFlag("scheduler.job_history_retention", serveCmd.Flags().Lookup("job-history-retention"))
+	mustBindPFlag("grpc.enabled", serveCmd.Flags().Lookup("grpc-enabled"))
+	mustBindPFlag("grpc.port", serveCmd.Flags().Lookup("grpc-port"))
+	mustBindPFlag("grpc.auth_token", serveCmd.Flags().Lookup("grpc-auth-token"))
+	mustBindPFlag("relay.prefer_remote_probe", serveCmd.Flags().Lookup("prefer-remote-probe"))
 }
 
 func runServe(_ *cobra.Command, _ []string) error {
@@ -178,6 +191,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	encodingProfileRepo := repository.NewEncodingProfileRepository(db)
 	lastKnownCodecRepo := repository.NewLastKnownCodecRepository(db)
 	clientDetectionRuleRepo := repository.NewClientDetectionRuleRepository(db)
+	encoderOverrideRepo := repository.NewEncoderOverrideRepository(db)
 	jobRepo := repository.NewJobRepository(db)
 
 	// Clean up old job history on startup if retention is configured
@@ -342,6 +356,10 @@ func runServe(_ *cobra.Command, _ []string) error {
 		proxyRepo,
 	).WithLogger(logger).WithBufferConfig(config.BufferConfig{
 		MaxVariantBytes: viperGetByteSizePtr("relay.buffer.max_variant_bytes"),
+	}).WithHLSConfig(config.HLSConfig{
+		TargetSegmentDuration: viper.GetFloat64("relay.hls.target_segment_duration"),
+		MaxSegments:           viper.GetInt("relay.hls.max_segments"),
+		PlaylistSegments:      viper.GetInt("relay.hls.playlist_segments"),
 	})
 
 	encodingProfileService := service.NewEncodingProfileService(encodingProfileRepo).
@@ -352,6 +370,13 @@ func runServe(_ *cobra.Command, _ []string) error {
 	// Refresh client detection rules cache on startup
 	if err := clientDetectionService.RefreshCache(context.Background()); err != nil {
 		logger.Warn("failed to refresh client detection rules cache", slog.String("error", err.Error()))
+	}
+
+	encoderOverrideService := service.NewEncoderOverrideService(encoderOverrideRepo).
+		WithLogger(logger)
+	// Refresh encoder overrides cache on startup
+	if err := encoderOverrideService.RefreshCache(context.Background()); err != nil {
+		logger.Warn("failed to refresh encoder overrides cache", slog.String("error", err.Error()))
 	}
 
 	logger.Debug("services initialized")
@@ -535,6 +560,9 @@ func runServe(_ *cobra.Command, _ []string) error {
 	clientDetectionRuleHandler := handlers.NewClientDetectionRuleHandler(clientDetectionService)
 	clientDetectionRuleHandler.Register(server.API())
 
+	encoderOverrideHandler := handlers.NewEncoderOverrideHandler(encoderOverrideService)
+	encoderOverrideHandler.Register(server.API())
+
 	channelHandler := handlers.NewChannelHandler(db).WithLogger(logger)
 	channelHandler.Register(server.API())
 
@@ -649,10 +677,76 @@ func runServe(_ *cobra.Command, _ []string) error {
 	}
 	defer runner.Stop()
 
+	// Start gRPC server (always created for internal Unix socket, optional TCP for remote daemons)
+	// The internal Unix socket is always available for local subprocess communication
+	grpcConfig := &relay.GRPCServerConfig{
+		AuthToken:         viper.GetString("grpc.auth_token"),
+		HeartbeatInterval: 5 * time.Second,
+	}
+
+	// Enable external TCP listener if gRPC is explicitly enabled
+	if viper.GetBool("grpc.enabled") {
+		grpcPort := viper.GetInt("grpc.port")
+		grpcConfig.ExternalListenAddr = fmt.Sprintf(":%d", grpcPort)
+	}
+
+	// Create daemon registry and gRPC server
+	daemonRegistry := relay.NewDaemonRegistry(logger)
+	grpcServer := relay.NewGRPCServer(logger, grpcConfig, daemonRegistry)
+
+	if err := grpcServer.Start(ctx); err != nil {
+		return fmt.Errorf("starting gRPC server: %w", err)
+	}
+	defer grpcServer.Stop(ctx)
+
+	if viper.GetBool("grpc.enabled") {
+		logger.Info("gRPC server started for ffmpegd daemon registration",
+			slog.Int("port", viper.GetInt("grpc.port")),
+		)
+	}
+
+	// Create FFmpegD spawner for local subprocess transcoding
+	// Uses the internal Unix socket to connect subprocesses to coordinator
+	spawner := relay.NewFFmpegDSpawner(relay.FFmpegDSpawnerConfig{
+		CoordinatorAddress: grpcServer.InternalAddress(),
+		AuthToken:          viper.GetString("grpc.auth_token"),
+		Logger:             logger,
+	})
+	spawner.SetRegistry(daemonRegistry)
+
+	// Log local ffmpegd capabilities on startup
+	spawner.LogCapabilities(ctx)
+
+	// Register ffmpegd REST API handler for transcoder dashboard
+	ffmpegdService := service.NewFFmpegDService(daemonRegistry, logger)
+	ffmpegdService.SetJobProvider(grpcServer.GetJobManager())
+	ffmpegdHandler := handlers.NewFFmpegDHandler(ffmpegdService)
+	ffmpegdHandler.Register(server.API())
+
+	// Configure relay service with distributed transcoding components
+	// - daemonRegistry: tracks remote and local daemons
+	// Configure encoder overrides provider for transcoding
+	// This must be called before WithDistributedTranscoding so the provider is available
+	relayService.WithEncoderOverridesProvider(encoderOverrideService.GetEnabledProto)
+
+	// - streamMgr/jobMgr: for routing jobs through coordinator's gRPC streams
+	// - spawner: for local subprocess transcoding
+	// - preferRemote: true if external gRPC is enabled (remote daemons available)
+	// - preferRemoteProbe: prefer remote daemons for ffprobe (TVARR_PREFER_REMOTE_PROBE)
+	relayService.WithDistributedTranscoding(
+		daemonRegistry,
+		grpcServer.GetStreamManager(),
+		grpcServer.GetJobManager(),
+		spawner,
+		viper.GetBool("grpc.enabled"),         // prefer remote if external port is enabled
+		viper.GetBool("relay.prefer_remote_probe"), // prefer remote probing
+	)
+
 	// Start server
 	logger.Info("starting tvarr server",
 		slog.String("host", serverConfig.Host),
 		slog.Int("port", serverConfig.Port),
+		slog.String("protocol", "h2c"),
 		slog.String("version", version.Version),
 		slog.Int("scheduler_entries", sched.GetEntryCount()),
 		slog.Int("worker_count", viper.GetInt("scheduler.workers")),

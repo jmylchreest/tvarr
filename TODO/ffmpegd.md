@@ -1345,3 +1345,25 @@ api/
    - AMD VCN: Parse rocm-smi or use known limits
    - Option: Let user override via config (`TVARR_GPU_MAX_SESSIONS=8`)
    - **Recommendation**: Auto-detect with model database, allow user override
+
+## Future Enhancements
+
+### Move Fallback Streaming to Daemon
+
+Currently, fallback streaming (generating a "Stream Unavailable" slate when upstream fails) is implemented in the coordinator (`internal/relay/fallback.go`, `session.go`). This should eventually be moved to the daemon:
+
+**Current location:**
+- `internal/relay/fallback.go` - FallbackGenerator, FallbackController
+- `internal/relay/session.go` - runFallbackStream(), runRecoveryLoop(), inFallback state
+
+**Why move to daemon:**
+- Coordinator shouldn't run FFmpeg processes
+- Daemon already has FFmpeg and encoding capabilities
+- Allows fallback generation on GPU if available
+- Consistent with "coordinator = orchestration, daemon = transcoding" separation
+
+**Implementation approach:**
+1. Add fallback generation capability to daemon
+2. Coordinator signals daemon to generate fallback stream
+3. Daemon produces fallback ES samples back through normal transcode stream
+4. Coordinator handles recovery detection and switching

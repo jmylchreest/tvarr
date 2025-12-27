@@ -5,18 +5,6 @@ import (
 	"time"
 )
 
-// RouteType represents the type of route used for a relay session.
-type RouteType string
-
-const (
-	// RouteTypePassthrough indicates the stream is passed through without modification.
-	RouteTypePassthrough RouteType = "passthrough"
-	// RouteTypeRepackage indicates the stream is repackaged (container change without transcode).
-	RouteTypeRepackage RouteType = "repackage"
-	// RouteTypeTranscode indicates the stream is transcoded via FFmpeg.
-	RouteTypeTranscode RouteType = "transcode"
-)
-
 // RelaySessionInfo provides a view of relay session data optimized for flow visualization.
 // It aggregates information needed to render the relay flow diagram with nodes and edges.
 type RelaySessionInfo struct {
@@ -28,7 +16,7 @@ type RelaySessionInfo struct {
 	ProfileName      string `json:"profile_name"`
 
 	// Route type determines the processing path
-	RouteType RouteType `json:"route_type"`
+	RouteType RoutingDecision `json:"route_type"`
 
 	// Source information
 	SourceURL    string `json:"source_url"`
@@ -91,14 +79,21 @@ type RelaySessionInfo struct {
 	FFmpegPID   *int             `json:"ffmpeg_pid,omitempty"`
 	FFmpegStats *FFmpegStatsInfo `json:"ffmpeg_stats,omitempty"` // Detailed FFmpeg stats
 
+	// ES Transcoders (individual transcoder instances for codec variants)
+	ESTranscoders []ESTranscoderInfo `json:"es_transcoders,omitempty"` // Per-variant transcoder stats
+
 	// Buffer statistics
 	BufferUtilization *float64            `json:"buffer_utilization,omitempty"` // 0-100 percentage
 	SegmentCount      *int                `json:"segment_count,omitempty"`
 	BufferVariants    []BufferVariantInfo `json:"buffer_variants,omitempty"` // Variants in shared buffer
 
+	// Edge bandwidth statistics (per-edge real-time tracking)
+	EdgeBandwidth *EdgeBandwidthStats `json:"edge_bandwidth,omitempty"`
+
 	// Status
-	InFallback bool   `json:"in_fallback"`
-	Error      string `json:"error,omitempty"`
+	InFallback      bool   `json:"in_fallback"`
+	OriginConnected bool   `json:"origin_connected"` // True if origin is still streaming (false after EOF)
+	Error           string `json:"error,omitempty"`
 }
 
 // FFmpegStatsInfo contains detailed FFmpeg process statistics.
@@ -119,6 +114,34 @@ type FFmpegStatsInfo struct {
 	MemoryHistory []float64 `json:"memory_history,omitempty"` // Historical memory MB values
 }
 
+// ESTranscoderInfo contains stats for a single ES-based transcoder instance.
+type ESTranscoderInfo struct {
+	ID            string    `json:"id"`
+	SourceVariant string    `json:"source_variant"` // e.g., "h264/aac"
+	TargetVariant string    `json:"target_variant"` // e.g., "h265/aac" or "av1/eac3"
+	StartedAt     time.Time `json:"started_at"`
+	SamplesIn     uint64    `json:"samples_in"`
+	SamplesOut    uint64    `json:"samples_out"`
+	BytesIn       uint64    `json:"bytes_in"`
+	BytesOut      uint64    `json:"bytes_out"`
+	Errors        uint64    `json:"errors"`
+	// Codec names (output codecs for this transcoder)
+	VideoCodec string `json:"video_codec,omitempty"`
+	AudioCodec string `json:"audio_codec,omitempty"`
+	// Encoder names (what FFmpeg uses)
+	VideoEncoder  string `json:"video_encoder,omitempty"`
+	AudioEncoder  string `json:"audio_encoder,omitempty"`
+	HWAccel       string `json:"hwaccel,omitempty"`
+	HWAccelDevice string `json:"hwaccel_device,omitempty"`
+	// Process stats
+	PID        int     `json:"pid,omitempty"`
+	CPUPercent float64 `json:"cpu_percent,omitempty"`
+	MemoryMB   float64 `json:"memory_mb,omitempty"`
+	// Resource history for sparkline graphs (last 30 samples, ~1 sample/sec)
+	CPUHistory    []float64 `json:"cpu_history,omitempty"`
+	MemoryHistory []float64 `json:"memory_history,omitempty"`
+}
+
 // Note: BufferVariantInfo is defined in flow_types.go
 
 // RelayClientInfo provides information about a connected client.
@@ -129,6 +152,7 @@ type RelayClientInfo struct {
 	PlayerType    string    `json:"player_type,omitempty"`    // Extracted from X-Tvarr-Player header
 	DetectionRule string    `json:"detection_rule,omitempty"` // Client detection rule that matched
 	ClientFormat  string    `json:"client_format,omitempty"`  // Format this client is using (hls, mpegts, dash)
+	ClientVariant string    `json:"client_variant,omitempty"` // Codec variant this client receives (e.g., "h265/aac", "av1/eac3")
 	ConnectedAt   time.Time `json:"connected_at"`
 	ConnectedSecs float64   `json:"connected_secs"` // How long the client has been connected
 	BytesRead     uint64    `json:"bytes_read"`
@@ -152,6 +176,7 @@ func (s *SessionStats) ToSessionInfo() RelaySessionInfo {
 		BytesIn:                s.BytesFromUpstream,
 		BytesOut:               s.BytesWritten,
 		InFallback:             s.InFallback,
+		OriginConnected:        s.OriginConnected,
 		Error:                  s.Error,
 	}
 
@@ -161,9 +186,20 @@ func (s *SessionStats) ToSessionInfo() RelaySessionInfo {
 		durationSecs = time.Since(s.StartedAt).Seconds()
 		info.DurationSecs = durationSecs
 
-		// Calculate ingress/egress rates (bytes per second)
-		if durationSecs > 0 {
+		// Use edge bandwidth stats for real-time rates if available,
+		// otherwise fall back to calculating from totals (lifetime average)
+		if s.EdgeBandwidthStats != nil {
+			info.EdgeBandwidth = s.EdgeBandwidthStats
+			// Use the real-time ingress rate from edge tracking
+			info.IngressRateBps = s.EdgeBandwidthStats.OriginToBuffer.CurrentBps
+		} else if durationSecs > 0 {
+			// Fallback: calculate average rate from totals
 			info.IngressRateBps = uint64(float64(s.BytesFromUpstream) / durationSecs)
+		}
+
+		// Egress rate is harder to track per-edge since it goes to multiple clients
+		// For now, keep using the lifetime average for egress
+		if durationSecs > 0 {
 			info.EgressRateBps = uint64(float64(s.BytesWritten) / durationSecs)
 		}
 	}
@@ -178,17 +214,17 @@ func (s *SessionStats) ToSessionInfo() RelaySessionInfo {
 	// Determine route type from delivery decision
 	switch s.DeliveryDecision {
 	case "passthrough":
-		info.RouteType = RouteTypePassthrough
+		info.RouteType = RoutePassthrough
 	case "repackage":
-		info.RouteType = RouteTypeRepackage
+		info.RouteType = RouteRepackage
 	case "transcode":
-		info.RouteType = RouteTypeTranscode
+		info.RouteType = RouteTranscode
 	default:
 		// Infer from FFmpeg presence
 		if s.FFmpegStats != nil {
-			info.RouteType = RouteTypeTranscode
+			info.RouteType = RouteTranscode
 		} else {
-			info.RouteType = RouteTypePassthrough
+			info.RouteType = RoutePassthrough
 		}
 	}
 
@@ -263,6 +299,34 @@ func (s *SessionStats) ToSessionInfo() RelaySessionInfo {
 		}
 	}
 
+	// Copy ES transcoder stats (for multi-variant transcoding)
+	if s.ESTranscoderStats != nil {
+		for _, t := range s.ESTranscoderStats.Transcoders {
+			info.ESTranscoders = append(info.ESTranscoders, ESTranscoderInfo{
+				ID:            t.ID,
+				SourceVariant: t.SourceVariant,
+				TargetVariant: t.TargetVariant,
+				StartedAt:     t.StartedAt,
+				SamplesIn:     t.SamplesIn,
+				SamplesOut:    t.SamplesOut,
+				BytesIn:       t.BytesIn,
+				BytesOut:      t.BytesOut,
+				Errors:        t.Errors,
+				VideoCodec:    t.VideoCodec,
+				AudioCodec:    t.AudioCodec,
+				VideoEncoder:  t.VideoEncoder,
+				AudioEncoder:  t.AudioEncoder,
+				HWAccel:       t.HWAccel,
+				HWAccelDevice: t.HWAccelDevice,
+				PID:           t.PID,
+				CPUPercent:    t.CPUPercent,
+				MemoryMB:      t.MemoryRSSMB,
+				CPUHistory:    t.CPUHistory,
+				MemoryHistory: t.MemoryHistory,
+			})
+		}
+	}
+
 	// Convert clients
 	for _, c := range s.Clients {
 		connectedSecs := 0.0
@@ -274,6 +338,7 @@ func (s *SessionStats) ToSessionInfo() RelaySessionInfo {
 			UserAgent:     c.UserAgent,
 			RemoteAddr:    c.RemoteAddr,
 			ClientFormat:  c.ClientFormat,
+			ClientVariant: c.ClientVariant,
 			ConnectedAt:   c.ConnectedAt,
 			ConnectedSecs: connectedSecs,
 			BytesRead:     c.BytesRead,

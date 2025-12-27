@@ -35,6 +35,8 @@ export interface BulkAction {
   onClick: (selectedIds: string[]) => void | Promise<void>;
 }
 
+export type MasterItemStatus = 'default' | 'active' | 'warning' | 'error' | 'success';
+
 export interface MasterItem {
   id: string;
   title: string;
@@ -43,6 +45,10 @@ export interface MasterItem {
   icon?: React.ReactNode;
   /** Whether the item is enabled (affects visual styling) */
   enabled?: boolean;
+  /** Status for collapsed view styling (color/animation) */
+  status?: MasterItemStatus;
+  /** Whether this item should show animation (e.g., sparkle when transcoding) */
+  animate?: boolean;
 }
 
 export interface MasterDetailLayoutProps<T extends MasterItem> {
@@ -94,6 +100,10 @@ export interface MasterDetailLayoutProps<T extends MasterItem> {
   sortable?: boolean;
   /** Callback when items are reordered (receives new order of IDs) */
   onReorder?: (reorderedIds: string[]) => void | Promise<void>;
+  /** Start with the master panel collapsed */
+  defaultCollapsed?: boolean;
+  /** localStorage key to persist collapsed state (e.g., 'transcoders-panel') */
+  storageKey?: string;
 }
 
 /**
@@ -199,11 +209,33 @@ export function MasterDetailLayout<T extends MasterItem>({
   bulkActions = [],
   sortable = false,
   onReorder,
+  defaultCollapsed = false,
+  storageKey,
 }: MasterDetailLayoutProps<T>) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [isCollapsed, setIsCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [showDetailOnMobile, setShowDetailOnMobile] = useState(false);
+
+  // Initialize collapsed state from localStorage or default
+  const [isCollapsed, setIsCollapsed] = useState(() => {
+    if (typeof window === 'undefined' || !storageKey) return defaultCollapsed;
+    try {
+      const stored = localStorage.getItem(`master-detail-${storageKey}-collapsed`);
+      return stored !== null ? stored === 'true' : defaultCollapsed;
+    } catch {
+      return defaultCollapsed;
+    }
+  });
+
+  // Persist collapsed state to localStorage
+  useEffect(() => {
+    if (!storageKey) return;
+    try {
+      localStorage.setItem(`master-detail-${storageKey}-collapsed`, String(isCollapsed));
+    } catch {
+      // Ignore localStorage errors
+    }
+  }, [isCollapsed, storageKey]);
 
   // DnD sensors for drag and drop
   const sensors = useSensors(
@@ -472,16 +504,31 @@ export function MasterDetailLayout<T extends MasterItem>({
               <div className="flex flex-col items-center gap-1 py-2">
                 {filteredItems.map((item, index) => {
                   const isSelected = item.id === selectedId;
+                  // Status-based styling for collapsed indicators using semantic theme colors
+                  const getStatusClasses = () => {
+                    if (isSelected) return 'bg-primary text-primary-foreground';
+                    switch (item.status) {
+                      case 'active':
+                        return 'bg-info text-info-foreground';
+                      case 'warning':
+                        return 'bg-warning text-warning-foreground';
+                      case 'error':
+                        return 'bg-destructive text-destructive-foreground';
+                      case 'success':
+                        return 'bg-success text-success-foreground';
+                      default:
+                        return 'bg-muted text-muted-foreground';
+                    }
+                  };
                   return (
                     <button
                       key={item.id}
                       onClick={() => onSelect(item)}
                       className={cn(
                         'w-6 h-6 rounded-sm flex items-center justify-center text-[10px] font-medium transition-colors',
-                        'hover:bg-accent focus:outline-none focus:ring-1 focus:ring-ring',
-                        isSelected
-                          ? 'bg-primary text-primary-foreground'
-                          : 'bg-muted text-muted-foreground'
+                        'hover:opacity-80 focus:outline-none focus:ring-1 focus:ring-ring',
+                        getStatusClasses(),
+                        item.animate && 'badge-sparkle'
                       )}
                       title={item.title}
                       aria-label={`Select ${item.title}`}

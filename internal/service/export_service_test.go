@@ -46,15 +46,13 @@ func setupExportTestDB(t *testing.T) (
 
 // createTestFilter creates a test filter with the given parameters
 func createTestFilter(name, expression string, sourceType models.FilterSourceType, action models.FilterAction, isSystem bool) *models.Filter {
-	enabled := true
 	return &models.Filter{
-		BaseModel:   models.BaseModel{ID: models.NewULID()},
-		Name:        name,
-		Expression:  expression,
-		SourceType:  sourceType,
-		Action:      action,
-		IsEnabled:   &enabled,
-		IsSystem:    isSystem,
+		BaseModel:  models.BaseModel{ID: models.NewULID()},
+		Name:       name,
+		Expression: expression,
+		SourceType: sourceType,
+		Action:     action,
+		IsSystem:   isSystem,
 	}
 }
 
@@ -222,7 +220,6 @@ func TestExportService_ExportFilters_ItemFields(t *testing.T) {
 	svc := NewExportService(filterRepo, dmrRepo, cdrRepo, epRepo)
 
 	// Create filter with all fields
-	enabled := true
 	sourceID := models.NewULID()
 	filter := &models.Filter{
 		BaseModel:   models.BaseModel{ID: models.NewULID()},
@@ -231,7 +228,6 @@ func TestExportService_ExportFilters_ItemFields(t *testing.T) {
 		Expression:  "group = 'movies' AND name contains 'HD'",
 		SourceType:  models.FilterSourceTypeStream,
 		Action:      models.FilterActionExclude,
-		IsEnabled:   &enabled,
 		IsSystem:    false,
 		SourceID:    &sourceID,
 	}
@@ -247,7 +243,6 @@ func TestExportService_ExportFilters_ItemFields(t *testing.T) {
 	assert.Equal(t, "group = 'movies' AND name contains 'HD'", item.Expression)
 	assert.Equal(t, "stream", item.SourceType)
 	assert.Equal(t, "exclude", item.Action)
-	assert.True(t, item.IsEnabled)
 	require.NotNil(t, item.SourceID)
 	assert.Equal(t, sourceID.String(), *item.SourceID)
 }

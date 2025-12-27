@@ -16,6 +16,8 @@ import {
   Paintbrush,
   Users,
   Archive,
+  Cog,
+  Cpu,
   LucideIcon,
 } from 'lucide-react';
 
@@ -39,6 +41,11 @@ export const navigation: NavigationGroup[] = [
         title: 'Dashboard',
         url: '/',
         icon: Activity,
+      },
+      {
+        title: 'Transcoders',
+        url: '/transcoders',
+        icon: Cpu,
       },
       {
         title: 'Channel Browser',
@@ -97,6 +104,11 @@ export const navigation: NavigationGroup[] = [
         title: 'Client Detection',
         url: '/admin/client-detection',
         icon: Users,
+      },
+      {
+        title: 'Encoder Overrides',
+        url: '/admin/encoder-overrides',
+        icon: Cpu,
       },
       {
         title: 'Logos',

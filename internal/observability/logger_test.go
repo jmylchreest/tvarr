@@ -326,6 +326,7 @@ func TestParseLevel(t *testing.T) {
 		input    string
 		expected slog.Level
 	}{
+		{"trace", LevelTrace},
 		{"debug", slog.LevelDebug},
 		{"info", slog.LevelInfo},
 		{"warn", slog.LevelWarn},
@@ -338,6 +339,51 @@ func TestParseLevel(t *testing.T) {
 		t.Run(tt.input, func(t *testing.T) {
 			result := parseLevel(tt.input)
 			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestTraceLevelDisplay(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := config.LoggingConfig{Level: "trace", Format: "json"}
+	logger := NewLoggerWithWriter(cfg, &buf)
+
+	// Log at trace level
+	logger.Log(context.Background(), LevelTrace, "trace message")
+
+	output := buf.String()
+	// Should contain the message
+	assert.Contains(t, output, "trace message")
+	// Should display level as "TRACE" not "DEBUG-4"
+	assert.Contains(t, output, `"level":"TRACE"`)
+	assert.NotContains(t, output, "DEBUG-4")
+}
+
+func TestTraceLevelFiltering(t *testing.T) {
+	tests := []struct {
+		name        string
+		configLevel string
+		shouldLog   bool
+	}{
+		{"trace logs at trace level", "trace", true},
+		{"trace logs at debug level", "debug", false},
+		{"trace logs at info level", "info", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			cfg := config.LoggingConfig{Level: tt.configLevel, Format: "json"}
+			logger := NewLoggerWithWriter(cfg, &buf)
+
+			logger.Log(context.Background(), LevelTrace, "trace test")
+
+			if tt.shouldLog {
+				assert.NotEmpty(t, buf.String())
+				assert.Contains(t, buf.String(), "trace test")
+			} else {
+				assert.Empty(t, buf.String())
+			}
 		})
 	}
 }

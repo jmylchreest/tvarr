@@ -11,8 +11,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jmylchreest/tvarr/internal/codec"
 	"github.com/jmylchreest/tvarr/internal/ffmpeg"
 	"github.com/jmylchreest/tvarr/internal/models"
+	"github.com/jmylchreest/tvarr/internal/observability"
 	"github.com/jmylchreest/tvarr/internal/version"
 )
 
@@ -120,15 +122,17 @@ type ProcessorConfig struct {
 
 // RelaySession represents an active relay session.
 type RelaySession struct {
-	ID               models.ULID
-	ChannelID        models.ULID
-	ChannelName      string // Display name of the channel
-	StreamSourceName string // Name of the stream source (e.g., "s8k")
-	StreamURL        string
-	EncodingProfile  *models.EncodingProfile
-	Classification   ClassificationResult
-	CachedCodecInfo  *models.LastKnownCodec // Pre-probed codec info for faster startup
-	StartedAt        time.Time
+	ID                        models.ULID
+	ChannelID                 models.ULID
+	ChannelName               string      // Display name of the channel
+	SourceID                  models.ULID // ID of the stream source (for connection tracking)
+	StreamSourceName          string      // Name of the stream source (e.g., "s8k")
+	StreamURL                 string
+	SourceMaxConcurrentStreams int    // Max concurrent streams for the source (0 = unlimited)
+	EncodingProfile           *models.EncodingProfile
+	Classification       ClassificationResult
+	CachedCodecInfo      *models.LastKnownCodec // Pre-probed codec info for faster startup
+	StartedAt            time.Time
 
 	// Use atomic values for frequently updated fields to avoid mutex contention
 	// These are updated by the ingest loop on every read, which would block stats collection
@@ -136,17 +140,18 @@ type RelaySession struct {
 	idleSince    atomic.Value // time.Time - when session became idle (zero if not idle)
 
 	// Session state - atomic to avoid lock contention with stats collection
-	closed     atomic.Bool           // Whether session is closed
-	inFallback atomic.Bool           // Whether session is in fallback mode
-	lastErr    atomic.Pointer[error] // Last error (if any)
+	closed          atomic.Bool           // Whether session is closed
+	inFallback      atomic.Bool           // Whether session is in fallback mode
+	ingestCompleted atomic.Bool           // Whether origin ingest has finished (EOF received)
+	lastErr         atomic.Pointer[error] // Last error (if any)
 
 	// Resource history for sparklines (CPU/memory over time)
 	resourceHistory *ResourceHistory
 
-	// Smart delivery context (set when using smart mode)
-	DeliveryContext *DeliveryContext
+	// Per-edge bandwidth tracking for flow visualization
+	edgeBandwidth *EdgeBandwidthTrackers
 
-	manager            *Manager
+	manager *Manager
 	ctx                context.Context
 	cancel             context.CancelFunc
 	fallbackController *FallbackController
@@ -155,10 +160,6 @@ type RelaySession struct {
 	// Multi-format streaming support
 	formatRouter    *FormatRouter          // Routes requests to appropriate output handler
 	containerFormat models.ContainerFormat // Current container format
-
-	// Passthrough handlers for HLS/DASH sources
-	hlsPassthrough  *HLSPassthroughHandler
-	dashPassthrough *DASHPassthroughHandler
 
 	// Elementary stream based processing (multi-variant codec support)
 	esBuffer        *SharedESBuffer  // Shared ES buffer for multi-variant codec processing
@@ -172,8 +173,9 @@ type RelaySession struct {
 	hlsFMP4Processors HLSfMP4ProcessorMap // HLS-fMP4 processors per variant
 	dashProcessors    DASHProcessorMap    // DASH processors per variant
 	mpegtsProcessors  MPEGTSProcessorMap  // MPEG-TS processors per variant
-	esTranscoders     []*FFmpegTranscoder // Active transcoders for codec variants
+	esTranscoders     []Transcoder        // Active transcoders for codec variants (interface)
 	esTranscodersMu   sync.RWMutex
+	transcoderFactory *TranscoderFactory // Factory for creating transcoders
 
 	// Legacy fields - set once during pipeline init, read-only afterward
 	// Protected by readyCh synchronization (readers wait for ready before accessing)
@@ -210,8 +212,14 @@ func (s *RelaySession) runPipeline() {
 	defer func() {
 		if err != nil {
 			s.lastErr.Store(&err)
+			// Only mark closed on error - successful completion should let cleanup
+			// handle session lifecycle based on client count and idle timeout
+			s.closed.Store(true)
 		}
-		s.closed.Store(true)
+		// NOTE: Don't set closed=true on success! The ingest may have completed
+		// (e.g., fixed-length source stream), but clients may still be connected
+		// waiting for transcoded data. Let the cleanup logic handle session closure
+		// based on client count and idle timeout.
 	}()
 
 	for {
@@ -231,6 +239,8 @@ func (s *RelaySession) runPipeline() {
 
 		// Check for cancellation
 		if errors.Is(err, context.Canceled) {
+			// Context cancellation means session was explicitly closed
+			s.closed.Store(true)
 			return
 		}
 
@@ -262,56 +272,14 @@ func (s *RelaySession) runNormalPipeline() error {
 	// Log the pipeline decision with all relevant context
 	s.logPipelineDecision()
 
-	// If smart delivery context is set, use its decision for special cases
-	if s.DeliveryContext != nil {
-		switch s.DeliveryContext.Decision {
-		case DeliveryRepackage:
-			// Repackage means changing container format without re-encoding
-			// Use HLSRepackager for HLS-to-HLS with different segment types
-			if s.Classification.SourceFormat == SourceFormatHLS {
-				slog.Debug("Smart delivery: HLS repackage mode",
-					slog.String("session_id", s.ID.String()),
-					slog.String("source_format", string(s.DeliveryContext.Source.SourceFormat)),
-					slog.String("client_format", string(s.DeliveryContext.ClientFormat)))
-				return s.runHLSRepackagePipeline()
-			}
-			// For non-HLS sources, fall through to ES pipeline
-		case DeliveryPassthrough:
-			// Check if we can use native passthrough handlers for HLS/DASH sources
-			switch s.Classification.Mode {
-			case StreamModePassthroughHLS, StreamModeTransparentHLS:
-				return s.runHLSPassthroughPipeline()
-			case StreamModePassthroughDASH:
-				return s.runDASHPassthroughPipeline()
-			}
-			// Otherwise fall through to ES pipeline
-		}
-	}
-
 	// Handle special source format cases
 	switch s.Classification.Mode {
 	case StreamModeCollapsedHLS:
 		return s.runHLSCollapsePipeline()
-	case StreamModePassthroughHLS, StreamModeTransparentHLS:
-		// Check if profile requires transcoding - if so, use ES pipeline
-		if s.EncodingProfile != nil && s.EncodingProfile.NeedsTranscode() {
-			slog.Debug("HLS source requires transcoding, using ES pipeline",
-				slog.String("session_id", s.ID.String()),
-				slog.String("video_codec", string(s.EncodingProfile.TargetVideoCodec)),
-				slog.String("audio_codec", string(s.EncodingProfile.TargetAudioCodec)))
-			return s.runESPipeline()
-		}
-		return s.runHLSPassthroughPipeline()
-	case StreamModePassthroughDASH:
-		// Check if profile requires transcoding - if so, use ES pipeline
-		if s.EncodingProfile != nil && s.EncodingProfile.NeedsTranscode() {
-			slog.Debug("DASH source requires transcoding, using ES pipeline",
-				slog.String("session_id", s.ID.String()),
-				slog.String("video_codec", string(s.EncodingProfile.TargetVideoCodec)),
-				slog.String("audio_codec", string(s.EncodingProfile.TargetAudioCodec)))
-			return s.runESPipeline()
-		}
-		return s.runDASHPassthroughPipeline()
+	case StreamModePassthroughHLS, StreamModeTransparentHLS, StreamModePassthroughDASH:
+		// All HLS/DASH streams go through ES pipeline for connection sharing
+		// ES pipeline handles both passthrough (copy) and transcoding modes
+		return s.runESPipeline()
 	default:
 		// Raw MPEG-TS or unknown - use ES pipeline for all processing
 		// The ES pipeline handles both passthrough and on-demand transcoding
@@ -321,56 +289,28 @@ func (s *RelaySession) runNormalPipeline() error {
 
 // logPipelineDecision logs an INFO message summarizing the pipeline decision and context.
 func (s *RelaySession) logPipelineDecision() {
-	// Determine pipeline type and reason
+	// Determine pipeline type and reason based on classification
 	pipelineType := "es"
 	reason := "default"
 
-	if s.DeliveryContext != nil {
-		switch s.DeliveryContext.Decision {
-		case DeliveryPassthrough:
-			switch s.Classification.Mode {
-			case StreamModePassthroughHLS, StreamModeTransparentHLS:
-				pipelineType = "hls-passthrough"
-				reason = "client supports HLS passthrough"
-			case StreamModePassthroughDASH:
-				pipelineType = "dash-passthrough"
-				reason = "client supports DASH passthrough"
-			default:
-				reason = "passthrough via ES pipeline"
-			}
-		case DeliveryRepackage:
-			if s.Classification.SourceFormat == SourceFormatHLS {
-				pipelineType = "hls-repackage"
-				reason = "repackaging HLS segments"
-			} else {
-				reason = "repackaging via ES pipeline"
-			}
-		case DeliveryTranscode:
-			reason = "transcoding required"
+	switch s.Classification.Mode {
+	case StreamModeCollapsedHLS:
+		pipelineType = "hls-collapse"
+		reason = "collapsing HLS to MPEG-TS"
+	case StreamModePassthroughHLS, StreamModeTransparentHLS:
+		if s.EncodingProfile != nil && s.EncodingProfile.NeedsTranscode() {
+			reason = "HLS source requires transcoding"
+		} else {
+			reason = "HLS source with copy mode"
 		}
-	} else {
-		// No delivery context - use classification
-		switch s.Classification.Mode {
-		case StreamModeCollapsedHLS:
-			pipelineType = "hls-collapse"
-			reason = "collapsing HLS to MPEG-TS"
-		case StreamModePassthroughHLS, StreamModeTransparentHLS:
-			if s.EncodingProfile != nil && s.EncodingProfile.NeedsTranscode() {
-				reason = "HLS source requires transcoding"
-			} else {
-				pipelineType = "hls-passthrough"
-				reason = "HLS passthrough mode"
-			}
-		case StreamModePassthroughDASH:
-			if s.EncodingProfile != nil && s.EncodingProfile.NeedsTranscode() {
-				reason = "DASH source requires transcoding"
-			} else {
-				pipelineType = "dash-passthrough"
-				reason = "DASH passthrough mode"
-			}
-		default:
-			reason = "raw MPEG-TS source"
+	case StreamModePassthroughDASH:
+		if s.EncodingProfile != nil && s.EncodingProfile.NeedsTranscode() {
+			reason = "DASH source requires transcoding"
+		} else {
+			reason = "DASH source with copy mode"
 		}
+	default:
+		reason = "raw MPEG-TS source"
 	}
 
 	// Build log fields
@@ -503,7 +443,7 @@ func (s *RelaySession) testUpstreamRecovery() bool {
 // This is the correct ES pipeline pattern:
 // 1. Origin -> TSDemuxer -> SharedESBuffer (source variant)
 // 2. Processors request target variant from profile
-// 3. If target != source, FFmpegTranscoder is spawned to read from source and write to target
+// 3. If target != source, a transcoder is spawned to read from source and write to target
 // 4. Processors read from appropriate variant
 
 // runHLSCollapsePipeline runs the HLS collapsing pipeline.
@@ -555,9 +495,10 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 	}
 	s.tsDemuxer = NewTSDemuxer(s.esBuffer, demuxerConfig)
 
-	// Default streaming settings (EncodingProfile focuses on encoding, not streaming parameters)
-	var targetSegmentDuration float64 = 6.0
-	var maxSegments = 7
+	// Use HLS config from manager for segment settings
+	targetSegmentDuration := s.manager.config.HLSConfig.TargetSegmentDuration
+	maxSegments := s.manager.config.HLSConfig.MaxSegments
+	playlistSegments := s.manager.config.HLSConfig.PlaylistSegments
 
 	// No need to initialize processor maps - sync.Map is zero-value safe
 
@@ -566,6 +507,7 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 	hlsTSConfig.Logger = slog.Default()
 	hlsTSConfig.TargetSegmentDuration = targetSegmentDuration
 	hlsTSConfig.MaxSegments = maxSegments
+	hlsTSConfig.PlaylistSegments = playlistSegments
 
 	hlsTSProcessor := NewHLSTSProcessor(
 		fmt.Sprintf("hls-ts-%s-%s", s.ID.String(), VariantCopy.String()),
@@ -577,6 +519,7 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 		return fmt.Errorf("starting HLS-TS processor: %w", err)
 	}
 	s.configureProcessorStreamContext(hlsTSProcessor.BaseProcessor)
+	hlsTSProcessor.SetBandwidthTracker(s.edgeBandwidth.GetOrCreateProcessorTracker("hls"))
 	s.hlsTSProcessors.Store(VariantCopy, hlsTSProcessor)
 
 	// Start MPEG-TS processor for raw streaming
@@ -592,6 +535,7 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 		slog.Warn("Failed to start MPEG-TS processor", slog.String("error", err.Error()))
 	} else {
 		s.configureProcessorStreamContext(mpegtsProcessor.BaseProcessor)
+		mpegtsProcessor.SetBandwidthTracker(s.edgeBandwidth.GetOrCreateProcessorTracker("mpegts"))
 		s.mpegtsProcessors.Store(VariantCopy, mpegtsProcessor)
 	}
 
@@ -630,6 +574,9 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 		}
 
 		if n > 0 {
+			// Track bytes ingested from origin (HLS collapse pipeline)
+			s.edgeBandwidth.OriginToBuffer.Add(uint64(n))
+
 			if err := s.tsDemuxer.Write(buf[:n]); err != nil {
 				slog.Warn("Demuxer error", slog.String("error", err.Error()))
 			}
@@ -639,169 +586,15 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 	}
 }
 
-// runHLSRepackagePipeline runs the HLS repackaging pipeline.
-// This uses HLSRepackager to convert HLS sources to HLS with potentially different
-// segment container formats (e.g., MPEG-TS to fMP4 or vice versa) without transcoding.
-func (s *RelaySession) runHLSRepackagePipeline() error {
-	// Determine the playlist URL (use selected media playlist if available)
-	playlistURL := s.StreamURL
-	if s.Classification.SelectedMediaPlaylist != "" {
-		playlistURL = s.Classification.SelectedMediaPlaylist
-	}
-
-	// Determine the output variant based on profile container format preference
-	// Default to MPEG-TS for maximum compatibility with legacy HLS clients
-	outputVariant := HLSMuxerVariantMPEGTS
-	if s.EncodingProfile != nil {
-		// Use the profile's container format setting to determine variant
-		container := s.EncodingProfile.DetermineContainer()
-		switch container {
-		case models.ContainerFormatFMP4:
-			outputVariant = HLSMuxerVariantFMP4
-		case models.ContainerFormatMPEGTS:
-			outputVariant = HLSMuxerVariantMPEGTS
-		}
-	}
-
-	// Default streaming settings (EncodingProfile focuses on encoding, not streaming parameters)
-	segmentCount := 7
-	segmentDuration := 1 * time.Second
-
-	// Create the HLS repackager
-	repackager := NewHLSRepackager(HLSRepackagerConfig{
-		SourceURL:          playlistURL,
-		OutputVariant:      outputVariant,
-		SegmentCount:       segmentCount,
-		SegmentMinDuration: segmentDuration,
-		HTTPClient:         s.manager.config.HTTPClient,
-		Logger:             slog.Default(),
-	})
-
-	s.hlsRepackager = repackager
-
-	// Start the repackager
-	if err := repackager.Start(); err != nil {
-		return fmt.Errorf("starting HLS repackager: %w", err)
-	}
-
-	// Signal that the pipeline is ready for clients
-	s.markReady()
-
-	slog.Debug("Started HLS repackage pipeline",
-		slog.String("session_id", s.ID.String()),
-		slog.String("source_url", playlistURL),
-		slog.String("output_variant", outputVariant.String()))
-
-	// Wait for context cancellation or repackager error
-	for {
-		select {
-		case <-s.ctx.Done():
-			repackager.Close()
-			return s.ctx.Err()
-		default:
-		}
-
-		// Check for repackager error
-		if err := repackager.Error(); err != nil {
-			return fmt.Errorf("HLS repackager error: %w", err)
-		}
-
-		// Check if repackager closed unexpectedly
-		if repackager.IsClosed() {
-			if err := repackager.Error(); err != nil {
-				return fmt.Errorf("HLS repackager closed with error: %w", err)
-			}
-			return nil // Clean shutdown
-		}
-
-		// Update activity timestamp using atomic to avoid blocking stats collection
-		s.lastActivity.Store(time.Now())
-
-		// Small sleep to avoid busy loop
-		time.Sleep(100 * time.Millisecond)
-	}
-}
-
-// runHLSPassthroughPipeline runs the HLS passthrough proxy pipeline.
-// This initializes the HLS passthrough handler and waits for cancellation.
-// The handler serves requests directly via the format router.
-func (s *RelaySession) runHLSPassthroughPipeline() error {
-	// Get the upstream playlist URL
-	playlistURL := s.StreamURL
-	if s.Classification.SelectedMediaPlaylist != "" {
-		playlistURL = s.Classification.SelectedMediaPlaylist
-	}
-
-	// Build the base URL for proxy URLs
-	// This will be used by the handler to rewrite segment URLs
-	baseURL := s.buildProxyBaseURL()
-
-	// Initialize HLS passthrough handler
-	config := DefaultHLSPassthroughConfig()
-	config.HTTPClient = s.manager.config.HTTPClient
-	s.hlsPassthrough = NewHLSPassthroughHandler(playlistURL, baseURL, config)
-
-	// Register with format router if available
-	if s.formatRouter != nil {
-		s.formatRouter.RegisterPassthroughHandler(FormatValueHLS, s.hlsPassthrough)
-	}
-
-	// Signal that the pipeline is ready for clients
-	s.markReady()
-
-	slog.Debug("Started HLS passthrough pipeline",
-		slog.String("session_id", s.ID.String()),
-		slog.String("upstream_url", playlistURL),
-		slog.String("base_url", baseURL))
-
-	// Wait for context cancellation - passthrough handlers serve on demand
-	<-s.ctx.Done()
-	return s.ctx.Err()
-}
-
-// runDASHPassthroughPipeline runs the DASH passthrough proxy pipeline.
-// This initializes the DASH passthrough handler and waits for cancellation.
-// The handler serves requests directly via the format router.
-func (s *RelaySession) runDASHPassthroughPipeline() error {
-	// Build the base URL for proxy URLs
-	baseURL := s.buildProxyBaseURL()
-
-	// Initialize DASH passthrough handler
-	config := DefaultDASHPassthroughConfig()
-	config.HTTPClient = s.manager.config.HTTPClient
-	s.dashPassthrough = NewDASHPassthroughHandler(s.StreamURL, baseURL, config)
-
-	// Register with format router if available
-	if s.formatRouter != nil {
-		s.formatRouter.RegisterPassthroughHandler(FormatValueDASH, s.dashPassthrough)
-	}
-
-	// Signal that the pipeline is ready for clients
-	s.markReady()
-
-	slog.Debug("Started DASH passthrough pipeline",
-		slog.String("session_id", s.ID.String()),
-		slog.String("upstream_url", s.StreamURL),
-		slog.String("base_url", baseURL))
-
-	// Wait for context cancellation - passthrough handlers serve on demand
-	<-s.ctx.Done()
-	return s.ctx.Err()
-}
-
-// buildProxyBaseURL constructs the base URL for passthrough proxy URLs.
-func (s *RelaySession) buildProxyBaseURL() string {
-	// This should be constructed based on the server's configuration
-	// For now, use a placeholder that will be replaced by the handler
-	// The actual base URL would come from server config or request context
-	return fmt.Sprintf("/api/v1/relay/stream/%s", s.ID.String())
-}
-
 // getTargetVariant returns the target codec variant based on the profile settings.
 // If the profile specifies transcoding, this returns the target variant (e.g., "h264/aac").
 // If no transcoding is needed, this returns VariantCopy which means use source codecs.
 // When processors request a variant that differs from the source, the on-demand
-// transcoding callback (handleVariantRequest) will spawn an FFmpegTranscoder.
+// transcoding callback (handleVariantRequest) will spawn a transcoder.
+//
+// When a codec is set to "copy", empty, or "none", this function resolves it to the
+// actual source codec from CachedCodecInfo, so the variant name reflects the real
+// codec being used (e.g., "h265/aac" instead of "h265/copy").
 func (s *RelaySession) getTargetVariant() CodecVariant {
 	if s.EncodingProfile == nil || !s.EncodingProfile.NeedsTranscode() {
 		return VariantCopy
@@ -833,7 +626,22 @@ func (s *RelaySession) getTargetVariant() CodecVariant {
 		return VariantCopy
 	}
 
-	return MakeCodecVariant(videoCodec, audioCodec)
+	// Resolve "copy" to actual source codec from CachedCodecInfo
+	// This ensures the variant name reflects the real codec (e.g., "h265/aac" not "h265/copy")
+	if s.CachedCodecInfo != nil {
+		if videoCodec == "copy" && s.CachedCodecInfo.VideoCodec != "" {
+			videoCodec = s.CachedCodecInfo.VideoCodec
+		}
+		if audioCodec == "copy" && s.CachedCodecInfo.AudioCodec != "" {
+			audioCodec = s.CachedCodecInfo.AudioCodec
+		}
+	}
+
+	variant := NewCodecVariant(videoCodec, audioCodec)
+	slog.Debug("getTargetVariant result",
+		slog.String("session_id", s.ID.String()),
+		slog.String("resolved_variant", variant.String()))
+	return variant
 }
 
 // runESPipeline runs the elementary stream based pipeline.
@@ -845,8 +653,8 @@ func (s *RelaySession) getTargetVariant() CodecVariant {
 // Pipeline flow:
 // 1. Source stream → TSDemuxer → SharedESBuffer (source variant, "copy/copy")
 // 2. Processors request target variant from profile (e.g., "h264/aac")
-// 3. If target != source, handleVariantRequest spawns FFmpegTranscoder
-// 4. FFmpegTranscoder reads from source variant, writes to target variant
+// 3. If target != source, handleVariantRequest spawns a transcoder
+// 4. Transcoder reads from source variant, writes to target variant
 // 5. Processors read from target variant
 func (s *RelaySession) runESPipeline() error {
 	// Initialize the shared ES buffer
@@ -891,17 +699,13 @@ func (s *RelaySession) runESPipeline() error {
 		inputURL = s.Classification.SelectedMediaPlaylist
 	}
 
-	// Get the target variant from profile - this is what processors will request
-	// If target differs from source, on-demand transcoding will be triggered
-	targetVariant := s.getTargetVariant()
-
-	// Default streaming settings (EncodingProfile focuses on encoding, not streaming parameters)
-	var targetSegmentDuration float64 = 6.0
-	var maxSegments = 7
+	// Use HLS config from manager for segment settings
+	targetSegmentDuration := s.manager.config.HLSConfig.TargetSegmentDuration
+	maxSegments := s.manager.config.HLSConfig.MaxSegments
+	playlistSegments := s.manager.config.HLSConfig.PlaylistSegments
 
 	slog.Debug("Starting ES pipeline",
 		slog.String("session_id", s.ID.String()),
-		slog.String("target_variant", targetVariant.String()),
 		slog.Bool("needs_transcode", s.EncodingProfile != nil && s.EncodingProfile.NeedsTranscode()))
 
 	// Start ingest in a goroutine FIRST - this feeds data to the demuxer
@@ -967,12 +771,21 @@ func (s *RelaySession) runESPipeline() error {
 		slog.String("session_id", s.ID.String()),
 		slog.String("source_variant", s.esBuffer.SourceVariantKey().String()))
 
+	// Get the target variant from profile - NOW that source codecs are known
+	// "copy" will be resolved to actual source codec (e.g., "av1/aac" not "av1/copy")
+	targetVariant := s.getTargetVariant()
+
+	slog.Debug("Target variant resolved",
+		slog.String("session_id", s.ID.String()),
+		slog.String("target_variant", targetVariant.String()))
+
 	// Store processor config for on-demand creation
 	// Processors are NOT created here - they are created on-demand when clients connect
 	s.processorConfig = &ProcessorConfig{
 		TargetVariant:         targetVariant,
 		TargetSegmentDuration: targetSegmentDuration,
 		MaxSegments:           maxSegments,
+		PlaylistSegments:      playlistSegments,
 	}
 
 	// Set up format router WITHOUT pre-created processors
@@ -1063,7 +876,13 @@ func (s *RelaySession) runIngestLoop(inputURL string, demuxer *TSDemuxer) error 
 	// Read from upstream and feed to demuxer
 	buf := make([]byte, 64*1024)
 	var totalBytesRead uint64
+	var lastLogBytes uint64
 	startTime := time.Now()
+	lastLogTime := startTime
+
+	// Throughput logging ticker
+	throughputTicker := time.NewTicker(5 * time.Second)
+	defer throughputTicker.Stop()
 
 	slog.Debug("Ingest loop: starting read loop",
 		slog.String("session_id", s.ID.String()))
@@ -1078,18 +897,35 @@ func (s *RelaySession) runIngestLoop(inputURL string, demuxer *TSDemuxer) error 
 				slog.String("context_err", s.ctx.Err().Error()))
 			demuxer.Flush()
 			return s.ctx.Err()
+		case <-throughputTicker.C:
+			now := time.Now()
+			elapsed := now.Sub(lastLogTime).Seconds()
+			bytesDelta := totalBytesRead - lastLogBytes
+			throughputKBps := float64(bytesDelta) / elapsed / 1024
+			slog.Debug("Ingest throughput",
+				slog.String("session_id", s.ID.String()),
+				slog.Float64("kbps", throughputKBps),
+				slog.Uint64("total_bytes", totalBytesRead))
+			lastLogBytes = totalBytesRead
+			lastLogTime = now
 		default:
 		}
 
 		n, err := resp.Body.Read(buf)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				slog.Debug("Ingest loop: upstream stream ended (EOF)",
+				slog.Info("Ingest loop: upstream stream ended (EOF), origin disconnected",
 					slog.String("session_id", s.ID.String()),
 					slog.String("url", inputURL),
 					slog.Uint64("total_bytes_read", totalBytesRead),
 					slog.Duration("duration", time.Since(startTime)))
+				s.ingestCompleted.Store(true)
 				demuxer.Flush()
+				// Signal ES buffer that source stream is complete
+				// This triggers graceful shutdown of transcoders after they finish processing
+				if s.esBuffer != nil {
+					s.esBuffer.MarkSourceCompleted()
+				}
 				return nil
 			}
 			// Check if this is a context cancellation error
@@ -1113,6 +949,9 @@ func (s *RelaySession) runIngestLoop(inputURL string, demuxer *TSDemuxer) error 
 		totalBytesRead += uint64(n)
 
 		if n > 0 {
+			// Track bytes ingested from origin (direct MPEG-TS ingest loop)
+			s.edgeBandwidth.OriginToBuffer.Add(uint64(n))
+
 			if err := demuxer.Write(buf[:n]); err != nil {
 				slog.Warn("Demuxer error",
 					slog.String("error", err.Error()))
@@ -1123,13 +962,9 @@ func (s *RelaySession) runIngestLoop(inputURL string, demuxer *TSDemuxer) error 
 	}
 }
 
-// HLSClientIdleTimeout is how long an HLS/DASH client can be inactive before being removed.
-// HLS clients make periodic requests for playlists/segments, so 30s covers ~5 segment requests.
-const HLSClientIdleTimeout = 30 * time.Second
-
 // runVariantCleanupLoop periodically cleans up unused transcoded variants and their transcoders.
 // This prevents memory leaks when clients stop requesting certain codec variants.
-// It also cleans up inactive HLS/DASH clients that haven't made requests recently.
+// It also checks HLS/DASH processors for playlist idle timeout (no playlist polls = client left).
 func (s *RelaySession) runVariantCleanupLoop() {
 	ticker := time.NewTicker(VariantCleanupInterval)
 	defer ticker.Stop()
@@ -1145,56 +980,80 @@ func (s *RelaySession) runVariantCleanupLoop() {
 	}
 }
 
-// cleanupInactiveStreamingClients removes HLS/DASH clients that haven't made requests recently.
-// This is necessary because HLS/DASH are request-based protocols without persistent connections,
-// unlike MPEG-TS which maintains a persistent streaming connection.
+// DefaultClientIdleTimeout is the default timeout for client inactivity cleanup.
+const DefaultClientIdleTimeout = 60 * time.Second
+
+// cleanupInactiveStreamingClients cleans up inactive clients and stops idle processors.
+// Each processor type implements IsIdle() according to its own semantics:
+// - HLS-fMP4: playlist request timeout (clients poll for manifests)
+// - HLS-TS/DASH/MPEG-TS: no connected clients
 func (s *RelaySession) cleanupInactiveStreamingClients() {
-	totalRemoved := 0
 	sessionID := s.ID.String()
 
-	// Clean up inactive clients from all HLS-TS processors
-	s.hlsTSProcessors.Range(func(variant CodecVariant, processor *HLSTSProcessor) bool {
-		removed := processor.CleanupInactiveClients(HLSClientIdleTimeout)
-		if removed > 0 {
-			totalRemoved += removed
-			slog.Debug("Cleaned up inactive HLS-TS clients",
-				slog.String("session_id", sessionID),
-				slog.String("variant", variant.String()),
-				slog.Int("removed", removed))
-		}
-		return true
-	})
-
-	// Clean up inactive clients from all HLS-fMP4 processors
+	// Check HLS-fMP4 processors
 	s.hlsFMP4Processors.Range(func(variant CodecVariant, processor *HLSfMP4Processor) bool {
-		removed := processor.CleanupInactiveClients(HLSClientIdleTimeout)
-		if removed > 0 {
-			totalRemoved += removed
-			slog.Debug("Cleaned up inactive HLS-fMP4 clients",
+		// Use playlist idle timeout for client cleanup since that's the polling interval
+		clientTimeout := processor.PlaylistIdleTimeout()
+		if removed := processor.CleanupInactiveClients(clientTimeout); removed > 0 {
+			slog.Debug("Cleaned up inactive clients",
 				slog.String("session_id", sessionID),
+				slog.String("format", "hls-fmp4"),
 				slog.String("variant", variant.String()),
-				slog.Int("removed", removed))
+				slog.Int("removed_clients", removed))
+		}
+
+		if processor.IsIdle() {
+			slog.Debug("Processor is idle, scheduling cleanup",
+				slog.String("session_id", sessionID),
+				slog.String("format", "hls-fmp4"),
+				slog.String("variant", variant.String()))
+			go s.StopProcessorIfIdle("hls-fmp4")
 		}
 		return true
 	})
 
-	// Clean up inactive clients from all DASH processors
+	// Check HLS-TS processors
+	s.hlsTSProcessors.Range(func(variant CodecVariant, processor *HLSTSProcessor) bool {
+		if removed := processor.CleanupInactiveClients(DefaultClientIdleTimeout); removed > 0 {
+			slog.Debug("Cleaned up inactive clients",
+				slog.String("session_id", sessionID),
+				slog.String("format", "hls-ts"),
+				slog.String("variant", variant.String()),
+				slog.Int("removed_clients", removed))
+		}
+
+		if processor.IsIdle() {
+			slog.Debug("Processor is idle, scheduling cleanup",
+				slog.String("session_id", sessionID),
+				slog.String("format", "hls-ts"),
+				slog.String("variant", variant.String()))
+			go s.StopProcessorIfIdle("hls-ts")
+		}
+		return true
+	})
+
+	// Check DASH processors
 	s.dashProcessors.Range(func(variant CodecVariant, processor *DASHProcessor) bool {
-		removed := processor.CleanupInactiveClients(HLSClientIdleTimeout)
-		if removed > 0 {
-			totalRemoved += removed
-			slog.Debug("Cleaned up inactive DASH clients",
+		if removed := processor.CleanupInactiveClients(DefaultClientIdleTimeout); removed > 0 {
+			slog.Debug("Cleaned up inactive clients",
 				slog.String("session_id", sessionID),
+				slog.String("format", "dash"),
 				slog.String("variant", variant.String()),
-				slog.Int("removed", removed))
+				slog.Int("removed_clients", removed))
+		}
+
+		if processor.IsIdle() {
+			slog.Debug("Processor is idle, scheduling cleanup",
+				slog.String("session_id", sessionID),
+				slog.String("format", "dash"),
+				slog.String("variant", variant.String()))
+			go s.StopProcessorIfIdle("dash")
 		}
 		return true
 	})
 
-	// If we removed clients, update session idle state
-	if totalRemoved > 0 {
-		s.UpdateIdleState()
-	}
+	// Update session idle state based on whether any processors remain active
+	s.UpdateIdleState()
 }
 
 // cleanupUnusedVariants removes variants that haven't been accessed recently
@@ -1243,7 +1102,7 @@ func (s *RelaySession) stopTranscodersForVariants(variants map[CodecVariant]bool
 	defer s.esTranscodersMu.Unlock()
 
 	// Find and stop transcoders for removed variants
-	var remaining []*FFmpegTranscoder
+	var remaining []Transcoder
 	for _, transcoder := range s.esTranscoders {
 		stats := transcoder.Stats()
 		if variants[stats.TargetVariant] {
@@ -1259,12 +1118,46 @@ func (s *RelaySession) stopTranscodersForVariants(variants map[CodecVariant]bool
 }
 
 // handleVariantRequest is called when a processor requests a codec variant that doesn't exist.
-// It spawns an FFmpeg transcoder to produce the requested variant from the source.
+// It spawns a transcoder via ffmpegd (either remote daemon or local subprocess) to produce the requested variant.
 func (s *RelaySession) handleVariantRequest(source, target CodecVariant) error {
-	// Detect FFmpeg
-	binInfo, err := s.manager.ffmpegBin.Detect(s.ctx)
-	if err != nil {
-		return fmt.Errorf("detecting ffmpeg: %w", err)
+	slog.Default().Log(context.Background(), observability.LevelTrace, "handleVariantRequest called",
+		slog.String("session_id", s.ID.String()),
+		slog.String("source_variant", source.String()),
+		slog.String("target_variant", target.String()))
+
+	// Check if a transcoder for this source+target already exists and is still running
+	// This prevents duplicate transcoders for the same variant pair
+	s.esTranscodersMu.Lock()
+	for _, existing := range s.esTranscoders {
+		stats := existing.Stats()
+		if stats.SourceVariant == source && stats.TargetVariant == target {
+			if !existing.IsClosed() {
+				s.esTranscodersMu.Unlock()
+				slog.Debug("Transcoder already exists for variant pair",
+					slog.String("session_id", s.ID.String()),
+					slog.String("source_variant", source.String()),
+					slog.String("target_variant", target.String()),
+					slog.String("transcoder_id", stats.ID))
+				return nil // Transcoder already running, nothing to do
+			}
+			// Transcoder exists but is closed - will be cleaned up later
+		}
+	}
+	s.esTranscodersMu.Unlock()
+
+	// Initialize transcoder factory if needed
+	if s.transcoderFactory == nil {
+		// Create factory with daemon registry and stream/job managers for distributed transcoding
+		// All transcoding is done via ffmpegd - either remote daemon or local subprocess
+		s.transcoderFactory = NewTranscoderFactory(TranscoderFactoryConfig{
+			Spawner:                  s.manager.FFmpegDSpawner(),
+			DaemonRegistry:           s.manager.DaemonRegistry(),
+			DaemonStreamManager:      s.manager.DaemonStreamManager(),
+			ActiveJobManager:         s.manager.ActiveJobManager(),
+			PreferRemote:             s.manager.PreferRemote(),
+			EncoderOverridesProvider: s.manager.EncoderOverridesProvider(),
+			Logger:                   slog.Default(),
+		})
 	}
 
 	// Check if source audio/video codec can be demuxed by mediacommon
@@ -1293,7 +1186,7 @@ func (s *RelaySession) handleVariantRequest(source, target CodecVariant) error {
 	// audio was detected. The transcoder will get the actual codec from the ESTrack, not the variant name.
 
 	// Check audio codec demuxability
-	if sourceAudioCodec != "" && !IsAudioCodecDemuxable(sourceAudioCodec) {
+	if sourceAudioCodec != "" && !codec.IsAudioDemuxable(sourceAudioCodec) {
 		slog.Info("Source audio codec not demuxable, using direct URL input",
 			slog.String("session_id", s.ID.String()),
 			slog.String("audio_codec", sourceAudioCodec),
@@ -1302,7 +1195,7 @@ func (s *RelaySession) handleVariantRequest(source, target CodecVariant) error {
 	}
 
 	// Check video codec demuxability
-	if sourceVideoCodec != "" && !IsVideoCodecDemuxable(sourceVideoCodec) {
+	if sourceVideoCodec != "" && !codec.IsVideoDemuxable(sourceVideoCodec) {
 		slog.Info("Source video codec not demuxable, using direct URL input",
 			slog.String("session_id", s.ID.String()),
 			slog.String("video_codec", sourceVideoCodec),
@@ -1310,22 +1203,49 @@ func (s *RelaySession) handleVariantRequest(source, target CodecVariant) error {
 		useDirectInput = true
 	}
 
-	var transcoder *FFmpegTranscoder
+	// If useDirectInput is needed, check if opening another connection would breach
+	// the source's max_concurrent_streams limit. Each useDirectInput transcoder needs
+	// its own connection to the source URL.
+	if useDirectInput && s.SourceMaxConcurrentStreams > 0 {
+		// Count existing active sessions for this source
+		currentConnections := s.manager.CountActiveSessionsForSource(s.SourceID)
+		// +1 for the new FFmpeg connection (useDirectInput mode)
+		if currentConnections+1 > s.SourceMaxConcurrentStreams {
+			unsupportedCodec := ""
+			if sourceAudioCodec != "" && !codec.IsAudioDemuxable(sourceAudioCodec) {
+				unsupportedCodec = sourceAudioCodec
+			} else if sourceVideoCodec != "" && !codec.IsVideoDemuxable(sourceVideoCodec) {
+				unsupportedCodec = sourceVideoCodec
+			}
+			return fmt.Errorf("UseDirectInput would connect to the origin and breach max concurrent streams (current: %d, limit: %d). Codec %s is unsupported and cannot be demuxed",
+				currentConnections, s.SourceMaxConcurrentStreams, unsupportedCodec)
+		}
+	}
+
+	opts := CreateTranscoderOptions{
+		SourceURL:      sourceURL,
+		UseDirectInput: useDirectInput,
+		ChannelName:    s.ChannelName,
+	}
+
+	var transcoder Transcoder
+	var err error
 
 	// Try to create transcoder from profile if available, otherwise use variant directly
+	// Transcoder ID includes both source and target variants for clarity:
+	// transcoder-{session-id}-{source-variant}-{target-variant}
+	transcoderID := fmt.Sprintf("transcoder-%s-%s-%s", s.ID.String(), source.String(), target.String())
+
 	if s.EncodingProfile != nil {
 		// Use profile for full configuration (bitrate, preset, hwaccel, etc.)
-		transcoder, err = CreateTranscoderFromProfile(
-			fmt.Sprintf("transcoder-%s-%s", s.ID.String(), target.String()),
+		// Pass target variant which may override profile's target codecs (e.g., from client detection)
+		transcoder, err = s.transcoderFactory.CreateTranscoderFromProfile(
+			transcoderID,
 			s.esBuffer,
 			source,
+			target, // Target variant (may override profile targets via client detection)
 			s.EncodingProfile,
-			binInfo,
-			slog.Default(),
-			CreateTranscoderFromProfileOptions{
-				SourceURL:      sourceURL,
-				UseDirectInput: useDirectInput,
-			},
+			opts,
 		)
 		if err != nil {
 			return fmt.Errorf("creating transcoder from profile: %w", err)
@@ -1337,17 +1257,12 @@ func (s *RelaySession) handleVariantRequest(source, target CodecVariant) error {
 			slog.String("source", source.String()),
 			slog.String("target", target.String()))
 
-		transcoder, err = CreateTranscoderFromVariant(
-			fmt.Sprintf("transcoder-%s-%s", s.ID.String(), target.String()),
+		transcoder, err = s.transcoderFactory.CreateTranscoderFromVariant(
+			transcoderID,
 			s.esBuffer,
 			source,
 			target,
-			binInfo,
-			slog.Default(),
-			CreateTranscoderFromVariantOptions{
-				SourceURL:      sourceURL,
-				UseDirectInput: useDirectInput,
-			},
+			opts,
 		)
 		if err != nil {
 			return fmt.Errorf("creating transcoder from variant: %w", err)
@@ -1384,9 +1299,6 @@ func (s *RelaySession) configureProcessorStreamContext(p *BaseProcessor) {
 	ctx := StreamContext{
 		ProxyMode: "smart", // Sessions are only used in smart mode
 		Version:   version.Version,
-	}
-	if s.DeliveryContext != nil {
-		ctx.DeliveryDecision = s.DeliveryContext.Decision.String()
 	}
 	p.SetStreamContext(ctx)
 }
@@ -1448,6 +1360,7 @@ func (s *RelaySession) GetOrCreateHLSTSProcessorForVariant(variant CodecVariant)
 		return nil, fmt.Errorf("starting HLS-TS processor for variant %s: %w", variant.String(), err)
 	}
 	s.configureProcessorStreamContext(processor.BaseProcessor)
+	processor.SetBandwidthTracker(s.edgeBandwidth.GetOrCreateProcessorTracker("hls"))
 
 	// Atomically store or get existing - if another goroutine won the race, stop our duplicate
 	existing, loaded := s.hlsTSProcessors.LoadOrStore(variant, processor)
@@ -1508,6 +1421,7 @@ func (s *RelaySession) GetOrCreateHLSfMP4ProcessorForVariant(variant CodecVarian
 		return nil, fmt.Errorf("starting HLS-fMP4 processor for variant %s: %w", variant.String(), err)
 	}
 	s.configureProcessorStreamContext(processor.BaseProcessor)
+	processor.SetBandwidthTracker(s.edgeBandwidth.GetOrCreateProcessorTracker("hls"))
 
 	// Atomically store or get existing - if another goroutine won the race, stop our duplicate
 	existing, loaded := s.hlsFMP4Processors.LoadOrStore(variant, processor)
@@ -1568,6 +1482,7 @@ func (s *RelaySession) GetOrCreateDASHProcessorForVariant(variant CodecVariant) 
 		return nil, fmt.Errorf("starting DASH processor for variant %s: %w", variant.String(), err)
 	}
 	s.configureProcessorStreamContext(processor.BaseProcessor)
+	processor.SetBandwidthTracker(s.edgeBandwidth.GetOrCreateProcessorTracker("dash"))
 
 	// Atomically store or get existing - if another goroutine won the race, stop our duplicate
 	existing, loaded := s.dashProcessors.LoadOrStore(variant, processor)
@@ -1633,6 +1548,7 @@ func (s *RelaySession) GetOrCreateMPEGTSProcessorForVariant(variant CodecVariant
 		return nil, fmt.Errorf("starting MPEG-TS processor for variant %s: %w", variant.String(), err)
 	}
 	s.configureProcessorStreamContext(processor.BaseProcessor)
+	processor.SetBandwidthTracker(s.edgeBandwidth.GetOrCreateProcessorTracker("mpegts"))
 
 	// Atomically store or get existing - if another goroutine won the race, stop our duplicate
 	existing, loaded := s.mpegtsProcessors.LoadOrStore(variant, processor)
@@ -1768,6 +1684,12 @@ func (s *RelaySession) StopProcessorIfIdle(processorType string) {
 		p.processor.Stop()
 	}
 
+	// Trigger immediate variant cleanup to free resources sooner
+	// This avoids waiting up to 30s for the next cleanup cycle
+	if len(toStop) > 0 {
+		s.cleanupUnusedVariants()
+	}
+
 	// Update session idle state after processor cleanup
 	clientCount := s.ClientCount()
 	idleSince, _ := s.idleSince.Load().(time.Time)
@@ -1802,7 +1724,7 @@ func (s *RelaySession) Close() {
 	// Collect transcoders to stop WITHOUT holding the lock during Stop calls
 	// This prevents blocking other goroutines that need the lock
 	s.esTranscodersMu.Lock()
-	transcodersToStop := make([]*FFmpegTranscoder, len(s.esTranscoders))
+	transcodersToStop := make([]Transcoder, len(s.esTranscoders))
 	copy(transcodersToStop, s.esTranscoders)
 	s.esTranscoders = nil
 	s.esTranscodersMu.Unlock()
@@ -1860,7 +1782,6 @@ func (s *RelaySession) Stats() SessionStats {
 	var ffmpegCmd *ffmpeg.Command
 	var fallbackController *FallbackController
 	var cachedCodecInfo *models.LastKnownCodec
-	var deliveryContext *DeliveryContext
 	var classification ClassificationResult
 
 	// Read atomic state values
@@ -1879,7 +1800,6 @@ func (s *RelaySession) Stats() SessionStats {
 	ffmpegCmd = s.ffmpegCmd
 	fallbackController = s.fallbackController
 	cachedCodecInfo = s.CachedCodecInfo
-	deliveryContext = s.DeliveryContext
 	classification = s.Classification
 
 	// Get stats from ES buffer if available (has its own lock)
@@ -1901,64 +1821,73 @@ func (s *RelaySession) Stats() SessionStats {
 	hasDash := s.dashProcessors.Len() > 0
 
 	// MPEG-TS processor clients (all variants)
-	s.mpegtsProcessors.Range(func(_ CodecVariant, processor *MPEGTSProcessor) bool {
+	s.mpegtsProcessors.Range(func(variant CodecVariant, processor *MPEGTSProcessor) bool {
 		clientCount += processor.ClientCount()
-		for _, c := range processor.GetClients() {
+		processorClients := processor.GetClients()
+		slog.Debug("Stats: MPEG-TS processor variant",
+			slog.String("session_id", s.ID.String()),
+			slog.String("variant", string(variant)),
+			slog.Int("client_count", len(processorClients)))
+		for _, c := range processorClients {
 			clients = append(clients, ClientStats{
-				ID:           c.ID,
-				BytesRead:    c.BytesRead.Load(),
-				ConnectedAt:  c.ConnectedAt,
-				UserAgent:    c.UserAgent,
-				RemoteAddr:   c.RemoteAddr,
-				ClientFormat: "mpegts",
+				ID:            c.ID,
+				BytesRead:     c.BytesRead.Load(),
+				ConnectedAt:   c.ConnectedAt,
+				UserAgent:     c.UserAgent,
+				RemoteAddr:    c.RemoteAddr,
+				ClientFormat:  "mpegts",
+				ClientVariant: string(variant),
 			})
 		}
 		return true
 	})
 
 	// HLS TS processor clients (all variants)
-	s.hlsTSProcessors.Range(func(_ CodecVariant, processor *HLSTSProcessor) bool {
+	s.hlsTSProcessors.Range(func(variant CodecVariant, processor *HLSTSProcessor) bool {
 		clientCount += processor.ClientCount()
 		for _, c := range processor.GetClients() {
 			clients = append(clients, ClientStats{
-				ID:           c.ID,
-				BytesRead:    c.BytesRead.Load(),
-				ConnectedAt:  c.ConnectedAt,
-				UserAgent:    c.UserAgent,
-				RemoteAddr:   c.RemoteAddr,
-				ClientFormat: "hls",
+				ID:            c.ID,
+				BytesRead:     c.BytesRead.Load(),
+				ConnectedAt:   c.ConnectedAt,
+				UserAgent:     c.UserAgent,
+				RemoteAddr:    c.RemoteAddr,
+				ClientFormat:  "hls",
+				ClientVariant: string(variant),
 			})
 		}
 		return true
 	})
 
 	// HLS fMP4 processor clients (all variants)
-	s.hlsFMP4Processors.Range(func(_ CodecVariant, processor *HLSfMP4Processor) bool {
+	s.hlsFMP4Processors.Range(func(variant CodecVariant, processor *HLSfMP4Processor) bool {
 		clientCount += processor.ClientCount()
 		for _, c := range processor.GetClients() {
 			clients = append(clients, ClientStats{
-				ID:           c.ID,
-				BytesRead:    c.BytesRead.Load(),
-				ConnectedAt:  c.ConnectedAt,
-				UserAgent:    c.UserAgent,
-				RemoteAddr:   c.RemoteAddr,
-				ClientFormat: "hls",
+				ID:            c.ID,
+				BytesRead:     c.BytesRead.Load(),
+				ConnectedAt:   c.ConnectedAt,
+				UserAgent:     c.UserAgent,
+				RemoteAddr:    c.RemoteAddr,
+				ClientFormat:  "hls",
+				ClientVariant: string(variant),
 			})
 		}
 		return true
 	})
 
 	// DASH processor clients (all variants)
-	s.dashProcessors.Range(func(_ CodecVariant, processor *DASHProcessor) bool {
+	s.dashProcessors.Range(func(variant CodecVariant, processor *DASHProcessor) bool {
 		clientCount += processor.ClientCount()
 		for _, c := range processor.GetClients() {
 			clients = append(clients, ClientStats{
-				ID:           c.ID,
-				BytesRead:    c.BytesRead.Load(),
-				ConnectedAt:  c.ConnectedAt,
-				UserAgent:    c.UserAgent,
-				RemoteAddr:   c.RemoteAddr,
-				ClientFormat: "dash",
+				ID:            c.ID,
+				BytesRead:     c.BytesRead.Load(),
+				ConnectedAt:   c.ConnectedAt,
+				UserAgent:     c.UserAgent,
+				RemoteAddr:    c.RemoteAddr,
+				ClientFormat:  "dash",
+				ClientVariant: string(variant),
 			})
 		}
 		return true
@@ -1980,6 +1909,10 @@ func (s *RelaySession) Stats() SessionStats {
 	}
 
 	// Build stats from immutable fields (set at creation, no lock needed)
+	// Check ingest completion state (atomic, safe to call)
+	ingestCompleted := s.IngestCompleted()
+	originConnected := !ingestCompleted && !closed
+
 	stats := SessionStats{
 		ID:                s.ID.String(),
 		ChannelID:         s.ChannelID.String(),
@@ -1995,20 +1928,15 @@ func (s *RelaySession) Stats() SessionStats {
 		BytesWritten:      bytesWritten,
 		BytesFromUpstream: bytesWritten,
 		Closed:            closed,
+		IngestCompleted:   ingestCompleted,
+		OriginConnected:   originConnected,
 		Error:             errStr,
 		InFallback:        inFallback,
 		Clients:           clients,
 	}
 
-	// Include smart delivery context if available
-	if deliveryContext != nil {
-		stats.DeliveryDecision = deliveryContext.Decision.String()
-		stats.ClientFormat = string(deliveryContext.ClientFormat)
-		stats.SourceFormat = string(deliveryContext.Source.SourceFormat)
-	}
-
-	// Fallback to Classification source format if DeliveryContext not available
-	if stats.SourceFormat == "" && classification.SourceFormat != "" {
+	// Set source format from classification
+	if classification.SourceFormat != "" {
 		stats.SourceFormat = string(classification.SourceFormat)
 	}
 
@@ -2080,8 +2008,14 @@ func (s *RelaySession) Stats() SessionStats {
 		var totalCPUPercent, totalMemoryRSSMB, totalMemoryPercent float64
 		var activePID int
 		var transcoderList []ESTranscoderStats
+		var activeTranscoderCount int
 
 		for _, transcoder := range s.esTranscoders {
+			// Skip closed transcoders - they've finished processing and stopped
+			if transcoder.IsClosed() {
+				continue
+			}
+			activeTranscoderCount++
 			tStats := transcoder.Stats()
 			totalBytesIn += tStats.BytesIn
 			totalBytesOut += tStats.BytesOut
@@ -2104,6 +2038,9 @@ func (s *RelaySession) Stats() SessionStats {
 					activePID = pid
 				}
 			}
+
+			// Get resource history for sparkline graphs
+			cpuHistory, memHistory := transcoder.GetResourceHistory()
 
 			transcoderList = append(transcoderList, ESTranscoderStats{
 				ID:            tStats.ID,
@@ -2129,27 +2066,30 @@ func (s *RelaySession) Stats() SessionStats {
 				MemoryRSSMB:   memoryRSSMB,
 				MemoryPercent: memoryPercent,
 				EncodingSpeed: tStats.EncodingSpeed,
+				CPUHistory:    cpuHistory,
+				MemoryHistory: memHistory,
+				FFmpegCommand: tStats.FFmpegCommand,
 			})
 		}
 
 		stats.ESTranscoderStats = &ESTranscodersStats{
-			Count:          len(s.esTranscoders),
+			Count:          activeTranscoderCount,
 			TotalBytesIn:   totalBytesIn,
 			TotalBytesOut:  totalBytesOut,
 			TotalSamplesIn: totalSamplesIn,
 			Transcoders:    transcoderList,
 		}
 
-		// If no legacy FFmpeg stats but we have ES transcoders, populate FFmpegStats
+		// If no legacy FFmpeg stats but we have active ES transcoders, populate FFmpegStats
 		// with actual process stats so the flow visualization shows transcoding
-		if stats.FFmpegStats == nil && len(s.esTranscoders) > 0 {
+		if stats.FFmpegStats == nil && activeTranscoderCount > 0 && len(transcoderList) > 0 {
 			// Sample resource history if enough time has passed
 			if s.resourceHistory != nil && s.resourceHistory.ShouldSample() {
 				s.resourceHistory.AddSample(totalCPUPercent, totalMemoryRSSMB)
 			}
 
-			// Get encoding config from first transcoder for display
-			firstStats := s.esTranscoders[0].Stats()
+			// Get encoding config from first active transcoder for display
+			firstStats := transcoderList[0]
 			stats.FFmpegStats = &FFmpegProcessStats{
 				PID:           activePID,
 				CPUPercent:    totalCPUPercent,
@@ -2190,6 +2130,13 @@ func (s *RelaySession) Stats() SessionStats {
 		stats.ESBufferStats = &esStats
 	}
 
+	// Include edge bandwidth stats if available
+	if s.edgeBandwidth != nil {
+		// Sample all trackers before collecting stats
+		s.edgeBandwidth.SampleAll()
+		stats.EdgeBandwidthStats = s.edgeBandwidth.Stats()
+	}
+
 	return stats
 }
 
@@ -2209,6 +2156,8 @@ type SessionStats struct {
 	BytesWritten      uint64    `json:"bytes_written"`
 	BytesFromUpstream uint64    `json:"bytes_from_upstream"`
 	Closed            bool      `json:"closed"`
+	IngestCompleted   bool      `json:"ingest_completed"`    // True if origin ingest finished (EOF received)
+	OriginConnected   bool      `json:"origin_connected"`    // True if origin is still streaming data
 	Error             string    `json:"error,omitempty"`
 	// Smart delivery information (only present when using smart mode)
 	DeliveryDecision       string   `json:"delivery_decision,omitempty"`        // passthrough, repackage, or transcode
@@ -2235,18 +2184,21 @@ type SessionStats struct {
 	SegmentBufferStats *SessionSegmentBufferStats `json:"segment_buffer_stats,omitempty"`
 	// ES buffer stats (variant information from shared buffer)
 	ESBufferStats *ESBufferStats `json:"es_buffer_stats,omitempty"`
+	// Edge bandwidth stats (per-edge bandwidth tracking for flow visualization)
+	EdgeBandwidthStats *EdgeBandwidthStats `json:"edge_bandwidth_stats,omitempty"`
 }
 
 // ClientStats holds statistics for a single connected client.
 type ClientStats struct {
-	ID           string    `json:"id"`
-	BytesRead    uint64    `json:"bytes_read"`
-	LastSequence uint64    `json:"last_sequence"`
-	ConnectedAt  time.Time `json:"connected_at"`
-	LastRead     time.Time `json:"last_read,omitempty"`
-	UserAgent    string    `json:"user_agent,omitempty"`
-	RemoteAddr   string    `json:"remote_addr,omitempty"`
-	ClientFormat string    `json:"client_format,omitempty"` // Format this client is using (hls, mpegts, dash)
+	ID            string    `json:"id"`
+	BytesRead     uint64    `json:"bytes_read"`
+	LastSequence  uint64    `json:"last_sequence"`
+	ConnectedAt   time.Time `json:"connected_at"`
+	LastRead      time.Time `json:"last_read,omitempty"`
+	UserAgent     string    `json:"user_agent,omitempty"`
+	RemoteAddr    string    `json:"remote_addr,omitempty"`
+	ClientFormat  string    `json:"client_format,omitempty"`  // Format this client is using (hls, mpegts, dash)
+	ClientVariant string    `json:"client_variant,omitempty"` // Codec variant this client receives (e.g., "h265/aac", "av1/eac3")
 }
 
 // SessionSegmentBufferStats contains segment buffer statistics for a session.
@@ -2326,6 +2278,11 @@ type ESTranscoderStats struct {
 	MemoryPercent float64 `json:"memory_percent,omitempty"`
 	// Encoding speed (1.0 = realtime, 2.0 = 2x realtime, 0.5 = half realtime)
 	EncodingSpeed float64 `json:"encoding_speed,omitempty"`
+	// Resource history for sparkline graphs (last 30 samples, ~1 sample/sec)
+	CPUHistory    []float64 `json:"cpu_history,omitempty"`
+	MemoryHistory []float64 `json:"memory_history,omitempty"`
+	// FFmpeg command for debugging
+	FFmpegCommand string `json:"ffmpeg_command,omitempty"`
 }
 
 // GetFormatRouter returns the format router for handling output format requests.
@@ -2348,6 +2305,56 @@ func (s *RelaySession) LastActivity() time.Time {
 func (s *RelaySession) IdleSince() time.Time {
 	t, _ := s.idleSince.Load().(time.Time)
 	return t
+}
+
+// IngestCompleted returns true if the origin ingest has finished (EOF received).
+// This indicates the source stream has ended (finite content) but clients may still
+// be connected and consuming buffered data.
+// This is safe to call concurrently without holding any locks.
+func (s *RelaySession) IngestCompleted() bool {
+	return s.ingestCompleted.Load()
+}
+
+// HasActiveContent returns true if the session has active transcoders that are still working.
+// This is used to determine if a session with completed ingest can still serve new clients.
+// For finite streams (like IPTV error videos), we want to reuse the session if transcoders
+// are still producing output, rather than creating a new session that re-fetches the source.
+//
+// Note: We only consider active transcoders as "active content", not buffer data alone.
+// If ingest is complete and all transcoders are stopped, buffer data is stale and the
+// session should be cleaned up even if the buffer still has bytes.
+func (s *RelaySession) HasActiveContent() bool {
+	// Check for active (non-closed) transcoders
+	s.esTranscodersMu.RLock()
+	transcoderCount := len(s.esTranscoders)
+	activeTranscoders := 0
+	for _, transcoder := range s.esTranscoders {
+		if !transcoder.IsClosed() {
+			activeTranscoders++
+		}
+	}
+	s.esTranscodersMu.RUnlock()
+
+	// Check if ES buffer has content (for logging purposes)
+	var bufferBytes uint64
+	if s.esBuffer != nil {
+		stats := s.esBuffer.Stats()
+		bufferBytes = stats.TotalBytes
+	}
+
+	// Only active transcoders count as active content.
+	// Buffer data alone (without active transcoders) is considered stale
+	// and the session can be cleaned up.
+	hasActive := activeTranscoders > 0
+
+	slog.Debug("HasActiveContent check",
+		slog.String("session_id", s.ID.String()),
+		slog.Int("total_transcoders", transcoderCount),
+		slog.Int("active_transcoders", activeTranscoders),
+		slog.Uint64("buffer_bytes", bufferBytes),
+		slog.Bool("has_active_content", hasActive))
+
+	return hasActive
 }
 
 // markReady signals that the session pipeline is ready for clients.
@@ -2402,11 +2409,6 @@ func (s *RelaySession) SupportsFormat(format string) bool {
 		return format == FormatValueMPEGTS || format == ""
 	}
 
-	// Check for passthrough mode first
-	if s.formatRouter.IsPassthroughMode(format) {
-		return true
-	}
-
 	return s.formatRouter.HasHandler(format)
 }
 
@@ -2419,28 +2421,4 @@ func (s *RelaySession) GetOutputHandler(req OutputRequest) (OutputHandler, error
 		return nil, ErrNoHandlerAvailable
 	}
 	return s.formatRouter.GetHandler(req)
-}
-
-// IsPassthroughMode returns true if the session is using passthrough handlers.
-// IsPassthroughMode returns true if the session is in passthrough mode.
-// This is safe to call without locks because hlsPassthrough and dashPassthrough
-// are set once during pipeline init and only read afterward.
-func (s *RelaySession) IsPassthroughMode() bool {
-	return s.hlsPassthrough != nil || s.dashPassthrough != nil
-}
-
-// GetHLSPassthrough returns the HLS passthrough handler if available.
-// GetHLSPassthrough returns the HLS passthrough handler if available.
-// This is safe to call without locks because hlsPassthrough is set once during
-// pipeline init and only read afterward.
-func (s *RelaySession) GetHLSPassthrough() *HLSPassthroughHandler {
-	return s.hlsPassthrough
-}
-
-// GetDASHPassthrough returns the DASH passthrough handler if available.
-// GetDASHPassthrough returns the DASH passthrough handler if available.
-// This is safe to call without locks because dashPassthrough is set once during
-// pipeline init and only read afterward.
-func (s *RelaySession) GetDASHPassthrough() *DASHPassthroughHandler {
-	return s.dashPassthrough
 }

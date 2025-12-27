@@ -144,12 +144,12 @@ func GetVideoBitstreamFilter(codecFamily CodecFamily, outputFormat OutputFormatT
 // GetAudioBitstreamFilter returns the appropriate audio bitstream filter
 func GetAudioBitstreamFilter(codecFamily CodecFamily, outputFormat OutputFormatType) BitstreamFilterInfo {
 	switch outputFormat {
-	case FormatFLV, FormatMP4:
-		// AAC in FLV/MP4 needs ASC format (convert from ADTS if coming from MPEG-TS)
+	case FormatFLV, FormatMP4, FormatFMP4:
+		// AAC in FLV/MP4/fMP4 needs ASC format (convert from ADTS if coming from MPEG-TS)
 		if codecFamily == CodecFamilyAAC {
 			return BitstreamFilterInfo{
 				AudioBSF: "aac_adtstoasc",
-				Reason:   "Convert AAC from ADTS (MPEG-TS) to ASC (MP4/FLV) format",
+				Reason:   "Convert AAC from ADTS (MPEG-TS) to ASC (MP4/FLV/fMP4) format",
 			}
 		}
 	case FormatMPEGTS, FormatHLS:
@@ -351,18 +351,6 @@ func ApplyBitstreamFilters(builder *CommandBuilder, bsfInfo BitstreamFilterInfo)
 			slog.String("reason", bsfInfo.Reason))
 	}
 	return builder
-}
-
-// RequiresAnnexBConversion returns true if the output format requires Annex B NAL format.
-// Deprecated: Use outputFormat.RequiresAnnexB() instead.
-func RequiresAnnexBConversion(outputFormat OutputFormatType) bool {
-	return outputFormat.RequiresAnnexB()
-}
-
-// ParseOutputFormat converts a string to OutputFormatType.
-// Deprecated: Use codec.ParseOutputFormat instead.
-func ParseOutputFormat(format string) OutputFormatType {
-	return codec.ParseOutputFormat(format)
 }
 
 // IsHardwareEncoder returns true if the encoder is a hardware encoder.

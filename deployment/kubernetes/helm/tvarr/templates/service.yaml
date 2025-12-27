@@ -11,5 +11,11 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
+    {{- if .Values.ffmpegd.enabled }}
+    - port: {{ .Values.service.grpcPort | default 9090 }}
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+    {{- end }}
   selector:
     {{- include "tvarr.selectorLabels" . | nindent 4 }}

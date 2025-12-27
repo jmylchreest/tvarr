@@ -4,10 +4,13 @@ package relay
 import (
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/jmylchreest/tvarr/internal/observability"
 )
 
 // OutputFormat represents the output container format.
@@ -52,6 +55,16 @@ type Processor interface {
 
 	// ClientCount returns the number of connected clients.
 	ClientCount() int
+
+	// CleanupInactiveClients removes clients that haven't been active within the timeout.
+	// Returns the number of clients removed.
+	CleanupInactiveClients(timeout time.Duration) int
+
+	// IsIdle returns true if the processor should be stopped due to inactivity.
+	// Each processor type defines its own idle semantics:
+	// - HLS-fMP4: no playlist requests for playlist_segments * segment_duration * 2
+	// - HLS-TS/DASH/MPEG-TS: no connected clients
+	IsIdle() bool
 
 	// Stats returns current processor statistics.
 	Stats() ProcessorStats
@@ -133,7 +146,6 @@ type StreamContext struct {
 type BaseProcessor struct {
 	id            string
 	format        OutputFormat
-	buffer        *SharedESBuffer
 	clients       map[string]*ProcessorClient
 	clientsMu     sync.RWMutex
 	startedAt     time.Time
@@ -142,14 +154,16 @@ type BaseProcessor struct {
 	closed        atomic.Bool
 	closedCh      chan struct{}
 	streamContext StreamContext
+
+	// Bandwidth tracking for buffer-to-processor edge
+	bandwidthTracker *BandwidthTracker
 }
 
 // NewBaseProcessor creates a new base processor.
-func NewBaseProcessor(id string, format OutputFormat, buffer *SharedESBuffer) *BaseProcessor {
+func NewBaseProcessor(id string, format OutputFormat) *BaseProcessor {
 	p := &BaseProcessor{
 		id:       id,
 		format:   format,
-		buffer:   buffer,
 		clients:  make(map[string]*ProcessorClient),
 		closedCh: make(chan struct{}),
 	}
@@ -167,14 +181,22 @@ func (p *BaseProcessor) Format() OutputFormat {
 	return p.format
 }
 
-// Buffer returns the shared buffer.
-func (p *BaseProcessor) Buffer() *SharedESBuffer {
-	return p.buffer
-}
-
 // SetStreamContext sets the stream context for header generation.
 func (p *BaseProcessor) SetStreamContext(ctx StreamContext) {
 	p.streamContext = ctx
+}
+
+// SetBandwidthTracker sets the bandwidth tracker for buffer-to-processor edge tracking.
+func (p *BaseProcessor) SetBandwidthTracker(tracker *BandwidthTracker) {
+	p.bandwidthTracker = tracker
+}
+
+// TrackBytesFromBuffer records bytes read from the ES buffer.
+// This should be called after reading samples from the buffer.
+func (p *BaseProcessor) TrackBytesFromBuffer(bytes uint64) {
+	if p.bandwidthTracker != nil {
+		p.bandwidthTracker.Add(bytes)
+	}
 }
 
 // SetStreamHeaders sets the X-Stream-* and X-Tvarr-Version headers on the response.
@@ -198,15 +220,23 @@ func (p *BaseProcessor) RegisterClientBase(clientID string, w http.ResponseWrite
 	p.clientsMu.Lock()
 	defer p.clientsMu.Unlock()
 
+	now := time.Now()
+
 	// Check if client already exists (for request-based protocols like HLS)
 	if existing, exists := p.clients[clientID]; exists {
 		// Update the existing client's activity - keep accumulated BytesRead
 		existing.mu.Lock()
+		oldActivity := existing.LastActivity
 		existing.writer = w
 		existing.flusher, _ = w.(http.Flusher)
-		existing.LastActivity = time.Now()
+		existing.LastActivity = now
 		existing.mu.Unlock()
-		p.lastActivity.Store(time.Now())
+		p.lastActivity.Store(now)
+
+		slog.Log(context.Background(), observability.LevelTrace, "Client activity updated",
+			slog.String("processor_id", p.id),
+			slog.String("client_id", clientID),
+			slog.Duration("since_last_activity", now.Sub(oldActivity)))
 		return existing
 	}
 
@@ -214,7 +244,11 @@ func (p *BaseProcessor) RegisterClientBase(clientID string, w http.ResponseWrite
 	client := NewProcessorClient(clientID, w, r)
 	p.clients[clientID] = client
 
-	p.lastActivity.Store(time.Now())
+	p.lastActivity.Store(now)
+
+	slog.Log(context.Background(), observability.LevelTrace, "New client registered",
+		slog.String("processor_id", p.id),
+		slog.String("client_id", clientID))
 	return client
 }
 
@@ -245,7 +279,13 @@ func (p *BaseProcessor) CleanupInactiveClients(timeout time.Duration) int {
 		lastActivity := client.LastActivity
 		client.mu.Unlock()
 
-		if now.Sub(lastActivity) > timeout {
+		idleDuration := now.Sub(lastActivity)
+		if idleDuration > timeout {
+			slog.Log(context.Background(), observability.LevelTrace, "Removing inactive client",
+				slog.String("processor_id", p.id),
+				slog.String("client_id", id),
+				slog.Duration("idle_duration", idleDuration),
+				slog.Duration("timeout", timeout))
 			client.Close()
 			delete(p.clients, id)
 			removed++
@@ -260,6 +300,13 @@ func (p *BaseProcessor) ClientCount() int {
 	p.clientsMu.RLock()
 	defer p.clientsMu.RUnlock()
 	return len(p.clients)
+}
+
+// IsIdle returns true if the processor has no connected clients.
+// This is the default implementation suitable for most processor types.
+// Processors with different idle semantics (e.g., manifest-based) should override this.
+func (p *BaseProcessor) IsIdle() bool {
+	return p.ClientCount() == 0
 }
 
 // GetClients returns a copy of all clients.
@@ -328,30 +375,4 @@ func (p *BaseProcessor) IsClosed() bool {
 // ClosedChan returns a channel that is closed when the processor is closed.
 func (p *BaseProcessor) ClosedChan() <-chan struct{} {
 	return p.closedCh
-}
-
-// BroadcastToClients sends data to all connected clients.
-func (p *BaseProcessor) BroadcastToClients(data []byte) {
-	p.clientsMu.RLock()
-	clients := make([]*ProcessorClient, 0, len(p.clients))
-	for _, c := range p.clients {
-		clients = append(clients, c)
-	}
-	p.clientsMu.RUnlock()
-
-	for _, client := range clients {
-		select {
-		case <-client.Done():
-			// Client is done, skip
-			continue
-		default:
-			_, err := client.Write(data)
-			if err != nil {
-				// Client write failed, will be cleaned up
-				p.UnregisterClientBase(client.ID)
-			}
-		}
-	}
-
-	p.RecordBytesWritten(uint64(len(data)))
 }

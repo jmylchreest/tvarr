@@ -54,6 +54,7 @@ import {
 import { apiClient, ApiError } from '@/lib/api-client';
 import { API_CONFIG } from '@/lib/config';
 import { StatCard } from '@/components/shared/feedback/StatCard';
+import { formatRelativeTimeShort } from '@/lib/format';
 
 interface LoadingState {
   logos: boolean;
@@ -85,22 +86,6 @@ function formatFileSize(bytes: number): string {
 
 function formatDate(dateString: string): string {
   return new Date(dateString).toLocaleString();
-}
-
-function formatRelativeTime(dateString: string): string {
-  const now = new Date();
-  const date = new Date(dateString);
-  const diffMs = now.getTime() - date.getTime();
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffDays = Math.floor(diffHours / 24);
-
-  if (diffDays > 0) {
-    return `${diffDays}d ago`;
-  } else if (diffHours > 0) {
-    return `${diffHours}h ago`;
-  } else {
-    return 'Just now';
-  }
 }
 
 function getAssetTypeColor(assetType: string): string {
@@ -1649,7 +1634,7 @@ export function Logos() {
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <span className="cursor-help">
-                                      {formatRelativeTime(logo.created_at)}
+                                      {formatRelativeTimeShort(logo.created_at)}
                                     </span>
                                   </TooltipTrigger>
                                   <TooltipContent>

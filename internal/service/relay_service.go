@@ -26,15 +26,16 @@ var ErrProxyNotFound = errors.New("stream proxy not found")
 
 // RelayService provides business logic for stream relay functionality.
 type RelayService struct {
-	encodingProfileRepo repository.EncodingProfileRepository
-	lastKnownCodecRepo  repository.LastKnownCodecRepository
-	channelRepo         repository.ChannelRepository
-	streamProxyRepo     repository.StreamProxyRepository
-	relayManager        *relay.Manager
-	ffmpegDetector      *ffmpeg.BinaryDetector
-	hardwareDetector    *services.HardwareDetector
-	prober              *ffmpeg.Prober
-	logger              *slog.Logger
+	encodingProfileRepo      repository.EncodingProfileRepository
+	lastKnownCodecRepo       repository.LastKnownCodecRepository
+	channelRepo              repository.ChannelRepository
+	streamProxyRepo          repository.StreamProxyRepository
+	relayManager             *relay.Manager
+	ffmpegDetector           *ffmpeg.BinaryDetector
+	hardwareDetector         *services.HardwareDetector
+	prober                   *ffmpeg.Prober
+	logger                   *slog.Logger
+	encoderOverridesProvider relay.EncoderOverridesProvider
 }
 
 // NewRelayService creates a new relay service.
@@ -107,6 +108,79 @@ func (s *RelayService) WithBufferConfig(bufferCfg config.BufferConfig) *RelaySer
 		"max_variant_bytes", bufferConfig.MaxVariantBytes,
 	)
 
+	return s
+}
+
+// WithHLSConfig configures the HLS streaming settings from application config.
+func (s *RelayService) WithHLSConfig(hlsCfg config.HLSConfig) *RelayService {
+	managerConfig := relay.DefaultManagerConfig()
+	managerConfig.CodecRepo = s.lastKnownCodecRepo
+
+	// Apply HLS config values
+	managerConfig.HLSConfig = relay.HLSConfig{
+		TargetSegmentDuration: hlsCfg.TargetSegmentDuration,
+		MaxSegments:           hlsCfg.MaxSegments,
+		PlaylistSegments:      hlsCfg.PlaylistSegments,
+	}
+
+	s.relayManager.Close()
+	s.relayManager = relay.NewManager(managerConfig)
+
+	s.logger.Info("Relay HLS config applied",
+		"target_segment_duration", hlsCfg.TargetSegmentDuration,
+		"max_segments", hlsCfg.MaxSegments,
+		"playlist_segments", hlsCfg.PlaylistSegments,
+	)
+
+	return s
+}
+
+// WithDistributedTranscoding configures distributed transcoding using the provided components.
+// - registry: DaemonRegistry for daemon selection
+// - streamMgr: DaemonStreamManager for communicating with connected daemons (optional)
+// - jobMgr: ActiveJobManager for tracking active transcode jobs (optional)
+// - spawner: FFmpegDSpawner for local subprocess transcoding (optional)
+// - preferRemote: Whether to prefer remote daemons over local FFmpeg for transcoding
+// - preferRemoteProbe: Whether to prefer remote daemons for stream probing (ffprobe)
+//
+// When streamMgr and jobMgr are provided, remote transcoding uses the persistent daemon streams.
+// When spawner is provided, local subprocess transcoding is available.
+func (s *RelayService) WithDistributedTranscoding(
+	registry *relay.DaemonRegistry,
+	streamMgr *relay.DaemonStreamManager,
+	jobMgr *relay.ActiveJobManager,
+	spawner *relay.FFmpegDSpawner,
+	preferRemote bool,
+	preferRemoteProbe bool,
+) *RelayService {
+	managerConfig := relay.DefaultManagerConfig()
+	managerConfig.CodecRepo = s.lastKnownCodecRepo
+	managerConfig.DaemonRegistry = registry
+	managerConfig.DaemonStreamManager = streamMgr
+	managerConfig.ActiveJobManager = jobMgr
+	managerConfig.FFmpegDSpawner = spawner
+	managerConfig.PreferRemote = preferRemote
+	managerConfig.PreferRemoteProbe = preferRemoteProbe
+	managerConfig.EncoderOverridesProvider = s.encoderOverridesProvider
+
+	s.relayManager.Close()
+	s.relayManager = relay.NewManager(managerConfig)
+
+	s.logger.Info("Distributed transcoding configured",
+		"prefer_remote", preferRemote,
+		"prefer_remote_probe", preferRemoteProbe,
+		"stream_manager", streamMgr != nil,
+		"job_manager", jobMgr != nil,
+		"spawner", spawner != nil,
+	)
+
+	return s
+}
+
+// WithEncoderOverridesProvider sets the encoder overrides provider for transcoding.
+// This should be called before WithDistributedTranscoding.
+func (s *RelayService) WithEncoderOverridesProvider(provider relay.EncoderOverridesProvider) *RelayService {
+	s.encoderOverridesProvider = provider
 	return s
 }
 
@@ -237,14 +311,18 @@ func (s *RelayService) StartRelay(ctx context.Context, channelID models.ULID, pr
 		// profile can be nil if no default is set (use passthrough)
 	}
 
-	// Extract stream source name if available
+	// Extract stream source info if available
+	var sourceID models.ULID
 	var streamSourceName string
+	var sourceMaxConcurrentStreams int
 	if channel.Source != nil {
+		sourceID = channel.Source.ID
 		streamSourceName = channel.Source.Name
+		sourceMaxConcurrentStreams = channel.Source.MaxConcurrentStreams
 	}
 
 	// Start the relay session
-	session, err := s.relayManager.GetOrCreateSession(ctx, channelID, channel.ChannelName, streamSourceName, channel.StreamURL, profile)
+	session, err := s.relayManager.GetOrCreateSession(ctx, channelID, channel.ChannelName, sourceID, streamSourceName, channel.StreamURL, sourceMaxConcurrentStreams, profile)
 	if err != nil {
 		return nil, fmt.Errorf("starting relay session: %w", err)
 	}
@@ -266,14 +344,18 @@ func (s *RelayService) StartRelayWithProfile(ctx context.Context, channelID mode
 		return nil, ErrChannelNotFound
 	}
 
-	// Extract stream source name if available
+	// Extract stream source info if available
+	var sourceID models.ULID
 	var streamSourceName string
+	var sourceMaxConcurrentStreams int
 	if channel.Source != nil {
+		sourceID = channel.Source.ID
 		streamSourceName = channel.Source.Name
+		sourceMaxConcurrentStreams = channel.Source.MaxConcurrentStreams
 	}
 
 	// Start the relay session
-	session, err := s.relayManager.GetOrCreateSession(ctx, channelID, channel.ChannelName, streamSourceName, channel.StreamURL, profile)
+	session, err := s.relayManager.GetOrCreateSession(ctx, channelID, channel.ChannelName, sourceID, streamSourceName, channel.StreamURL, sourceMaxConcurrentStreams, profile)
 	if err != nil {
 		return nil, fmt.Errorf("starting relay session: %w", err)
 	}
@@ -326,28 +408,6 @@ func (s *RelayService) HasSessionForChannel(channelID models.ULID) bool {
 // GetRelayStats returns relay manager statistics.
 func (s *RelayService) GetRelayStats() relay.ManagerStats {
 	return s.relayManager.Stats()
-}
-
-// GetPassthroughConnections returns all active passthrough connections.
-func (s *RelayService) GetPassthroughConnections() []*relay.PassthroughConnection {
-	if s.relayManager == nil {
-		return nil
-	}
-	return s.relayManager.PassthroughTracker().List()
-}
-
-// RegisterPassthroughConnection registers a new passthrough connection for tracking.
-func (s *RelayService) RegisterPassthroughConnection(conn *relay.PassthroughConnection) {
-	if s.relayManager != nil {
-		s.relayManager.PassthroughTracker().Register(conn)
-	}
-}
-
-// UnregisterPassthroughConnection removes a passthrough connection from tracking.
-func (s *RelayService) UnregisterPassthroughConnection(id string) {
-	if s.relayManager != nil {
-		s.relayManager.PassthroughTracker().Unregister(id)
-	}
 }
 
 // GetFFmpegInfo returns information about the detected FFmpeg installation.

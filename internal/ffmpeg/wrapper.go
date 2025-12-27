@@ -126,9 +126,28 @@ func (b *CommandBuilder) Progress(target string) *CommandBuilder {
 	return b
 }
 
+// GlobalArgs adds custom global arguments (placed before input args).
+func (b *CommandBuilder) GlobalArgs(args ...string) *CommandBuilder {
+	b.globalArgs = append(b.globalArgs, args...)
+	return b
+}
+
+// VaapiDevice sets the VAAPI device for hardware encoding.
+// This is the simplest approach for VAAPI software decode + hardware encode.
+// Example: VaapiDevice("/dev/dri/renderD128")
+// The resulting command will be: ffmpeg -vaapi_device /dev/dri/renderD128 ...
+func (b *CommandBuilder) VaapiDevice(device string) *CommandBuilder {
+	if device != "" {
+		b.globalArgs = append(b.globalArgs, "-vaapi_device", device)
+	}
+	return b
+}
+
 // InitHWDevice initializes a hardware device for acceleration.
 // This should be called before HWAccel for proper device setup.
-// Example: InitHWDevice("vaapi", "/dev/dri/renderD128")
+// Note: When using InitHWDevice, you should also call FilterHWDevice("hw")
+// to connect the hwupload filter to the initialized device.
+// Example: InitHWDevice("cuda", "0") followed by FilterHWDevice("hw")
 func (b *CommandBuilder) InitHWDevice(hwType string, device string) *CommandBuilder {
 	// Skip if empty, "none", or "auto" - FFmpeg doesn't understand "auto",
 	// it needs specific types like vaapi, cuda, qsv, etc.
@@ -139,6 +158,16 @@ func (b *CommandBuilder) InitHWDevice(hwType string, device string) *CommandBuil
 		b.globalArgs = append(b.globalArgs, "-init_hw_device", fmt.Sprintf("%s=hw:%s", hwType, device))
 	} else {
 		b.globalArgs = append(b.globalArgs, "-init_hw_device", fmt.Sprintf("%s=hw", hwType))
+	}
+	return b
+}
+
+// FilterHWDevice specifies the device to use for hardware filters like hwupload.
+// This is required when using InitHWDevice to connect filters to the device.
+// Example: FilterHWDevice("hw") after InitHWDevice("cuda", "0")
+func (b *CommandBuilder) FilterHWDevice(deviceName string) *CommandBuilder {
+	if deviceName != "" {
+		b.globalArgs = append(b.globalArgs, "-filter_hw_device", deviceName)
 	}
 	return b
 }
@@ -170,6 +199,7 @@ func (b *CommandBuilder) HWAccelOutputFormat(format string) *CommandBuilder {
 
 // HWUploadFilter adds the appropriate hardware upload filter for the given hwaccel type.
 // This is needed when transcoding with hardware acceleration to upload frames to GPU.
+// Note: Requires -filter_hw_device to be set via GlobalArgs to specify the target device.
 func (b *CommandBuilder) HWUploadFilter(hwType string) *CommandBuilder {
 	if hwType == "" || hwType == "none" || hwType == "auto" {
 		return b

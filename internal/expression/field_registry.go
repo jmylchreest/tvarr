@@ -479,4 +479,86 @@ func registerRequestContextFields(r *FieldRegistry) {
 		Domains:     []FieldDomain{DomainRequest},
 		ReadOnly:    true,
 	})
+
+	// Dynamic header input fields (extracted via @dynamic())
+	r.Register(&FieldDefinition{
+		Name:        "x_video_codec",
+		Type:        FieldTypeString,
+		Description: "The X-Video-Codec header value (via @dynamic())",
+		Domains:     []FieldDomain{DomainRequest},
+		ReadOnly:    true,
+	})
+
+	r.Register(&FieldDefinition{
+		Name:        "x_audio_codec",
+		Type:        FieldTypeString,
+		Description: "The X-Audio-Codec header value (via @dynamic())",
+		Domains:     []FieldDomain{DomainRequest},
+		ReadOnly:    true,
+	})
+
+	r.Register(&FieldDefinition{
+		Name:        "x_container",
+		Type:        FieldTypeString,
+		Description: "The X-Container header value (via @dynamic())",
+		Domains:     []FieldDomain{DomainRequest},
+		ReadOnly:    true,
+	})
+
+	// Client capabilities output fields (settable via SET clause)
+	r.Register(&FieldDefinition{
+		Name:        "accepted_video_codecs",
+		Type:        FieldTypeString,
+		Description: "List of video codecs the client accepts (JSON array)",
+		Domains:     []FieldDomain{DomainRequest},
+		ReadOnly:    false,
+	})
+
+	r.Register(&FieldDefinition{
+		Name:        "accepted_audio_codecs",
+		Type:        FieldTypeString,
+		Description: "List of audio codecs the client accepts (JSON array)",
+		Domains:     []FieldDomain{DomainRequest},
+		ReadOnly:    false,
+	})
+
+	r.Register(&FieldDefinition{
+		Name:        "preferred_video_codec",
+		Type:        FieldTypeString,
+		Description: "Client's preferred video codec",
+		Domains:     []FieldDomain{DomainRequest},
+		ReadOnly:    false,
+	})
+
+	r.Register(&FieldDefinition{
+		Name:        "preferred_audio_codec",
+		Type:        FieldTypeString,
+		Description: "Client's preferred audio codec",
+		Domains:     []FieldDomain{DomainRequest},
+		ReadOnly:    false,
+	})
+
+	r.Register(&FieldDefinition{
+		Name:        "preferred_format",
+		Type:        FieldTypeString,
+		Description: "Client's preferred container format (hls, hls-fmp4, dash, mpegts)",
+		Domains:     []FieldDomain{DomainRequest},
+		ReadOnly:    false,
+	})
+
+	r.Register(&FieldDefinition{
+		Name:        "supports_fmp4",
+		Type:        FieldTypeBoolean,
+		Description: "Whether the client supports fMP4 segments",
+		Domains:     []FieldDomain{DomainRequest},
+		ReadOnly:    false,
+	})
+
+	r.Register(&FieldDefinition{
+		Name:        "supports_mpegts",
+		Type:        FieldTypeBoolean,
+		Description: "Whether the client supports MPEG-TS",
+		Domains:     []FieldDomain{DomainRequest},
+		ReadOnly:    false,
+	})
 }

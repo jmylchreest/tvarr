@@ -327,10 +327,9 @@ type StreamProxyResponse struct {
 	UpstreamTimeout        int                      `json:"upstream_timeout,omitempty"`
 	BufferSize             int                      `json:"buffer_size,omitempty"`
 	MaxConcurrentStreams   int                      `json:"max_concurrent_streams,omitempty"`
-	CacheChannelLogos      bool                     `json:"cache_channel_logos"`
-	CacheProgramLogos      bool                     `json:"cache_program_logos"`
-	ClientDetectionEnabled bool                     `json:"client_detection_enabled"`
-	EncodingProfileID      *models.ULID             `json:"encoding_profile_id,omitempty"`
+	CacheChannelLogos bool                     `json:"cache_channel_logos"`
+	CacheProgramLogos bool                     `json:"cache_program_logos"`
+	EncodingProfileID *models.ULID             `json:"encoding_profile_id,omitempty"`
 	Status                 models.StreamProxyStatus `json:"status"`
 	LastGeneratedAt        *time.Time               `json:"last_generated_at,omitempty"`
 	LastError              string                   `json:"last_error,omitempty"`
@@ -357,10 +356,9 @@ func StreamProxyFromModel(p *models.StreamProxy, baseURL string) StreamProxyResp
 		UpstreamTimeout:        p.UpstreamTimeout,
 		BufferSize:             p.BufferSize,
 		MaxConcurrentStreams:   p.MaxConcurrentStreams,
-		CacheChannelLogos:      p.CacheChannelLogos,
-		CacheProgramLogos:      p.CacheProgramLogos,
-		ClientDetectionEnabled: models.BoolVal(p.ClientDetectionEnabled),
-		EncodingProfileID:      p.EncodingProfileID,
+		CacheChannelLogos: p.CacheChannelLogos,
+		CacheProgramLogos: p.CacheProgramLogos,
+		EncodingProfileID: p.EncodingProfileID,
 		Status:                 p.Status,
 		LastGeneratedAt:        p.LastGeneratedAt,
 		LastError:              p.LastError,
@@ -487,10 +485,9 @@ type CreateStreamProxyRequest struct {
 	UpstreamTimeout        *int                   `json:"upstream_timeout,omitempty" doc:"Timeout in seconds for upstream connections"`
 	BufferSize             *int                   `json:"buffer_size,omitempty" doc:"Buffer size in bytes for proxy mode"`
 	MaxConcurrentStreams   *int                   `json:"max_concurrent_streams,omitempty" doc:"Max concurrent streams (0 = unlimited)"`
-	CacheChannelLogos      *bool                  `json:"cache_channel_logos,omitempty" doc:"Cache channel logos locally"`
-	CacheProgramLogos      *bool                  `json:"cache_program_logos,omitempty" doc:"Cache EPG program logos locally"`
-	ClientDetectionEnabled *bool                  `json:"client_detection_enabled,omitempty" doc:"Enable automatic client capability detection (default: true)"`
-	EncodingProfileID      *models.ULID           `json:"encoding_profile_id,omitempty" doc:"Default encoding profile when client detection doesn't match or is disabled"`
+	CacheChannelLogos *bool        `json:"cache_channel_logos,omitempty" doc:"Cache channel logos locally"`
+	CacheProgramLogos *bool        `json:"cache_program_logos,omitempty" doc:"Cache EPG program logos locally"`
+	EncodingProfileID *models.ULID `json:"encoding_profile_id,omitempty" doc:"Fallback encoding profile when no client detection rule matches"`
 	OutputPath             string                        `json:"output_path,omitempty" doc:"Path for generated files" maxLength:"512"`
 	SourceIDs              []models.ULID                 `json:"source_ids,omitempty" doc:"Stream source IDs to include"`
 	EpgSourceIDs           []models.ULID                 `json:"epg_source_ids,omitempty" doc:"EPG source IDs to include"`
@@ -512,10 +509,9 @@ func (r *CreateStreamProxyRequest) ToModel() *models.StreamProxy {
 		UpstreamTimeout:        30,
 		BufferSize:             8192,
 		MaxConcurrentStreams:   0,
-		CacheChannelLogos:      true,
-		CacheProgramLogos:      true,
-		ClientDetectionEnabled: models.BoolPtr(true), // Default to enabled
-		OutputPath:             r.OutputPath,
+		CacheChannelLogos: true,
+		CacheProgramLogos: true,
+		OutputPath:        r.OutputPath,
 	}
 	if r.ProxyMode != "" && models.IsValidProxyMode(r.ProxyMode) {
 		proxy.ProxyMode = r.ProxyMode
@@ -550,9 +546,6 @@ func (r *CreateStreamProxyRequest) ToModel() *models.StreamProxy {
 	if r.CacheProgramLogos != nil {
 		proxy.CacheProgramLogos = *r.CacheProgramLogos
 	}
-	if r.ClientDetectionEnabled != nil {
-		proxy.ClientDetectionEnabled = r.ClientDetectionEnabled
-	}
 	if r.EncodingProfileID != nil {
 		proxy.EncodingProfileID = r.EncodingProfileID
 	}
@@ -572,10 +565,9 @@ type UpdateStreamProxyRequest struct {
 	UpstreamTimeout        *int                    `json:"upstream_timeout,omitempty" doc:"Timeout in seconds for upstream connections"`
 	BufferSize             *int                    `json:"buffer_size,omitempty" doc:"Buffer size in bytes for proxy mode"`
 	MaxConcurrentStreams   *int                    `json:"max_concurrent_streams,omitempty" doc:"Max concurrent streams (0 = unlimited)"`
-	CacheChannelLogos      *bool                   `json:"cache_channel_logos,omitempty" doc:"Cache channel logos locally"`
-	CacheProgramLogos      *bool                   `json:"cache_program_logos,omitempty" doc:"Cache EPG program logos locally"`
-	ClientDetectionEnabled *bool                   `json:"client_detection_enabled,omitempty" doc:"Enable automatic client capability detection"`
-	EncodingProfileID      *models.ULID            `json:"encoding_profile_id,omitempty" doc:"Default encoding profile when client detection doesn't match or is disabled"`
+	CacheChannelLogos *bool        `json:"cache_channel_logos,omitempty" doc:"Cache channel logos locally"`
+	CacheProgramLogos *bool        `json:"cache_program_logos,omitempty" doc:"Cache EPG program logos locally"`
+	EncodingProfileID *models.ULID `json:"encoding_profile_id,omitempty" doc:"Fallback encoding profile when no client detection rule matches"`
 	OutputPath             *string                        `json:"output_path,omitempty" doc:"Path for generated files" maxLength:"512"`
 	SourceIDs              []models.ULID                  `json:"source_ids,omitempty" doc:"Stream source IDs to include"`
 	EpgSourceIDs           []models.ULID                  `json:"epg_source_ids,omitempty" doc:"EPG source IDs to include"`
@@ -623,9 +615,6 @@ func (r *UpdateStreamProxyRequest) ApplyToModel(p *models.StreamProxy) {
 	}
 	if r.CacheProgramLogos != nil {
 		p.CacheProgramLogos = *r.CacheProgramLogos
-	}
-	if r.ClientDetectionEnabled != nil {
-		p.ClientDetectionEnabled = r.ClientDetectionEnabled
 	}
 	if r.EncodingProfileID != nil {
 		p.EncodingProfileID = r.EncodingProfileID

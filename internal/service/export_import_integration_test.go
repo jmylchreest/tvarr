@@ -399,7 +399,6 @@ func TestExportImportRoundTrip_PreservesAllFields(t *testing.T) {
 	ctx := context.Background()
 
 	// Create filter with all fields populated
-	enabled := true
 	sourceID := models.NewULID()
 	filter := &models.Filter{
 		BaseModel:   models.BaseModel{ID: models.NewULID()},
@@ -408,7 +407,6 @@ func TestExportImportRoundTrip_PreservesAllFields(t *testing.T) {
 		Expression:  "complex.expression > 100",
 		SourceType:  models.FilterSourceTypeStream,
 		Action:      models.FilterActionExclude,
-		IsEnabled:   &enabled,
 		IsSystem:    false,
 		SourceID:    &sourceID,
 	}
@@ -426,7 +424,6 @@ func TestExportImportRoundTrip_PreservesAllFields(t *testing.T) {
 	assert.Equal(t, "complex.expression > 100", item.Expression)
 	assert.Equal(t, string(models.FilterSourceTypeStream), item.SourceType)
 	assert.Equal(t, string(models.FilterActionExclude), item.Action)
-	assert.True(t, item.IsEnabled)
 	assert.NotNil(t, item.SourceID)
 	assert.Equal(t, sourceID.String(), *item.SourceID)
 
@@ -456,7 +453,6 @@ func TestExportImportRoundTrip_PreservesAllFields(t *testing.T) {
 	assert.Equal(t, "complex.expression > 100", imported.Expression)
 	assert.Equal(t, models.FilterSourceTypeStream, imported.SourceType)
 	assert.Equal(t, models.FilterActionExclude, imported.Action)
-	assert.True(t, models.BoolVal(imported.IsEnabled))
 	assert.False(t, imported.IsSystem) // Always false on import
 	assert.NotNil(t, imported.SourceID)
 	assert.Equal(t, sourceID.String(), imported.SourceID.String())

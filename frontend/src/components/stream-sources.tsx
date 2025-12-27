@@ -1252,6 +1252,7 @@ export function StreamSources() {
                 isLoading={loading.sources}
                 title={`Stream Sources (${sortedSources.length})`}
                 searchPlaceholder="Search by name, type, status..."
+                storageKey="stream-sources"
                 headerAction={
                   <Button
                     size="sm"

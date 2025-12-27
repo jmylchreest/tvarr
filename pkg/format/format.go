@@ -442,7 +442,6 @@ func RelativeTimeShort(t time.Time) string {
 	diff := now.Sub(t)
 
 	if diff < 0 {
-		diff = -diff
 		return "soon"
 	}
 

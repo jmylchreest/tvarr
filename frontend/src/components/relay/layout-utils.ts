@@ -1,328 +1,212 @@
 /**
- * Layout utilities for ReactFlow relay pipeline visualization.
+ * Layout utilities for ReactFlow relay pipeline visualization using dagre.
  *
- * This module handles automatic node positioning based on node types and relationships.
- * Layout is calculated entirely on the frontend using MEASURED node dimensions from React Flow.
+ * This module uses the dagre library for automatic graph layout, which handles
+ * node positioning based on the graph structure and edges.
  *
- * Layout Structure:
- * - Column 0: Origin (source stream)
- * - Column 1: Buffer (shared ES buffer)
- * - Column 1: Transcoder (positioned ABOVE buffer, same X)
- * - Column 2: Processor (output format processors)
- * - Column 3: Client (connected clients)
- *
- * The layout uses actual measured node dimensions when available, falling back to
- * estimates only for unmeasured nodes.
+ * Layout Structure (left to right):
+ * - Origin (source stream)
+ * - Buffer (shared ES buffer) + Transcoder (above buffer)
+ * - Processor (output format processors)
+ * - Client (connected clients)
  */
 
+import Dagre from '@dagrejs/dagre';
 import type { Edge } from '@xyflow/react';
 
 // Generic node type that works with our flow data
-// This is compatible with React Flow's Node type
 interface FlowNode {
   id: string;
   type?: string;
   position: { x: number; y: number };
-  data: Record<string, unknown>; // Required to match React Flow's Node type
+  data: Record<string, unknown>;
   parentId?: string;
-  // React Flow adds these after measurement (dimensions may be undefined)
   measured?: { width?: number; height?: number };
   width?: number;
   height?: number;
 }
 
-// Layout configuration
-interface LayoutConfig {
-  /** Minimum horizontal gap between node edges */
-  columnGap: number;
-  /** Minimum vertical gap between node edges */
-  rowGap: number;
-  /** Vertical gap between client nodes (smaller for compact layout) */
-  clientGap: number;
-  /** Additional vertical gap above buffer for transcoder */
-  transcoderGap: number;
-  /** Starting X position */
-  startX: number;
-  /** Starting Y position (must leave room for transcoder above) */
-  startY: number;
-  /** Fallback widths when nodes aren't measured yet */
-  fallbackWidths: Record<string, number>;
-  /** Fallback heights when nodes aren't measured yet */
-  fallbackHeights: Record<string, number>;
-}
+// Fallback dimensions for unmeasured nodes
+const FALLBACK_DIMENSIONS: Record<string, { width: number; height: number }> = {
+  origin: { width: 256, height: 220 },
+  buffer: { width: 288, height: 200 },
+  transcoder: { width: 224, height: 240 },
+  processor: { width: 256, height: 140 },
+  client: { width: 192, height: 160 },
+};
 
-const DEFAULT_CONFIG: LayoutConfig = {
-  columnGap: 80, // Horizontal gap between node edges
-  rowGap: 40, // Vertical gap between node edges
-  clientGap: 25, // Gap between clients (smaller than rowGap but enough to prevent overlap)
-  transcoderGap: 60, // Gap between transcoder bottom and buffer top
-  startX: 50,
-  startY: 350, // Leave room for transcoder above
-  fallbackWidths: {
-    origin: 256,
-    buffer: 288,
-    transcoder: 224,
-    processor: 256,
-    client: 192,
-  },
-  fallbackHeights: {
-    origin: 220,
-    buffer: 200,
-    transcoder: 240,
-    processor: 140,
-    client: 120, // Client node fallback height
-  },
+// Layout configuration
+const LAYOUT_CONFIG = {
+  nodesep: 80, // Vertical spacing between nodes (increased from 50)
+  ranksep: 120, // Horizontal spacing between columns (increased from 100)
+  marginx: 50,
+  marginy: 50,
+  transcoderGap: 40, // Gap between transcoders
+  transcoderBufferGap: 100, // Gap between transcoders and buffer
 };
 
 /**
  * Gets the width of a node, preferring measured dimensions.
  */
-function getNodeWidth(node: FlowNode, config: LayoutConfig): number {
-  // React Flow v12+ uses node.measured.width
+function getNodeWidth(node: FlowNode): number {
   if (node.measured?.width) return node.measured.width;
-  // Older versions or direct setting
   if (node.width) return node.width;
-  // Fallback to estimates
-  return config.fallbackWidths[node.type || 'origin'] || 200;
+  return FALLBACK_DIMENSIONS[node.type || 'origin']?.width || 200;
 }
 
 /**
  * Gets the height of a node, preferring measured dimensions.
  */
-function getNodeHeight(node: FlowNode, config: LayoutConfig): number {
-  // React Flow v12+ uses node.measured.height
+function getNodeHeight(node: FlowNode): number {
   if (node.measured?.height) return node.measured.height;
-  // Older versions or direct setting
   if (node.height) return node.height;
-  // Fallback to estimates
-  return config.fallbackHeights[node.type || 'origin'] || 150;
+  return FALLBACK_DIMENSIONS[node.type || 'origin']?.height || 150;
 }
 
 /**
- * Groups nodes by their session ID to handle multi-session layouts.
+ * Assigns a rank (column) to each node type for left-to-right layout.
  */
-function groupNodesBySession(nodes: FlowNode[]): Map<string, FlowNode[]> {
-  const sessions = new Map<string, FlowNode[]>();
-
-  for (const node of nodes) {
-    const data = node.data as Record<string, unknown> | undefined;
-    const sessionId = (data?.sessionId as string) || (data?.SessionID as string) || 'default';
-    if (!sessions.has(sessionId)) {
-      sessions.set(sessionId, []);
-    }
-    sessions.get(sessionId)!.push(node);
+function getNodeRank(node: FlowNode): number {
+  switch (node.type) {
+    case 'origin':
+      return 0;
+    case 'transcoder':
+      return 1;
+    case 'buffer':
+      return 1;
+    case 'processor':
+      return 2;
+    case 'client':
+      return 3;
+    default:
+      return 0;
   }
-
-  return sessions;
 }
 
 /**
- * Groups nodes by their type within a session.
+ * Calculates layout using dagre for automatic node positioning.
+ * After dagre layout, transcoder nodes are repositioned above their buffer.
+ * The layout is then shifted to ensure transcoders don't overlap with other nodes.
  */
-function groupNodesByType(nodes: FlowNode[]): Map<string, FlowNode[]> {
-  const groups = new Map<string, FlowNode[]>();
-
-  for (const node of nodes) {
-    const type = node.type || 'unknown';
-    if (!groups.has(type)) {
-      groups.set(type, []);
-    }
-    groups.get(type)!.push(node);
-  }
-
-  return groups;
-}
-
-/**
- * Finds which processor a client is connected to based on edges.
- */
-function getClientProcessorMap(nodes: FlowNode[], edges: Edge[]): Map<string, string> {
-  const clientToProcessor = new Map<string, string>();
-
-  for (const edge of edges) {
-    const sourceNode = nodes.find((n) => n.id === edge.source);
-    const targetNode = nodes.find((n) => n.id === edge.target);
-
-    if (sourceNode?.type === 'processor' && targetNode?.type === 'client') {
-      clientToProcessor.set(edge.target, edge.source);
-    }
-  }
-
-  return clientToProcessor;
-}
-
-/**
- * Calculates optimal layout for relay flow nodes using measured dimensions.
- *
- * Layout strategy:
- * 1. Group nodes by session
- * 2. Sessions stack vertically
- * 3. Within each session: Origin, Buffer, Processors, Clients are TOP-ALIGNED
- * 4. Transcoder positioned above buffer with guaranteed gap
- * 5. Node spacing uses actual measured heights + gap to prevent overlap
- */
-export function calculateLayout<T extends FlowNode>(
-  nodes: T[],
-  edges: Edge[],
-  config: Partial<LayoutConfig> = {}
-): T[] {
-  const cfg = { ...DEFAULT_CONFIG, ...config };
-
+export function calculateLayout<T extends FlowNode>(nodes: T[], edges: Edge[]): T[] {
   if (nodes.length === 0) return [];
 
-  // Map of client ID to processor ID
-  const clientToProcessor = getClientProcessorMap(nodes as FlowNode[], edges);
+  // Separate transcoder nodes - we'll position them manually after dagre
+  const transcoderNodes = nodes.filter((n) => n.type === 'transcoder');
+  const nonTranscoderNodes = nodes.filter((n) => n.type !== 'transcoder');
 
-  // Group by session
-  const sessions = groupNodesBySession(nodes as FlowNode[]);
-  const layoutedNodes: T[] = [];
+  // Calculate transcoder space needed upfront
+  let transcoderSpaceNeeded = 0;
+  if (transcoderNodes.length > 0) {
+    const maxTranscoderHeight = Math.max(
+      ...transcoderNodes.map((t) => getNodeHeight(t))
+    );
+    transcoderSpaceNeeded = maxTranscoderHeight + LAYOUT_CONFIG.transcoderBufferGap;
+  }
 
-  let sessionYOffset = cfg.startY;
+  // Create a new dagre graph
+  const g = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
 
-  for (const [_sessionId, sessionNodes] of sessions) {
-    // Group nodes by type within this session
-    const typeGroups = groupNodesByType(sessionNodes);
+  // Configure the graph for left-to-right layout
+  // Add extra top margin to account for transcoders
+  g.setGraph({
+    rankdir: 'LR', // Left to right
+    nodesep: LAYOUT_CONFIG.nodesep,
+    ranksep: LAYOUT_CONFIG.ranksep,
+    marginx: LAYOUT_CONFIG.marginx,
+    marginy: LAYOUT_CONFIG.marginy + transcoderSpaceNeeded,
+  });
 
-    // Get nodes by column
-    const originNodes = (typeGroups.get('origin') || []) as T[];
-    const bufferNodes = (typeGroups.get('buffer') || []) as T[];
-    const transcoderNodes = (typeGroups.get('transcoder') || []) as T[];
-    const processorNodes = (typeGroups.get('processor') || []) as T[];
-    const clientNodes = (typeGroups.get('client') || []) as T[];
+  // Add non-transcoder nodes to the graph
+  for (const node of nonTranscoderNodes) {
+    const width = getNodeWidth(node);
+    const height = getNodeHeight(node);
 
-    // Group clients by their processor (only clients that have a known processor connection)
-    const clientsByProcessor = new Map<string, T[]>();
-    for (const client of clientNodes) {
-      const processorId = clientToProcessor.get(client.id);
-      if (processorId) {
-        if (!clientsByProcessor.has(processorId)) {
-          clientsByProcessor.set(processorId, []);
-        }
-        clientsByProcessor.get(processorId)!.push(client);
-      }
-    }
-
-    // Calculate column X positions based on actual node widths
-    // Each column starts where the previous one ends + gap
-    const originWidth = originNodes.length > 0 ? Math.max(...originNodes.map((n) => getNodeWidth(n, cfg))) : 0;
-    const bufferWidth = bufferNodes.length > 0 ? Math.max(...bufferNodes.map((n) => getNodeWidth(n, cfg))) : 0;
-    const processorWidth =
-      processorNodes.length > 0 ? Math.max(...processorNodes.map((n) => getNodeWidth(n, cfg))) : 0;
-
-    const originX = cfg.startX;
-    const bufferX = originX + originWidth + cfg.columnGap;
-    const processorX = bufferX + bufferWidth + cfg.columnGap;
-    const clientX = processorX + processorWidth + cfg.columnGap;
-
-    // The main row Y is where the top of origin/buffer/first-processor align
-    const mainRowY = sessionYOffset;
-
-    // Position origin nodes - stack vertically with measured heights
-    let originY = mainRowY;
-    for (const node of originNodes) {
-      layoutedNodes.push({
-        ...node,
-        position: { x: originX, y: originY },
-      });
-      originY += getNodeHeight(node, cfg) + cfg.rowGap;
-    }
-
-    // Position buffer nodes - stack vertically with measured heights
-    let bufferY = mainRowY;
-    for (const node of bufferNodes) {
-      layoutedNodes.push({
-        ...node,
-        position: { x: bufferX, y: bufferY },
-      });
-      bufferY += getNodeHeight(node, cfg) + cfg.rowGap;
-    }
-
-    // Position transcoder nodes ABOVE buffer
-    // Calculate position so transcoder bottom is transcoderGap above buffer top
-    if (transcoderNodes.length > 0) {
-      const transcoderWidth = getNodeWidth(transcoderNodes[0], cfg);
-      const transcoderX = bufferX + (bufferWidth - transcoderWidth) / 2;
-
-      let transcoderY = mainRowY;
-      for (let i = transcoderNodes.length - 1; i >= 0; i--) {
-        const node = transcoderNodes[i];
-        const height = getNodeHeight(node, cfg);
-        // Position above the main row
-        transcoderY -= height + cfg.transcoderGap;
-        layoutedNodes.push({
-          ...node,
-          position: { x: transcoderX, y: transcoderY },
-        });
-      }
-    }
-
-    // Position processor nodes - stack vertically with measured heights
-    // Track Y position for each processor so clients can align with them
-    const processorPositions: Map<string, { x: number; y: number; height: number }> = new Map();
-    let processorY = mainRowY;
-
-    for (const node of processorNodes) {
-      const height = getNodeHeight(node, cfg);
-      processorPositions.set(node.id, { x: processorX, y: processorY, height });
-      layoutedNodes.push({
-        ...node,
-        position: { x: processorX, y: processorY },
-      });
-      processorY += height + cfg.rowGap;
-    }
-
-    // Position client nodes - stack all clients compactly from mainRowY
-    // This prevents clients from spreading out vertically when there are multiple processors
-    let clientY = mainRowY;
-
-    // Collect all clients in order (by processor, then unconnected)
-    const allClients: T[] = [];
-    for (const [, clients] of clientsByProcessor) {
-      allClients.push(...clients);
-    }
-    // Add unconnected clients
-    const unconnectedClients = clientNodes.filter((c) => !clientToProcessor.has(c.id));
-    allClients.push(...unconnectedClients);
-
-    // Debug: log client positioning
-    console.log('[Layout] Client debug:', {
-      mainRowY,
-      clientX,
-      clientNodesCount: clientNodes.length,
-      clientsByProcessorSize: clientsByProcessor.size,
-      allClientsCount: allClients.length,
-      clientIds: allClients.map((c) => c.id),
-      unconnectedClientsCount: unconnectedClients.length,
+    g.setNode(node.id, {
+      width,
+      height,
     });
+  }
 
-    // Position all clients compactly with smaller gap
-    const clientPositions: Array<{ id: string; y: number }> = [];
-    for (const node of allClients) {
-      const height = getNodeHeight(node, cfg);
-      clientPositions.push({ id: node.id, y: clientY });
+  // Add edges (excluding transcoder edges for now)
+  for (const edge of edges) {
+    const isTranscoderEdge =
+      transcoderNodes.some((t) => t.id === edge.source || t.id === edge.target);
+
+    if (!isTranscoderEdge && g.hasNode(edge.source) && g.hasNode(edge.target)) {
+      g.setEdge(edge.source, edge.target);
+    }
+  }
+
+  // Run the dagre layout algorithm
+  Dagre.layout(g);
+
+  // Apply the calculated positions back to non-transcoder nodes
+  const layoutedNodes: T[] = nonTranscoderNodes.map((node) => {
+    const nodeWithPosition = g.node(node.id);
+
+    // Dagre returns center position, convert to top-left for React Flow
+    const width = getNodeWidth(node);
+    const height = getNodeHeight(node);
+
+    return {
+      ...node,
+      position: {
+        x: nodeWithPosition.x - width / 2,
+        y: nodeWithPosition.y - height / 2,
+      },
+    };
+  });
+
+  // Now position transcoder nodes above the buffer node
+  // Find buffer node(s) to align transcoders with
+  const bufferNode = layoutedNodes.find((n) => n.type === 'buffer');
+
+  if (bufferNode && transcoderNodes.length > 0) {
+    const bufferWidth = getNodeWidth(bufferNode);
+    const bufferX = bufferNode.position.x;
+    const bufferY = bufferNode.position.y;
+
+    // Get dimensions for all transcoders
+    const transcoderDimensions = transcoderNodes.map((t) => ({
+      node: t,
+      width: getNodeWidth(t),
+      height: getNodeHeight(t),
+    }));
+
+    const totalTranscoderWidth = transcoderDimensions.reduce(
+      (sum, t) => sum + t.width,
+      0
+    ) + (transcoderNodes.length - 1) * LAYOUT_CONFIG.transcoderGap;
+
+    // Find the tallest transcoder for positioning
+    const maxTranscoderHeight = Math.max(...transcoderDimensions.map((t) => t.height));
+
+    // Center the transcoders horizontally above the buffer
+    const bufferCenterX = bufferX + bufferWidth / 2;
+    let currentX = bufferCenterX - totalTranscoderWidth / 2;
+    const transcoderY = bufferY - maxTranscoderHeight - LAYOUT_CONFIG.transcoderBufferGap;
+
+    // Position each transcoder side by side
+    for (const { node, width, height } of transcoderDimensions) {
       layoutedNodes.push({
         ...node,
-        position: { x: clientX, y: clientY },
+        position: {
+          x: currentX,
+          // Align bottoms of transcoders (so they're level with each other)
+          y: transcoderY + (maxTranscoderHeight - height),
+        },
       });
-      clientY += height + cfg.clientGap;
+      currentX += width + LAYOUT_CONFIG.transcoderGap;
     }
-    if (clientPositions.length > 0) {
-      console.log('[Layout] Final client Y positions:', clientPositions);
+  } else {
+    // No buffer node, just add transcoders with default position
+    for (const transcoder of transcoderNodes) {
+      layoutedNodes.push({
+        ...transcoder,
+        position: { x: 200, y: 50 },
+      });
     }
-
-    // Calculate session height for next session offset
-    // Find the maximum Y extent of all nodes in this session
-    const sessionNodeIds = new Set(sessionNodes.map((n) => n.id));
-    let maxY = mainRowY;
-    for (const node of layoutedNodes) {
-      if (sessionNodeIds.has(node.id)) {
-        const bottom = node.position.y + getNodeHeight(node as FlowNode, cfg);
-        maxY = Math.max(maxY, bottom);
-      }
-    }
-
-    // Next session starts below this one with extra padding
-    sessionYOffset = maxY + cfg.rowGap * 2;
   }
 
   return layoutedNodes;
@@ -350,8 +234,8 @@ export function getNodesBounds(nodes: FlowNode[]): {
 
   for (const node of nodes) {
     const { x, y } = node.position;
-    const width = getNodeWidth(node, DEFAULT_CONFIG);
-    const height = getNodeHeight(node, DEFAULT_CONFIG);
+    const width = getNodeWidth(node);
+    const height = getNodeHeight(node);
 
     minX = Math.min(minX, x);
     minY = Math.min(minY, y);

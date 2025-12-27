@@ -62,7 +62,7 @@ func createMediaPlayerClientDetectionRules(tx *gorm.DB) error {
 		{
 			Name:        "MPV",
 			Description: "MPV media player. Supports h264/h265/av1/vp9 video and aac/ac3/eac3/opus/mp3 audio.",
-			Expression:  `@dynamic(request.headers):user-agent contains "mpv" OR @dynamic(request.headers):user-agent contains "libmpv"`,
+			Expression:  `@dynamic(request.headers):user-agent contains "mpv"`,
 			Priority:    220,
 			IsEnabled:   models.BoolPtr(true),
 			IsSystem:    true,

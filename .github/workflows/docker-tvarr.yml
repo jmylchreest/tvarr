@@ -8,8 +8,12 @@ on:
       - 'v[0-9]+.[0-9]+.[0-9]+'  # Only release tags (v1.2.3), not dev tags (v1.2.3-dev.N)
     paths-ignore:
       - 'deployment/docker/Dockerfile.ffmpeg'
+      - 'deployment/docker/Dockerfile.ffmpegd'
+      - 'deployment/docker/Dockerfile.coordinator'
       - 'deployment/docker/pkgbuild/**'
       - '.github/workflows/docker-ffmpeg.yml'
+      - '.github/workflows/docker-transcoder.yml'
+      - '.github/workflows/docker-coordinator.yml'
       - '.github/workflows/docker-tvarr.yml'
       - '.github/workflows/dependency-updates.yml'
       - '**.md'
@@ -18,8 +22,12 @@ on:
   pull_request:
     paths-ignore:
       - 'deployment/docker/Dockerfile.ffmpeg'
+      - 'deployment/docker/Dockerfile.ffmpegd'
+      - 'deployment/docker/Dockerfile.coordinator'
       - 'deployment/docker/pkgbuild/**'
       - '.github/workflows/docker-ffmpeg.yml'
+      - '.github/workflows/docker-transcoder.yml'
+      - '.github/workflows/docker-coordinator.yml'
       - '.github/workflows/docker-tvarr.yml'
       - '.github/workflows/dependency-updates.yml'
       - '**.md'

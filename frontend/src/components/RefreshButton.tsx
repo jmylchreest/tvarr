@@ -63,7 +63,7 @@ export function RefreshButton({
     icon: hasError ? AlertCircle : isCompleted ? CheckCircle : RefreshCw,
     className: cn(
       hasError && 'text-destructive hover:text-destructive',
-      isCompleted && 'text-green-600 hover:text-green-700',
+      isCompleted && 'text-success',
       // Ensure no background / rotation effect on container
       'p-0 h-8 w-8 rounded-full bg-transparent hover:bg-transparent',
       className
@@ -90,9 +90,9 @@ export function RefreshButton({
             <span
               className={cn(
                 'font-medium',
-                event.state === 'completed' && 'text-green-600',
+                event.state === 'completed' && 'text-success',
                 event.state === 'error' && 'text-destructive',
-                event.state === 'processing' && 'text-blue-600'
+                event.state === 'processing' && 'text-info'
               )}
             >
               {event.state.charAt(0).toUpperCase() + event.state.slice(1)}

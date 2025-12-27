@@ -116,6 +116,25 @@ tasks:
     generates:
       - "{{.DEBUG_DIR}}/{{.BINARY_NAME}}"
 
+  build:ffmpegd:
+    desc: Build the tvarr-ffmpegd daemon binary (debug, uncompressed)
+    preconditions:
+      - sh: command -v go
+        msg: |
+          Go not found. Install Go 1.23+ via:
+            https://go.dev/dl/
+            brew install go (macOS)
+            sudo apt install golang-go (Debian/Ubuntu)
+    cmds:
+      - mkdir -p {{.DEBUG_DIR}}
+      - go build -ldflags "{{.LDFLAGS}}" -o {{.DEBUG_DIR}}/tvarr-ffmpegd ./cmd/tvarr-ffmpegd
+    sources:
+      - ./**/*.go
+      - go.mod
+      - go.sum
+    generates:
+      - "{{.DEBUG_DIR}}/tvarr-ffmpegd"
+
   build:linux:amd64:
     desc: Cross-compile for Linux amd64
     env:
@@ -191,9 +210,9 @@ tasks:
   # ============================================
 
   container:build:
-    desc: Build all container images (FFmpeg base + tvarr app)
+    desc: Build all container images (FFmpeg base + tvarr + ffmpegd + coordinator)
     summary: |
-      Builds both the FFmpeg base image and the tvarr application image.
+      Builds all container images: FFmpeg base, tvarr (full), ffmpegd daemon, and coordinator (slim).
       Auto-detects container runtime ({{.CONTAINER_RUNTIME}}) and platform ({{.LOCAL_ARCH}}).
 
       Options:
@@ -201,36 +220,44 @@ tasks:
         - TAG: Image tag (default: latest)
 
       For individual builds, use:
-        - task container:build:ffmpeg  (FFmpeg base image)
-        - task container:build:tvarr   (tvarr app image)
+        - task container:build:ffmpeg      (FFmpeg base image)
+        - task container:build:tvarr       (full tvarr with local FFmpeg)
+        - task container:build:ffmpegd     (distributed transcoding daemon)
+        - task container:build:coordinator (slim coordinator without FFmpeg)
     cmds:
       - task: container:build:ffmpeg
       - task: container:build:tvarr
+      - task: container:build:ffmpegd
+      - task: container:build:coordinator
 
   container:build:tvarr:
-    desc: Build tvarr application container image
+    desc: Build tvarr application container image (with FFmpeg)
     summary: |
-      Builds the tvarr container image using the local Dockerfile.
-      Requires the FFmpeg base image to exist (or will pull from GHCR).
+      Builds the full tvarr container image based on tvarr-ffmpeg.
+      Includes FFmpeg with hardware acceleration for local transcoding.
       Auto-detects container runtime ({{.CONTAINER_RUNTIME}}) and platform ({{.LOCAL_ARCH}}).
 
       Options:
         - PLATFORM: Target platform (default: auto-detected {{.LOCAL_ARCH}})
         - TAG: Image tag (default: latest)
         - FFMPEG_IMAGE: FFmpeg base image (default: ghcr.io/jmylchreest/tvarr-ffmpeg:latest)
+        - LOCAL: Use local images only, don't pull from registry (default: false)
 
-      Note: If you've built the FFmpeg image locally with container:build:ffmpeg,
-      it will be used automatically (Docker/Podman uses local images when available).
       Local builds also create a version-tagged image ({{.VERSION}}).
+
+      For a slim coordinator-only image (no local FFmpeg), use:
+        task container:build:coordinator
     vars:
       TAG: '{{.TAG | default "latest"}}'
       PLATFORM: '{{.PLATFORM | default .LOCAL_ARCH}}'
       FFMPEG_IMAGE: '{{.FFMPEG_IMAGE | default "ghcr.io/jmylchreest/tvarr-ffmpeg:latest"}}'
+      LOCAL: '{{.LOCAL | default "false"}}'
     cmds:
       - |
         {{.CONTAINER_RUNTIME}} build \
           -f deployment/docker/Dockerfile \
           --platform {{.PLATFORM}} \
+          $([ "{{.LOCAL}}" = "true" ] && echo "--pull=never") \
           --build-arg FFMPEG_IMAGE={{.FFMPEG_IMAGE}} \
           --build-arg VERSION={{.VERSION}} \
           --build-arg COMMIT={{.COMMIT}} \
@@ -239,6 +266,76 @@ tasks:
           --build-arg TREE_STATE={{.TREE_STATE}} \
           -t ghcr.io/jmylchreest/tvarr:{{.TAG}} \
           -t ghcr.io/jmylchreest/tvarr:{{.VERSION_TAG}} \
+          .
+
+  container:build:ffmpegd:
+    desc: Build tvarr-transcoder container image (distributed transcoding daemon)
+    summary: |
+      Builds the tvarr-transcoder container image (runs tvarr-ffmpegd binary).
+      Requires the FFmpeg base image to exist (or will pull from GHCR).
+      Auto-detects container runtime ({{.CONTAINER_RUNTIME}}) and platform ({{.LOCAL_ARCH}}).
+
+      Options:
+        - PLATFORM: Target platform (default: auto-detected {{.LOCAL_ARCH}})
+        - TAG: Image tag (default: latest)
+        - FFMPEG_IMAGE: FFmpeg base image (default: ghcr.io/jmylchreest/tvarr-ffmpeg:latest)
+        - LOCAL: Use local images only, don't pull from registry (default: false)
+
+      Note: If you've built the FFmpeg image locally with container:build:ffmpeg,
+      use LOCAL=true to ensure the local image is used.
+      Local builds also create a version-tagged image ({{.VERSION}}).
+    vars:
+      TAG: '{{.TAG | default "latest"}}'
+      PLATFORM: '{{.PLATFORM | default .LOCAL_ARCH}}'
+      FFMPEG_IMAGE: '{{.FFMPEG_IMAGE | default "ghcr.io/jmylchreest/tvarr-ffmpeg:latest"}}'
+      LOCAL: '{{.LOCAL | default "false"}}'
+    cmds:
+      - |
+        {{.CONTAINER_RUNTIME}} build \
+          -f deployment/docker/Dockerfile.ffmpegd \
+          --platform {{.PLATFORM}} \
+          $([ "{{.LOCAL}}" = "true" ] && echo "--pull=never") \
+          --build-arg FFMPEG_IMAGE={{.FFMPEG_IMAGE}} \
+          --build-arg VERSION={{.VERSION}} \
+          --build-arg COMMIT={{.COMMIT}} \
+          --build-arg BUILD_DATE={{.BUILD_DATE}} \
+          --build-arg BRANCH={{.BRANCH}} \
+          --build-arg TREE_STATE={{.TREE_STATE}} \
+          -t ghcr.io/jmylchreest/tvarr-transcoder:{{.TAG}} \
+          -t ghcr.io/jmylchreest/tvarr-transcoder:{{.VERSION_TAG}} \
+          .
+
+  container:build:coordinator:
+    desc: Build tvarr-coordinator container image (slim, no FFmpeg)
+    summary: |
+      Builds the lightweight tvarr-coordinator container image without FFmpeg.
+      Use this for distributed-only deployments where all transcoding is done
+      by remote ffmpegd workers.
+      Auto-detects container runtime ({{.CONTAINER_RUNTIME}}) and platform ({{.LOCAL_ARCH}}).
+
+      Options:
+        - PLATFORM: Target platform (default: auto-detected {{.LOCAL_ARCH}})
+        - TAG: Image tag (default: latest)
+
+      Local builds also create a version-tagged image ({{.VERSION}}).
+
+      For full tvarr with local FFmpeg transcoding, use:
+        task container:build:tvarr
+    vars:
+      TAG: '{{.TAG | default "latest"}}'
+      PLATFORM: '{{.PLATFORM | default .LOCAL_ARCH}}'
+    cmds:
+      - |
+        {{.CONTAINER_RUNTIME}} build \
+          -f deployment/docker/Dockerfile.coordinator \
+          --platform {{.PLATFORM}} \
+          --build-arg VERSION={{.VERSION}} \
+          --build-arg COMMIT={{.COMMIT}} \
+          --build-arg BUILD_DATE={{.BUILD_DATE}} \
+          --build-arg BRANCH={{.BRANCH}} \
+          --build-arg TREE_STATE={{.TREE_STATE}} \
+          -t ghcr.io/jmylchreest/tvarr-coordinator:{{.TAG}} \
+          -t ghcr.io/jmylchreest/tvarr-coordinator:{{.VERSION_TAG}} \
           .
 
   container:build:ffmpeg:
@@ -285,46 +382,7 @@ tasks:
           $([ "{{.TAG}}" = "{{.FFMPEG_DOCKERFILE_HASH}}" ] && echo "-t ghcr.io/jmylchreest/tvarr-ffmpeg:latest") \
           .
 
-  container:run:
-    desc: Run tvarr container with normal entrypoint
-    summary: |
-      Runs the tvarr container with the normal entrypoint (starts the server).
-      Passes through DRI devices for hardware acceleration if available.
-      Use NVIDIA=true to enable NVIDIA GPU passthrough (requires nvidia-container-toolkit).
-
-      Environment Variables:
-        TAG                       - Container tag (default: latest)
-        PORT                      - Host port mapping (default: 8080)
-        NVIDIA                    - Enable NVIDIA GPU (default: false)
-        LOG_LEVEL                 - Log level (default: debug)
-        BASE_URL                  - External base URL for M3U proxy URLs (e.g., https://tvarr.example.com)
-        DATABASE_DSN              - Database connection string (optional)
-        TZ                        - Timezone (optional)
-
-      Example:
-        task container:run BASE_URL=https://tvarr.example.com TZ=America/New_York
-    vars:
-      TAG: '{{.TAG | default "latest"}}'
-      PORT: '{{.PORT | default "8080"}}'
-      NVIDIA: '{{.NVIDIA | default "false"}}'
-      LOG_LEVEL: '{{.LOG_LEVEL | default "debug"}}'
-      BASE_URL: '{{.BASE_URL | default ""}}'
-      DATABASE_DSN: '{{.DATABASE_DSN | default ""}}'
-      TZ: '{{.TZ | default ""}}'
-    cmds:
-      - |
-        {{.CONTAINER_RUNTIME}} run --rm -it \
-          -p {{.PORT}}:8080 \
-          -v tvarr-data:/data \
-          -e TVARR_LOGGING_LEVEL={{.LOG_LEVEL}} \
-          $([ -n "{{.BASE_URL}}" ] && echo "-e TVARR_SERVER_BASE_URL={{.BASE_URL}}") \
-          $([ -n "{{.DATABASE_DSN}}" ] && echo "-e TVARR_DATABASE_DSN={{.DATABASE_DSN}}") \
-          $([ -n "{{.TZ}}" ] && echo "-e TZ={{.TZ}}") \
-          $([ -d /dev/dri ] && echo "--device /dev/dri:/dev/dri") \
-          $([ "{{.NVIDIA}}" = "true" ] && echo "--gpus all") \
-          ghcr.io/jmylchreest/tvarr:{{.TAG}}
-
-  container:run:tvarr:
+  container:shell:
     desc: Run tvarr container with interactive shell (for debugging)
     summary: |
       Starts the tvarr container with an interactive shell instead of the normal entrypoint.
@@ -343,7 +401,7 @@ tasks:
           --entrypoint /bin/bash \
           ghcr.io/jmylchreest/tvarr:{{.TAG}}
 
-  container:run:ffmpeg:
+  container:shell:ffmpeg:
     desc: Run FFmpeg base container with interactive shell (for debugging)
     summary: |
       Starts the FFmpeg base container with an interactive shell.
@@ -369,28 +427,11 @@ tasks:
           --entrypoint /bin/bash \
           ghcr.io/jmylchreest/tvarr-ffmpeg:{{.TAG}}
 
-  container:preflight:
-    desc: Run tvarr container in preflight mode to check HW acceleration
-    summary: |
-      Runs the hardware acceleration check script inside the container.
-      This tests what HW encoders/decoders are actually working.
-      Passes through DRI devices for VAAPI/Intel/AMD GPU support.
-      Use NVIDIA=true to enable NVIDIA GPU passthrough.
-    vars:
-      TAG: '{{.TAG | default "latest"}}'
-      NVIDIA: '{{.NVIDIA | default "false"}}'
-    cmds:
-      - |
-        {{.CONTAINER_RUNTIME}} run --rm \
-          $([ -d /dev/dri ] && echo "--device /dev/dri:/dev/dri") \
-          $([ "{{.NVIDIA}}" = "true" ] && echo "--gpus all") \
-          --entrypoint /usr/local/bin/check-hwaccel \
-          ghcr.io/jmylchreest/tvarr-ffmpeg:{{.TAG}}
-
   container:hwaccel:
-    desc: Run hardware acceleration test (alias for container:preflight)
+    desc: Test hardware acceleration support in container
     summary: |
-      Alias for container:preflight. Tests hardware acceleration support.
+      Runs the hardware acceleration check script inside the FFmpeg container.
+      Tests what HW encoders/decoders are actually working.
 
       Options:
         --quick, -q   Quick check (list available, skip encode tests)
@@ -421,6 +462,180 @@ tasks:
           $([ "{{.NVIDIA}}" = "true" ] && echo "--gpus all") \
           --entrypoint /usr/local/bin/check-hwaccel \
           ghcr.io/jmylchreest/tvarr-ffmpeg:{{.TAG}} {{.ARGS}}
+
+  # ============================================
+  # Docker Compose Tasks
+  # ============================================
+
+  compose:up:
+    desc: Start tvarr coordinator + transcoder stack
+    summary: |
+      Starts the tvarr stack using docker-compose with coordinator and transcoder.
+
+      The stack includes:
+        - tvarr (coordinator with gRPC enabled)
+        - tvarr-transcoder (ffmpegd daemon with GPU access)
+
+      Variables:
+        - NVIDIA: Set to "true" for NVIDIA GPU support (default: false, uses Intel/AMD)
+        - DETACH: Set to "false" to run in foreground (default: true)
+
+      Examples:
+        task compose:up                    # Start with Intel/AMD GPU
+        task compose:up NVIDIA=true        # Start with NVIDIA GPU
+        task compose:up DETACH=false       # Run in foreground
+    vars:
+      NVIDIA: '{{.NVIDIA | default "false"}}'
+      DETACH: '{{.DETACH | default "true"}}'
+    cmds:
+      - |
+        cd deployment/docker
+        if [ "{{.NVIDIA}}" = "true" ]; then
+          {{.CONTAINER_RUNTIME}} compose -f docker-compose.yml -f docker-compose.nvidia.yml up \
+            $([ "{{.DETACH}}" = "true" ] && echo "-d")
+        else
+          {{.CONTAINER_RUNTIME}} compose up $([ "{{.DETACH}}" = "true" ] && echo "-d")
+        fi
+
+  compose:down:
+    desc: Stop tvarr coordinator + transcoder stack
+    summary: |
+      Stops and removes the tvarr stack containers.
+
+      Variables:
+        - VOLUMES: Set to "true" to also remove volumes (default: false)
+    vars:
+      VOLUMES: '{{.VOLUMES | default "false"}}'
+    cmds:
+      - |
+        cd deployment/docker
+        {{.CONTAINER_RUNTIME}} compose down $([ "{{.VOLUMES}}" = "true" ] && echo "-v")
+
+  compose:logs:
+    desc: View logs from tvarr stack
+    summary: |
+      Shows logs from the tvarr stack containers.
+      Uses podman logs directly to properly aggregate logs from all containers.
+
+      Variables:
+        - FOLLOW: Set to "false" to not follow logs (default: true)
+        - TAIL: Number of lines to show (default: 100, use "all" for full history)
+        - SERVICE: Specific service to show logs for: tvarr, ffmpegd (default: all)
+
+      Examples:
+        task compose:logs                  # Follow all logs (last 100 lines)
+        task compose:logs TAIL=all         # Follow all logs from start
+        task compose:logs SERVICE=tvarr    # Only coordinator logs
+        task compose:logs SERVICE=ffmpegd  # Only transcoder logs
+        task compose:logs FOLLOW=false     # Show logs without following
+    vars:
+      FOLLOW: '{{.FOLLOW | default "true"}}'
+      TAIL: '{{.TAIL | default "100"}}'
+      SERVICE: '{{.SERVICE | default ""}}'
+    cmds:
+      - |
+        TAIL_ARG=""
+        if [ "{{.TAIL}}" != "all" ]; then
+          TAIL_ARG="--tail={{.TAIL}}"
+        fi
+        FOLLOW_ARG=""
+        if [ "{{.FOLLOW}}" = "true" ]; then
+          FOLLOW_ARG="-f"
+        fi
+
+        # Get container names (use -a to include containers that aren't running yet)
+        TVARR_CONTAINER=$({{.CONTAINER_RUNTIME}} ps -a --filter "name=docker_tvarr" --format "{{`{{.Names}}`}}" 2>/dev/null | head -1)
+        FFMPEGD_CONTAINER=$({{.CONTAINER_RUNTIME}} ps -a --filter "name=docker_ffmpegd" --format "{{`{{.Names}}`}}" 2>/dev/null | head -1)
+
+        if [ -n "{{.SERVICE}}" ]; then
+          # Single service requested
+          case "{{.SERVICE}}" in
+            tvarr)
+              [ -n "$TVARR_CONTAINER" ] && {{.CONTAINER_RUNTIME}} logs $FOLLOW_ARG $TAIL_ARG "$TVARR_CONTAINER"
+              ;;
+            ffmpegd)
+              [ -n "$FFMPEGD_CONTAINER" ] && {{.CONTAINER_RUNTIME}} logs $FOLLOW_ARG $TAIL_ARG "$FFMPEGD_CONTAINER"
+              ;;
+            *)
+              echo "Unknown service: {{.SERVICE}}. Use 'tvarr' or 'ffmpegd'"
+              exit 1
+              ;;
+          esac
+        else
+          # All services - use tail to merge logs
+          if [ "{{.FOLLOW}}" = "true" ]; then
+            # Follow mode: run both in background and merge output
+            (
+              [ -n "$TVARR_CONTAINER" ] && {{.CONTAINER_RUNTIME}} logs $FOLLOW_ARG $TAIL_ARG "$TVARR_CONTAINER" 2>&1 | sed -u 's/^/[tvarr] /' &
+              [ -n "$FFMPEGD_CONTAINER" ] && {{.CONTAINER_RUNTIME}} logs $FOLLOW_ARG $TAIL_ARG "$FFMPEGD_CONTAINER" 2>&1 | sed -u 's/^/[ffmpegd] /' &
+              wait
+            )
+          else
+            # Non-follow mode: show each sequentially
+            echo "=== tvarr (coordinator) ==="
+            [ -n "$TVARR_CONTAINER" ] && {{.CONTAINER_RUNTIME}} logs $TAIL_ARG "$TVARR_CONTAINER"
+            echo ""
+            echo "=== ffmpegd (transcoder) ==="
+            [ -n "$FFMPEGD_CONTAINER" ] && {{.CONTAINER_RUNTIME}} logs $TAIL_ARG "$FFMPEGD_CONTAINER"
+          fi
+        fi
+
+  compose:ps:
+    desc: Show status of tvarr stack containers
+    cmds:
+      - cd deployment/docker && {{.CONTAINER_RUNTIME}} compose ps
+
+  compose:standalone:
+    desc: Start tvarr all-in-one with local FFmpeg and gRPC enabled
+    summary: |
+      Starts a single tvarr container with everything included:
+        - Local FFmpeg transcoding with GPU access
+        - gRPC enabled (can add remote transcoders later)
+
+      This is the simplest way to run tvarr. Remote transcoders can be
+      added later by pointing them at this instance's gRPC port (9090).
+
+      Variables:
+        - NVIDIA: Set to "true" for NVIDIA GPU support (default: false, uses Intel/AMD)
+        - DETACH: Set to "false" to run in foreground (default: true)
+
+      Examples:
+        task compose:standalone                # Start with Intel/AMD GPU
+        task compose:standalone NVIDIA=true    # Start with NVIDIA GPU
+        task compose:standalone DETACH=false   # Run in foreground
+    vars:
+      NVIDIA: '{{.NVIDIA | default "false"}}'
+      DETACH: '{{.DETACH | default "true"}}'
+    cmds:
+      - |
+        cd deployment/docker
+        if [ "{{.NVIDIA}}" = "true" ]; then
+          {{.CONTAINER_RUNTIME}} compose -f docker-compose.standalone.yml -f docker-compose.nvidia.yml up \
+            $([ "{{.DETACH}}" = "true" ] && echo "-d")
+        else
+          {{.CONTAINER_RUNTIME}} compose -f docker-compose.standalone.yml up \
+            $([ "{{.DETACH}}" = "true" ] && echo "-d")
+        fi
+
+  compose:standalone:down:
+    desc: Stop tvarr standalone container
+    vars:
+      VOLUMES: '{{.VOLUMES | default "false"}}'
+    cmds:
+      - |
+        cd deployment/docker
+        {{.CONTAINER_RUNTIME}} compose -f docker-compose.standalone.yml down \
+          $([ "{{.VOLUMES}}" = "true" ] && echo "-v")
+
+  compose:standalone:logs:
+    desc: View logs from tvarr standalone container
+    vars:
+      FOLLOW: '{{.FOLLOW | default "true"}}'
+    cmds:
+      - |
+        cd deployment/docker
+        {{.CONTAINER_RUNTIME}} compose -f docker-compose.standalone.yml logs \
+          $([ "{{.FOLLOW}}" = "true" ] && echo "-f")
 
   # ============================================
   # UPX Compression Tasks
@@ -740,31 +955,70 @@ tasks:
       - ./{{.DEBUG_DIR}}/{{.BINARY_NAME}} serve
 
   run:dev:
-    desc: Run Go backend with hot reload (API only, no frontend)
+    desc: Run Go backend + ffmpegd with hot reload
     summary: |
-      Runs the Go backend server with hot reload using air.
-      JSON logs are formatted with hl for readability.
+      Runs the Go backend server and ffmpegd daemon with hot reload using air.
+      Both processes are rebuilt and restarted when code changes.
+      JSON logs are formatted with hl, showing which process each line comes from.
 
       For full-stack development:
-        Terminal 1: task run:dev       (Go backend on :8080)
+        Terminal 1: task run:dev       (Go backend on :8080 + ffmpegd on :9090)
         Terminal 2: task frontend:dev  (Next.js on :3000)
 
       The frontend dev server proxies API requests to the backend.
       For production builds, use 'task frontend:embed' to embed the UI.
 
+      Options:
+        - LOG_LEVEL: Log level for both processes (default: debug, supports: trace, debug, info, warn, error)
+
+      Examples:
+        task run:dev                    # Default debug level
+        task run:dev LOG_LEVEL=trace    # Trace level (very verbose, includes heartbeats)
+
       Use 'task run:dev:json' for raw JSON log output.
     deps: [tools:hl, tools:air]
+    interactive: true
+    vars:
+      LOG_LEVEL: '{{.LOG_LEVEL | default "debug"}}'
     cmds:
-      - air 2>&1 | hl
+      - |
+        trap 'kill 0; rm -f tmp/air.tvarr.toml tmp/air.ffmpegd.toml' EXIT
+        mkdir -p tmp/tvarr tmp/ffmpegd
+        rm -f tvarr-dev-*.log
+
+        # Generate air configs with the specified log level
+        sed 's/--log-level", "debug"/--log-level", "{{.LOG_LEVEL}}"/' air.tvarr.toml > tmp/air.tvarr.toml
+        sed 's/--log-level", "debug"/--log-level", "{{.LOG_LEVEL}}"/' air.ffmpegd.toml > tmp/air.ffmpegd.toml
+
+        touch tvarr-dev-tvarr.log tvarr-dev-ffmpegd.log
+        stdbuf -oL air -c tmp/air.tvarr.toml >> tvarr-dev-tvarr.log 2>&1 &
+        stdbuf -oL air -c tmp/air.ffmpegd.toml >> tvarr-dev-ffmpegd.log 2>&1 &
+        hl -F --tail 0 --input-info full tvarr-dev-*.log
 
   run:dev:json:
-    desc: Run Go backend with hot reload (raw JSON logs)
+    desc: Run Go backend + ffmpegd with hot reload (raw JSON logs)
     summary: |
       Same as run:dev but outputs raw JSON logs without formatting.
       Useful for piping to other tools or debugging log parsing issues.
+
+      Options:
+        - LOG_LEVEL: Log level for both processes (default: debug, supports: trace, debug, info, warn, error)
     deps: [tools:air]
+    interactive: true
+    vars:
+      LOG_LEVEL: '{{.LOG_LEVEL | default "debug"}}'
     cmds:
-      - air
+      - |
+        trap 'kill 0; rm -f tmp/air.tvarr.toml tmp/air.ffmpegd.toml' EXIT
+        mkdir -p tmp/tvarr tmp/ffmpegd
+
+        # Generate air configs with the specified log level
+        sed 's/--log-level", "debug"/--log-level", "{{.LOG_LEVEL}}"/' air.tvarr.toml > tmp/air.tvarr.toml
+        sed 's/--log-level", "debug"/--log-level", "{{.LOG_LEVEL}}"/' air.ffmpegd.toml > tmp/air.ffmpegd.toml
+
+        air -c tmp/air.tvarr.toml &
+        air -c tmp/air.ffmpegd.toml &
+        wait
 
   run:prod:
     desc: Build with embedded frontend and run (production-like)
@@ -932,9 +1186,57 @@ tasks:
   # ============================================
 
   generate:
-    desc: Run go generate
+    desc: Run all code generation (go generate + protobuf)
     cmds:
+      - task: generate:proto
       - go generate ./...
+
+  generate:proto:
+    desc: Generate Go code from protobuf definitions
+    summary: |
+      Generates Go code from .proto files in pkg/ffmpegd/proto/.
+      Requires protoc and protoc-gen-go/protoc-gen-go-grpc installed.
+
+      Install protoc plugins:
+        go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+        go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+    preconditions:
+      - sh: command -v protoc
+        msg: |
+          protoc not found. Install via:
+            apt install protobuf-compiler (Debian/Ubuntu)
+            brew install protobuf (macOS)
+            pacman -S protobuf (Arch)
+      - sh: command -v protoc-gen-go
+        msg: |
+          protoc-gen-go not found. Install via:
+            go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+      - sh: command -v protoc-gen-go-grpc
+        msg: |
+          protoc-gen-go-grpc not found. Install via:
+            go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+    cmds:
+      - |
+        echo "Generating Go code from protobuf definitions..."
+        protoc \
+          --go_out=. \
+          --go-grpc_out=. \
+          --go_opt=paths=source_relative \
+          --go-grpc_opt=paths=source_relative \
+          pkg/ffmpegd/proto/ffmpegd.proto
+        echo "Generated: pkg/ffmpegd/proto/*.pb.go"
+
+  generate:proto:install:
+    desc: Install protobuf code generation tools
+    preconditions:
+      - sh: command -v go
+        msg: |
+          Go not found. Install Go 1.23+ via:
+            https://go.dev/dl/
+    cmds:
+      - go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+      - go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+      - echo "Protobuf Go plugins installed"
 
   # ============================================
   # Clean Tasks

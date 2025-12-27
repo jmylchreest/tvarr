@@ -23,7 +23,10 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/ulikunitz/xz v0.5.15
 	golang.org/x/image v0.34.0
+	golang.org/x/net v0.47.0
 	golang.org/x/text v0.32.0
+	google.golang.org/grpc v1.77.0
+	google.golang.org/protobuf v1.36.10
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/postgres v1.6.0
@@ -64,8 +67,10 @@ require (
 	golang.org/x/crypto v0.46.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.39.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20251022142026-3a174f9686a8 // indirect
 )
 
-// Fork with E-AC3 support, PCE parsing for channel_config=0, and ADTS all profiles fix
+// Fork with E-AC3 support, PCE parsing for channel_config=0, ADTS all profiles fix,
+// and WriteTables() for late-joining MPEG-TS clients
 // Branch: tvarr (github.com/jmylchreest/mediacommon)
-replace github.com/bluenviron/mediacommon/v2 => github.com/jmylchreest/mediacommon/v2 v2.5.4-0.20251218233358-b979cd505f16
+replace github.com/bluenviron/mediacommon/v2 => github.com/jmylchreest/mediacommon/v2 v2.5.4-0.20251222103348-862e6cd6c2fb

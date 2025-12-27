@@ -543,12 +543,13 @@ func TestXtreamEpgHandler_Ingest_WithEpgShift(t *testing.T) {
 	handler := NewXtreamEpgHandler()
 	sourceID := models.NewULID()
 	source := &models.EpgSource{
-		BaseModel: models.BaseModel{ID: sourceID},
-		Type:      models.EpgSourceTypeXtream,
-		URL:       server.URL,
-		Username:  "testuser",
-		Password:  "testpass",
-		EpgShift:  2, // Apply +2 hour shift
+		BaseModel:         models.BaseModel{ID: sourceID},
+		Type:              models.EpgSourceTypeXtream,
+		URL:               server.URL,
+		Username:          "testuser",
+		Password:          "testpass",
+		EpgShift:          2,     // Apply +2 hour shift
+		AutoShiftTimezone: "UTC", // Set to match server to prevent auto-shift from overwriting
 	}
 
 	var programs []*models.EpgProgram

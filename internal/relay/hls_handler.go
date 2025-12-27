@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 )
 
 // SegmentWaiter is an optional interface that SegmentProviders can implement
@@ -18,11 +17,20 @@ type SegmentWaiter interface {
 	SegmentCount() int
 }
 
+// PlaylistActivityRecorder is an optional interface that providers can implement
+// to track playlist request activity. This is used to determine if clients are
+// still actively watching the stream.
+type PlaylistActivityRecorder interface {
+	// RecordPlaylistRequest records that a playlist was requested.
+	RecordPlaylistRequest()
+}
+
 // HLSHandler handles HLS output.
 // Implements the OutputHandler interface for serving HLS playlists and segments.
 // Supports both HLS v3 (MPEG-TS) and HLS v7 (fMP4/CMAF) formats.
 type HLSHandler struct {
 	OutputHandlerBase
+	variant string // Codec variant (e.g., "h264/aac") for segment URL routing
 }
 
 // NewHLSHandler creates an HLS output handler with a SegmentProvider.
@@ -30,6 +38,20 @@ func NewHLSHandler(provider SegmentProvider) *HLSHandler {
 	return &HLSHandler{
 		OutputHandlerBase: NewOutputHandlerBase(provider),
 	}
+}
+
+// NewHLSHandlerWithVariant creates an HLS output handler with variant for proper segment routing.
+// The variant is included in segment URLs to ensure clients fetch from the correct processor.
+func NewHLSHandlerWithVariant(provider SegmentProvider, variant string) *HLSHandler {
+	return &HLSHandler{
+		OutputHandlerBase: NewOutputHandlerBase(provider),
+		variant:           variant,
+	}
+}
+
+// SetVariant sets the codec variant for segment URL generation.
+func (h *HLSHandler) SetVariant(variant string) {
+	h.variant = variant
 }
 
 // Format returns the output format this handler serves.
@@ -70,11 +92,16 @@ func (h *HLSHandler) ServePlaylist(w http.ResponseWriter, baseURL string) error 
 // If the provider implements SegmentWaiter and has no segments, it will wait
 // up to 15 seconds for the first segment before returning.
 func (h *HLSHandler) ServePlaylistWithContext(ctx context.Context, w http.ResponseWriter, baseURL string) error {
+	// Record playlist activity - this is the heartbeat that indicates clients are watching
+	if recorder, ok := h.provider.(PlaylistActivityRecorder); ok {
+		recorder.RecordPlaylistRequest()
+	}
+
 	// Check if provider supports waiting for segments
 	if waiter, ok := h.provider.(SegmentWaiter); ok {
 		if waiter.SegmentCount() == 0 {
-			// Wait for at least 1 segment (with timeout)
-			waitCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			// Wait for at least 1 segment (with timeout matching HTTP WriteTimeout)
+			waitCtx, cancel := context.WithTimeout(ctx, SegmentWaitTimeout)
 			defer cancel()
 
 			if err := waiter.WaitForSegments(waitCtx, 1); err != nil {
@@ -196,13 +223,27 @@ func (h *HLSHandler) GeneratePlaylist(baseURL string) string {
 	// Ensure baseURL doesn't have trailing slash
 	baseURL = strings.TrimSuffix(baseURL, "/")
 
+	// Determine the correct format value for segment URLs
+	// Use hls-fmp4 when in fMP4 mode to ensure proper routing
+	formatValue := FormatValueHLS
+	if isFMP4Mode {
+		formatValue = FormatValueHLSFMP4
+	}
+
+	// Build variant query parameter if set
+	variantParam := ""
+	if h.variant != "" {
+		variantParam = fmt.Sprintf("&%s=%s", QueryParamVariant, h.variant)
+	}
+
 	// For fMP4 mode, add EXT-X-MAP pointing to the initialization segment
 	// This tells players where to get the ftyp+moov boxes before any media segments
 	if isFMP4Mode && hasInitSegment {
-		sb.WriteString(fmt.Sprintf("#EXT-X-MAP:URI=\"%s?%s=%s&%s=1\"\n",
+		sb.WriteString(fmt.Sprintf("#EXT-X-MAP:URI=\"%s?%s=%s&%s=1%s\"\n",
 			baseURL,
-			QueryParamFormat, FormatValueHLS,
+			QueryParamFormat, formatValue,
 			QueryParamInit,
+			variantParam,
 		))
 	}
 
@@ -221,10 +262,11 @@ func (h *HLSHandler) GeneratePlaylist(baseURL string) string {
 
 		// Write segment info
 		sb.WriteString(fmt.Sprintf("#EXTINF:%.3f,\n", seg.Duration))
-		sb.WriteString(fmt.Sprintf("%s?%s=%s&%s=%d\n",
+		sb.WriteString(fmt.Sprintf("%s?%s=%s&%s=%d%s\n",
 			baseURL,
-			QueryParamFormat, FormatValueHLS,
+			QueryParamFormat, formatValue,
 			QueryParamSegment, seg.Sequence,
+			variantParam,
 		))
 	}
 

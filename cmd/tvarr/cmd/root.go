@@ -53,7 +53,7 @@ func init() {
 	// explicitly set using Changed() and only then override the config/env values.
 	// This preserves the correct priority: CLI flag > env var > config > default
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.tvarr.yaml)")
-	rootCmd.PersistentFlags().String("log-level", "info", "log level (debug, info, warn, error)")
+	rootCmd.PersistentFlags().String("log-level", "info", "log level (trace, debug, info, warn, error)")
 	rootCmd.PersistentFlags().String("log-format", "json", "log format (text, json)")
 }
 
@@ -132,7 +132,9 @@ func initLogging() error {
 	}
 
 	// Use observability package to create logger with sensitive data redaction
+	// Add "app" field to distinguish tvarr from tvarr-ffmpegd logs
 	logger := observability.NewLoggerWithWriter(logCfg, os.Stderr)
+	logger = observability.WithApp(logger, "tvarr")
 	observability.SetDefault(logger)
 
 	return nil

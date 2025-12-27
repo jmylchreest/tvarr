@@ -13,6 +13,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/jmylchreest/tvarr/internal/http/middleware"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 )
 
 // ServerConfig holds HTTP server configuration.
@@ -105,16 +107,22 @@ func (s *Server) Router() *chi.Mux {
 func (s *Server) Start() error {
 	addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
 
+	// Configure HTTP/2 server for h2c (HTTP/2 cleartext) support.
+	// This allows HTTP/2 without TLS, solving browser connection limits
+	// (HTTP/1.1 limits to ~6 concurrent connections per domain).
+	h2s := &http2.Server{}
+
 	s.httpServer = &http.Server{
 		Addr:         addr,
-		Handler:      s.router,
+		Handler:      h2c.NewHandler(s.router, h2s),
 		ReadTimeout:  s.config.ReadTimeout,
 		WriteTimeout: s.config.WriteTimeout,
 		IdleTimeout:  s.config.IdleTimeout,
 	}
 
-	s.logger.Info("starting HTTP server",
+	s.logger.Debug("HTTP server configured",
 		slog.String("address", addr),
+		slog.String("protocol", "h2c"),
 	)
 
 	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
