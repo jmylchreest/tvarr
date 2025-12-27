@@ -437,6 +437,57 @@ func Normalize(name string) string {
 	return name
 }
 
+// NormalizeHLSCodec normalizes codec strings from HLS/DASH manifests to canonical form.
+// HLS codec strings include version/profile info (e.g., "avc1.64001f", "mp4a.40.2").
+// This function extracts the base codec and normalizes it.
+func NormalizeHLSCodec(name string) string {
+	if name == "" {
+		return name
+	}
+
+	lower := strings.ToLower(name)
+
+	// First try exact match (handles simple cases like "h264", "aac")
+	if codec, ok := videoAliasIndex[lower]; ok {
+		return string(codec)
+	}
+	if codec, ok := audioAliasIndex[lower]; ok {
+		return string(codec)
+	}
+
+	// Handle HLS codec strings with version/profile suffixes
+	// Common formats: avc1.*, hev1.*, hvc1.*, mp4a.*, vp09.*, av01.*, ac-3, ec-3
+	if len(lower) >= 4 {
+		prefix := lower[:4]
+		switch prefix {
+		case "avc1", "avc3":
+			return string(VideoH264)
+		case "hev1", "hvc1":
+			return string(VideoH265)
+		case "mp4a":
+			return string(AudioAAC) // mp4a.40.2 = AAC-LC, mp4a.40.5 = HE-AAC, etc.
+		case "vp09":
+			return string(VideoVP9)
+		case "av01":
+			return string(VideoAV1)
+		case "ac-3":
+			return string(AudioAC3)
+		case "ec-3":
+			return string(AudioEAC3)
+		}
+	}
+
+	// Handle common aliases not in the index
+	switch lower {
+	case "hevc":
+		return string(VideoH265)
+	case "avc":
+		return string(VideoH264)
+	}
+
+	return name
+}
+
 // NormalizeVideo normalizes a video codec/encoder name to its canonical form.
 // Returns the canonical codec string (e.g., "h264", "h265") or the input unchanged.
 func NormalizeVideo(name string) string {

@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/jmylchreest/tvarr/internal/codec"
 	"github.com/jmylchreest/tvarr/internal/models"
 )
 
@@ -242,16 +243,16 @@ func (d *DefaultRoutingDecider) clientAcceptsSourceCodecs(sourceCodecs []string,
 		return true // No source codecs known, assume compatible
 	}
 
-	for _, codec := range sourceCodecs {
-		// Normalize codec name for comparison
-		normalizedCodec := d.normalizeCodecName(codec)
+	for _, codecStr := range sourceCodecs {
+		// Normalize codec name for comparison using the codec package
+		normalizedCodec := codec.NormalizeHLSCodec(codecStr)
 
 		// Check if it's a video or audio codec and verify client accepts it
-		if d.isKnownVideoCodec(normalizedCodec) {
+		if _, isVideo := codec.ParseVideo(normalizedCodec); isVideo {
 			if !client.AcceptsVideoCodec(normalizedCodec) {
 				return false
 			}
-		} else if d.isKnownAudioCodec(normalizedCodec) {
+		} else if _, isAudio := codec.ParseAudio(normalizedCodec); isAudio {
 			if !client.AcceptsAudioCodec(normalizedCodec) {
 				return false
 			}
@@ -259,61 +260,6 @@ func (d *DefaultRoutingDecider) clientAcceptsSourceCodecs(sourceCodecs []string,
 		// Unknown codec type - assume compatible
 	}
 	return true
-}
-
-// normalizeCodecName normalizes codec names for consistent comparison.
-// Handles both simple names (h264, aac) and HLS codec strings (avc1.*, mp4a.*).
-func (d *DefaultRoutingDecider) normalizeCodecName(codec string) string {
-	// Handle HLS codec strings (avc1.*, hev1.*, hvc1.*, mp4a.*, etc.)
-	if len(codec) >= 4 {
-		prefix := codec[:4]
-		switch prefix {
-		case "avc1", "avc3":
-			return "h264"
-		case "hev1", "hvc1":
-			return "h265"
-		case "mp4a":
-			return "aac" // mp4a.40.2 is AAC-LC, mp4a.40.5 is HE-AAC, etc.
-		case "ac-3":
-			return "ac3"
-		case "ec-3":
-			return "eac3"
-		case "vp09":
-			return "vp9"
-		case "av01":
-			return "av1"
-		}
-	}
-
-	// Handle common aliases
-	switch codec {
-	case "hevc":
-		return "h265"
-	case "avc":
-		return "h264"
-	default:
-		return codec
-	}
-}
-
-// isKnownVideoCodec returns true if the codec is a known video codec.
-func (d *DefaultRoutingDecider) isKnownVideoCodec(codec string) bool {
-	switch codec {
-	case "h264", "h265", "hevc", "avc", "vp8", "vp9", "av1", "mpeg2video":
-		return true
-	default:
-		return false
-	}
-}
-
-// isKnownAudioCodec returns true if the codec is a known audio codec.
-func (d *DefaultRoutingDecider) isKnownAudioCodec(codec string) bool {
-	switch codec {
-	case "aac", "ac3", "eac3", "mp3", "opus", "flac", "vorbis", "dts", "truehd", "pcm":
-		return true
-	default:
-		return false
-	}
 }
 
 // logRoutingDecision logs the routing decision with all relevant context per FR-009.
