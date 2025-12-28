@@ -158,7 +158,7 @@ ENV PUID=1000 \
     PGID=1000 \
     TZ=UTC \
     TVARR_SERVER_PORT=8080 \
-    TVARR_DATABASE_DSN=file:/data/tvarr.db \
+    TVARR_DATABASE_DSN=/data/tvarr.db \
     TVARR_LOGGING_LEVEL=info \
     TVARR_STORAGE_BASE_DIR=/data
 

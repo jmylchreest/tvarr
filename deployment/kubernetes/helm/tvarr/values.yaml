@@ -227,7 +227,7 @@ env:
   # -- Enable gRPC server (required for ffmpegd)
   TVARR_GRPC_ENABLED: "true"
   # -- Database DSN
-  TVARR_DATABASE_DSN: "file:/data/tvarr.db"
+  TVARR_DATABASE_DSN: "/data/tvarr.db"
   # -- Log level (debug, info, warn, error)
   TVARR_LOGGING_LEVEL: "info"
   # -- Storage base directory

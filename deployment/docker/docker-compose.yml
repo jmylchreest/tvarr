@@ -41,7 +41,7 @@ services:
       - TVARR_GRPC_ENABLED=true
 
       # Database
-      - TVARR_DATABASE_DSN=${TVARR_DATABASE_DSN:-file:/data/tvarr.db}
+      - TVARR_DATABASE_DSN=${TVARR_DATABASE_DSN:-/data/tvarr.db}
 
       # Logging
       - TVARR_LOGGING_LEVEL=${TVARR_LOGGING_LEVEL:-info}

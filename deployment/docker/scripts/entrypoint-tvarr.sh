@@ -115,7 +115,7 @@ run_preflight() {
     echo "TZ: $TZ"
     echo "TVARR_SERVER_PORT: ${TVARR_SERVER_PORT:-8080}"
     echo "TVARR_LOGGING_LEVEL: ${TVARR_LOGGING_LEVEL:-info}"
-    echo "TVARR_DATABASE_DSN: ${TVARR_DATABASE_DSN:-file:/data/tvarr.db}"
+    echo "TVARR_DATABASE_DSN: ${TVARR_DATABASE_DSN:-/data/tvarr.db}"
 
     # Data directory
     log_section "Data Directory"

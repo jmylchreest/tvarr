@@ -6,17 +6,15 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	gormlogger "gorm.io/gorm/logger"
 
 	"github.com/jmylchreest/tvarr/internal/config"
+	"github.com/jmylchreest/tvarr/internal/database"
 	"github.com/jmylchreest/tvarr/internal/database/migrations"
 	"github.com/jmylchreest/tvarr/internal/ffmpeg"
 	internalhttp "github.com/jmylchreest/tvarr/internal/http"
@@ -140,14 +138,23 @@ func runServe(_ *cobra.Command, _ []string) error {
 		)
 	}
 
-	// Initialize database
-	db, err := initDatabase(viper.GetString("database.dsn"))
+	// Initialize database with proper driver support
+	dbConfig := config.DatabaseConfig{
+		Driver:          viper.GetString("database.driver"),
+		DSN:             viper.GetString("database.dsn"),
+		MaxOpenConns:    viper.GetInt("database.max_open_conns"),
+		MaxIdleConns:    viper.GetInt("database.max_idle_conns"),
+		ConnMaxLifetime: viper.GetDuration("database.conn_max_lifetime"),
+		ConnMaxIdleTime: viper.GetDuration("database.conn_max_idle_time"),
+		LogLevel:        viper.GetString("database.log_level"),
+	}
+	db, err := initDatabase(dbConfig, logger)
 	if err != nil {
 		return fmt.Errorf("initializing database: %w", err)
 	}
 
 	// Run migrations
-	if err := runMigrations(db, logger); err != nil {
+	if err := runMigrations(db.DB, logger); err != nil {
 		return fmt.Errorf("running migrations: %w", err)
 	}
 
@@ -187,19 +194,19 @@ func runServe(_ *cobra.Command, _ []string) error {
 	}
 
 	// Initialize repositories
-	streamSourceRepo := repository.NewStreamSourceRepository(db)
-	channelRepo := repository.NewChannelRepository(db)
-	manualChannelRepo := repository.NewManualChannelRepository(db)
-	epgSourceRepo := repository.NewEpgSourceRepository(db)
-	epgProgramRepo := repository.NewEpgProgramRepository(db)
-	proxyRepo := repository.NewStreamProxyRepository(db)
-	filterRepo := repository.NewFilterRepository(db)
-	dataMappingRuleRepo := repository.NewDataMappingRuleRepository(db)
-	encodingProfileRepo := repository.NewEncodingProfileRepository(db)
-	lastKnownCodecRepo := repository.NewLastKnownCodecRepository(db)
-	clientDetectionRuleRepo := repository.NewClientDetectionRuleRepository(db)
-	encoderOverrideRepo := repository.NewEncoderOverrideRepository(db)
-	jobRepo := repository.NewJobRepository(db)
+	streamSourceRepo := repository.NewStreamSourceRepository(db.DB)
+	channelRepo := repository.NewChannelRepository(db.DB)
+	manualChannelRepo := repository.NewManualChannelRepository(db.DB)
+	epgSourceRepo := repository.NewEpgSourceRepository(db.DB)
+	epgProgramRepo := repository.NewEpgProgramRepository(db.DB)
+	proxyRepo := repository.NewStreamProxyRepository(db.DB)
+	filterRepo := repository.NewFilterRepository(db.DB)
+	dataMappingRuleRepo := repository.NewDataMappingRuleRepository(db.DB)
+	encodingProfileRepo := repository.NewEncodingProfileRepository(db.DB)
+	lastKnownCodecRepo := repository.NewLastKnownCodecRepository(db.DB)
+	clientDetectionRuleRepo := repository.NewClientDetectionRuleRepository(db.DB)
+	encoderOverrideRepo := repository.NewEncoderOverrideRepository(db.DB)
+	jobRepo := repository.NewJobRepository(db.DB)
 
 	// Clean up old job history on startup if retention is configured
 	jobHistoryRetention := viper.GetDuration("scheduler.job_history_retention")
@@ -389,7 +396,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 			Retention: viper.GetInt("backup.schedule.retention"),
 		},
 	}
-	backupService := service.NewBackupService(db, backupConfig, viper.GetString("storage.base_dir")).
+	backupService := service.NewBackupService(db.DB, backupConfig, viper.GetString("storage.base_dir")).
 		WithLogger(logger)
 
 	// Configure internal recurring jobs
@@ -496,7 +503,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	server.Router().NotFound(staticHandler.ServeHTTP)
 
 	// Register handlers
-	healthHandler := handlers.NewHealthHandler(version.Version).WithDB(db)
+	healthHandler := handlers.NewHealthHandler(version.Version).WithDB(db.DB)
 	healthHandler.Register(server.API())
 
 	streamSourceHandler := handlers.NewStreamSourceHandler(sourceService).
@@ -561,7 +568,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	encoderOverrideHandler := handlers.NewEncoderOverrideHandler(encoderOverrideService)
 	encoderOverrideHandler.Register(server.API())
 
-	channelHandler := handlers.NewChannelHandler(db).WithLogger(logger)
+	channelHandler := handlers.NewChannelHandler(db.DB).WithLogger(logger)
 	channelHandler.Register(server.API())
 
 	// Manual channel handler for managing channels in manual stream sources
@@ -570,7 +577,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	manualChannelHandler := handlers.NewManualChannelHandler(manualChannelService)
 	manualChannelHandler.Register(server.API())
 
-	epgHandler := handlers.NewEpgHandler(db)
+	epgHandler := handlers.NewEpgHandler(db.DB)
 	epgHandler.Register(server.API())
 
 	circuitBreakerHandler := handlers.NewCircuitBreakerHandler(httpclient.DefaultManager)
@@ -597,7 +604,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 	).WithLogger(logger)
 
 	importService := service.NewImportService(
-		db,
+		db.DB,
 		filterRepo,
 		dataMappingRuleRepo,
 		clientDetectionRuleRepo,
@@ -744,21 +751,13 @@ func runServe(_ *cobra.Command, _ []string) error {
 	return server.ListenAndServe(ctx)
 }
 
-func initDatabase(path string) (*gorm.DB, error) {
-	// Resolve to absolute path for clarity in logs
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		absPath = path // Fall back to original if resolution fails
-	}
-
+func initDatabase(cfg config.DatabaseConfig, logger *slog.Logger) (*database.DB, error) {
 	slog.Info("initializing database",
-		slog.String("path", path),
-		slog.String("absolute_path", absPath),
+		slog.String("driver", cfg.Driver),
+		slog.String("dsn", cfg.DSN),
 	)
 
-	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{
-		Logger: gormlogger.Default.LogMode(gormlogger.Silent),
-	})
+	db, err := database.New(cfg, logger, nil)
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}

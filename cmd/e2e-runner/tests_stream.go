@@ -98,7 +98,7 @@ func (r *E2ERunner) runStreamTests(ctx context.Context) {
 
 	// Test Smart Mode Stream
 	r.runTestWithInfo("Test Stream (Smart Mode)",
-		"GET /proxy/{id}/{channelId} - verify smart mode returns HTTP 200 with CORS + TS bytes",
+		"GET /proxy/{id}/{channelId} with X-Container: mpegts - verify smart mode returns HTTP 200 with CORS + TS bytes",
 		func() error {
 			if r.SmartModeProxyID == "" {
 				return fmt.Errorf("smart mode proxy was not created")
@@ -114,10 +114,15 @@ func (r *E2ERunner) runStreamTests(ctx context.Context) {
 				return fmt.Errorf("get channel ID: %w", err)
 			}
 
+			// Use X-Container header to request MPEG-TS format via client detection rules.
+			// Smart mode now serves content based on source format (HLS sources serve HLS playlists by default).
+			// The X-Container header triggers the dynamic client detection rule that extracts format preference.
 			streamURL := r.client.GetProxyStreamURL(r.SmartModeProxyID, channelID)
-			r.log("  Testing stream URL: %s", streamURL)
+			r.log("  Testing stream URL: %s (with X-Container: mpegts)", streamURL)
 
-			result, err := r.client.TestStreamRequest(ctx, streamURL)
+			result, err := r.client.TestStreamRequestWithHeaders(ctx, streamURL, map[string]string{
+				"X-Container": "mpegts",
+			})
 			if err != nil {
 				return fmt.Errorf("stream request: %w", err)
 			}
@@ -142,7 +147,7 @@ func (r *E2ERunner) runStreamTests(ctx context.Context) {
 	// Test Relay Profile Stream (only if ffmpeg is available)
 	if r.ffmpegAvailable && r.RelayProfileProxyID != "" {
 		r.runTestWithInfo("Test Stream (Smart Mode with Relay Profile)",
-			"GET /proxy/{id}/{channelId} - verify relay transcoding works",
+			"GET /proxy/{id}/{channelId} with X-Container: mpegts - verify relay transcoding works",
 			func() error {
 				// Trigger proxy generation
 				if err := r.client.TriggerProxyGeneration(ctx, r.RelayProfileProxyID, time.Minute); err != nil {
@@ -154,10 +159,13 @@ func (r *E2ERunner) runStreamTests(ctx context.Context) {
 					return fmt.Errorf("get channel ID: %w", err)
 				}
 
+				// Use X-Container header to request MPEG-TS format via client detection rules
 				streamURL := r.client.GetProxyStreamURL(r.RelayProfileProxyID, channelID)
-				r.log("  Testing stream URL: %s", streamURL)
+				r.log("  Testing stream URL: %s (with X-Container: mpegts)", streamURL)
 
-				result, err := r.client.TestStreamRequest(ctx, streamURL)
+				result, err := r.client.TestStreamRequestWithHeaders(ctx, streamURL, map[string]string{
+					"X-Container": "mpegts",
+				})
 				if err != nil {
 					return fmt.Errorf("stream request: %w", err)
 				}

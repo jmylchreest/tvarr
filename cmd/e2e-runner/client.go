@@ -520,6 +520,13 @@ func (c *APIClient) GetProxyStreamURL(proxyID, channelID string) string {
 // TestStreamRequest tests a stream URL and returns information about the response.
 // It does not follow redirects automatically.
 func (c *APIClient) TestStreamRequest(ctx context.Context, streamURL string) (*StreamTestResult, error) {
+	return c.TestStreamRequestWithHeaders(ctx, streamURL, nil)
+}
+
+// TestStreamRequestWithHeaders tests a stream URL with custom headers and returns information about the response.
+// It does not follow redirects automatically. Headers like X-Container, X-Video-Codec, X-Audio-Codec
+// can be used to test client detection rules.
+func (c *APIClient) TestStreamRequestWithHeaders(ctx context.Context, streamURL string, headers map[string]string) (*StreamTestResult, error) {
 	// Create client that doesn't follow redirects
 	client := &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -531,6 +538,11 @@ func (c *APIClient) TestStreamRequest(ctx context.Context, streamURL string) (*S
 	req, err := http.NewRequestWithContext(ctx, "GET", streamURL, nil)
 	if err != nil {
 		return nil, err
+	}
+
+	// Add custom headers (e.g., X-Container, X-Video-Codec, X-Audio-Codec)
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 
 	resp, err := client.Do(req)

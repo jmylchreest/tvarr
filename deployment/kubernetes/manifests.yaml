@@ -62,7 +62,7 @@ data:
   TVARR_GRPC_PORT: "9090"
   TVARR_GRPC_ENABLED: "true"
   # Database configuration
-  TVARR_DATABASE_DSN: "file:/data/tvarr.db"
+  TVARR_DATABASE_DSN: "/data/tvarr.db"
   # Logging configuration
   TVARR_LOGGING_LEVEL: "info"
   # Storage configuration

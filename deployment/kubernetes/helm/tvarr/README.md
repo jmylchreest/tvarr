@@ -37,7 +37,7 @@ helm install tvarr tvarr/tvarr -f my-values.yaml
 | `PGID` | `1000` | Group ID for file permissions |
 | `TZ` | `UTC` | Timezone (e.g., `America/New_York`) |
 | `TVARR_PORT` | `8080` | HTTP server port |
-| `TVARR_DATABASE_DSN` | `file:/data/tvarr.db` | Database connection string |
+| `TVARR_DATABASE_DSN` | `/data/tvarr.db` | Database connection string |
 | `TVARR_LOG_LEVEL` | `info` | Logging level (debug, info, warn, error) |
 | `TVARR_CONFIG_DIR` | `/data/config` | Configuration directory |
 | `TVARR_FFMPEG_PATH` | `/usr/bin/ffmpeg` | FFmpeg binary path |
