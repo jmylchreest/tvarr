@@ -241,6 +241,8 @@ func (s *BackupService) CreateBackup(ctx context.Context) (*models.BackupMetadat
 }
 
 // createTarGzArchive creates a tar.gz archive containing the database and metadata.
+// IMPORTANT: Metadata is written FIRST so that ListBackups can read it quickly
+// without decompressing the entire database.
 func (s *BackupService) createTarGzArchive(archivePath, dbPath string, meta *models.BackupMetadataFile) error {
 	// Create the archive file
 	archiveFile, err := os.Create(archivePath)
@@ -249,13 +251,37 @@ func (s *BackupService) createTarGzArchive(archivePath, dbPath string, meta *mod
 	}
 	defer archiveFile.Close()
 
-	// Create gzip writer
-	gzWriter := gzip.NewWriter(archiveFile)
+	// Create gzip writer with best speed for faster backups
+	// (database is already incompressible, so compression level doesn't help much)
+	gzWriter, err := gzip.NewWriterLevel(archiveFile, gzip.BestSpeed)
+	if err != nil {
+		return fmt.Errorf("creating gzip writer: %w", err)
+	}
 	defer gzWriter.Close()
 
 	// Create tar writer
 	tarWriter := tar.NewWriter(gzWriter)
 	defer tarWriter.Close()
+
+	// Add metadata file FIRST for fast listing
+	// This allows ListBackups to read metadata without decompressing the entire database
+	metaJSON, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling metadata: %w", err)
+	}
+
+	metaHeader := &tar.Header{
+		Name:    backupMetadataFile,
+		Size:    int64(len(metaJSON)),
+		Mode:    0644,
+		ModTime: meta.CreatedAt,
+	}
+	if err := tarWriter.WriteHeader(metaHeader); err != nil {
+		return fmt.Errorf("writing metadata header: %w", err)
+	}
+	if _, err := tarWriter.Write(metaJSON); err != nil {
+		return fmt.Errorf("writing metadata content: %w", err)
+	}
 
 	// Add database file to archive
 	dbFile, err := os.Open(dbPath)
@@ -282,30 +308,12 @@ func (s *BackupService) createTarGzArchive(archivePath, dbPath string, meta *mod
 		return fmt.Errorf("writing database content: %w", err)
 	}
 
-	// Add metadata file to archive
-	metaJSON, err := json.MarshalIndent(meta, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshaling metadata: %w", err)
-	}
-
-	metaHeader := &tar.Header{
-		Name:    backupMetadataFile,
-		Size:    int64(len(metaJSON)),
-		Mode:    0644,
-		ModTime: meta.CreatedAt,
-	}
-	if err := tarWriter.WriteHeader(metaHeader); err != nil {
-		return fmt.Errorf("writing metadata header: %w", err)
-	}
-	if _, err := tarWriter.Write(metaJSON); err != nil {
-		return fmt.Errorf("writing metadata content: %w", err)
-	}
-
 	return nil
 }
 
 // ListBackups returns all available backups sorted by creation time (newest first).
 // Supports both new .tar.gz format and legacy .db.gz format.
+// Reads backup metadata in parallel for better performance.
 func (s *BackupService) ListBackups(ctx context.Context) ([]*models.BackupMetadata, error) {
 	entries, err := os.ReadDir(s.storageDir)
 	if err != nil {
@@ -315,22 +323,45 @@ func (s *BackupService) ListBackups(ctx context.Context) ([]*models.BackupMetada
 		return nil, err
 	}
 
-	var backups []*models.BackupMetadata
+	// Filter to backup files only
+	var backupFiles []string
 	for _, entry := range entries {
-		// Support both new .tar.gz and legacy .db.gz formats
-		if !strings.HasSuffix(entry.Name(), ".tar.gz") && !strings.HasSuffix(entry.Name(), ".db.gz") {
-			continue
+		if strings.HasSuffix(entry.Name(), ".tar.gz") || strings.HasSuffix(entry.Name(), ".db.gz") {
+			backupFiles = append(backupFiles, filepath.Join(s.storageDir, entry.Name()))
 		}
+	}
 
-		meta, err := s.loadBackupMetadata(filepath.Join(s.storageDir, entry.Name()))
-		if err != nil {
+	if len(backupFiles) == 0 {
+		return []*models.BackupMetadata{}, nil
+	}
+
+	// Read metadata in parallel for better performance
+	type result struct {
+		meta *models.BackupMetadata
+		err  error
+		path string
+	}
+
+	results := make(chan result, len(backupFiles))
+	for _, path := range backupFiles {
+		go func(p string) {
+			meta, err := s.loadBackupMetadata(p)
+			results <- result{meta: meta, err: err, path: p}
+		}(path)
+	}
+
+	// Collect results
+	var backups []*models.BackupMetadata
+	for range backupFiles {
+		r := <-results
+		if r.err != nil {
 			s.logger.Warn("failed to load backup metadata",
-				slog.String("filename", entry.Name()),
-				slog.String("error", err.Error()),
+				slog.String("filename", filepath.Base(r.path)),
+				slog.String("error", r.err.Error()),
 			)
 			continue
 		}
-		backups = append(backups, meta)
+		backups = append(backups, r.meta)
 	}
 
 	// Sort by creation time, newest first
