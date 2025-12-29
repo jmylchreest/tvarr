@@ -1,7 +1,10 @@
 // Package relay provides streaming relay functionality for tvarr.
 package relay
 
-import "github.com/jmylchreest/tvarr/internal/models"
+import (
+	"github.com/jmylchreest/tvarr/internal/codec"
+	"github.com/jmylchreest/tvarr/internal/models"
+)
 
 // ClientCapabilities represents detected client information.
 type ClientCapabilities struct {
@@ -46,12 +49,13 @@ type ClientCapabilities struct {
 }
 
 // AcceptsVideoCodec returns true if the client accepts the given video codec.
-func (c *ClientCapabilities) AcceptsVideoCodec(codec string) bool {
+// Uses codec normalization to handle aliases (e.g., hevc=h265, avc=h264).
+func (c *ClientCapabilities) AcceptsVideoCodec(codecName string) bool {
 	if len(c.AcceptedVideoCodecs) == 0 {
 		return true // No restrictions = accepts all
 	}
 	for _, accepted := range c.AcceptedVideoCodecs {
-		if accepted == codec {
+		if codec.VideoMatch(accepted, codecName) {
 			return true
 		}
 	}
@@ -59,12 +63,13 @@ func (c *ClientCapabilities) AcceptsVideoCodec(codec string) bool {
 }
 
 // AcceptsAudioCodec returns true if the client accepts the given audio codec.
-func (c *ClientCapabilities) AcceptsAudioCodec(codec string) bool {
+// Uses codec normalization to handle aliases (e.g., ec3=eac3).
+func (c *ClientCapabilities) AcceptsAudioCodec(codecName string) bool {
 	if len(c.AcceptedAudioCodecs) == 0 {
 		return true // No restrictions = accepts all
 	}
 	for _, accepted := range c.AcceptedAudioCodecs {
-		if accepted == codec {
+		if codec.AudioMatch(accepted, codecName) {
 			return true
 		}
 	}
