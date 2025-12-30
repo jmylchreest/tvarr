@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jmylchreest/tvarr/internal/config"
@@ -84,11 +85,23 @@ func New(cfg config.DatabaseConfig, log *slog.Logger, opts *Options) (*DB, error
 	// Note: SQLite PRAGMAs are applied via ConnectHook in registerSQLiteDriver()
 	// which ensures they are set on EVERY connection from the pool, not just the first.
 
-	return &DB{
+	dbWrapper := &DB{
 		DB:     db,
 		cfg:    cfg,
 		logger: log,
-	}, nil
+	}
+
+	// Log connection pool configuration and SQLite PRAGMAs for debugging
+	if cfg.Driver == "sqlite" {
+		dbWrapper.logSQLiteConfig()
+	} else {
+		log.Info("database connection pool configured",
+			slog.Int("max_open_conns", maxOpen),
+			slog.Int("max_idle_conns", maxIdle),
+		)
+	}
+
+	return dbWrapper, nil
 }
 
 // sqliteDriverName is the custom driver name for SQLite with connection hooks.
@@ -218,25 +231,45 @@ func (l *slogGormLogger) Trace(ctx context.Context, begin time.Time, fc func() (
 	}
 
 	elapsed := time.Since(begin)
-	sql, rows := fc()
+	sqlStr, rows := fc()
+
+	// Categorize errors for better debugging
+	errStr := ""
+	errType := ""
+	if err != nil {
+		errStr = err.Error()
+		switch {
+		case strings.Contains(errStr, "database is locked"):
+			errType = "SQLITE_BUSY"
+		case strings.Contains(errStr, "context canceled"):
+			errType = "CONTEXT_CANCELED"
+		case strings.Contains(errStr, "context deadline exceeded"):
+			errType = "TIMEOUT"
+		case strings.Contains(errStr, "record not found"):
+			errType = "NOT_FOUND"
+		default:
+			errType = "OTHER"
+		}
+	}
 
 	switch {
 	case err != nil && l.level >= logger.Error:
 		l.logger.ErrorContext(ctx, "database error",
-			slog.String("sql", sql),
+			slog.String("error_type", errType),
+			slog.String("sql", sqlStr),
 			slog.Int64("rows", rows),
 			slog.Duration("elapsed", elapsed),
-			slog.String("error", err.Error()),
+			slog.String("error", errStr),
 		)
 	case elapsed > 200*time.Millisecond && l.level >= logger.Warn:
 		l.logger.WarnContext(ctx, "slow query",
-			slog.String("sql", sql),
+			slog.String("sql", sqlStr),
 			slog.Int64("rows", rows),
 			slog.Duration("elapsed", elapsed),
 		)
 	case l.level >= logger.Info:
 		l.logger.DebugContext(ctx, "database query",
-			slog.String("sql", sql),
+			slog.String("sql", sqlStr),
 			slog.Int64("rows", rows),
 			slog.Duration("elapsed", elapsed),
 		)
@@ -300,4 +333,39 @@ func (db *DB) Stats() (map[string]interface{}, error) {
 		"max_idle_time_closed": stats.MaxIdleTimeClosed,
 		"max_lifetime_closed":  stats.MaxLifetimeClosed,
 	}, nil
+}
+
+// logSQLiteConfig queries and logs the actual SQLite PRAGMA values.
+// This helps verify that our configuration is being applied correctly.
+func (db *DB) logSQLiteConfig() {
+	sqlDB, err := db.DB.DB()
+	if err != nil {
+		db.logger.Warn("failed to get sql.DB for SQLite config logging", slog.String("error", err.Error()))
+		return
+	}
+
+	stats := sqlDB.Stats()
+
+	// Query actual PRAGMA values
+	var journalMode, synchronous string
+	var busyTimeout, cacheSize, walAutocheckpoint int
+
+	_ = db.DB.Raw("PRAGMA journal_mode").Scan(&journalMode)
+	_ = db.DB.Raw("PRAGMA synchronous").Scan(&synchronous)
+	_ = db.DB.Raw("PRAGMA busy_timeout").Scan(&busyTimeout)
+	_ = db.DB.Raw("PRAGMA cache_size").Scan(&cacheSize)
+	_ = db.DB.Raw("PRAGMA wal_autocheckpoint").Scan(&walAutocheckpoint)
+
+	db.logger.Info("SQLite configuration",
+		slog.String("journal_mode", journalMode),
+		slog.String("synchronous", synchronous),
+		slog.Int("busy_timeout_ms", busyTimeout),
+		slog.Int("cache_size", cacheSize),
+		slog.Int("wal_autocheckpoint", walAutocheckpoint),
+		slog.Int("max_open_conns", stats.MaxOpenConnections),
+		slog.Int("max_idle_conns", stats.MaxOpenConnections), // MaxIdleConns not directly available
+		slog.Int("open_conns", stats.OpenConnections),
+		slog.Int("in_use", stats.InUse),
+		slog.Int("idle", stats.Idle),
+	)
 }
