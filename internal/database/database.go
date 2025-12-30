@@ -69,16 +69,16 @@ func New(cfg config.DatabaseConfig, log *slog.Logger, opts *Options) (*DB, error
 
 	// Configure connection pool
 	// For SQLite in WAL mode, concurrent readers are allowed but only one writer at a time.
-	// We use 4 connections to balance:
+	// We use 6 connections (in the recommended 5-8 range) to balance:
 	// - Enough connections for concurrent reads during writes
-	// - Not so many that we exhaust file descriptors or increase contention
-	// Job workers (2) and occasional writes need some connections, while reads should not
-	// block waiting for a connection slot.
+	// - Not so many that we increase lock contention
+	// - Job workers (2), ingestion writes, and UI reads need their own slots
+	// Monitor wait_count/wait_duration in logs to detect connection starvation.
 	maxOpen := cfg.MaxOpenConns
 	maxIdle := cfg.MaxIdleConns
 	if cfg.Driver == "sqlite" {
-		maxOpen = 4 // More connections for read concurrency
-		maxIdle = 2
+		maxOpen = 6 // 5-8 recommended, avoid over-provisioning
+		maxIdle = 3
 	}
 	sqlDB.SetMaxOpenConns(maxOpen)
 	sqlDB.SetMaxIdleConns(maxIdle)
@@ -130,12 +130,14 @@ func registerSQLiteDriver() {
 			// Note: busy_timeout is set to 30s to give time for locks to release during
 			// heavy operations like ingestion, while not waiting indefinitely.
 			pragmas := []string{
-				"PRAGMA busy_timeout = 30000",      // Wait 30s when database is locked
-				"PRAGMA journal_mode = WAL",        // Better read/write concurrency
-				"PRAGMA synchronous = NORMAL",      // Better performance with WAL
-				"PRAGMA foreign_keys = ON",         // Enable foreign key constraints
-				"PRAGMA cache_size = -64000",       // 64MB cache (negative = KB)
-				"PRAGMA wal_autocheckpoint = 1000", // Checkpoint every 1000 pages to prevent WAL growth
+				"PRAGMA busy_timeout = 30000",       // Wait 30s when database is locked
+				"PRAGMA journal_mode = WAL",         // Better read/write concurrency
+				"PRAGMA synchronous = NORMAL",       // Better performance with WAL
+				"PRAGMA foreign_keys = ON",          // Enable foreign key constraints
+				"PRAGMA cache_size = -64000",        // 64MB cache (negative = KB)
+				"PRAGMA mmap_size = 268435456",      // 256MB memory-mapped I/O for faster reads
+				"PRAGMA temp_store = MEMORY",        // Store temp tables/indices in RAM
+				"PRAGMA wal_autocheckpoint = 1000",  // Checkpoint every 1000 pages to prevent WAL growth
 			}
 
 			for _, pragma := range pragmas {
@@ -350,25 +352,34 @@ func (db *DB) logSQLiteConfig() {
 	stats := sqlDB.Stats()
 
 	// Query actual PRAGMA values
-	var journalMode, synchronous string
-	var busyTimeout, cacheSize, walAutocheckpoint int
+	var journalMode, synchronous, tempStore string
+	var busyTimeout, cacheSize, walAutocheckpoint, mmapSize int64
 
 	_ = db.DB.Raw("PRAGMA journal_mode").Scan(&journalMode)
 	_ = db.DB.Raw("PRAGMA synchronous").Scan(&synchronous)
 	_ = db.DB.Raw("PRAGMA busy_timeout").Scan(&busyTimeout)
 	_ = db.DB.Raw("PRAGMA cache_size").Scan(&cacheSize)
 	_ = db.DB.Raw("PRAGMA wal_autocheckpoint").Scan(&walAutocheckpoint)
+	_ = db.DB.Raw("PRAGMA mmap_size").Scan(&mmapSize)
+	_ = db.DB.Raw("PRAGMA temp_store").Scan(&tempStore)
 
 	db.logger.Info("SQLite configuration",
 		slog.String("journal_mode", journalMode),
 		slog.String("synchronous", synchronous),
-		slog.Int("busy_timeout_ms", busyTimeout),
-		slog.Int("cache_size", cacheSize),
-		slog.Int("wal_autocheckpoint", walAutocheckpoint),
+		slog.Int64("busy_timeout_ms", busyTimeout),
+		slog.Int64("cache_size", cacheSize),
+		slog.Int64("mmap_size_mb", mmapSize/(1024*1024)),
+		slog.String("temp_store", tempStore),
+		slog.Int64("wal_autocheckpoint", walAutocheckpoint),
+	)
+
+	// Log Go connection pool statistics - these show connection starvation
+	db.logger.Info("SQLite connection pool",
 		slog.Int("max_open_conns", stats.MaxOpenConnections),
-		slog.Int("max_idle_conns", stats.MaxOpenConnections), // MaxIdleConns not directly available
 		slog.Int("open_conns", stats.OpenConnections),
 		slog.Int("in_use", stats.InUse),
 		slog.Int("idle", stats.Idle),
+		slog.Int64("wait_count", stats.WaitCount),               // Total blocked connections
+		slog.String("wait_duration", stats.WaitDuration.String()), // Total time blocked
 	)
 }
