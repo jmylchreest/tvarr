@@ -68,13 +68,15 @@ func New(cfg config.DatabaseConfig, log *slog.Logger, opts *Options) (*DB, error
 	}
 
 	// Configure connection pool
-	// For SQLite, use limited connections. WAL mode allows concurrent readers
-	// with a single writer. More connections = more read concurrency but also
-	// more write lock contention. 2 connections is a good balance.
+	// For SQLite, use a SINGLE connection. While WAL mode allows concurrent readers,
+	// Go's connection pool blocks when all connections are busy. With multiple connections,
+	// if all are tied up in writes (ingestion, job workers), READ requests block waiting
+	// for a free connection - causing 30+ second waits and timeouts.
+	// A single connection forces serialization but ensures predictable operation ordering.
 	maxOpen := cfg.MaxOpenConns
 	maxIdle := cfg.MaxIdleConns
 	if cfg.Driver == "sqlite" {
-		maxOpen = 2 // Balance between read concurrency and write contention
+		maxOpen = 1 // Single connection prevents Go-level blocking
 		maxIdle = 1
 	}
 	sqlDB.SetMaxOpenConns(maxOpen)
