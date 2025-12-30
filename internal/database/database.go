@@ -67,8 +67,16 @@ func New(cfg config.DatabaseConfig, log *slog.Logger, opts *Options) (*DB, error
 	}
 
 	// Configure connection pool
-	sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
-	sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
+	// For SQLite, limit connections to reduce lock contention.
+	// SQLite only allows one writer at a time, so many connections cause SQLITE_BUSY.
+	maxOpen := cfg.MaxOpenConns
+	maxIdle := cfg.MaxIdleConns
+	if cfg.Driver == "sqlite" && maxOpen > 4 {
+		maxOpen = 4 // SQLite benefits from fewer connections
+		maxIdle = 2
+	}
+	sqlDB.SetMaxOpenConns(maxOpen)
+	sqlDB.SetMaxIdleConns(maxIdle)
 	sqlDB.SetConnMaxLifetime(cfg.ConnMaxLifetime)
 	sqlDB.SetConnMaxIdleTime(cfg.ConnMaxIdleTime)
 
@@ -101,12 +109,16 @@ func registerSQLiteDriver() {
 			// These PRAGMAs are applied to EVERY connection from the pool.
 			// This ensures consistent behavior regardless of which connection
 			// handles a particular request.
+			//
+			// Note: busy_timeout is set high (60s) to handle network storage
+			// (like Longhorn PVCs in Kubernetes) where I/O latency can be high.
 			pragmas := []string{
-				"PRAGMA busy_timeout = 30000", // Wait 30s when database is locked
-				"PRAGMA journal_mode = WAL",   // Better read/write concurrency
-				"PRAGMA synchronous = NORMAL", // Better performance with WAL
-				"PRAGMA foreign_keys = ON",    // Enable foreign key constraints
-				"PRAGMA cache_size = -64000",  // 64MB cache (negative = KB)
+				"PRAGMA busy_timeout = 60000",      // Wait 60s when database is locked (for network storage)
+				"PRAGMA journal_mode = WAL",        // Better read/write concurrency
+				"PRAGMA synchronous = NORMAL",      // Better performance with WAL
+				"PRAGMA foreign_keys = ON",         // Enable foreign key constraints
+				"PRAGMA cache_size = -64000",       // 64MB cache (negative = KB)
+				"PRAGMA wal_autocheckpoint = 1000", // Checkpoint every 1000 pages to prevent WAL growth
 			}
 
 			for _, pragma := range pragmas {

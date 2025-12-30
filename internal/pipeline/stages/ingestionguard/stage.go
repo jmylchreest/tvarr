@@ -23,7 +23,7 @@ const (
 	// DefaultPollInterval is the default interval between checks.
 	DefaultPollInterval = 1 * time.Second
 	// DefaultMaxWaitTime is the default maximum time to wait for ingestions.
-	DefaultMaxWaitTime = 5 * time.Minute
+	DefaultMaxWaitTime = 30 * time.Minute
 )
 
 // StateChecker is an interface for checking ingestion state.
