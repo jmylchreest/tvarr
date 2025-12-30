@@ -635,6 +635,9 @@ func runServe(_ *cobra.Command, _ []string) error {
 		cancel()
 	}()
 
+	// Start database stats monitor (logs every 30 minutes for SQLite)
+	db.StartStatsMonitor(ctx)
+
 	// Start scheduler
 	if err := sched.Start(ctx); err != nil {
 		return fmt.Errorf("starting scheduler: %w", err)

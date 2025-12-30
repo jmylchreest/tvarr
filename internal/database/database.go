@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jmylchreest/tvarr/internal/config"
@@ -66,6 +67,9 @@ func New(cfg config.DatabaseConfig, log *slog.Logger, opts *Options) (*DB, error
 	if err != nil {
 		return nil, fmt.Errorf("getting underlying sql.DB: %w", err)
 	}
+
+	// Enable stats logging on SQLITE_BUSY errors
+	gormLogger.SetSQLDB(sqlDB)
 
 	// Configure connection pool
 	// For SQLite in WAL mode, concurrent readers are allowed but only one writer at a time.
@@ -192,24 +196,62 @@ func gormLogLevel(level string) logger.LogLevel {
 }
 
 // newGormLogger creates a GORM logger that uses slog.
-func newGormLogger(level string, log *slog.Logger) logger.Interface {
+func newGormLogger(level string, log *slog.Logger) *slogGormLogger {
 	return &slogGormLogger{
 		logger: log,
 		level:  gormLogLevel(level),
 	}
 }
 
+// SetSQLDB sets the sql.DB reference for stats logging on errors.
+// Call this after opening the connection.
+func (l *slogGormLogger) SetSQLDB(db *sql.DB) {
+	l.sqlDB = db
+}
+
 // slogGormLogger implements GORM's logger.Interface using slog.
 type slogGormLogger struct {
-	logger *slog.Logger
-	level  logger.LogLevel
+	logger        *slog.Logger
+	level         logger.LogLevel
+	sqlDB         *sql.DB        // Optional: for stats logging on errors
+	lastStatsLog  time.Time      // Rate limit stats logging
+	statsLogMutex sync.Mutex     // Protect lastStatsLog
 }
 
 func (l *slogGormLogger) LogMode(level logger.LogLevel) logger.Interface {
 	return &slogGormLogger{
-		logger: l.logger,
-		level:  level,
+		logger:       l.logger,
+		level:        level,
+		sqlDB:        l.sqlDB,
+		lastStatsLog: l.lastStatsLog,
 	}
+}
+
+// logStatsOnError logs connection pool stats when we see lock contention.
+// Rate limited to once per minute to avoid log spam.
+func (l *slogGormLogger) logStatsOnError() {
+	if l.sqlDB == nil {
+		return
+	}
+
+	l.statsLogMutex.Lock()
+	defer l.statsLogMutex.Unlock()
+
+	// Rate limit to once per minute
+	if time.Since(l.lastStatsLog) < time.Minute {
+		return
+	}
+	l.lastStatsLog = time.Now()
+
+	stats := l.sqlDB.Stats()
+	l.logger.Warn("SQLite connection pool stats (on lock contention)",
+		slog.Int("max_open_conns", stats.MaxOpenConnections),
+		slog.Int("open_conns", stats.OpenConnections),
+		slog.Int("in_use", stats.InUse),
+		slog.Int("idle", stats.Idle),
+		slog.Int64("wait_count", stats.WaitCount),
+		slog.String("wait_duration", stats.WaitDuration.String()),
+	)
 }
 
 func (l *slogGormLogger) Info(ctx context.Context, msg string, args ...interface{}) {
@@ -246,6 +288,8 @@ func (l *slogGormLogger) Trace(ctx context.Context, begin time.Time, fc func() (
 		switch {
 		case strings.Contains(errStr, "database is locked"):
 			errType = "SQLITE_BUSY"
+			// Log connection pool stats on lock contention (rate limited)
+			l.logStatsOnError()
 		case strings.Contains(errStr, "context canceled"):
 			errType = "CONTEXT_CANCELED"
 		case strings.Contains(errStr, "context deadline exceeded"):
@@ -312,6 +356,50 @@ func (db *DB) WithContext(ctx context.Context) *DB {
 // If the function returns an error, the transaction is rolled back.
 func (db *DB) Transaction(ctx context.Context, fn func(tx *gorm.DB) error) error {
 	return db.DB.WithContext(ctx).Transaction(fn)
+}
+
+// StartStatsMonitor starts a background goroutine that logs connection pool
+// stats every 30 minutes. Only active for SQLite. Cancel ctx to stop.
+func (db *DB) StartStatsMonitor(ctx context.Context) {
+	if db.cfg.Driver != "sqlite" {
+		return
+	}
+
+	go func() {
+		ticker := time.NewTicker(30 * time.Minute)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				db.LogStats()
+			}
+		}
+	}()
+
+	db.logger.Debug("SQLite stats monitor started (logs every 30m)")
+}
+
+// LogStats logs current connection pool statistics.
+func (db *DB) LogStats() {
+	sqlDB, err := db.DB.DB()
+	if err != nil {
+		return
+	}
+
+	stats := sqlDB.Stats()
+	db.logger.Info("SQLite connection pool stats (periodic)",
+		slog.Int("max_open_conns", stats.MaxOpenConnections),
+		slog.Int("open_conns", stats.OpenConnections),
+		slog.Int("in_use", stats.InUse),
+		slog.Int("idle", stats.Idle),
+		slog.Int64("wait_count", stats.WaitCount),
+		slog.String("wait_duration", stats.WaitDuration.String()),
+		slog.Int64("max_idle_closed", stats.MaxIdleClosed),
+		slog.Int64("max_lifetime_closed", stats.MaxLifetimeClosed),
+	)
 }
 
 // Driver returns the database driver name.
