@@ -67,13 +67,14 @@ func New(cfg config.DatabaseConfig, log *slog.Logger, opts *Options) (*DB, error
 	}
 
 	// Configure connection pool
-	// For SQLite, limit connections to reduce lock contention.
-	// SQLite only allows one writer at a time, so many connections cause SQLITE_BUSY.
+	// For SQLite, use limited connections. WAL mode allows concurrent readers
+	// with a single writer. More connections = more read concurrency but also
+	// more write lock contention. 2 connections is a good balance.
 	maxOpen := cfg.MaxOpenConns
 	maxIdle := cfg.MaxIdleConns
-	if cfg.Driver == "sqlite" && maxOpen > 4 {
-		maxOpen = 4 // SQLite benefits from fewer connections
-		maxIdle = 2
+	if cfg.Driver == "sqlite" {
+		maxOpen = 2 // Balance between read concurrency and write contention
+		maxIdle = 1
 	}
 	sqlDB.SetMaxOpenConns(maxOpen)
 	sqlDB.SetMaxIdleConns(maxIdle)
@@ -110,10 +111,10 @@ func registerSQLiteDriver() {
 			// This ensures consistent behavior regardless of which connection
 			// handles a particular request.
 			//
-			// Note: busy_timeout is set high (60s) to handle network storage
-			// (like Longhorn PVCs in Kubernetes) where I/O latency can be high.
+			// Note: busy_timeout is set to 15s as a balance between giving time for
+			// locks to be released and failing fast to allow retries.
 			pragmas := []string{
-				"PRAGMA busy_timeout = 60000",      // Wait 60s when database is locked (for network storage)
+				"PRAGMA busy_timeout = 15000",      // Wait 15s when database is locked
 				"PRAGMA journal_mode = WAL",        // Better read/write concurrency
 				"PRAGMA synchronous = NORMAL",      // Better performance with WAL
 				"PRAGMA foreign_keys = ON",         // Enable foreign key constraints
