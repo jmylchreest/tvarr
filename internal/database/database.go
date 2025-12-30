@@ -68,16 +68,17 @@ func New(cfg config.DatabaseConfig, log *slog.Logger, opts *Options) (*DB, error
 	}
 
 	// Configure connection pool
-	// For SQLite, use a SINGLE connection. While WAL mode allows concurrent readers,
-	// Go's connection pool blocks when all connections are busy. With multiple connections,
-	// if all are tied up in writes (ingestion, job workers), READ requests block waiting
-	// for a free connection - causing 30+ second waits and timeouts.
-	// A single connection forces serialization but ensures predictable operation ordering.
+	// For SQLite in WAL mode, concurrent readers are allowed but only one writer at a time.
+	// We use 4 connections to balance:
+	// - Enough connections for concurrent reads during writes
+	// - Not so many that we exhaust file descriptors or increase contention
+	// Job workers (2) and occasional writes need some connections, while reads should not
+	// block waiting for a connection slot.
 	maxOpen := cfg.MaxOpenConns
 	maxIdle := cfg.MaxIdleConns
 	if cfg.Driver == "sqlite" {
-		maxOpen = 1 // Single connection prevents Go-level blocking
-		maxIdle = 1
+		maxOpen = 4 // More connections for read concurrency
+		maxIdle = 2
 	}
 	sqlDB.SetMaxOpenConns(maxOpen)
 	sqlDB.SetMaxIdleConns(maxIdle)
@@ -126,10 +127,10 @@ func registerSQLiteDriver() {
 			// This ensures consistent behavior regardless of which connection
 			// handles a particular request.
 			//
-			// Note: busy_timeout is set to 15s as a balance between giving time for
-			// locks to be released and failing fast to allow retries.
+			// Note: busy_timeout is set to 30s to give time for locks to release during
+			// heavy operations like ingestion, while not waiting indefinitely.
 			pragmas := []string{
-				"PRAGMA busy_timeout = 15000",      // Wait 15s when database is locked
+				"PRAGMA busy_timeout = 30000",      // Wait 30s when database is locked
 				"PRAGMA journal_mode = WAL",        // Better read/write concurrency
 				"PRAGMA synchronous = NORMAL",      // Better performance with WAL
 				"PRAGMA foreign_keys = ON",         // Enable foreign key constraints
