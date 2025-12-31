@@ -245,6 +245,14 @@ func (s *Service) SubscriberCount() int {
 	return len(s.subscribers)
 }
 
+// HasSubscribers returns true if there are any active subscribers.
+// This is a fast check used to skip expensive log processing when no one is listening.
+func (s *Service) HasSubscribers() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.subscribers) > 0
+}
+
 // logsHandler is a slog.Handler that intercepts logs and sends them to the service.
 type logsHandler struct {
 	service *Service
@@ -260,28 +268,36 @@ func (h *logsHandler) Enabled(ctx context.Context, level slog.Level) bool {
 
 // Handle handles the Record.
 func (h *logsHandler) Handle(ctx context.Context, r slog.Record) error {
-	// Convert slog record to LogEntry
-	entry := LogEntry{
-		ID:        ulid.Make().String(),
-		Timestamp: r.Time,
-		Level:     levelToString(r.Level),
-		Message:   r.Message,
-		Fields:    make(map[string]interface{}),
+	// Fast path: skip log capture if no subscribers and not an error
+	// This avoids expensive ULID generation and map allocations during bulk operations
+	hasSubscribers := h.service.HasSubscribers()
+	isError := r.Level >= slog.LevelError
+
+	// Only capture logs if someone is listening or it's an error (for recent errors tracking)
+	if hasSubscribers || isError {
+		// Convert slog record to LogEntry
+		entry := LogEntry{
+			ID:        ulid.Make().String(),
+			Timestamp: r.Time,
+			Level:     levelToString(r.Level),
+			Message:   r.Message,
+			Fields:    make(map[string]interface{}),
+		}
+
+		// Add pre-set attributes
+		for _, attr := range h.attrs {
+			h.addAttr(&entry, attr)
+		}
+
+		// Add record attributes
+		r.Attrs(func(a slog.Attr) bool {
+			h.addAttr(&entry, a)
+			return true
+		})
+
+		// Send to service
+		h.service.AddLog(entry)
 	}
-
-	// Add pre-set attributes
-	for _, attr := range h.attrs {
-		h.addAttr(&entry, attr)
-	}
-
-	// Add record attributes
-	r.Attrs(func(a slog.Attr) bool {
-		h.addAttr(&entry, a)
-		return true
-	})
-
-	// Send to service
-	h.service.AddLog(entry)
 
 	// Pass through to wrapped handler
 	return h.wrapped.Handle(ctx, r)

@@ -237,6 +237,22 @@ func (l *slogGormLogger) Error(ctx context.Context, msg string, args ...interfac
 	}
 }
 
+// slowQueryThreshold defines when a query is considered slow.
+// Set to 1 second to avoid excessive logging during batch operations.
+const slowQueryThreshold = 1 * time.Second
+
+// maxSQLLogLength limits SQL string length in logs to reduce overhead.
+// Full SQL with interpolated values can be megabytes for batch inserts.
+const maxSQLLogLength = 200
+
+// truncateSQL truncates a SQL string for logging, preserving the query type.
+func truncateSQL(sql string) string {
+	if len(sql) <= maxSQLLogLength {
+		return sql
+	}
+	return sql[:maxSQLLogLength] + "... (truncated)"
+}
+
 func (l *slogGormLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql string, rowsAffected int64), err error) {
 	if l.level <= logger.Silent {
 		return
@@ -248,7 +264,7 @@ func (l *slogGormLogger) Trace(ctx context.Context, begin time.Time, fc func() (
 	// fc() calls GORM's ExplainSQL which builds the full SQL string with interpolated parameters.
 	// This was causing 26% of all allocations in profiles.
 	isError := err != nil
-	isSlow := elapsed > 200*time.Millisecond
+	isSlow := elapsed > slowQueryThreshold
 
 	// Fast path: determine what we would log and at what level
 	// Only generate SQL string if slog will actually output it
@@ -294,22 +310,24 @@ func (l *slogGormLogger) Trace(ctx context.Context, begin time.Time, fc func() (
 
 	switch {
 	case isError:
+		// For errors, truncate SQL to avoid log spam but keep enough for debugging
 		l.logger.ErrorContext(ctx, "database error",
 			slog.String("error_type", errType),
-			slog.String("sql", sqlStr),
+			slog.String("sql", truncateSQL(sqlStr)),
 			slog.Int64("rows", rows),
 			slog.Duration("elapsed", elapsed),
 			slog.String("error", errStr),
 		)
 	case isSlow:
+		// For slow queries, truncate SQL - the pattern is more important than the data
 		l.logger.WarnContext(ctx, "slow query",
-			slog.String("sql", sqlStr),
+			slog.String("sql", truncateSQL(sqlStr)),
 			slog.Int64("rows", rows),
 			slog.Duration("elapsed", elapsed),
 		)
 	default:
 		l.logger.DebugContext(ctx, "database query",
-			slog.String("sql", sqlStr),
+			slog.String("sql", truncateSQL(sqlStr)),
 			slog.Int64("rows", rows),
 			slog.Duration("elapsed", elapsed),
 		)
