@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
+	_ "net/http/pprof" // Register pprof handlers on DefaultServeMux
 	"os"
 	"os/signal"
 	"syscall"
@@ -76,6 +78,10 @@ func init() {
 	// Relay flags
 	serveCmd.Flags().Bool("prefer-remote-probe", false, "Prefer remote daemons for stream probing (ffprobe) even when local ffprobe is available")
 
+	// Profiling flags
+	serveCmd.Flags().Bool("pprof", false, "Enable pprof profiling server")
+	serveCmd.Flags().Int("pprof-port", 6060, "Port for pprof profiling server")
+
 	// Bind flags to viper
 	mustBindPFlag("server.host", serveCmd.Flags().Lookup("host"))
 	mustBindPFlag("server.port", serveCmd.Flags().Lookup("port"))
@@ -91,6 +97,8 @@ func init() {
 	mustBindPFlag("grpc.port", serveCmd.Flags().Lookup("grpc-port"))
 	mustBindPFlag("grpc.auth_token", serveCmd.Flags().Lookup("grpc-auth-token"))
 	mustBindPFlag("relay.prefer_remote_probe", serveCmd.Flags().Lookup("prefer-remote-probe"))
+	mustBindPFlag("profiling.pprof", serveCmd.Flags().Lookup("pprof"))
+	mustBindPFlag("profiling.pprof_port", serveCmd.Flags().Lookup("pprof-port"))
 }
 
 func runServe(_ *cobra.Command, _ []string) error {
@@ -125,6 +133,23 @@ func runServe(_ *cobra.Command, _ []string) error {
 		slog.String("go", versionInfo.GoVersion),
 		slog.String("platform", versionInfo.Platform),
 	)
+
+	// Start pprof server if enabled
+	if viper.GetBool("profiling.pprof") {
+		pprofPort := viper.GetInt("profiling.pprof_port")
+		pprofAddr := fmt.Sprintf("localhost:%d", pprofPort)
+		go func() {
+			logger.Info("pprof server starting",
+				slog.String("address", pprofAddr),
+				slog.String("cpu_profile", fmt.Sprintf("http://%s/debug/pprof/profile", pprofAddr)),
+				slog.String("heap_profile", fmt.Sprintf("http://%s/debug/pprof/heap", pprofAddr)),
+			)
+			// Uses http.DefaultServeMux which has pprof handlers registered via blank import
+			if err := http.ListenAndServe(pprofAddr, nil); err != nil {
+				logger.Error("pprof server failed", slog.String("error", err.Error()))
+			}
+		}()
+	}
 
 	// T055/T057: Clean up orphaned temp directories from previous runs
 	orphansRemoved, err := startup.CleanupSystemTempDirs(logger)
