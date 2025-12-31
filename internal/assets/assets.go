@@ -97,21 +97,3 @@ func GetContentType(path string) string {
 	}
 }
 
-// ListAssets returns a list of all embedded asset paths.
-func ListAssets() ([]string, error) {
-	var assets []string
-
-	err := fs.WalkDir(StaticFS, "static", func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() && d.Name() != ".gitkeep" {
-			// Remove "static/" prefix for cleaner paths
-			cleanPath := strings.TrimPrefix(path, "static/")
-			assets = append(assets, cleanPath)
-		}
-		return nil
-	})
-
-	return assets, err
-}

@@ -51,11 +51,3 @@ func TestGetStaticFS(t *testing.T) {
 	assert.NotNil(t, staticFS)
 }
 
-func TestListAssets(t *testing.T) {
-	assets, err := ListAssets()
-	assert.NoError(t, err)
-	t.Logf("Found %d assets", len(assets))
-	for _, asset := range assets {
-		t.Logf("  - %s", asset)
-	}
-}

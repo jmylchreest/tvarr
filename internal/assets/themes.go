@@ -17,22 +17,3 @@ func GetThemesFS() (fs.FS, error) {
 	return fs.Sub(staticFS, "themes")
 }
 
-// HasBuiltinThemes returns true if the themes directory contains theme files.
-func HasBuiltinThemes() bool {
-	themesFS, err := GetThemesFS()
-	if err != nil {
-		return false
-	}
-
-	entries, err := fs.ReadDir(themesFS, ".")
-	if err != nil {
-		return false
-	}
-
-	for _, entry := range entries {
-		if !entry.IsDir() && len(entry.Name()) > 4 && entry.Name()[len(entry.Name())-4:] == ".css" {
-			return true
-		}
-	}
-	return false
-}

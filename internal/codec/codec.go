@@ -488,24 +488,6 @@ func NormalizeHLSCodec(name string) string {
 	return name
 }
 
-// NormalizeVideo normalizes a video codec/encoder name to its canonical form.
-// Returns the canonical codec string (e.g., "h264", "h265") or the input unchanged.
-func NormalizeVideo(name string) string {
-	if codec, ok := ParseVideo(name); ok {
-		return string(codec)
-	}
-	return name
-}
-
-// NormalizeAudio normalizes an audio codec/encoder name to its canonical form.
-// Returns the canonical codec string (e.g., "aac", "mp3") or the input unchanged.
-func NormalizeAudio(name string) string {
-	if codec, ok := ParseAudio(name); ok {
-		return string(codec)
-	}
-	return name
-}
-
 // IsEncoder returns true if the name appears to be an FFmpeg encoder name
 // rather than a codec name.
 func IsEncoder(name string) bool {
