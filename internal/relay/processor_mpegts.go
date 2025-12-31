@@ -329,10 +329,24 @@ func (p *MPEGTSProcessor) ServeStream(w http.ResponseWriter, r *http.Request, cl
 	// Wait for client to disconnect or context to cancel
 	select {
 	case <-client.done:
+		p.config.Logger.Info("MPEG-TS client done channel closed",
+			slog.String("client_id", clientID),
+			slog.Uint64("bytes_written", client.bytesWritten.Load()),
+			slog.Duration("connected_duration", time.Since(client.startedAt)))
 		return nil
 	case <-r.Context().Done():
+		p.config.Logger.Info("MPEG-TS client HTTP context cancelled",
+			slog.String("client_id", clientID),
+			slog.Uint64("bytes_written", client.bytesWritten.Load()),
+			slog.Duration("connected_duration", time.Since(client.startedAt)),
+			slog.String("error", r.Context().Err().Error()))
 		return r.Context().Err()
 	case <-ctx.Done():
+		p.config.Logger.Info("MPEG-TS processor context cancelled",
+			slog.String("client_id", clientID),
+			slog.Uint64("bytes_written", client.bytesWritten.Load()),
+			slog.Duration("connected_duration", time.Since(client.startedAt)),
+			slog.String("error", ctx.Err().Error()))
 		return ctx.Err()
 	}
 }
@@ -598,8 +612,11 @@ func (p *MPEGTSProcessor) broadcastToClients(data []byte, hasKeyframe bool) {
 		case err := <-writeDone:
 			if err != nil {
 				// Client write failed, unregister
-				p.config.Logger.Debug("Client write failed",
+				p.config.Logger.Info("MPEG-TS client write failed, disconnecting",
 					slog.String("client_id", clientID),
+					slog.String("processor_id", p.id),
+					slog.Uint64("bytes_written", client.bytesWritten.Load()),
+					slog.Duration("connected_duration", time.Since(client.startedAt)),
 					slog.String("error", err.Error()))
 				p.UnregisterClient(clientID)
 				continue
