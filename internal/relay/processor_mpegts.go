@@ -234,6 +234,20 @@ func (p *MPEGTSProcessor) UnregisterClient(clientID string) {
 	}
 }
 
+// ClientCount returns the number of connected streaming clients.
+// This overrides BaseProcessor.ClientCount because MPEG-TS uses persistent connections
+// tracked in streamClients rather than request-based tracking in the base clients map.
+func (p *MPEGTSProcessor) ClientCount() int {
+	p.streamClientsMu.RLock()
+	defer p.streamClientsMu.RUnlock()
+	return len(p.streamClients)
+}
+
+// IsIdle returns true if no clients are connected.
+func (p *MPEGTSProcessor) IsIdle() bool {
+	return p.ClientCount() == 0
+}
+
 // ServeManifest is not applicable for raw MPEG-TS streams.
 func (p *MPEGTSProcessor) ServeManifest(w http.ResponseWriter, r *http.Request) error {
 	http.Error(w, "MPEG-TS streams do not have manifests", http.StatusNotFound)
