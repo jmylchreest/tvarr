@@ -17,9 +17,7 @@ func migration013SystemClientDetectionRules() Migration {
 	return Migration{
 		Version:     "013",
 		Description: "Add system client detection rules for popular media players",
-		Up: func(tx *gorm.DB) error {
-			return createMediaPlayerClientDetectionRules(tx)
-		},
+		Up:          createMediaPlayerClientDetectionRules,
 		Down: func(tx *gorm.DB) error {
 			// Delete the media player rules by name
 			names := []string{

@@ -15,9 +15,7 @@ func migration006ExplicitCodecHeaders() Migration {
 	return Migration{
 		Version:     "006",
 		Description: "Add explicit codec header detection rules",
-		Up: func(tx *gorm.DB) error {
-			return createExplicitCodecHeaderRules(tx)
-		},
+		Up:          createExplicitCodecHeaderRules,
 		Down: func(tx *gorm.DB) error {
 			// Delete the explicit codec header rules by name pattern
 			return tx.Where("name LIKE ?", "Explicit % Request").Delete(&models.ClientDetectionRule{}).Error

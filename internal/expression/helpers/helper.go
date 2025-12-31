@@ -168,13 +168,11 @@ func ParseHelperSyntax(value string) (isHelper bool, name, args string) {
 		return false, "", ""
 	}
 
-	colonIdx := strings.Index(rest, ":")
-	if colonIdx <= 0 {
+	name, args, found := strings.Cut(rest, ":")
+	if !found || name == "" {
 		return false, "", ""
 	}
 
-	name = rest[:colonIdx]
-	args = rest[colonIdx+1:]
 	return true, name, args
 }
 
@@ -394,7 +392,7 @@ func isValidULID(s string) bool {
 func isCrockfordBase32(c byte) bool {
 	// Convert to uppercase for consistent checking
 	if c >= 'a' && c <= 'z' {
-		c = c - 32 // Convert to uppercase
+		c -= 32 // Convert to uppercase
 	}
 
 	// 0-9 are valid

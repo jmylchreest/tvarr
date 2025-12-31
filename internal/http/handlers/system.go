@@ -214,10 +214,10 @@ func containsLower(s, substr string) bool {
 			tc := substr[j]
 			// Simple lowercase comparison for ASCII
 			if sc >= 'A' && sc <= 'Z' {
-				sc = sc + 32
+				sc += 32
 			}
 			if tc >= 'A' && tc <= 'Z' {
-				tc = tc + 32
+				tc += 32
 			}
 			if sc != tc {
 				match = false
