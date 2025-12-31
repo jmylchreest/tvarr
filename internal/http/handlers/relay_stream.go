@@ -961,6 +961,10 @@ func (h *RelayStreamHandler) handleMultiFormatOutput(w http.ResponseWriter, r *h
 		return
 	}
 
+	// Clear any idle state since a client is actively connecting
+	// This prevents the session from being cleaned up while serving requests
+	session.ClearIdleState()
+
 	// Build output request for format determination
 	var segment *uint64
 	if segmentStr != "" {
@@ -1208,6 +1212,9 @@ func (h *RelayStreamHandler) streamMPEGTSFromRelay(w http.ResponseWriter, r *htt
 		http.Error(w, "session not ready", http.StatusServiceUnavailable)
 		return
 	}
+
+	// Clear any idle state since a client is actively connecting
+	session.ClearIdleState()
 
 	// Get or create the MPEG-TS processor for the client's variant on-demand
 	// This enables per-client codec variants

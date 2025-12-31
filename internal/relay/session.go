@@ -1629,6 +1629,19 @@ func (s *RelaySession) UpdateIdleState() {
 	s.lastActivity.Store(time.Now())
 }
 
+// ClearIdleState clears the session's idle state when a client connects.
+// This should be called after registering a client to ensure the session
+// is not cleaned up while active clients are connected.
+func (s *RelaySession) ClearIdleState() {
+	idleSince, _ := s.idleSince.Load().(time.Time)
+	if !idleSince.IsZero() {
+		slog.Debug("Clearing session idle state (client connected)",
+			slog.String("session_id", s.ID.String()))
+		s.idleSince.Store(time.Time{})
+	}
+	s.lastActivity.Store(time.Now())
+}
+
 // StopProcessorIfIdle stops idle processors of a given type across all variants.
 // This is called when a client disconnects to immediately clean up unused processors.
 func (s *RelaySession) StopProcessorIfIdle(processorType string) {

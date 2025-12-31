@@ -102,8 +102,8 @@ func DefaultManagerConfig() ManagerConfig {
 	return ManagerConfig{
 		MaxSessions:          100,
 		SessionTimeout:       5 * time.Minute,
-		IdleGracePeriod:      5 * time.Second,
-		CleanupInterval:      1 * time.Second, // Check frequently for idle sessions
+		IdleGracePeriod:      60 * time.Second, // Allow 60s for HLS clients to reconnect after cleanup
+		CleanupInterval:      1 * time.Second,  // Check frequently for idle sessions
 		CircuitBreakerConfig: DefaultCircuitBreakerConfig(),
 		ConnectionPoolConfig: DefaultConnectionPoolConfig(),
 		FallbackConfig:       DefaultFallbackConfig(),
