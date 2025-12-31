@@ -201,15 +201,6 @@ func TestGormLogLevel(t *testing.T) {
 	}
 }
 
-func TestRegisterSQLiteDriver(t *testing.T) {
-	// Test that the driver can be registered multiple times without error
-	registerSQLiteDriver()
-	registerSQLiteDriver() // Should be a no-op
-
-	// Verify the driver is registered
-	assert.True(t, sqliteDriverRegistered)
-}
-
 // setupTestDB creates an in-memory SQLite database for testing.
 func setupTestDB(t *testing.T) *DB {
 	t.Helper()

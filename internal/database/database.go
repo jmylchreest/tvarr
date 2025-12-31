@@ -11,11 +11,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/glebarez/sqlite"
 	"github.com/jmylchreest/tvarr/internal/config"
-	sqlite3 "github.com/mattn/go-sqlite3"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -111,65 +110,31 @@ func New(cfg config.DatabaseConfig, log *slog.Logger, opts *Options) (*DB, error
 	return dbWrapper, nil
 }
 
-// sqliteDriverName is the custom driver name for SQLite with connection hooks.
-const sqliteDriverName = "sqlite3_tvarr"
-
-// sqliteDriverRegistered tracks whether our custom driver has been registered.
-var sqliteDriverRegistered bool
-
-// registerSQLiteDriver registers a custom SQLite driver with a ConnectHook
-// that applies PRAGMAs to every new connection. This is more reliable than
-// DSN parameters because it works with all connection pool implementations.
-func registerSQLiteDriver() {
-	if sqliteDriverRegistered {
-		return
-	}
-
-	sql.Register(sqliteDriverName, &sqlite3.SQLiteDriver{
-		ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-			// These PRAGMAs are applied to EVERY connection from the pool.
-			// This ensures consistent behavior regardless of which connection
-			// handles a particular request.
-			//
-			// Note: busy_timeout is set to 30s to give time for locks to release during
-			// heavy operations like ingestion, while not waiting indefinitely.
-			pragmas := []string{
-				"PRAGMA busy_timeout = 30000",       // Wait 30s when database is locked
-				"PRAGMA journal_mode = WAL",         // Better read/write concurrency
-				"PRAGMA synchronous = NORMAL",       // Better performance with WAL
-				"PRAGMA foreign_keys = ON",          // Enable foreign key constraints
-				"PRAGMA cache_size = -64000",        // 64MB cache (negative = KB)
-				"PRAGMA mmap_size = 268435456",      // 256MB memory-mapped I/O for faster reads
-				"PRAGMA temp_store = MEMORY",        // Store temp tables/indices in RAM
-				"PRAGMA wal_autocheckpoint = 1000",  // Checkpoint every 1000 pages to prevent WAL growth
-			}
-
-			for _, pragma := range pragmas {
-				if _, err := conn.Exec(pragma, nil); err != nil {
-					// Log but don't fail - some pragmas may not be supported
-					// in all SQLite versions or configurations
-					return nil
-				}
-			}
-			return nil
-		},
-	})
-
-	sqliteDriverRegistered = true
-}
-
 // getDialector returns the appropriate GORM dialector for the configured driver.
 func getDialector(cfg config.DatabaseConfig) (gorm.Dialector, error) {
 	switch cfg.Driver {
 	case "sqlite":
-		// Register our custom SQLite driver with connection hooks
-		registerSQLiteDriver()
+		// Use pure Go SQLite driver (github.com/glebarez/sqlite -> modernc.org/sqlite)
+		// This eliminates CGO overhead which was 40%+ of CPU time in profiles.
+		// PRAGMAs are applied via DSN parameters using _pragma syntax.
+		dsn := cfg.DSN
+		if !strings.Contains(dsn, "?") {
+			dsn += "?"
+		} else {
+			dsn += "&"
+		}
+		// Apply SQLite PRAGMAs via DSN for the pure Go driver
+		// These are applied to every connection from the pool.
+		dsn += "_pragma=busy_timeout(30000)" +      // Wait 30s when database is locked
+			"&_pragma=journal_mode(WAL)" +           // Better read/write concurrency
+			"&_pragma=synchronous(NORMAL)" +         // Better performance with WAL
+			"&_pragma=foreign_keys(ON)" +            // Enable foreign key constraints
+			"&_pragma=cache_size(-64000)" +          // 64MB cache (negative = KB)
+			"&_pragma=mmap_size(268435456)" +        // 256MB memory-mapped I/O for faster reads
+			"&_pragma=temp_store(MEMORY)" +          // Store temp tables/indices in RAM
+			"&_pragma=wal_autocheckpoint(1000)"      // Checkpoint every 1000 pages
 
-		// Use the custom driver that applies PRAGMAs on every connection
-		return sqlite.Dialector{
-			DriverName: sqliteDriverName,
-			DSN:        cfg.DSN,
-		}, nil
+		return sqlite.Open(dsn), nil
 	case "postgres":
 		return postgres.Open(cfg.DSN), nil
 	case "mysql":
@@ -278,6 +243,32 @@ func (l *slogGormLogger) Trace(ctx context.Context, begin time.Time, fc func() (
 	}
 
 	elapsed := time.Since(begin)
+
+	// Determine if we need to log BEFORE calling fc() to avoid expensive SQL string generation.
+	// fc() calls GORM's ExplainSQL which builds the full SQL string with interpolated parameters.
+	// This was causing 26% of all allocations in profiles.
+	isError := err != nil
+	isSlow := elapsed > 200*time.Millisecond
+
+	// Fast path: determine what we would log and at what level
+	// Only generate SQL string if slog will actually output it
+	var willLog bool
+	if isError && l.level >= logger.Error {
+		// Errors are logged at ERROR level - always visible
+		willLog = true
+	} else if isSlow && l.level >= logger.Warn {
+		// Slow queries are logged at WARN level
+		willLog = l.logger.Enabled(ctx, slog.LevelWarn)
+	} else if l.level >= logger.Info {
+		// Normal queries are logged at DEBUG level - check if DEBUG is enabled
+		willLog = l.logger.Enabled(ctx, slog.LevelDebug)
+	}
+
+	if !willLog {
+		return
+	}
+
+	// Only now do we call fc() to get the SQL string
 	sqlStr, rows := fc()
 
 	// Categorize errors for better debugging
@@ -302,7 +293,7 @@ func (l *slogGormLogger) Trace(ctx context.Context, begin time.Time, fc func() (
 	}
 
 	switch {
-	case err != nil && l.level >= logger.Error:
+	case isError:
 		l.logger.ErrorContext(ctx, "database error",
 			slog.String("error_type", errType),
 			slog.String("sql", sqlStr),
@@ -310,13 +301,13 @@ func (l *slogGormLogger) Trace(ctx context.Context, begin time.Time, fc func() (
 			slog.Duration("elapsed", elapsed),
 			slog.String("error", errStr),
 		)
-	case elapsed > 200*time.Millisecond && l.level >= logger.Warn:
+	case isSlow:
 		l.logger.WarnContext(ctx, "slow query",
 			slog.String("sql", sqlStr),
 			slog.Int64("rows", rows),
 			slog.Duration("elapsed", elapsed),
 		)
-	case l.level >= logger.Info:
+	default:
 		l.logger.DebugContext(ctx, "database query",
 			slog.String("sql", sqlStr),
 			slog.Int64("rows", rows),
