@@ -1,6 +1,10 @@
 package models
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/jmylchreest/tvarr/internal/codec"
+)
 
 // EncoderOverrideCodecType represents the type of codec (video or audio).
 type EncoderOverrideCodecType string
@@ -116,20 +120,11 @@ func (o *EncoderOverride) Enabled() bool {
 }
 
 // MatchesCodec returns true if this override matches the given codec type and source codec.
+// Uses codec.Normalize to handle aliases (e.g., hevc=h265, avc=h264, ec3=eac3).
 func (o *EncoderOverride) MatchesCodec(codecType EncoderOverrideCodecType, sourceCodec string) bool {
 	if o.CodecType != codecType {
 		return false
 	}
-	// Normalize codec names (h265 == hevc)
-	return normalizeCodec(o.SourceCodec) == normalizeCodec(sourceCodec)
-}
-
-// normalizeCodec normalizes codec names for comparison.
-func normalizeCodec(codec string) string {
-	codec = strings.ToLower(strings.TrimSpace(codec))
-	// Normalize HEVC variants
-	if codec == "hevc" {
-		return "h265"
-	}
-	return codec
+	// Normalize codec names using canonical forms
+	return codec.Normalize(o.SourceCodec) == codec.Normalize(sourceCodec)
 }

@@ -1,6 +1,8 @@
 // Package daemon provides the tvarr-ffmpegd daemon implementation.
 package daemon
 
+import "github.com/jmylchreest/tvarr/internal/codec"
+
 // InputMuxer is the interface for muxing ES samples into a container format
 // that FFmpeg can read from stdin.
 //
@@ -37,8 +39,8 @@ type InputMuxerConfig struct {
 // RequiresFMP4Input returns true if the source video codec requires fMP4 input
 // because it's not compatible with MPEG-TS.
 func RequiresFMP4Input(sourceVideoCodec string) bool {
-	codec := normalizeCodec(sourceVideoCodec)
-	switch codec {
+	normalized := codec.Normalize(sourceVideoCodec)
+	switch normalized {
 	case "vp9", "av1":
 		return true
 	default:
@@ -48,8 +50,8 @@ func RequiresFMP4Input(sourceVideoCodec string) bool {
 
 // SupportsMPEGTS returns true if the source video codec can be muxed to MPEG-TS.
 func SupportsMPEGTS(sourceVideoCodec string) bool {
-	codec := normalizeCodec(sourceVideoCodec)
-	switch codec {
+	normalized := codec.Normalize(sourceVideoCodec)
+	switch normalized {
 	case "h264", "h265":
 		return true
 	default:

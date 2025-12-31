@@ -14,6 +14,7 @@ import (
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/fmp4"
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/mp4"
+	"github.com/jmylchreest/tvarr/internal/codec"
 )
 
 // FMP4MuxerConfig configures the fMP4 muxer for the daemon.
@@ -73,8 +74,8 @@ func NewFMP4Muxer(w io.Writer, config FMP4MuxerConfig) *FMP4Muxer {
 	return &FMP4Muxer{
 		writer:         w,
 		config:         config,
-		videoCodec:     normalizeCodec(config.VideoCodec),
-		audioCodec:     normalizeCodec(config.AudioCodec),
+		videoCodec:     codec.Normalize(config.VideoCodec),
+		audioCodec:     codec.Normalize(config.AudioCodec),
 		audioInitData:  config.AudioInitData,
 		videoTrackID:   1,
 		audioTrackID:   2,

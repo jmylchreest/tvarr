@@ -833,9 +833,8 @@ func (t *ESTranscoder) processSourceSamples(videoTrack, audioTrack *ESTrack, str
 	var protoVideoSamples []*proto.ESSample
 	var protoAudioSamples []*proto.ESSample
 
-	// Read video samples
-	isH265 := t.config.SourceVariant.VideoCodec() == "h265" ||
-		t.config.SourceVariant.VideoCodec() == "hevc"
+	// Read video samples (variant codecs are normalized in NewCodecVariant)
+	isH265 := t.config.SourceVariant.VideoCodec() == "h265"
 
 	videoSamples := videoTrack.ReadFrom(t.lastVideoSeq, 100)
 	for _, sample := range videoSamples {

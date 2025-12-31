@@ -828,8 +828,14 @@ func (h *RelayStreamHandler) handleSmartPassthrough(w http.ResponseWriter, r *ht
 		clientFormat = relay.FormatValueMPEGTS
 	}
 
+	// For passthrough mode (client accepts source codecs), we need to clear the
+	// encoding profile so the relay session doesn't transcode. Create a copy
+	// of info without the encoding profile.
+	infoNoTranscode := *info
+	infoNoTranscode.EncodingProfile = nil
+
 	// Route through ES pipeline with copy mode for connection sharing
-	h.handleSmartTranscode(w, r, info, clientFormat, relay.VariantCopy, "")
+	h.handleSmartTranscode(w, r, &infoNoTranscode, clientFormat, relay.VariantCopy, "")
 }
 
 // handleSmartRepackage repackages the source stream to a different manifest format.

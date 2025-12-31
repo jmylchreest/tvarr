@@ -210,6 +210,36 @@ func TestDefaultRoutingDecider_DecideWithNilProfile(t *testing.T) {
 			},
 			expectedDecision: RouteTranscode,
 		},
+		{
+			name:         "raw MPEGTS passthrough - client accepts source format and codecs",
+			sourceFormat: SourceFormatMPEGTS,
+			sourceCodecs: []string{"hevc", "eac3"},
+			client: ClientCapabilities{
+				PlayerName:          "jellyfin",
+				SupportsFMP4:        true,
+				SupportsMPEGTS:      true, // Client accepts MPEG-TS format
+				AcceptedVideoCodecs: []string{"h264", "h265", "hevc"},
+				AcceptedAudioCodecs: []string{"aac", "ac3", "eac3"},
+			},
+			// Client accepts both the source format (MPEG-TS) and codecs (hevc/eac3)
+			// so we can passthrough directly without any FFmpeg processing
+			expectedDecision: RoutePassthrough,
+		},
+		{
+			name:         "raw MPEGTS with client not accepting source codecs - transcode required",
+			sourceFormat: SourceFormatMPEGTS,
+			sourceCodecs: []string{"hevc", "eac3"},
+			client: ClientCapabilities{
+				PlayerName:          "limited-player",
+				SupportsFMP4:        true,
+				SupportsMPEGTS:      true,
+				AcceptedVideoCodecs: []string{"h264"}, // Does NOT accept hevc
+				AcceptedAudioCodecs: []string{"aac"},  // Does NOT accept eac3
+			},
+			// Client accepts MPEG-TS format but NOT the source codecs
+			// so we need to transcode
+			expectedDecision: RouteTranscode,
+		},
 	}
 
 	for _, tt := range tests {

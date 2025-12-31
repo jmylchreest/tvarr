@@ -146,6 +146,20 @@ func (d *DefaultRoutingDecider) Decide(
 		result.Reasons = append(result.Reasons, "client accepts source codecs - skipping unnecessary transcoding")
 	}
 
+	// Step 1.5: Check if raw MPEG-TS passthrough is possible
+	// When source is raw MPEG-TS AND client supports MPEG-TS format AND client accepts source codecs,
+	// we can passthrough directly without any FFmpeg processing.
+	if sourceFormat == SourceFormatMPEGTS && client.SupportsMPEGTS {
+		clientAcceptsSource := d.clientAcceptsSourceCodecs(sourceCodecs, client)
+		if clientAcceptsSource {
+			result.Decision = RoutePassthrough
+			result.ClientFormat = FormatValueMPEGTS
+			result.Reasons = append(result.Reasons, "raw MPEG-TS passthrough - client accepts source format and codecs")
+			d.logRoutingDecision(result, sourceCodecs, client, profile)
+			return result
+		}
+	}
+
 	// Step 2: Profile uses passthrough (copy) - check if source format allows repackaging
 	if !sourceFormat.IsSegmented() {
 		// Raw TS or unknown source - needs FFmpeg for segmentation

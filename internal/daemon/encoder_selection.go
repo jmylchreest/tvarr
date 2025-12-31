@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jmylchreest/tvarr/internal/codec"
 	"github.com/jmylchreest/tvarr/pkg/ffmpeg"
 	"github.com/jmylchreest/tvarr/pkg/ffmpegd/proto"
 	"github.com/shirou/gopsutil/v4/cpu"
@@ -39,8 +40,8 @@ func (s *EncoderSelector) SelectVideoEncoder(targetCodec string) (encoder string
 // If preferredHWAccel is empty, it auto-selects based on availability.
 // Returns the encoder name, hwaccel type, and device path (empty for software encoding).
 func (s *EncoderSelector) SelectVideoEncoderWithPreference(targetCodec, preferredHWAccel string) (encoder string, hwAccel string, hwDevice string) {
-	// Normalize target codec
-	targetCodec = normalizeCodec(targetCodec)
+	// Normalize target codec using the codec package
+	targetCodec = codec.Normalize(targetCodec)
 	preferredHWAccel = strings.ToLower(strings.TrimSpace(preferredHWAccel))
 
 	// Handle copy/passthrough - return "copy" to tell FFmpeg to pass through video
@@ -167,7 +168,7 @@ func (s *EncoderSelector) SelectVideoEncoderWithPreference(targetCodec, preferre
 // SelectAudioEncoder returns the best audio encoder for the target codec.
 // Audio encoding is typically done in software.
 func (s *EncoderSelector) SelectAudioEncoder(targetCodec string) string {
-	targetCodec = normalizeCodec(targetCodec)
+	targetCodec = codec.Normalize(targetCodec)
 
 	// Handle copy/passthrough - return "copy" to tell FFmpeg to pass through audio
 	if targetCodec == "copy" || targetCodec == "" {
@@ -198,35 +199,6 @@ func (s *EncoderSelector) SelectAudioEncoder(targetCodec string) string {
 	// Return first candidate even if not explicitly available
 	// (FFmpeg may still support it)
 	return candidates[0]
-}
-
-// normalizeCodec normalizes codec names to their base form.
-func normalizeCodec(codec string) string {
-	codec = strings.ToLower(strings.TrimSpace(codec))
-
-	// Normalize video codecs
-	switch codec {
-	case "h264", "avc", "x264":
-		return "h264"
-	case "h265", "hevc", "x265":
-		return "h265"
-	case "vp9", "libvpx-vp9":
-		return "vp9"
-	case "av1", "libaom-av1", "libsvtav1":
-		return "av1"
-	}
-
-	// Normalize audio codecs
-	switch codec {
-	case "aac", "libfdk_aac":
-		return "aac"
-	case "mp3", "libmp3lame":
-		return "mp3"
-	case "opus", "libopus":
-		return "opus"
-	}
-
-	return codec
 }
 
 // getHWEncoders returns a map of hwaccel type -> encoder name for a given codec.
@@ -317,7 +289,7 @@ func (s *EncoderSelector) ApplyEncoderOverride(
 
 	// Normalize inputs
 	codecType = strings.ToLower(strings.TrimSpace(codecType))
-	targetCodec = normalizeCodec(targetCodec)
+	targetCodec = codec.Normalize(targetCodec)
 	hwAccel = strings.ToLower(strings.TrimSpace(hwAccel))
 
 	slog.Debug("checking encoder overrides",
@@ -351,7 +323,7 @@ func (s *EncoderSelector) ApplyEncoderOverride(
 
 	// Check each override in priority order
 	for _, override := range matching {
-		sourceCodec := normalizeCodec(override.SourceCodec)
+		sourceCodec := codec.Normalize(override.SourceCodec)
 
 		slog.Debug("evaluating encoder override",
 			slog.String("source_codec", override.SourceCodec),

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jmylchreest/tvarr/internal/codec"
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/mem"
 )
@@ -72,9 +73,9 @@ func (b *FlowBuilder) BuildFlowGraph(sessions []RelaySessionInfo) RelayFlowGraph
 				transcoderNode := b.buildESTranscoderNode(session, esTranscoder)
 				graph.Nodes = append(graph.Nodes, transcoderNode)
 
-				// Parse source/target variants for codec info
+				// Parse source/target variants for codec info (all normalized for consistent display)
 				sourceVideo, sourceAudio := b.resolveVariantCodecs(session, esTranscoder.SourceVariant)
-				targetVideo, targetAudio := esTranscoder.VideoCodec, esTranscoder.AudioCodec
+				targetVideo, targetAudio := codec.Normalize(esTranscoder.VideoCodec), codec.Normalize(esTranscoder.AudioCodec)
 				if targetVideo == "" {
 					targetVideo, _ = b.resolveVariantCodecs(session, esTranscoder.TargetVariant)
 				}
@@ -304,8 +305,9 @@ func (b *FlowBuilder) groupClientsByFormatVariant(clients []RelayClientInfo) map
 
 // resolveVariantCodecs parses a variant string (e.g., "h265/aac") into video and audio codecs.
 // Falls back to session source codecs if variant is empty or "copy/copy".
+// All returned codec names are normalized for consistent display.
 func (b *FlowBuilder) resolveVariantCodecs(session RelaySessionInfo, variant string) (videoCodec, audioCodec string) {
-	// Default to source codecs
+	// Default to source codecs (already normalized in ToSessionInfo)
 	videoCodec = session.VideoCodec
 	audioCodec = session.AudioCodec
 
@@ -317,10 +319,10 @@ func (b *FlowBuilder) resolveVariantCodecs(session RelaySessionInfo, variant str
 	// Parse variant string "video/audio"
 	parts := strings.Split(variant, "/")
 	if len(parts) >= 1 && parts[0] != "" && parts[0] != "copy" {
-		videoCodec = parts[0]
+		videoCodec = codec.Normalize(parts[0])
 	}
 	if len(parts) >= 2 && parts[1] != "" && parts[1] != "copy" {
-		audioCodec = parts[1]
+		audioCodec = codec.Normalize(parts[1])
 	}
 
 	return videoCodec, audioCodec
@@ -449,27 +451,28 @@ func (b *FlowBuilder) buildTranscoderNode(session RelaySessionInfo) RelayFlowNod
 
 // buildESTranscoderNode creates a node for a specific ES transcoder instance.
 func (b *FlowBuilder) buildESTranscoderNode(session RelaySessionInfo, transcoder ESTranscoderInfo) RelayFlowNode {
-	// Parse target variant for codec display
-	targetVideo, targetAudio := transcoder.VideoCodec, transcoder.AudioCodec
+	// Parse target variant for codec display (normalize for consistent display)
+	targetVideo, targetAudio := codec.Normalize(transcoder.VideoCodec), codec.Normalize(transcoder.AudioCodec)
 	if targetVideo == "" || targetAudio == "" {
 		parts := strings.Split(transcoder.TargetVariant, "/")
 		if len(parts) >= 1 && targetVideo == "" {
-			targetVideo = parts[0]
+			targetVideo = codec.Normalize(parts[0])
 		}
 		if len(parts) >= 2 && targetAudio == "" {
-			targetAudio = parts[1]
+			targetAudio = codec.Normalize(parts[1])
 		}
 	}
 
-	// Parse source variant for display
+	// Parse source variant for display (normalize for consistent display)
+	// Session codecs are already normalized in ToSessionInfo()
 	sourceVideo, sourceAudio := session.VideoCodec, session.AudioCodec
 	if transcoder.SourceVariant != "" {
 		parts := strings.Split(transcoder.SourceVariant, "/")
 		if len(parts) >= 1 {
-			sourceVideo = parts[0]
+			sourceVideo = codec.Normalize(parts[0])
 		}
 		if len(parts) >= 2 {
-			sourceAudio = parts[1]
+			sourceAudio = codec.Normalize(parts[1])
 		}
 	}
 

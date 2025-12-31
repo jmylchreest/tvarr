@@ -2,7 +2,8 @@ package models
 
 import (
 	"encoding/json"
-	"strings"
+
+	"github.com/jmylchreest/tvarr/internal/codec"
 )
 
 // ClientDetectionRule represents a rule for detecting client capabilities from HTTP requests.
@@ -156,14 +157,14 @@ func (r *ClientDetectionRule) SetAcceptedAudioCodecs(codecs []string) error {
 }
 
 // AcceptsVideoCodec returns true if the client accepts the given video codec.
-func (r *ClientDetectionRule) AcceptsVideoCodec(codec string) bool {
+// Uses codec.VideoMatch to handle aliases (e.g., hevc=h265, avc=h264).
+func (r *ClientDetectionRule) AcceptsVideoCodec(codecName string) bool {
 	codecs := r.GetAcceptedVideoCodecs()
 	if len(codecs) == 0 {
 		return true // No restrictions = accepts all
 	}
-	codecLower := strings.ToLower(codec)
-	for _, c := range codecs {
-		if strings.ToLower(c) == codecLower {
+	for _, accepted := range codecs {
+		if codec.VideoMatch(accepted, codecName) {
 			return true
 		}
 	}
@@ -171,24 +172,20 @@ func (r *ClientDetectionRule) AcceptsVideoCodec(codec string) bool {
 }
 
 // AcceptsAudioCodec returns true if the client accepts the given audio codec.
-func (r *ClientDetectionRule) AcceptsAudioCodec(codec string) bool {
+// Uses codec.AudioMatch to handle aliases (e.g., ec3=eac3).
+func (r *ClientDetectionRule) AcceptsAudioCodec(codecName string) bool {
 	codecs := r.GetAcceptedAudioCodecs()
 	if len(codecs) == 0 {
 		return true // No restrictions = accepts all
 	}
-	codecLower := strings.ToLower(codec)
-	for _, c := range codecs {
-		if strings.ToLower(c) == codecLower {
+	for _, accepted := range codecs {
+		if codec.AudioMatch(accepted, codecName) {
 			return true
 		}
 	}
 	return false
 }
 
-// NeedsTranscode returns true if the source codecs require transcoding for this client.
-func (r *ClientDetectionRule) NeedsTranscode(sourceVideoCodec, sourceAudioCodec string) bool {
-	return !r.AcceptsVideoCodec(sourceVideoCodec) || !r.AcceptsAudioCodec(sourceAudioCodec)
-}
 
 // ClientDetectionResult contains the result of evaluating client detection rules.
 // Multiple rules can contribute to the result - the first rule to set each attribute wins.

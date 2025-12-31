@@ -406,6 +406,7 @@ const (
 // NewCodecVariant creates a CodecVariant from video and audio codec names.
 // Codec names should be like "h264", "h265", "aac" - NOT encoder names like "libx265".
 // Empty or "copy" values are normalized to "copy".
+// All codec names are normalized to canonical form (e.g., "hevc" -> "h265").
 func NewCodecVariant(videoCodec, audioCodec string) CodecVariant {
 	// Warn if encoder names are passed instead of codec names - this indicates a bug
 	if codec.IsEncoder(videoCodec) {
@@ -424,9 +425,15 @@ func NewCodecVariant(videoCodec, audioCodec string) CodecVariant {
 	// Handle empty/copy values
 	if videoCodec == "" || videoCodec == "copy" {
 		videoCodec = "copy"
+	} else {
+		// Normalize to canonical form (e.g., "hevc" -> "h265")
+		videoCodec = codec.Normalize(videoCodec)
 	}
 	if audioCodec == "" || audioCodec == "copy" {
 		audioCodec = "copy"
+	} else {
+		// Normalize to canonical form (e.g., "ec3" -> "eac3")
+		audioCodec = codec.Normalize(audioCodec)
 	}
 
 	return CodecVariant(fmt.Sprintf("%s/%s", videoCodec, audioCodec))

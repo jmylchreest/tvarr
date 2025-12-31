@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jmylchreest/tvarr/internal/codec"
 	internalffmpeg "github.com/jmylchreest/tvarr/internal/ffmpeg"
 	"github.com/jmylchreest/tvarr/internal/observability"
 	"github.com/jmylchreest/tvarr/internal/util"
@@ -720,7 +721,7 @@ func (t *TranscodeJob) startFFmpeg() error {
 	// AAC in MPEG-TS uses ADTS format, but MP4/fMP4 requires ASC format.
 	// The aac_adtstoasc filter converts between these formats without re-encoding.
 	if audioEncoder == "copy" && outputFormat == "fmp4" {
-		sourceAudioCodec := normalizeCodec(t.config.SourceAudioCodec)
+		sourceAudioCodec := codec.Normalize(t.config.SourceAudioCodec)
 		if sourceAudioCodec == "aac" {
 			builder.OutputArgs("-bsf:a", "aac_adtstoasc")
 			t.logger.Debug("applying aac_adtstoasc bitstream filter for AAC copy to fMP4",

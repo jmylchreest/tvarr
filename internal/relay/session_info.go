@@ -3,6 +3,8 @@ package relay
 
 import (
 	"time"
+
+	"github.com/jmylchreest/tvarr/internal/codec"
 )
 
 // RelaySessionInfo provides a view of relay session data optimized for flow visualization.
@@ -204,9 +206,9 @@ func (s *SessionStats) ToSessionInfo() RelaySessionInfo {
 		}
 	}
 
-	// Copy codec info
-	info.VideoCodec = s.VideoCodec
-	info.AudioCodec = s.AudioCodec
+	// Copy codec info (normalized for consistent display)
+	info.VideoCodec = codec.Normalize(s.VideoCodec)
+	info.AudioCodec = codec.Normalize(s.AudioCodec)
 	info.Framerate = s.Framerate
 	info.VideoWidth = s.VideoWidth
 	info.VideoHeight = s.VideoHeight
@@ -236,9 +238,9 @@ func (s *SessionStats) ToSessionInfo() RelaySessionInfo {
 		info.MemoryBytes = &memBytes
 		info.MemoryPercent = &s.FFmpegStats.MemoryPercent
 
-		// Copy target codecs from FFmpeg stats (these are the transcoded output codecs)
-		info.TargetVideoCodec = s.FFmpegStats.VideoCodec
-		info.TargetAudioCodec = s.FFmpegStats.AudioCodec
+		// Copy target codecs from FFmpeg stats (normalized for consistent display)
+		info.TargetVideoCodec = codec.Normalize(s.FFmpegStats.VideoCodec)
+		info.TargetAudioCodec = codec.Normalize(s.FFmpegStats.AudioCodec)
 
 		// Copy encoder names (what FFmpeg uses to produce the codecs)
 		info.VideoEncoder = s.FFmpegStats.VideoEncoder
@@ -280,11 +282,11 @@ func (s *SessionStats) ToSessionInfo() RelaySessionInfo {
 	// Copy ES buffer variant stats if present
 	if s.ESBufferStats != nil {
 		for _, v := range s.ESBufferStats.Variants {
-			// Convert from ESVariantStats to BufferVariantInfo
+			// Convert from ESVariantStats to BufferVariantInfo (normalize codecs for consistent display)
 			info.BufferVariants = append(info.BufferVariants, BufferVariantInfo{
 				Variant:        string(v.Variant),
-				VideoCodec:     v.VideoCodec,
-				AudioCodec:     v.AudioCodec,
+				VideoCodec:     codec.Normalize(v.VideoCodec),
+				AudioCodec:     codec.Normalize(v.AudioCodec),
 				VideoSamples:   v.VideoSamples,
 				AudioSamples:   v.AudioSamples,
 				BytesIngested:  v.CurrentBytes, // Use current resident bytes, not total ingested
@@ -302,6 +304,7 @@ func (s *SessionStats) ToSessionInfo() RelaySessionInfo {
 	// Copy ES transcoder stats (for multi-variant transcoding)
 	if s.ESTranscoderStats != nil {
 		for _, t := range s.ESTranscoderStats.Transcoders {
+			// Normalize codec names for consistent display
 			info.ESTranscoders = append(info.ESTranscoders, ESTranscoderInfo{
 				ID:            t.ID,
 				SourceVariant: t.SourceVariant,
@@ -312,8 +315,8 @@ func (s *SessionStats) ToSessionInfo() RelaySessionInfo {
 				BytesIn:       t.BytesIn,
 				BytesOut:      t.BytesOut,
 				Errors:        t.Errors,
-				VideoCodec:    t.VideoCodec,
-				AudioCodec:    t.AudioCodec,
+				VideoCodec:    codec.Normalize(t.VideoCodec),
+				AudioCodec:    codec.Normalize(t.AudioCodec),
 				VideoEncoder:  t.VideoEncoder,
 				AudioEncoder:  t.AudioEncoder,
 				HWAccel:       t.HWAccel,
