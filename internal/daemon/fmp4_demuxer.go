@@ -98,6 +98,12 @@ func (d *FMP4Demuxer) Close() {
 
 // parse attempts to parse complete fMP4 structures from the buffer.
 func (d *FMP4Demuxer) parse() error {
+	// Compact buffer if it's empty to release memory
+	// bytes.Buffer never shrinks, so we need to reset when empty
+	if d.buf.Len() == 0 && d.buf.Cap() > 1024*1024 {
+		d.buf = bytes.Buffer{}
+	}
+
 	for d.buf.Len() >= 8 {
 		// Peek at box size and type
 		header := d.buf.Bytes()[:8]
@@ -116,7 +122,42 @@ func (d *FMP4Demuxer) parse() error {
 			return nil
 		}
 
-		// Extract the complete box
+		// For moof boxes, check if we have the complete moof+mdat pair before extracting
+		if boxType == "moof" {
+			// Check if we have enough data for moof + mdat header
+			if uint32(d.buf.Len()) < boxSize+8 {
+				return nil // Wait for more data
+			}
+
+			// Peek at what follows the moof
+			bufData := d.buf.Bytes()
+			mdatHeader := bufData[boxSize : boxSize+8]
+			mdatSize := uint32(mdatHeader[0])<<24 | uint32(mdatHeader[1])<<16 | uint32(mdatHeader[2])<<8 | uint32(mdatHeader[3])
+			mdatType := string(mdatHeader[4:8])
+
+			if mdatType != "mdat" {
+				// Not mdat after moof - skip the moof and continue
+				d.buf.Next(int(boxSize))
+				continue
+			}
+
+			// Check if we have complete moof+mdat
+			totalSize := boxSize + mdatSize
+			if uint32(d.buf.Len()) < totalSize {
+				return nil // Wait for complete fragment
+			}
+
+			// Extract and parse the complete moof+mdat fragment
+			fragment := make([]byte, totalSize)
+			_, _ = d.buf.Read(fragment)
+
+			if err := d.parseFragment(fragment); err != nil {
+				return err
+			}
+			continue
+		}
+
+		// Extract the complete box for non-moof types
 		boxData := make([]byte, boxSize)
 		_, _ = d.buf.Read(boxData)
 
@@ -134,12 +175,6 @@ func (d *FMP4Demuxer) parse() error {
 				return err
 			}
 
-		case "moof":
-			// Media fragment - we need both moof and mdat
-			// Put moof back and wait for mdat
-			d.buf = *bytes.NewBuffer(append(boxData, d.buf.Bytes()...))
-			return d.tryParseMoofMdat()
-
 		case "mdat":
 			// mdat without moof - shouldn't happen with valid fMP4
 			d.logger.Warn("fMP4 demuxer: mdat without moof")
@@ -147,46 +182,6 @@ func (d *FMP4Demuxer) parse() error {
 	}
 
 	return nil
-}
-
-// tryParseMoofMdat attempts to parse a moof+mdat pair from the buffer.
-func (d *FMP4Demuxer) tryParseMoofMdat() error {
-	if d.buf.Len() < 16 {
-		return nil
-	}
-
-	// Find moof size
-	data := d.buf.Bytes()
-	moofSize := uint32(data[0])<<24 | uint32(data[1])<<16 | uint32(data[2])<<8 | uint32(data[3])
-
-	// Check if we have moof + mdat header
-	if uint32(len(data)) < moofSize+8 {
-		return nil
-	}
-
-	// Check for mdat after moof
-	mdatHeader := data[moofSize : moofSize+8]
-	mdatSize := uint32(mdatHeader[0])<<24 | uint32(mdatHeader[1])<<16 | uint32(mdatHeader[2])<<8 | uint32(mdatHeader[3])
-	mdatType := string(mdatHeader[4:8])
-
-	if mdatType != "mdat" {
-		// Not mdat after moof - skip the moof and continue
-		d.buf.Next(int(moofSize))
-		return nil
-	}
-
-	// Check if we have complete moof+mdat
-	totalSize := moofSize + mdatSize
-	if uint32(len(data)) < totalSize {
-		return nil
-	}
-
-	// Extract moof+mdat
-	fragment := make([]byte, totalSize)
-	_, _ = d.buf.Read(fragment)
-
-	// Parse the fragment
-	return d.parseFragment(fragment)
 }
 
 // parseInit parses the initialization segment (moov box).
