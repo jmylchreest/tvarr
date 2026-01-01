@@ -82,6 +82,10 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, enabled = true, classNa
   const layoutTimer = useRef<NodeJS.Timeout | null>(null);
   // Track valid node IDs from current API data to filter out stale nodes
   const validNodeIds = useRef<Set<string>>(new Set());
+  // Track if user has manually interacted with viewport (zoom/pan)
+  const userHasInteracted = useRef(false);
+  // Track if this is the initial render (first time we have data)
+  const isInitialRender = useRef(true);
 
   // Convert flow graph data to React Flow format
   const { nodes: rawNodes, edges } = useMemo(() => {
@@ -151,10 +155,12 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, enabled = true, classNa
           const reLayoutedNodes = calculateLayout(validMeasuredNodes, edges);
           setNodes(reLayoutedNodes);
 
-          // Fit view after re-layout
-          setTimeout(() => {
-            fitView({ padding: 0.1, duration: 200 });
-          }, 50);
+          // Only fit view if user hasn't manually interacted
+          if (!userHasInteracted.current) {
+            setTimeout(() => {
+              fitView({ padding: 0.1, duration: 200 });
+            }, 50);
+          }
         }, 150);
       }
     },
@@ -170,8 +176,9 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, enabled = true, classNa
     setNodes(layoutedNodes);
     setEdges(edges);
 
-    // Fit view after layout (only if we have nodes)
-    if (layoutedNodes.length > 0) {
+    // Only fit view on initial render or if user hasn't manually interacted
+    if (layoutedNodes.length > 0 && isInitialRender.current) {
+      isInitialRender.current = false;
       setTimeout(() => {
         fitView({ padding: 0.1, duration: 200 });
       }, 100);
@@ -201,16 +208,27 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, enabled = true, classNa
     const reLayoutedNodes = calculateLayout(validMeasuredNodes, edges);
     setNodes(reLayoutedNodes);
 
-    // Fit view after measured layout
-    setTimeout(() => {
-      fitView({ padding: 0.1, duration: 200 });
-    }, 50);
+    // Only fit view if user hasn't manually interacted
+    if (!userHasInteracted.current) {
+      setTimeout(() => {
+        fitView({ padding: 0.1, duration: 200 });
+      }, 50);
+    }
   }, [nodesInitialized, nodesState.length, edges, getNodes, setNodes, fitView]);
 
+  // Track user viewport interactions (zoom, pan)
+  const onMoveEnd = useCallback(() => {
+    // Mark that user has manually interacted with the viewport
+    userHasInteracted.current = true;
+  }, []);
+
   const onInit = useCallback(() => {
-    setTimeout(() => {
-      fitView({ padding: 0.1 });
-    }, 100);
+    // Only fit on init if not already interacted
+    if (!userHasInteracted.current) {
+      setTimeout(() => {
+        fitView({ padding: 0.1 });
+      }, 100);
+    }
   }, [fitView]);
 
   if (isLoading && !data) {
@@ -286,13 +304,9 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, enabled = true, classNa
               onNodesChange={handleNodesChange}
               onEdgesChange={onEdgesChange}
               onInit={onInit}
+              onMoveEnd={onMoveEnd}
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
-              fitView
-              fitViewOptions={{
-                padding: 0.1,
-                includeHiddenNodes: false,
-              }}
               minZoom={0.3}
               maxZoom={1.5}
               defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}

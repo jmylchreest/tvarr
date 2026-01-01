@@ -1545,7 +1545,7 @@ func (s *RelaySession) GetOrCreateDASHProcessorForVariant(variant CodecVariant) 
 		return existing, nil
 	}
 
-	slog.Debug("Created DASH processor on-demand",
+	slog.Info("Created DASH processor on-demand",
 		slog.String("session_id", s.ID.String()),
 		slog.String("variant", variant.String()),
 		slog.Int("total_dash_processors", s.dashProcessors.Len()))

@@ -543,6 +543,24 @@ func (p *DASHProcessor) GetSegment(sequence uint64) (*Segment, error) {
 		}
 	}
 
+	// Log available segments when requested segment is not found
+	if len(p.segments) > 0 {
+		minSeq := p.segments[0].sequence
+		maxSeq := p.segments[len(p.segments)-1].sequence
+		p.config.Logger.Info("DASH segment not found - buffer state",
+			slog.String("processor_id", p.id),
+			slog.Uint64("requested_seq", sequence),
+			slog.Int("buffer_count", len(p.segments)),
+			slog.Uint64("buffer_min_seq", minSeq),
+			slog.Uint64("buffer_max_seq", maxSeq),
+			slog.Uint64("next_sequence", p.nextSequence))
+	} else {
+		p.config.Logger.Info("DASH segment not found - buffer empty",
+			slog.String("processor_id", p.id),
+			slog.Uint64("requested_seq", sequence),
+			slog.Uint64("next_sequence", p.nextSequence))
+	}
+
 	return nil, ErrSegmentNotFound
 }
 
@@ -574,8 +592,9 @@ func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
 	videoTrack := esVariant.VideoTrack()
 	audioTrack := esVariant.AudioTrack()
 
-	p.config.Logger.Debug("DASH processor loop started, waiting for keyframe",
+	p.config.Logger.Info("DASH processor loop started, waiting for keyframe",
 		slog.String("id", p.id),
+		slog.String("variant", p.variant.String()),
 		slog.Bool("has_video_track", videoTrack != nil),
 		slog.Bool("has_audio_track", audioTrack != nil))
 
@@ -586,8 +605,9 @@ func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
 		return
 	}
 
-	p.config.Logger.Debug("DASH processor: received first keyframe, starting segment accumulation",
-		slog.String("id", p.id))
+	p.config.Logger.Info("DASH processor: received first keyframe, starting segment accumulation",
+		slog.String("id", p.id),
+		slog.String("variant", p.variant.String()))
 
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
@@ -809,10 +829,13 @@ func (p *DASHProcessor) flushSegment(videoSamples, audioSamples []ESSample) {
 		// Channel already has notification pending
 	}
 
-	p.config.Logger.Debug("Created DASH segment",
+	p.config.Logger.Info("Created DASH segment",
+		slog.String("processor_id", p.id),
+		slog.String("variant", p.variant.String()),
 		slog.Uint64("sequence", seg.sequence),
 		slog.Float64("duration", seg.duration),
-		slog.Int("size", len(seg.data)))
+		slog.Int("size", len(seg.data)),
+		slog.Int("buffer_count", len(p.segments)))
 
 	// Update stats
 	p.RecordBytesWritten(uint64(len(seg.data)))
