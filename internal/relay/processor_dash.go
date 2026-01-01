@@ -612,23 +612,19 @@ func (p *DASHProcessor) getPlaceholderSegmentInfos() []SegmentInfo {
 
 // GetSegment implements SegmentProvider.
 func (p *DASHProcessor) GetSegment(sequence uint64) (*Segment, error) {
-	p.segmentsMu.RLock()
+	return p.getSegmentWithWait(sequence, 5*time.Second)
+}
 
-	// First, check if we have the real segment
-	for _, seg := range p.segments {
-		if seg.sequence == sequence {
-			p.segmentsMu.RUnlock()
-			return &Segment{
-				Sequence:     seg.sequence,
-				Duration:     seg.duration,
-				Data:         seg.data,
-				Timestamp:    seg.createdAt,
-				IsFragmented: true, // DASH always produces fMP4 segments
-			}, nil
-		}
+// getSegmentWithWait looks for a segment with optional waiting for it to appear.
+// This prevents 404 cascades when the transcoder is slightly behind the client.
+func (p *DASHProcessor) getSegmentWithWait(sequence uint64, maxWait time.Duration) (*Segment, error) {
+	// First, quick check without waiting
+	if seg := p.findSegment(sequence); seg != nil {
+		return seg, nil
 	}
 
-	// Segment not found - check if we should serve placeholder
+	// Get buffer state for decision making
+	p.segmentsMu.RLock()
 	bufferCount := len(p.segments)
 	var minSeq, maxSeq uint64
 	if bufferCount > 0 {
@@ -638,13 +634,64 @@ func (p *DASHProcessor) GetSegment(sequence uint64) (*Segment, error) {
 	nextSeq := p.nextSequence
 	p.segmentsMu.RUnlock()
 
-	// Serve placeholder for any missing segment that's within a valid range
-	// This covers both startup (transcoder catching up) and gaps in the buffer
-	if p.shouldServePlaceholder(sequence, minSeq, maxSeq, nextSeq) {
-		return p.getPlaceholderSegment(sequence)
+	// If segment isn't expected (too old or too far future), don't wait
+	if !p.shouldServePlaceholder(sequence, minSeq, maxSeq, nextSeq) {
+		return nil, p.logAndReturnNotFound(sequence, bufferCount, minSeq, maxSeq, nextSeq)
 	}
 
-	// Log available segments when requested segment is not found
+	// If we have real content and the segment is expected soon, wait for it
+	// This prevents 404s when transcoder is just slightly behind
+	if p.hasRealContent.Load() && sequence <= nextSeq+3 {
+		deadline := time.Now().Add(maxWait)
+		pollInterval := 100 * time.Millisecond
+
+		for time.Now().Before(deadline) {
+			select {
+			case <-p.ctx.Done():
+				// Processor shutting down, fall back to placeholder
+				break
+			case <-time.After(pollInterval):
+				if seg := p.findSegment(sequence); seg != nil {
+					p.config.Logger.Debug("Segment appeared after waiting",
+						slog.Uint64("sequence", sequence))
+					return seg, nil
+				}
+				// Check if segment is now too old (buffer moved past it)
+				p.segmentsMu.RLock()
+				if len(p.segments) > 0 && sequence < p.segments[0].sequence {
+					p.segmentsMu.RUnlock()
+					break // Segment expired, stop waiting
+				}
+				p.segmentsMu.RUnlock()
+			}
+		}
+	}
+
+	// Fall back to placeholder for expected segments
+	return p.getPlaceholderSegment(sequence)
+}
+
+// findSegment looks up a segment by sequence number.
+func (p *DASHProcessor) findSegment(sequence uint64) *Segment {
+	p.segmentsMu.RLock()
+	defer p.segmentsMu.RUnlock()
+
+	for _, seg := range p.segments {
+		if seg.sequence == sequence {
+			return &Segment{
+				Sequence:     seg.sequence,
+				Duration:     seg.duration,
+				Data:         seg.data,
+				Timestamp:    seg.createdAt,
+				IsFragmented: true, // DASH always produces fMP4 segments
+			}
+		}
+	}
+	return nil
+}
+
+// logAndReturnNotFound logs the segment not found state and returns error.
+func (p *DASHProcessor) logAndReturnNotFound(sequence uint64, bufferCount int, minSeq, maxSeq, nextSeq uint64) error {
 	if bufferCount > 0 {
 		p.config.Logger.Info("DASH segment not found - buffer state",
 			slog.String("processor_id", p.id),
@@ -662,7 +709,7 @@ func (p *DASHProcessor) GetSegment(sequence uint64) (*Segment, error) {
 			slog.Bool("has_real_content", p.hasRealContent.Load()))
 	}
 
-	return nil, ErrSegmentNotFound
+	return ErrSegmentNotFound
 }
 
 // shouldServePlaceholder determines if we should serve a placeholder for this sequence.
