@@ -3,7 +3,6 @@
 import { useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   ReactFlow,
-  Controls,
   Background,
   BackgroundVariant,
   useNodesState,
@@ -81,10 +80,13 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, enabled = true, classNa
   const hasDoneMeasuredLayout = useRef(false);
   // Debounce timer for re-layout
   const layoutTimer = useRef<NodeJS.Timeout | null>(null);
+  // Track valid node IDs from current API data to filter out stale nodes
+  const validNodeIds = useRef<Set<string>>(new Set());
 
   // Convert flow graph data to React Flow format
   const { nodes: rawNodes, edges } = useMemo(() => {
     if (!data?.nodes || !data?.edges) {
+      validNodeIds.current = new Set();
       return { nodes: [] as Node[], edges: [] as Edge[] };
     }
 
@@ -94,6 +96,9 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, enabled = true, classNa
       position: { x: 0, y: 0 }, // Will be calculated by layout
       data: node.data as unknown as Record<string, unknown>,
     }));
+
+    // Track valid node IDs from current API data
+    validNodeIds.current = new Set(nodes.map(n => n.id));
 
     const backendEdges = data.edges.map((edge) => ({
       id: edge.id,
@@ -138,7 +143,12 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, enabled = true, classNa
           const measuredNodes = getNodes();
           if (measuredNodes.length === 0) return;
 
-          const reLayoutedNodes = calculateLayout(measuredNodes, edges);
+          // Filter out stale nodes that no longer exist in API data
+          const currentValidIds = validNodeIds.current;
+          const validMeasuredNodes = measuredNodes.filter(n => currentValidIds.has(n.id));
+          if (validMeasuredNodes.length === 0) return;
+
+          const reLayoutedNodes = calculateLayout(validMeasuredNodes, edges);
           setNodes(reLayoutedNodes);
 
           // Fit view after re-layout
@@ -153,18 +163,19 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, enabled = true, classNa
 
   // Update nodes when data changes
   useEffect(() => {
-    if (layoutedNodes.length === 0) return;
-
     // Reset measured layout flag when nodes change
     hasDoneMeasuredLayout.current = false;
 
+    // Always update nodes/edges to ensure stale nodes are removed
     setNodes(layoutedNodes);
     setEdges(edges);
 
-    // Fit view after layout
-    setTimeout(() => {
-      fitView({ padding: 0.1, duration: 200 });
-    }, 100);
+    // Fit view after layout (only if we have nodes)
+    if (layoutedNodes.length > 0) {
+      setTimeout(() => {
+        fitView({ padding: 0.1, duration: 200 });
+      }, 100);
+    }
   }, [layoutedNodes, edges, setNodes, setEdges, fitView]);
 
   // Re-layout with measured dimensions after React Flow measures nodes
@@ -181,8 +192,13 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, enabled = true, classNa
 
     hasDoneMeasuredLayout.current = true;
 
+    // Filter out stale nodes that no longer exist in API data
+    const currentValidIds = validNodeIds.current;
+    const validMeasuredNodes = measuredNodes.filter(n => currentValidIds.has(n.id));
+    if (validMeasuredNodes.length === 0) return;
+
     // Re-calculate layout using measured dimensions
-    const reLayoutedNodes = calculateLayout(measuredNodes, edges);
+    const reLayoutedNodes = calculateLayout(validMeasuredNodes, edges);
     setNodes(reLayoutedNodes);
 
     // Fit view after measured layout
@@ -285,7 +301,6 @@ function RelayFlowDiagramInner({ pollingInterval = 2000, enabled = true, classNa
               nodesConnectable={false}
               elementsSelectable={true}
             >
-              <Controls showInteractive={false} />
               <Background variant={BackgroundVariant.Dots} gap={12} size={1} />
             </ReactFlow>
           </div>
