@@ -727,47 +727,6 @@ func stripADTSHeader(data []byte) []byte {
 	return data[headerSize:]
 }
 
-// convertToAnnexB ensures video data is in Annex B format using mediacommon.
-// This is used for MPEG-TS output which requires start code prefixed NALs.
-func convertToAnnexB(data []byte) []byte {
-	if len(data) == 0 {
-		return data
-	}
-
-	// Check if already Annex B format
-	if len(data) >= 4 && data[0] == 0x00 && data[1] == 0x00 {
-		if data[2] == 0x01 || (data[2] == 0x00 && data[3] == 0x01) {
-			return data
-		}
-	}
-
-	// Try to parse as AVCC and convert to Annex B using mediacommon
-	if len(data) >= 4 {
-		var avcc h264.AVCC
-		if err := avcc.Unmarshal(data); err == nil && len(avcc) > 0 {
-			// Convert to Annex B using mediacommon
-			annexB, err := h264.AnnexB(avcc).Marshal()
-			if err == nil {
-				return annexB
-			}
-		}
-	}
-
-	// Assume raw NAL unit, convert to Annex B using mediacommon
-	annexB, err := h264.AnnexB([][]byte{data}).Marshal()
-	if err != nil {
-		// Fallback: manually add start code
-		result := make([]byte, len(data)+4)
-		result[0] = 0x00
-		result[1] = 0x00
-		result[2] = 0x00
-		result[3] = 0x01
-		copy(result[4:], data)
-		return result
-	}
-	return annexB
-}
-
 // convertAnnexBToAVCC converts video data from Annex B format (start codes) to AVCC format (length-prefixed).
 // This is required for fMP4/MP4 containers which use AVCC/HVCC format.
 // The function works for both H.264 and H.265 as they use the same NAL unit structure.
@@ -1037,30 +996,3 @@ func (a *ESSampleAdapter) ConfigureWriter(writer *FMP4Writer) error {
 	return nil
 }
 
-// GetSPSInfo parses H.264 SPS to extract video dimensions.
-func GetSPSInfo(sps []byte) (width, height int, err error) {
-	if len(sps) == 0 {
-		return 0, 0, nil
-	}
-
-	var spsp h264.SPS
-	if err := spsp.Unmarshal(sps); err != nil {
-		return 0, 0, err
-	}
-
-	return spsp.Width(), spsp.Height(), nil
-}
-
-// GetH265SPSInfo parses H.265 SPS to extract video dimensions.
-func GetH265SPSInfo(sps []byte) (width, height int, err error) {
-	if len(sps) == 0 {
-		return 0, 0, nil
-	}
-
-	var spsp h265.SPS
-	if err := spsp.Unmarshal(sps); err != nil {
-		return 0, 0, err
-	}
-
-	return spsp.Width(), spsp.Height(), nil
-}

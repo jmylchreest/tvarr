@@ -340,48 +340,6 @@ func TestStripADTSHeader(t *testing.T) {
 	}
 }
 
-func TestConvertToAnnexB(t *testing.T) {
-	tests := []struct {
-		name        string
-		data        []byte
-		expectStart bool // should have start code at beginning
-	}{
-		{
-			name:        "Already Annex B (4-byte)",
-			data:        []byte{0x00, 0x00, 0x00, 0x01, 0x67},
-			expectStart: true,
-		},
-		{
-			name:        "Already Annex B (3-byte)",
-			data:        []byte{0x00, 0x00, 0x01, 0x67},
-			expectStart: true,
-		},
-		{
-			name:        "Raw NAL",
-			data:        []byte{0x67, 0x42, 0xC0},
-			expectStart: true,
-		},
-		{
-			name:        "Empty",
-			data:        []byte{},
-			expectStart: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := convertToAnnexB(tt.data)
-
-			if tt.expectStart && len(result) >= 4 {
-				// Should have start code
-				if result[0] != 0x00 || result[1] != 0x00 {
-					t.Error("Expected start code prefix")
-				}
-			}
-		})
-	}
-}
-
 func TestConvertAnnexBToAVCC(t *testing.T) {
 	tests := []struct {
 		name           string

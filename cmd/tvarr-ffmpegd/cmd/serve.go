@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
+	_ "net/http/pprof" // Register pprof handlers on DefaultServeMux
 	"os"
 	"os/signal"
 	"syscall"
@@ -57,6 +59,10 @@ func init() {
 	serveCmd.Flags().String("coordinator-url", "", "coordinator gRPC URL (overrides TVARR_COORDINATOR_URL)")
 	serveCmd.Flags().String("auth-token", "", "authentication token (overrides TVARR_AUTH_TOKEN)")
 	serveCmd.Flags().String("log-level", "", "log level (trace, debug, info, warn, error)")
+
+	// Profiling flags
+	serveCmd.Flags().Bool("pprof", false, "enable pprof profiling server")
+	serveCmd.Flags().Int("pprof-port", 6060, "port for pprof profiling server")
 }
 
 func runServe(cmd *cobra.Command, _ []string) error {
@@ -73,6 +79,33 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	)
 
 	v := GetDaemonViper()
+
+	// Start pprof server if enabled (check CLI flag first, then config/env)
+	// Uses daemon.profiling.* to avoid conflict with tvarr in all-in-one image
+	// Env vars: TVARR_DAEMON_PROFILING_PPROF, TVARR_DAEMON_PROFILING_PPROF_PORT
+	pprofEnabled, _ := cmd.Flags().GetBool("pprof")
+	if !pprofEnabled {
+		pprofEnabled = v.GetBool("daemon.profiling.pprof")
+	}
+	if pprofEnabled {
+		pprofPort, _ := cmd.Flags().GetInt("pprof-port")
+		if pprofPort == 6060 && v.GetInt("daemon.profiling.pprof_port") != 6060 {
+			// Use config value if CLI wasn't explicitly set
+			pprofPort = v.GetInt("daemon.profiling.pprof_port")
+		}
+		pprofAddr := fmt.Sprintf("localhost:%d", pprofPort)
+		go func() {
+			logger.Info("pprof server starting",
+				slog.String("address", pprofAddr),
+				slog.String("cpu_profile", fmt.Sprintf("http://%s/debug/pprof/profile", pprofAddr)),
+				slog.String("heap_profile", fmt.Sprintf("http://%s/debug/pprof/heap", pprofAddr)),
+			)
+			// Uses http.DefaultServeMux which has pprof handlers registered via blank import
+			if err := http.ListenAndServe(pprofAddr, nil); err != nil {
+				logger.Error("pprof server failed", slog.String("error", err.Error()))
+			}
+		}()
+	}
 
 	// Get daemon configuration
 	daemonID := v.GetString("daemon.id")

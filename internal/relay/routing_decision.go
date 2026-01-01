@@ -244,12 +244,6 @@ func (d *DefaultRoutingDecider) isRepackageCompatible(sourceFormat SourceFormat,
 	return AreCodecsCompatible(containerFormat, codecs)
 }
 
-// codecsCompatibleWithMPEGTS checks if codecs can be muxed into MPEG-TS container.
-// Delegates to the codec_compatibility module for consistent behavior.
-func (d *DefaultRoutingDecider) codecsCompatibleWithMPEGTS(codecs []string) bool {
-	return CodecsCompatibleWithMPEGTS(codecs)
-}
-
 // clientAcceptsSourceCodecs checks if the client can accept all source codecs.
 // Returns true if client has no codec restrictions or accepts all source codecs.
 func (d *DefaultRoutingDecider) clientAcceptsSourceCodecs(sourceCodecs []string, client ClientCapabilities) bool {

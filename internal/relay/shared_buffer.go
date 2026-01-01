@@ -68,19 +68,6 @@ func NewESTrack(codec string) *ESTrack {
 	}
 }
 
-// NewESTrackWithCapacity creates a new elementary stream track with an initial capacity hint.
-// The capacity is just a hint for initial allocation - the slice grows as needed.
-func NewESTrackWithCapacity(codec string, initialCapacity int) *ESTrack {
-	if initialCapacity <= 0 {
-		initialCapacity = 1000
-	}
-	return &ESTrack{
-		codec:   codec,
-		samples: make([]ESSample, 0, initialCapacity),
-		notify:  make(chan struct{}, 1),
-	}
-}
-
 // SetInitData sets the codec initialization data (SPS/PPS for H.264, etc.).
 func (t *ESTrack) SetInitData(data []byte) {
 	t.mu.Lock()
@@ -522,12 +509,6 @@ type ESVariant struct {
 
 	// Mutex for coordinated eviction
 	evictMu sync.Mutex
-}
-
-// NewESVariant creates a new elementary stream variant.
-// The variant uses dynamic slices with no fixed capacity - eviction is controlled by maxBytes.
-func NewESVariant(variant CodecVariant, isSource bool) *ESVariant {
-	return NewESVariantWithMaxBytes(variant, DefaultMaxVariantBytes, isSource)
 }
 
 // NewESVariantWithMaxBytes creates a new elementary stream variant with a byte limit.

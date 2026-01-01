@@ -252,29 +252,6 @@ func TestDefaultRoutingDecider_DecideWithNilProfile(t *testing.T) {
 	}
 }
 
-func TestDefaultRoutingDecider_CodecsCompatibleWithMPEGTS(t *testing.T) {
-	decider := NewDefaultRoutingDecider(nil)
-
-	tests := []struct {
-		name     string
-		codecs   []string
-		expected bool
-	}{
-		{"H.264 + AAC compatible", []string{"avc1.64001f", "mp4a.40.2"}, true},
-		{"H.265 + AAC compatible", []string{"hvc1.1.6.L93.B0", "mp4a.40.2"}, true},
-		{"H.264 + AC3 compatible", []string{"avc1", "ac3"}, true},
-		{"VP9 + Opus not compatible", []string{"vp9", "opus"}, false},
-		{"AV1 + AAC not compatible", []string{"av1", "mp4a"}, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := decider.codecsCompatibleWithMPEGTS(tt.codecs)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestDefaultRoutingDecider_DetermineOutputFormat(t *testing.T) {
 	decider := NewDefaultRoutingDecider(nil)
 

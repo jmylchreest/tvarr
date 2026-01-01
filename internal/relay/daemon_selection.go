@@ -1,8 +1,6 @@
 package relay
 
 import (
-	"fmt"
-	"log/slog"
 	"sort"
 
 	"github.com/jmylchreest/tvarr/pkg/ffmpegd/types"
@@ -48,57 +46,6 @@ type SelectionStrategy interface {
 
 	// Name returns the strategy name for logging/debugging.
 	Name() string
-}
-
-// DaemonSelector provides high-level daemon selection using strategies.
-type DaemonSelector struct {
-	registry *DaemonRegistry
-	strategy SelectionStrategy
-	logger   *slog.Logger
-}
-
-// NewDaemonSelector creates a new daemon selector with the given strategy.
-func NewDaemonSelector(registry *DaemonRegistry, strategy SelectionStrategy, logger *slog.Logger) *DaemonSelector {
-	return &DaemonSelector{
-		registry: registry,
-		strategy: strategy,
-		logger:   logger,
-	}
-}
-
-// SelectDaemon selects the best daemon for the given criteria.
-func (s *DaemonSelector) SelectDaemon(criteria SelectionCriteria) (*types.Daemon, error) {
-	// Get all daemons that can accept jobs
-	available := s.registry.GetAvailable()
-
-	if len(available) == 0 {
-		return nil, fmt.Errorf("no available daemons")
-	}
-
-	// Apply strategy
-	daemon := s.strategy.Select(available, criteria)
-	if daemon == nil {
-		s.logger.Debug("no daemon matched criteria",
-			slog.String("strategy", s.strategy.Name()),
-			slog.String("required_encoder", criteria.RequiredEncoder),
-			slog.String("required_decoder", criteria.RequiredDecoder),
-			slog.Bool("require_gpu", criteria.RequireGPU),
-		)
-		return nil, fmt.Errorf("no daemon matches criteria")
-	}
-
-	s.logger.Debug("daemon selected",
-		slog.String("strategy", s.strategy.Name()),
-		slog.String("daemon_id", string(daemon.ID)),
-		slog.String("daemon_name", daemon.Name),
-	)
-
-	return daemon, nil
-}
-
-// SetStrategy changes the selection strategy.
-func (s *DaemonSelector) SetStrategy(strategy SelectionStrategy) {
-	s.strategy = strategy
 }
 
 // -----------------------------------------------------------------------------
@@ -372,89 +319,6 @@ func (s *StrategyFullHWTranscode) Select(daemons []*types.Daemon, criteria Selec
 	return candidates[0].daemon
 }
 
-// StrategyRoundRobin cycles through daemons in order.
-// Maintains state across calls to distribute load evenly.
-type StrategyRoundRobin struct {
-	lastIndex int
-}
-
-func NewStrategyRoundRobin() *StrategyRoundRobin {
-	return &StrategyRoundRobin{lastIndex: -1}
-}
-
-func (s *StrategyRoundRobin) Name() string {
-	return "round-robin"
-}
-
-func (s *StrategyRoundRobin) Select(daemons []*types.Daemon, criteria SelectionCriteria) *types.Daemon {
-	if len(daemons) == 0 {
-		return nil
-	}
-
-	// Filter by capability requirements
-	var filtered []*types.Daemon
-	for _, d := range daemons {
-		if d.Capabilities == nil {
-			continue
-		}
-		if criteria.RequiredEncoder != "" && !d.Capabilities.HasEncoder(criteria.RequiredEncoder) {
-			continue
-		}
-		if criteria.RequireGPU && !d.HasAvailableGPUSessions() {
-			continue
-		}
-		filtered = append(filtered, d)
-	}
-
-	if len(filtered) == 0 {
-		return nil
-	}
-
-	// Sort for consistent ordering
-	sort.Slice(filtered, func(i, j int) bool {
-		return filtered[i].ID < filtered[j].ID
-	})
-
-	// Round robin
-	s.lastIndex = (s.lastIndex + 1) % len(filtered)
-	return filtered[s.lastIndex]
-}
-
-// StrategyAffinity prefers specific daemons but falls back to capability match.
-type StrategyAffinity struct {
-	fallback SelectionStrategy
-}
-
-func NewStrategyAffinity(fallback SelectionStrategy) *StrategyAffinity {
-	if fallback == nil {
-		fallback = NewStrategyCapabilityMatch()
-	}
-	return &StrategyAffinity{fallback: fallback}
-}
-
-func (s *StrategyAffinity) Name() string {
-	return "affinity"
-}
-
-func (s *StrategyAffinity) Select(daemons []*types.Daemon, criteria SelectionCriteria) *types.Daemon {
-	// Try preferred daemons first
-	if len(criteria.PreferredDaemons) > 0 {
-		for _, prefID := range criteria.PreferredDaemons {
-			for _, d := range daemons {
-				if d.ID == prefID && d.CanAcceptJobs() {
-					// Verify capabilities match
-					if criteria.RequiredEncoder == "" || (d.Capabilities != nil && d.Capabilities.HasEncoder(criteria.RequiredEncoder)) {
-						return d
-					}
-				}
-			}
-		}
-	}
-
-	// Fall back to default strategy
-	return s.fallback.Select(daemons, criteria)
-}
-
 // StrategyChain tries multiple strategies in order until one succeeds.
 type StrategyChain struct {
 	strategies []SelectionStrategy
@@ -514,28 +378,6 @@ func DefaultSelectionStrategy() SelectionStrategy {
 		NewStrategyCapabilityMatch(), // Then capability match
 		NewStrategyLeastLoaded(),     // Finally least loaded
 	)
-}
-
-// TranscodingSelectionStrategy returns a strategy optimized for transcoding.
-// Prefers full hardware transcode path (HW decode + HW encode) when available.
-func TranscodingSelectionStrategy() SelectionStrategy {
-	return NewStrategyChain(
-		NewStrategyFullHWTranscode(),
-		NewStrategyGPUAware(),
-		NewStrategyCapabilityMatch(),
-	)
-}
-
-// HWEncoderSelectionStrategy returns a strategy optimized for hardware encoding.
-// Prioritizes GPU session availability to avoid session exhaustion.
-func HWEncoderSelectionStrategy() SelectionStrategy {
-	return NewStrategyGPUAware()
-}
-
-// SoftwareEncoderSelectionStrategy returns a strategy for software encoding.
-// Prioritizes CPU load distribution.
-func SoftwareEncoderSelectionStrategy() SelectionStrategy {
-	return NewStrategyCapabilityMatch()
 }
 
 // ProbeSelectionStrategy returns the default strategy for probe operations.

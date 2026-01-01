@@ -38,23 +38,6 @@ func ParseContainerFormat(format string) ContainerFormat {
 	}
 }
 
-// String returns the string representation of the container format.
-func (c ContainerFormat) String() string {
-	return string(c)
-}
-
-// UsesSegmentedTS returns true if the container uses MPEG-TS segments.
-// HLS-TS and plain MPEG-TS both use TS container for segments.
-func (c ContainerFormat) UsesSegmentedTS() bool {
-	return c == ContainerMPEGTS || c == ContainerHLSTS
-}
-
-// UsesFMP4 returns true if the container uses fragmented MP4.
-// HLS-fMP4, DASH, and plain fMP4 all use fragmented MP4 segments.
-func (c ContainerFormat) UsesFMP4() bool {
-	return c == ContainerHLSFMP4 || c == ContainerDASH || c == ContainerFMP4
-}
-
 // CodecCompatibility defines codec support for a container format.
 type CodecCompatibility struct {
 	// Format is the container format.
@@ -192,26 +175,3 @@ func AreCodecsCompatible(format ContainerFormat, codecs []string) bool {
 	return true
 }
 
-// CodecsCompatibleWithMPEGTS is a convenience function to check MPEG-TS compatibility.
-// Returns true if all codecs can be muxed into MPEG-TS container.
-func CodecsCompatibleWithMPEGTS(codecs []string) bool {
-	return AreCodecsCompatible(ContainerMPEGTS, codecs)
-}
-
-// CodecsCompatibleWithHLS is a convenience function to check HLS-TS compatibility.
-// Returns true if all codecs can be muxed into HLS with MPEG-TS segments.
-func CodecsCompatibleWithHLS(codecs []string) bool {
-	return AreCodecsCompatible(ContainerHLSTS, codecs)
-}
-
-// RequiresTranscodeForContainer checks if any codec requires transcoding for the target container.
-// Returns a list of codecs that need transcoding, or empty slice if remux is possible.
-func RequiresTranscodeForContainer(format ContainerFormat, codecs []string) []string {
-	var incompatible []string
-	for _, c := range codecs {
-		if !IsCodecCompatible(format, c) {
-			incompatible = append(incompatible, c)
-		}
-	}
-	return incompatible
-}

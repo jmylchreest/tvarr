@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os/exec"
 	"sync"
@@ -275,77 +274,6 @@ func indexString(s, substr string) int {
 		}
 	}
 	return -1
-}
-
-// FallbackStreamer provides a continuous stream of fallback segments.
-type FallbackStreamer struct {
-	generator *FallbackGenerator
-	logger    *slog.Logger
-
-	mu       sync.RWMutex
-	stopped  bool
-	interval time.Duration
-}
-
-// NewFallbackStreamer creates a new fallback streamer.
-func NewFallbackStreamer(generator *FallbackGenerator, logger *slog.Logger) *FallbackStreamer {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return &FallbackStreamer{
-		generator: generator,
-		logger:    logger,
-		interval:  time.Duration(generator.config.SegmentDuration * float64(time.Second)),
-	}
-}
-
-// Stream writes fallback segments continuously until context is cancelled.
-func (s *FallbackStreamer) Stream(ctx context.Context, w io.Writer) error {
-	if !s.generator.IsReady() {
-		return ErrFallbackNotReady
-	}
-
-	ticker := time.NewTicker(s.interval)
-	defer ticker.Stop()
-
-	// Write first segment immediately
-	segment, err := s.generator.GetSegment()
-	if err != nil {
-		return err
-	}
-	if _, err := w.Write(segment); err != nil {
-		return fmt.Errorf("writing fallback segment: %w", err)
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			s.mu.RLock()
-			stopped := s.stopped
-			s.mu.RUnlock()
-
-			if stopped {
-				return nil
-			}
-
-			segment, err := s.generator.GetSegment()
-			if err != nil {
-				return err
-			}
-			if _, err := w.Write(segment); err != nil {
-				return fmt.Errorf("writing fallback segment: %w", err)
-			}
-		}
-	}
-}
-
-// Stop stops the fallback streamer.
-func (s *FallbackStreamer) Stop() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.stopped = true
 }
 
 // ErrorPatternDetector monitors FFmpeg stderr for error patterns.

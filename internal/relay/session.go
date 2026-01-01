@@ -27,6 +27,51 @@ const (
 	VariantIdleTimeout = 60 * time.Second
 )
 
+// SessionState represents the lifecycle state of a relay session.
+// States progress: Created → Ready → Active ↔ Idle → Closing → Closed
+type SessionState uint32
+
+const (
+	// SessionStateCreated is the initial state after session construction.
+	SessionStateCreated SessionState = iota
+	// SessionStateReady means the pipeline is running but no clients connected yet.
+	SessionStateReady
+	// SessionStateActive means at least one client is connected.
+	SessionStateActive
+	// SessionStateIdle means no clients are connected, within grace period.
+	// The session records when it entered this state for grace period tracking.
+	SessionStateIdle
+	// SessionStateClosing means cleanup is in progress, new operations are rejected.
+	SessionStateClosing
+	// SessionStateClosed means the session is fully terminated.
+	SessionStateClosed
+)
+
+// String returns the state name for logging.
+func (s SessionState) String() string {
+	switch s {
+	case SessionStateCreated:
+		return "created"
+	case SessionStateReady:
+		return "ready"
+	case SessionStateActive:
+		return "active"
+	case SessionStateIdle:
+		return "idle"
+	case SessionStateClosing:
+		return "closing"
+	case SessionStateClosed:
+		return "closed"
+	default:
+		return "unknown"
+	}
+}
+
+// IsTerminal returns true if the session is closing or closed.
+func (s SessionState) IsTerminal() bool {
+	return s >= SessionStateClosing
+}
+
 // Resource history configuration
 const (
 	// ResourceHistorySize is the number of samples to keep for sparklines
@@ -137,10 +182,13 @@ type RelaySession struct {
 	// Use atomic values for frequently updated fields to avoid mutex contention
 	// These are updated by the ingest loop on every read, which would block stats collection
 	lastActivity atomic.Value // time.Time - last activity timestamp
-	idleSince    atomic.Value // time.Time - when session became idle (zero if not idle)
+	idleSince    atomic.Value // time.Time - when session entered Idle state (set by state machine)
 
-	// Session state - atomic to avoid lock contention with stats collection
-	closed          atomic.Bool           // Whether session is closed
+	// Session lifecycle state machine
+	// States: Created → Ready → Active ↔ Idle → Closing → Closed
+	state atomic.Uint32 // SessionState - use State() and transitionTo() methods
+
+	// Additional state flags (orthogonal to lifecycle)
 	inFallback      atomic.Bool           // Whether session is in fallback mode
 	ingestCompleted atomic.Bool           // Whether origin ingest has finished (EOF received)
 	lastErr         atomic.Pointer[error] // Last error (if any)
@@ -177,6 +225,9 @@ type RelaySession struct {
 	esTranscodersMu   sync.RWMutex
 	transcoderFactory *TranscoderFactory // Factory for creating transcoders
 
+	// Processor lifecycle configuration
+	processorIdleGracePeriods ProcessorIdleGracePeriods
+
 	// Legacy fields - set once during pipeline init, read-only afterward
 	// Protected by readyCh synchronization (readers wait for ready before accessing)
 	ffmpegCmd     *ffmpeg.Command // Running FFmpeg command for stats access
@@ -212,14 +263,16 @@ func (s *RelaySession) runPipeline() {
 	defer func() {
 		if err != nil {
 			s.lastErr.Store(&err)
-			// Only mark closed on error - successful completion should let cleanup
-			// handle session lifecycle based on client count and idle timeout
-			s.closed.Store(true)
+			// On error, transition to Closing (Close() will be called by cleanup)
+			s.transitionTo(SessionStateClosing)
 		}
-		// NOTE: Don't set closed=true on success! The ingest may have completed
+		// NOTE: Don't close on success! The ingest may have completed
 		// (e.g., fixed-length source stream), but clients may still be connected
-		// waiting for transcoded data. Let the cleanup logic handle session closure
-		// based on client count and idle timeout.
+		// waiting for transcoded data. Transition to Idle instead.
+		if err == nil {
+			// Pipeline completed successfully (EOF) - transition to Idle if no clients
+			s.UpdateIdleState()
+		}
 	}()
 
 	for {
@@ -240,7 +293,7 @@ func (s *RelaySession) runPipeline() {
 		// Check for cancellation
 		if errors.Is(err, context.Canceled) {
 			// Context cancellation means session was explicitly closed
-			s.closed.Store(true)
+			// State is already Closing from Close() call
 			return
 		}
 
@@ -1528,12 +1581,19 @@ func (s *RelaySession) GetOrCreateMPEGTSProcessorForVariant(variant CodecVariant
 	config.Logger = slog.Default()
 
 	// Set callback to track session idle state when clients connect/disconnect
+	mpegtsGracePeriod := s.processorIdleGracePeriods.MPEGTS
 	config.OnClientChange = func(clientCount int) {
 		s.UpdateIdleState()
-		// If no clients remain, schedule processor cleanup
+		// If no clients remain, schedule processor cleanup after grace period
 		if clientCount == 0 {
-			// Use a goroutine to avoid blocking the callback
-			go s.StopProcessorIfIdle("mpegts")
+			// Use a goroutine with grace period delay to avoid blocking the callback
+			// and allow clients to reconnect (e.g., player pause/seek)
+			go func() {
+				time.Sleep(mpegtsGracePeriod)
+				// TryMarkForStopping will correctly handle the case where
+				// a client reconnected during the grace period
+				s.StopProcessorIfIdle("mpegts")
+			}()
 		}
 	}
 
@@ -1598,52 +1658,148 @@ func (s *RelaySession) ClientCount() int {
 	return count
 }
 
-// UpdateIdleState updates the session's idle tracking based on current client count.
-// This should be called after clients connect or disconnect.
-// When client count drops to 0, IdleSince is set to the current time.
-// When clients reconnect, IdleSince is cleared.
+// State returns the current session state.
+func (s *RelaySession) State() SessionState {
+	return SessionState(s.state.Load())
+}
+
+// IsClosed returns true if the session is closing or closed.
+// This is a convenience method for backward compatibility.
+func (s *RelaySession) IsClosed() bool {
+	return s.State().IsTerminal()
+}
+
+// transitionTo attempts to transition the session to a new state.
+// Returns true if the transition was successful, false if invalid or already in target state.
+// This method handles side effects like setting idleSince when entering Idle state.
+func (s *RelaySession) transitionTo(newState SessionState) bool {
+	for {
+		currentState := s.State()
+
+		// Already in target state
+		if currentState == newState {
+			return false
+		}
+
+		// Validate transition
+		if !s.isValidTransition(currentState, newState) {
+			slog.Debug("Invalid state transition attempted",
+				slog.String("session_id", s.ID.String()),
+				slog.String("from", currentState.String()),
+				slog.String("to", newState.String()))
+			return false
+		}
+
+		// Attempt atomic transition
+		if s.state.CompareAndSwap(uint32(currentState), uint32(newState)) {
+			// Handle state entry side effects
+			s.onStateEnter(currentState, newState)
+			return true
+		}
+		// CAS failed - another goroutine changed state, retry
+	}
+}
+
+// isValidTransition checks if a state transition is allowed.
+func (s *RelaySession) isValidTransition(from, to SessionState) bool {
+	switch from {
+	case SessionStateCreated:
+		return to == SessionStateReady || to == SessionStateClosing
+	case SessionStateReady:
+		return to == SessionStateActive || to == SessionStateIdle || to == SessionStateClosing
+	case SessionStateActive:
+		return to == SessionStateIdle || to == SessionStateClosing
+	case SessionStateIdle:
+		return to == SessionStateActive || to == SessionStateClosing
+	case SessionStateClosing:
+		return to == SessionStateClosed
+	case SessionStateClosed:
+		return false // Terminal state
+	default:
+		return false
+	}
+}
+
+// onStateEnter handles side effects when entering a new state.
+func (s *RelaySession) onStateEnter(from, to SessionState) {
+	now := time.Now()
+
+	switch to {
+	case SessionStateReady:
+		slog.Debug("Session ready",
+			slog.String("session_id", s.ID.String()))
+
+	case SessionStateActive:
+		// Clear idle timestamp when becoming active
+		s.idleSince.Store(time.Time{})
+		slog.Debug("Session active",
+			slog.String("session_id", s.ID.String()),
+			slog.String("from", from.String()))
+
+	case SessionStateIdle:
+		// Record when we became idle for grace period tracking
+		s.idleSince.Store(now)
+		slog.Debug("Session idle",
+			slog.String("session_id", s.ID.String()),
+			slog.Time("idle_since", now))
+
+	case SessionStateClosing:
+		slog.Info("Session closing",
+			slog.String("session_id", s.ID.String()),
+			slog.String("from", from.String()))
+
+	case SessionStateClosed:
+		slog.Info("Session closed",
+			slog.String("session_id", s.ID.String()))
+	}
+
+	s.lastActivity.Store(now)
+}
+
+// UpdateIdleState updates the session state based on current client count.
+// Transitions between Active and Idle states as clients connect/disconnect.
 func (s *RelaySession) UpdateIdleState() {
+	currentState := s.State()
+
+	// Don't update if session is terminal
+	if currentState.IsTerminal() {
+		return
+	}
+
 	clientCount := s.ClientCount()
 
 	if clientCount == 0 {
-		// No clients - mark as idle if not already
-		idleSince, _ := s.idleSince.Load().(time.Time)
-		if idleSince.IsZero() {
-			now := time.Now()
-			s.idleSince.Store(now)
-			slog.Debug("Session became idle",
-				slog.String("session_id", s.ID.String()),
-				slog.Time("idle_since", now))
+		// No clients - transition to Idle if currently Active or Ready
+		if currentState == SessionStateActive || currentState == SessionStateReady {
+			s.transitionTo(SessionStateIdle)
 		}
 	} else {
-		// Has clients - clear idle state
-		idleSince, _ := s.idleSince.Load().(time.Time)
-		if !idleSince.IsZero() {
-			slog.Debug("Session no longer idle",
-				slog.String("session_id", s.ID.String()),
-				slog.Int("client_count", clientCount))
-			s.idleSince.Store(time.Time{})
+		// Has clients - transition to Active if currently Idle or Ready
+		if currentState == SessionStateIdle || currentState == SessionStateReady {
+			s.transitionTo(SessionStateActive)
 		}
 	}
 
 	s.lastActivity.Store(time.Now())
 }
 
-// ClearIdleState clears the session's idle state when a client connects.
-// This should be called after registering a client to ensure the session
-// is not cleaned up while active clients are connected.
+// ClearIdleState is called when an HTTP request arrives to ensure the session
+// doesn't get cleaned up while serving the request. This is called before the
+// client is registered with a processor, so it proactively transitions to Active.
 func (s *RelaySession) ClearIdleState() {
-	idleSince, _ := s.idleSince.Load().(time.Time)
-	if !idleSince.IsZero() {
-		slog.Debug("Clearing session idle state (client connected)",
-			slog.String("session_id", s.ID.String()))
-		s.idleSince.Store(time.Time{})
+	currentState := s.State()
+	if currentState == SessionStateIdle || currentState == SessionStateReady {
+		s.transitionTo(SessionStateActive)
 	}
 	s.lastActivity.Store(time.Now())
 }
 
 // StopProcessorIfIdle stops idle processors of a given type across all variants.
 // This is called when a client disconnects to immediately clean up unused processors.
+//
+// Uses TryMarkForStopping to prevent TOCTOU race: the stopping flag is set atomically
+// with the client count check, preventing new clients from registering while we're
+// removing the processor from the map.
 func (s *RelaySession) StopProcessorIfIdle(processorType string) {
 	// Collect and remove idle processors atomically, then stop them outside the map
 	type processorToStop struct {
@@ -1656,7 +1812,9 @@ func (s *RelaySession) StopProcessorIfIdle(processorType string) {
 	switch processorType {
 	case "mpegts":
 		s.mpegtsProcessors.Range(func(variant CodecVariant, processor *MPEGTSProcessor) bool {
-			if processor.ClientCount() == 0 {
+			// TryMarkForStopping atomically checks ClientCount() == 0 and sets stopping flag
+			// This prevents new clients from registering while we're removing the processor
+			if processor.TryMarkForStopping() {
 				toStop = append(toStop, processorToStop{variant, processor})
 				s.mpegtsProcessors.Delete(variant)
 			}
@@ -1664,7 +1822,7 @@ func (s *RelaySession) StopProcessorIfIdle(processorType string) {
 		})
 	case "hls-ts":
 		s.hlsTSProcessors.Range(func(variant CodecVariant, processor *HLSTSProcessor) bool {
-			if processor.ClientCount() == 0 {
+			if processor.TryMarkForStopping() {
 				toStop = append(toStop, processorToStop{variant, processor})
 				s.hlsTSProcessors.Delete(variant)
 			}
@@ -1672,7 +1830,7 @@ func (s *RelaySession) StopProcessorIfIdle(processorType string) {
 		})
 	case "hls-fmp4":
 		s.hlsFMP4Processors.Range(func(variant CodecVariant, processor *HLSfMP4Processor) bool {
-			if processor.ClientCount() == 0 {
+			if processor.TryMarkForStopping() {
 				toStop = append(toStop, processorToStop{variant, processor})
 				s.hlsFMP4Processors.Delete(variant)
 			}
@@ -1680,7 +1838,7 @@ func (s *RelaySession) StopProcessorIfIdle(processorType string) {
 		})
 	case "dash":
 		s.dashProcessors.Range(func(variant CodecVariant, processor *DASHProcessor) bool {
-			if processor.ClientCount() == 0 {
+			if processor.TryMarkForStopping() {
 				toStop = append(toStop, processorToStop{variant, processor})
 				s.dashProcessors.Delete(variant)
 			}
@@ -1703,21 +1861,28 @@ func (s *RelaySession) StopProcessorIfIdle(processorType string) {
 		s.cleanupUnusedVariants()
 	}
 
-	// Update session idle state after processor cleanup
-	clientCount := s.ClientCount()
-	idleSince, _ := s.idleSince.Load().(time.Time)
-	if clientCount == 0 && idleSince.IsZero() {
-		s.idleSince.Store(time.Now())
-		slog.Debug("Session became idle after processor cleanup",
-			slog.String("session_id", sessionID))
-	}
+	// Update session state after processor cleanup using state machine
+	s.UpdateIdleState()
 }
 
 // Close closes the session and releases resources.
 func (s *RelaySession) Close() {
-	// Use CompareAndSwap to ensure Close() is only executed once
-	if !s.closed.CompareAndSwap(false, true) {
+	// Transition to Closing state - if already Closing or Closed, return
+	currentState := s.State()
+	if currentState.IsTerminal() {
 		return
+	}
+
+	// Force transition to Closing (valid from any non-terminal state)
+	if !s.state.CompareAndSwap(uint32(currentState), uint32(SessionStateClosing)) {
+		// State changed, check if it's now terminal
+		if s.State().IsTerminal() {
+			return
+		}
+		// Retry transition
+		s.transitionTo(SessionStateClosing)
+	} else {
+		s.onStateEnter(currentState, SessionStateClosing)
 	}
 
 	s.cancel()
@@ -1775,6 +1940,9 @@ func (s *RelaySession) Close() {
 	if s.esBuffer != nil {
 		s.esBuffer.Close()
 	}
+
+	// Final transition to Closed
+	s.transitionTo(SessionStateClosed)
 }
 
 // Stats returns session statistics.
@@ -1805,7 +1973,7 @@ func (s *RelaySession) Stats() SessionStats {
 	if s.EncodingProfile != nil {
 		profileName = s.EncodingProfile.Name
 	}
-	closed = s.closed.Load()
+	closed = s.IsClosed()
 	inFallback = s.inFallback.Load()
 
 	// These fields are set once during init and read-only afterward
@@ -2374,6 +2542,7 @@ func (s *RelaySession) HasActiveContent() bool {
 // This is called after the format router and processors are initialized.
 func (s *RelaySession) markReady() {
 	s.readyOnce.Do(func() {
+		s.transitionTo(SessionStateReady)
 		close(s.readyCh)
 	})
 }
@@ -2406,13 +2575,11 @@ func (s *RelaySession) IsReady() bool {
 }
 
 // GetContainerFormat returns the current container format.
-// GetContainerFormat returns the current container format.
 // This is set during pipeline init and read-only afterward.
 func (s *RelaySession) GetContainerFormat() models.ContainerFormat {
 	return s.containerFormat
 }
 
-// SupportsFormat returns true if the session can serve content in the requested format.
 // SupportsFormat checks if the session supports the given output format.
 // This is safe to call without locks because formatRouter is set once during
 // pipeline init and only read afterward.
@@ -2425,7 +2592,6 @@ func (s *RelaySession) SupportsFormat(format string) bool {
 	return s.formatRouter.HasHandler(format)
 }
 
-// GetOutputHandler returns the appropriate output handler for the requested format.
 // GetOutputHandler returns the output handler for the given request.
 // This is safe to call without locks because formatRouter is set once during
 // pipeline init and only read afterward.

@@ -291,20 +291,3 @@ func TestParseAnnexBNALUs_3ByteStartCode(t *testing.T) {
 	}
 }
 
-func TestBuildAnnexB(t *testing.T) {
-	nalus := [][]byte{h264SPS, h264PPS, h264IDR}
-	result := BuildAnnexB(nalus)
-
-	// Parse back and verify
-	parsed := ParseAnnexBNALUs(result)
-
-	if len(parsed) != 3 {
-		t.Fatalf("Expected 3 NAL units after round trip, got %d", len(parsed))
-	}
-
-	for i, nalu := range nalus {
-		if !bytes.Equal(parsed[i], nalu) {
-			t.Errorf("NAL %d mismatch after round trip", i)
-		}
-	}
-}

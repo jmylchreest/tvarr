@@ -71,11 +71,14 @@ type mpegtsStreamClient struct {
 	id              string
 	writer          http.ResponseWriter
 	flusher         http.Flusher
+	reqCtx          context.Context // Request context - signals when client disconnects
 	done            chan struct{}
+	writeCh         chan []byte   // Buffered channel for data to write
 	mu              sync.Mutex    // Protects waitForKeyframe only
 	bytesWritten    atomic.Uint64 // Atomic for lock-free updates
 	startedAt       time.Time
 	waitForKeyframe bool // True if client is waiting for next keyframe before receiving data
+	slowClient      atomic.Bool // True if client is falling behind
 }
 
 // NewMPEGTSProcessor creates a new MPEG-TS processor.
@@ -175,17 +178,34 @@ func (p *MPEGTSProcessor) Stop() {
 }
 
 // RegisterClient adds a streaming client.
+// Returns ErrProcessorStopping if the processor is being shut down.
 func (p *MPEGTSProcessor) RegisterClient(clientID string, w http.ResponseWriter, r *http.Request) error {
+	// Check if processor is stopping before doing any registration
+	// This prevents the TOCTOU race where a client registers while the processor is being cleaned up
+	if p.IsStopping() {
+		p.config.Logger.Debug("Rejecting MPEG-TS client - processor is stopping",
+			slog.String("client_id", clientID))
+		return ErrProcessorStopping
+	}
+
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		return errors.New("response writer does not support flushing")
+	}
+
+	// Register with base processor first (this checks stopping flag under lock)
+	_, err := p.RegisterClientBase(clientID, w, r)
+	if err != nil {
+		return err
 	}
 
 	client := &mpegtsStreamClient{
 		id:              clientID,
 		writer:          w,
 		flusher:         flusher,
+		reqCtx:          r.Context(), // Store request context to detect client disconnect
 		done:            make(chan struct{}),
+		writeCh:         make(chan []byte, 64), // Buffer up to 64 chunks (~1MB at 13KB/chunk)
 		startedAt:       time.Now(),
 		waitForKeyframe: true, // New clients wait for next keyframe before receiving data
 	}
@@ -195,8 +215,8 @@ func (p *MPEGTSProcessor) RegisterClient(clientID string, w http.ResponseWriter,
 	clientCount := len(p.streamClients)
 	p.streamClientsMu.Unlock()
 
-	// Also register with base processor for stats
-	p.RegisterClientBase(clientID, w, r)
+	// Start a dedicated writer goroutine for this client
+	go p.clientWriteLoop(client)
 
 	p.config.Logger.Debug("Registered MPEG-TS stream client",
 		slog.String("client_id", clientID),
@@ -450,7 +470,7 @@ func (p *MPEGTSProcessor) processAvailableSamples(videoTrack, audioTrack *ESTrac
 
 // broadcastToExistingClients sends data only to clients that are already receiving
 // (not waiting for a keyframe). Used to send pre-keyframe data.
-// IMPORTANT: This method does NOT hold locks during HTTP I/O to prevent blocking.
+// Uses per-client write channels for efficient non-blocking writes.
 func (p *MPEGTSProcessor) broadcastToExistingClients(data []byte) {
 	if len(data) == 0 {
 		return
@@ -470,52 +490,35 @@ func (p *MPEGTSProcessor) broadcastToExistingClients(data []byte) {
 		default:
 		}
 
-		// Check waitForKeyframe under lock, get I/O references
+		// Check waitForKeyframe under lock
 		client.mu.Lock()
 		shouldSkip := client.waitForKeyframe
-		writer := client.writer
-		flusher := client.flusher
-		clientID := client.id
 		client.mu.Unlock()
 
 		if shouldSkip {
 			continue
 		}
 
-		// Perform HTTP I/O WITHOUT holding any locks
-		// Use a channel-based timeout to prevent blocking the processing loop
-		writeDone := make(chan error, 1)
-		go func() {
-			_, err := writer.Write(data)
-			writeDone <- err
-		}()
+		// Copy data for this client (channels share memory, need copy for safety)
+		dataCopy := make([]byte, len(data))
+		copy(dataCopy, data)
 
-		// Wait for write to complete with timeout
+		// Non-blocking send to client's write channel
 		select {
-		case err := <-writeDone:
-			if err != nil {
-				p.config.Logger.Debug("Client write failed",
-					slog.String("client_id", clientID),
-					slog.String("error", err.Error()))
-				p.UnregisterClient(clientID)
-				continue
+		case client.writeCh <- dataCopy:
+			// Data queued successfully
+		default:
+			// Channel full - client is too slow
+			if !client.slowClient.Swap(true) {
+				// First time detecting slow client, log warning
+				p.config.Logger.Warn("Client write buffer full (pre-keyframe), disconnecting slow client",
+					slog.String("client_id", client.id),
+					slog.String("processor_id", p.id),
+					slog.Uint64("bytes_written", client.bytesWritten.Load()),
+					slog.Duration("connected_duration", time.Since(client.startedAt)))
 			}
-		case <-time.After(30 * time.Second):
-			// Write timed out - client is too slow, disconnect them
-			p.config.Logger.Warn("Client write timeout (pre-keyframe), disconnecting slow client",
-				slog.String("client_id", clientID),
-				slog.String("processor_id", p.id),
-				slog.Uint64("bytes_written", client.bytesWritten.Load()),
-				slog.Duration("connected_duration", time.Since(client.startedAt)),
-				slog.Int("pending_write_bytes", len(data)))
-			p.UnregisterClient(clientID)
-			continue
+			p.UnregisterClient(client.id)
 		}
-		if flusher != nil {
-			flusher.Flush()
-		}
-		client.bytesWritten.Add(uint64(len(data)))
-		p.UpdateClientBytes(clientID, uint64(len(data)))
 	}
 
 	p.RecordBytesWritten(uint64(len(data)))
@@ -523,8 +526,7 @@ func (p *MPEGTSProcessor) broadcastToExistingClients(data []byte) {
 
 // broadcastToClients sends data to all connected streaming clients.
 // New clients wait for the next keyframe before receiving data.
-// This ensures they can start decoding immediately.
-// IMPORTANT: This method does NOT hold locks during HTTP I/O to prevent blocking.
+// Uses per-client write channels for efficient non-blocking writes.
 func (p *MPEGTSProcessor) broadcastToClients(data []byte, hasKeyframe bool) {
 	if len(data) == 0 {
 		return
@@ -568,9 +570,6 @@ func (p *MPEGTSProcessor) broadcastToClients(data []byte, hasKeyframe bool) {
 				shouldSkip = true
 			}
 		}
-		// Get references we need for I/O
-		writer := client.writer
-		flusher := client.flusher
 		clientID := client.id
 		client.mu.Unlock()
 
@@ -599,78 +598,73 @@ func (p *MPEGTSProcessor) broadcastToClients(data []byte, hasKeyframe bool) {
 				slog.Int("total_bytes", len(combined)))
 		}
 
-		// Perform HTTP I/O WITHOUT holding any locks
-		// Use a channel-based timeout to prevent blocking the processing loop
-		writeDone := make(chan error, 1)
-		go func() {
-			_, err := writer.Write(dataToWrite)
-			writeDone <- err
-		}()
+		// Copy data for this client (channels share memory, need copy for safety)
+		dataCopy := make([]byte, len(dataToWrite))
+		copy(dataCopy, dataToWrite)
 
-		// Wait for write to complete with timeout
+		// Non-blocking send to client's write channel
 		select {
-		case err := <-writeDone:
-			if err != nil {
-				// Client write failed, unregister
-				p.config.Logger.Info("MPEG-TS client write failed, disconnecting",
+		case client.writeCh <- dataCopy:
+			// Data queued successfully
+		default:
+			// Channel full - client is too slow
+			if !client.slowClient.Swap(true) {
+				// First time detecting slow client, log warning
+				p.config.Logger.Warn("Client write buffer full, disconnecting slow client",
 					slog.String("client_id", clientID),
 					slog.String("processor_id", p.id),
 					slog.Uint64("bytes_written", client.bytesWritten.Load()),
 					slog.Duration("connected_duration", time.Since(client.startedAt)),
-					slog.String("error", err.Error()))
-				p.UnregisterClient(clientID)
-				continue
+					slog.Int("pending_write_bytes", len(dataCopy)))
 			}
-		case <-time.After(30 * time.Second):
-			// Write timed out - client is too slow, disconnect them
-			p.config.Logger.Warn("Client write timeout, disconnecting slow client",
-				slog.String("client_id", clientID),
-				slog.String("processor_id", p.id),
-				slog.Uint64("bytes_written", client.bytesWritten.Load()),
-				slog.Duration("connected_duration", time.Since(client.startedAt)),
-				slog.Int("pending_write_bytes", len(dataToWrite)))
 			p.UnregisterClient(clientID)
-			continue
 		}
-		if flusher != nil {
-			flusher.Flush()
-		}
-
-		// Update stats atomically (no lock needed)
-		client.bytesWritten.Add(uint64(len(dataToWrite)))
-
-		// Sync bytes to base processor client for stats reporting
-		p.UpdateClientBytes(clientID, uint64(len(dataToWrite)))
 	}
 
 	// Update stats
 	p.RecordBytesWritten(uint64(len(data)))
 }
 
-// GetStreamStats returns statistics for all connected stream clients.
-func (p *MPEGTSProcessor) GetStreamStats() []StreamClientStats {
-	p.streamClientsMu.RLock()
-	defer p.streamClientsMu.RUnlock()
+// clientWriteLoop is a dedicated goroutine for writing data to a client.
+// This eliminates the need to spawn a goroutine for each write.
+// Also monitors the request context to detect client disconnects even when no data is flowing.
+func (p *MPEGTSProcessor) clientWriteLoop(client *mpegtsStreamClient) {
+	for {
+		select {
+		case <-client.done:
+			return
 
-	stats := make([]StreamClientStats, 0, len(p.streamClients))
-	for _, client := range p.streamClients {
-		// bytesWritten is atomic, no lock needed for reading it
-		stats = append(stats, StreamClientStats{
-			ID:           client.id,
-			BytesWritten: client.bytesWritten.Load(),
-			StartedAt:    client.startedAt,
-			Duration:     time.Since(client.startedAt),
-		})
+		case <-client.reqCtx.Done():
+			// Client disconnected (request context cancelled)
+			// This catches disconnects even when no data is flowing (e.g., after origin EOF)
+			p.config.Logger.Info("MPEG-TS client disconnected (context cancelled)",
+				slog.String("client_id", client.id),
+				slog.String("processor_id", p.id),
+				slog.Uint64("bytes_written", client.bytesWritten.Load()),
+				slog.Duration("connected_duration", time.Since(client.startedAt)))
+			p.UnregisterClient(client.id)
+			return
+
+		case data := <-client.writeCh:
+			// Write with timeout using deadline
+			_, err := client.writer.Write(data)
+			if err != nil {
+				p.config.Logger.Info("MPEG-TS client write failed in write loop, disconnecting",
+					slog.String("client_id", client.id),
+					slog.String("processor_id", p.id),
+					slog.Uint64("bytes_written", client.bytesWritten.Load()),
+					slog.Duration("connected_duration", time.Since(client.startedAt)),
+					slog.String("error", err.Error()))
+				p.UnregisterClient(client.id)
+				return
+			}
+			if client.flusher != nil {
+				client.flusher.Flush()
+			}
+			client.bytesWritten.Add(uint64(len(data)))
+			p.UpdateClientBytes(client.id, uint64(len(data)))
+		}
 	}
-	return stats
-}
-
-// StreamClientStats contains statistics for a stream client.
-type StreamClientStats struct {
-	ID           string
-	BytesWritten uint64
-	StartedAt    time.Time
-	Duration     time.Duration
 }
 
 // SupportsStreaming returns true since this is a streaming processor.

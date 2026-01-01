@@ -3,6 +3,7 @@ package relay
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -142,6 +143,10 @@ type StreamContext struct {
 	Version          string // tvarr version
 }
 
+// ErrProcessorStopping is returned when trying to register a client on a processor
+// that is being stopped. The caller should create or obtain a new processor.
+var ErrProcessorStopping = errors.New("processor is stopping")
+
 // BaseProcessor provides common functionality for all processor types.
 type BaseProcessor struct {
 	id            string
@@ -152,6 +157,7 @@ type BaseProcessor struct {
 	lastActivity  atomic.Value // time.Time
 	bytesWritten  atomic.Uint64
 	closed        atomic.Bool
+	stopping      atomic.Bool // Set when processor is being stopped - rejects new clients
 	closedCh      chan struct{}
 	streamContext StreamContext
 
@@ -216,9 +222,22 @@ func (p *BaseProcessor) SetStreamHeaders(w http.ResponseWriter) {
 // RegisterClientBase adds a client (used by specific processor implementations).
 // For request-based protocols like HLS/DASH, this updates the existing client's
 // activity timestamp rather than creating a duplicate entry.
-func (p *BaseProcessor) RegisterClientBase(clientID string, w http.ResponseWriter, r *http.Request) *ProcessorClient {
+//
+// Returns nil and ErrProcessorStopping if the processor is being stopped.
+// The caller should obtain or create a new processor instance.
+func (p *BaseProcessor) RegisterClientBase(clientID string, w http.ResponseWriter, r *http.Request) (*ProcessorClient, error) {
 	p.clientsMu.Lock()
 	defer p.clientsMu.Unlock()
+
+	// Reject new registrations if processor is being stopped
+	// This prevents the TOCTOU race where a client registers between
+	// ClientCount() check and Stop() call in StopProcessorIfIdle
+	if p.stopping.Load() {
+		slog.Debug("Rejecting client registration - processor is stopping",
+			slog.String("processor_id", p.id),
+			slog.String("client_id", clientID))
+		return nil, ErrProcessorStopping
+	}
 
 	now := time.Now()
 
@@ -237,7 +256,7 @@ func (p *BaseProcessor) RegisterClientBase(clientID string, w http.ResponseWrite
 			slog.String("processor_id", p.id),
 			slog.String("client_id", clientID),
 			slog.Duration("since_last_activity", now.Sub(oldActivity)))
-		return existing
+		return existing, nil
 	}
 
 	// Create new client
@@ -249,7 +268,7 @@ func (p *BaseProcessor) RegisterClientBase(clientID string, w http.ResponseWrite
 	slog.Log(context.Background(), observability.LevelTrace, "New client registered",
 		slog.String("processor_id", p.id),
 		slog.String("client_id", clientID))
-	return client
+	return client, nil
 }
 
 // UnregisterClientBase removes a client.
@@ -370,6 +389,42 @@ func (p *BaseProcessor) Close() {
 // IsClosed returns true if the processor is closed.
 func (p *BaseProcessor) IsClosed() bool {
 	return p.closed.Load()
+}
+
+// IsStopping returns true if the processor is being stopped.
+func (p *BaseProcessor) IsStopping() bool {
+	return p.stopping.Load()
+}
+
+// TryMarkForStopping atomically marks the processor for stopping if it has no clients.
+// Returns true if the processor was successfully marked for stopping (and should be stopped).
+// Returns false if there are active clients, meaning the processor should remain active.
+//
+// This method is used to prevent the TOCTOU race where:
+// 1. StopProcessorIfIdle checks ClientCount() == 0
+// 2. A new client registers before Stop() is called
+// 3. The processor is stopped with an active client
+//
+// By holding the clientsMu lock while both checking client count AND setting the stopping flag,
+// we ensure that RegisterClientBase will see the stopping flag and reject the registration.
+func (p *BaseProcessor) TryMarkForStopping() bool {
+	p.clientsMu.Lock()
+	defer p.clientsMu.Unlock()
+
+	// If there are clients, don't mark for stopping
+	if len(p.clients) > 0 {
+		return false
+	}
+
+	// No clients - mark as stopping to prevent new registrations
+	p.stopping.Store(true)
+	return true
+}
+
+// ClearStopping clears the stopping flag. This is used if the processor
+// is not actually being removed (e.g., it was re-added to the session map).
+func (p *BaseProcessor) ClearStopping() {
+	p.stopping.Store(false)
 }
 
 // ClosedChan returns a channel that is closed when the processor is closed.

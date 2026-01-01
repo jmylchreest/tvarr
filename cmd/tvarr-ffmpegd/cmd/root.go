@@ -99,6 +99,11 @@ func setDaemonDefaults() {
 	// Logging defaults (shared with main tvarr)
 	daemonViper.SetDefault("logging.level", "info")
 	daemonViper.SetDefault("logging.format", "json")
+
+	// Profiling defaults - use daemon.profiling.* to avoid conflict with tvarr in all-in-one image
+	// Env vars: TVARR_DAEMON_PROFILING_PPROF, TVARR_DAEMON_PROFILING_PPROF_PORT
+	daemonViper.SetDefault("daemon.profiling.pprof", false)
+	daemonViper.SetDefault("daemon.profiling.pprof_port", 6060)
 }
 
 // initLogging configures the slog logger for the daemon.

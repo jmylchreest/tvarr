@@ -351,31 +351,6 @@ func TestConnectionPool_Close(t *testing.T) {
 	assert.ErrorIs(t, err, ErrPoolClosed)
 }
 
-// Host Limiter Tests
-
-func TestHostLimiter_Basic(t *testing.T) {
-	limiter := NewHostLimiter(2)
-	ctx := context.Background()
-
-	// Should allow 2 concurrent
-	err := limiter.Acquire(ctx, "host1")
-	require.NoError(t, err)
-	err = limiter.Acquire(ctx, "host1")
-	require.NoError(t, err)
-
-	assert.Equal(t, 2, limiter.ActiveForHost("host1"))
-
-	// Third should block (with timeout)
-	ctx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
-	defer cancel()
-	err = limiter.Acquire(ctx, "host1")
-	assert.Error(t, err)
-
-	// Release one
-	limiter.Release("host1")
-	assert.Equal(t, 1, limiter.ActiveForHost("host1"))
-}
-
 func TestStreamMode_String(t *testing.T) {
 	tests := []struct {
 		mode     StreamMode

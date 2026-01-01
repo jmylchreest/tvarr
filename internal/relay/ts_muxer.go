@@ -102,39 +102,6 @@ func createAudioCodec(codecName string, aacConfig *mpeg4audio.AudioSpecificConfi
 	}
 }
 
-// codecNameFromTrack extracts the codec name from a mediacommon track's codec.
-// This is the single source of truth for codec type -> name mapping.
-func codecNameFromTrack(c mpegts.Codec) string {
-	switch c.(type) {
-	case *mpegts.CodecH264:
-		return "h264"
-	case *mpegts.CodecH265:
-		return "h265"
-	case *mpegts.CodecMPEG4Audio:
-		return "aac"
-	case *mpegts.CodecAC3:
-		return "ac3"
-	case *mpegts.CodecEAC3:
-		return "eac3"
-	case *mpegts.CodecMPEG1Audio:
-		return "mp3"
-	case *mpegts.CodecOpus:
-		return "opus"
-	default:
-		return ""
-	}
-}
-
-// isVideoCodec returns true if the codec name represents a video codec.
-func isVideoCodec(codecName string) bool {
-	switch codecName {
-	case "h264", "h265", "hevc":
-		return true
-	default:
-		return false
-	}
-}
-
 // TSMuxerConfig configures the TS muxer.
 type TSMuxerConfig struct {
 	VideoPID uint16
@@ -578,50 +545,6 @@ func extractADTSFrames(data []byte) [][]byte {
 	return frames
 }
 
-// TSMuxerWithTracks creates a muxer with explicit track configuration.
-func TSMuxerWithTracks(w io.Writer, tracks []*mpegts.Track, logger *slog.Logger) (*TSMuxer, error) {
-	if logger == nil {
-		logger = slog.Default()
-	}
-
-	m := &TSMuxer{
-		writer:      w,
-		config:      TSMuxerConfig{Logger: logger},
-		tracks:      tracks,
-		videoParams: NewVideoParamHelper(),
-	}
-
-	// Find video and audio tracks using codec type detection
-	for _, track := range tracks {
-		codecName := codecNameFromTrack(track.Codec)
-		if codecName == "" {
-			continue
-		}
-
-		// Classify as video or audio using helper
-		if isVideoCodec(codecName) {
-			m.videoTrack = track
-			m.videoCodec = codecName
-		} else {
-			m.audioTrack = track
-			m.audioCodec = codecName
-		}
-	}
-
-	// Create the writer
-	m.muxer = &mpegts.Writer{
-		W:      w,
-		Tracks: tracks,
-	}
-
-	if err := m.muxer.Initialize(); err != nil {
-		return nil, fmt.Errorf("initializing mpegts writer: %w", err)
-	}
-
-	m.initialized = true
-
-	return m, nil
-}
 
 // VideoTrack returns the video track.
 func (m *TSMuxer) VideoTrack() *mpegts.Track {

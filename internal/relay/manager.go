@@ -40,6 +40,31 @@ func formatBitrateKbps(bitrate int) string {
 	return fmt.Sprintf("%d", bitrate/1000)
 }
 
+// ProcessorIdleGracePeriods configures how long each processor type waits
+// after the last client disconnects before stopping.
+type ProcessorIdleGracePeriods struct {
+	// MPEGTS is the grace period for MPEG-TS processors.
+	// Should be very short since MPEG-TS is continuous live streaming.
+	MPEGTS time.Duration
+	// HLSTS is the grace period for HLS-TS processors.
+	// Should be segment duration * 2 to allow for segment-based requests.
+	HLSTS time.Duration
+	// HLSFMP4 is the grace period for HLS-fMP4 processors.
+	HLSFMP4 time.Duration
+	// DASH is the grace period for DASH processors.
+	DASH time.Duration
+}
+
+// DefaultProcessorIdleGracePeriods returns sensible defaults for processor idle handling.
+func DefaultProcessorIdleGracePeriods() ProcessorIdleGracePeriods {
+	return ProcessorIdleGracePeriods{
+		MPEGTS:  2 * time.Second,  // Very short - live streaming, client is gone
+		HLSTS:   10 * time.Second, // ~2x typical segment duration
+		HLSFMP4: 10 * time.Second, // ~2x typical segment duration
+		DASH:    10 * time.Second, // ~2x typical segment duration
+	}
+}
+
 // ManagerConfig holds configuration for the relay manager.
 type ManagerConfig struct {
 	// MaxSessions is the maximum number of concurrent relay sessions.
@@ -49,6 +74,8 @@ type ManagerConfig struct {
 	// IdleGracePeriod is how long to wait after all clients disconnect before closing a session.
 	// This is a shorter timeout than SessionTimeout, specifically for idle sessions.
 	IdleGracePeriod time.Duration
+	// ProcessorIdleGracePeriods configures per-processor-type idle handling.
+	ProcessorIdleGracePeriods ProcessorIdleGracePeriods
 	// CleanupInterval is how often to clean up stale sessions.
 	CleanupInterval time.Duration
 	// CircuitBreakerConfig for upstream failure handling.
@@ -280,7 +307,7 @@ func (m *Manager) GetOrCreateSession(ctx context.Context, channelID models.ULID,
 		slog.Int("active_sessions", len(m.sessions)))
 	if sessionID, ok := m.channelSessions[channelID]; ok {
 		if session, ok := m.sessions[sessionID]; ok {
-			isClosed := session.closed.Load()
+			isClosed := session.IsClosed()
 			ingestCompleted := session.IngestCompleted()
 			if !isClosed {
 				// Session is not closed - check if we can reuse it
@@ -338,7 +365,7 @@ func (m *Manager) GetOrCreateSession(ctx context.Context, channelID models.ULID,
 	// Double-check: another goroutine might have created a session while we were classifying/probing
 	if existingSessionID, ok := m.channelSessions[channelID]; ok {
 		if existingSession, ok := m.sessions[existingSessionID]; ok {
-			if !existingSession.closed.Load() {
+			if !existingSession.IsClosed() {
 				// Check if we should reuse the existing session
 				// Only reuse if URL matches - different stream URL means we need a new session
 				urlMatches := existingSession.StreamURL == streamURL
@@ -354,7 +381,7 @@ func (m *Manager) GetOrCreateSession(ctx context.Context, channelID models.ULID,
 				slog.String("channel_id", channelID.String()),
 				slog.String("old_session_id", existingSession.ID.String()),
 				slog.String("new_session_id", session.ID.String()),
-				slog.Bool("was_closed", existingSession.closed.Load()),
+				slog.Bool("was_closed", existingSession.IsClosed()),
 				slog.Bool("url_matches", existingSession.StreamURL == streamURL))
 			existingSession.Close()
 			delete(m.sessions, existingSessionID)
@@ -400,7 +427,7 @@ func (m *Manager) GetSessionForChannel(channelID models.ULID) *RelaySession {
 		return nil
 	}
 
-	if session.closed.Load() {
+	if session.IsClosed() {
 		return nil
 	}
 
@@ -424,7 +451,7 @@ func (m *Manager) CountActiveSessionsForSource(sourceID models.ULID) int {
 
 	count := 0
 	for _, session := range m.sessions {
-		if !session.closed.Load() && session.SourceID == sourceID {
+		if !session.IsClosed() && session.SourceID == sourceID {
 			count++
 		}
 	}
@@ -834,6 +861,12 @@ func (m *Manager) createSession(ctx context.Context, channelID models.ULID, chan
 
 	sessionCtx, sessionCancel := context.WithCancel(m.ctx)
 
+	// Get processor idle grace periods (use defaults if not configured)
+	gracePeriods := m.config.ProcessorIdleGracePeriods
+	if gracePeriods.MPEGTS == 0 {
+		gracePeriods = DefaultProcessorIdleGracePeriods()
+	}
+
 	session := &RelaySession{
 		ID:                         models.NewULID(),
 		ChannelID:                  channelID,
@@ -852,6 +885,7 @@ func (m *Manager) createSession(ctx context.Context, channelID models.ULID, chan
 		readyCh:                    make(chan struct{}),
 		resourceHistory:            NewResourceHistory(),
 		edgeBandwidth:              NewEdgeBandwidthTrackers(),
+		processorIdleGracePeriods:  gracePeriods,
 	}
 
 	// Initialize atomic values for frequently updated fields
@@ -924,7 +958,7 @@ func (m *Manager) cleanupStaleSessions() {
 		id := sessionIDs[i]
 
 		// Check session state using atomic load (no locks needed)
-		closed := session.closed.Load()
+		closed := session.IsClosed()
 
 		// ClientCount() uses processorsMu, not the manager lock
 		clientCount := session.ClientCount()

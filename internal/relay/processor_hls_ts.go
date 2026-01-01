@@ -158,9 +158,10 @@ func (p *HLSTSProcessor) Stop() {
 }
 
 // RegisterClient adds a client to receive output from this processor.
+// Returns ErrProcessorStopping if the processor is being shut down.
 func (p *HLSTSProcessor) RegisterClient(clientID string, w http.ResponseWriter, r *http.Request) error {
-	_ = p.RegisterClientBase(clientID, w, r)
-	return nil
+	_, err := p.RegisterClientBase(clientID, w, r)
+	return err
 }
 
 // UnregisterClient removes a client.

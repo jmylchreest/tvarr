@@ -10,7 +10,6 @@ import (
 
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h264"
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
-	"github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts"
 )
 
 // TestTSMuxer_BasicWrite tests basic video and audio writing.
@@ -135,40 +134,6 @@ func TestTSMuxer_Reset(t *testing.T) {
 	}
 	if muxer.muxer != nil {
 		t.Error("Expected muxer to be nil after Reset")
-	}
-}
-
-// TestTSMuxer_WithTracks tests creating a muxer with explicit tracks.
-func TestTSMuxer_WithTracks(t *testing.T) {
-	var buf bytes.Buffer
-
-	tracks := []*mpegts.Track{
-		{PID: 256, Codec: &mpegts.CodecH264{}},
-		{PID: 257, Codec: &mpegts.CodecMPEG4Audio{
-			Config: mpeg4audio.AudioSpecificConfig{
-				Type:         mpeg4audio.ObjectTypeAACLC,
-				SampleRate:   48000,
-				ChannelCount: 2,
-			},
-		}},
-	}
-
-	muxer, err := TSMuxerWithTracks(&buf, tracks, nil)
-	if err != nil {
-		t.Fatalf("TSMuxerWithTracks failed: %v", err)
-	}
-
-	if muxer.VideoTrack() == nil {
-		t.Error("Expected video track to be set")
-	}
-	if muxer.AudioTrack() == nil {
-		t.Error("Expected audio track to be set")
-	}
-	if muxer.videoCodec != "h264" {
-		t.Errorf("Expected video codec h264, got %s", muxer.videoCodec)
-	}
-	if muxer.audioCodec != "aac" {
-		t.Errorf("Expected audio codec aac, got %s", muxer.audioCodec)
 	}
 }
 
@@ -355,38 +320,6 @@ func TestTSDemuxer_WaitInitialized_Timeout(t *testing.T) {
 	err := demuxer.WaitInitialized(ctx)
 	if err != context.DeadlineExceeded {
 		t.Errorf("Expected DeadlineExceeded, got %v", err)
-	}
-}
-
-// TestAnnexBToNALUnits tests the annexBToNALUnits helper function.
-func TestAnnexBToNALUnits(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    []byte
-		expected int
-	}{
-		{
-			name: "multiple NAL units",
-			input: []byte{
-				0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, // SPS
-				0x00, 0x00, 0x01, 0x68, 0xce, 0x38, // PPS (3-byte start code)
-			},
-			expected: 2,
-		},
-		{
-			name:     "single NAL unit",
-			input:    []byte{0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84},
-			expected: 1,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			units := annexBToNALUnits(tt.input)
-			if len(units) != tt.expected {
-				t.Errorf("Expected %d units, got %d", tt.expected, len(units))
-			}
-		})
 	}
 }
 
