@@ -1207,20 +1207,9 @@ func (b *SharedESBuffer) GetOrCreateVariantWithContext(ctx context.Context, vari
 	b.variants[variant] = v
 	b.variantsMu.Unlock()
 
-	// Inject placeholder content if configured and available for this variant
-	if b.config.TargetSegmentDuration > 0 {
-		injector := GetBufferInjector()
-		if injector.HasPlaceholder(variant) {
-			if err := injector.InjectStartupPlaceholder(v, b.config.TargetSegmentDuration); err != nil {
-				b.config.Logger.Warn("Failed to inject startup placeholder",
-					slog.String("variant", variant.String()),
-					slog.String("error", err.Error()))
-			}
-		} else {
-			b.config.Logger.Debug("No placeholder available for variant",
-				slog.String("variant", variant.String()))
-		}
-	}
+	// Note: Placeholder content is now generated on-demand by the DASH processor
+	// when segments are requested before transcoder content is available.
+	// This provides more flexible placeholder serving without pre-filling the buffer.
 
 	b.config.Logger.Log(context.Background(), observability.LevelTrace, "Created new codec variant - triggering transcoding callback",
 		slog.String("channel_id", b.channelID),

@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/fmp4"
@@ -108,6 +109,12 @@ type DASHProcessor struct {
 	// Used for availabilityStartTime in DASH manifest (must be constant)
 	streamStartTime   time.Time
 	streamStartTimeMu sync.RWMutex
+
+	// Placeholder fallback for segments not yet produced by transcoder
+	placeholderGen       *PlaceholderSegmentGenerator
+	hasRealContent       atomic.Bool // True once we've received real transcoder content
+	placeholderInitOnce  sync.Once
+	placeholderInitError error
 }
 
 // NewDASHProcessor creates a new DASH processor.
@@ -166,10 +173,23 @@ func (p *DASHProcessor) WaitForSegments(ctx context.Context, minSegments int) er
 }
 
 // SegmentCount returns the current number of segments.
+// Returns placeholder segment count if no real segments exist yet.
 func (p *DASHProcessor) SegmentCount() int {
 	p.segmentsMu.RLock()
-	defer p.segmentsMu.RUnlock()
-	return len(p.segments)
+	count := len(p.segments)
+	p.segmentsMu.RUnlock()
+
+	// If no real segments, return placeholder count to satisfy WaitForSegments
+	if count == 0 && !p.hasRealContent.Load() {
+		// Check if placeholder is available for this variant
+		injector := GetBufferInjector()
+		if injector.HasPlaceholder(p.variant) {
+			// Return enough segments to satisfy minimum DASH requirement
+			return p.config.PlaylistSegments
+		}
+	}
+
+	return count
 }
 
 // Start begins processing data from the shared buffer.
@@ -494,7 +514,18 @@ func (p *DASHProcessor) GetFilteredInitSegment(trackType string) ([]byte, error)
 
 // GetSegmentInfos implements SegmentProvider.
 // Returns only the latest PlaylistSegments segments so new clients start near live edge.
+// If no real segments exist yet, returns placeholder segment info to allow manifest generation.
 func (p *DASHProcessor) GetSegmentInfos() []SegmentInfo {
+	p.segmentsMu.RLock()
+	segmentCount := len(p.segments)
+	p.segmentsMu.RUnlock()
+
+	// If we have no real segments, generate placeholder segment infos
+	// This allows the manifest to be served before the transcoder produces content
+	if segmentCount == 0 && !p.hasRealContent.Load() {
+		return p.getPlaceholderSegmentInfos()
+	}
+
 	p.segmentsMu.RLock()
 	defer p.segmentsMu.RUnlock()
 
@@ -526,13 +557,70 @@ func (p *DASHProcessor) GetSegmentInfos() []SegmentInfo {
 	return infos
 }
 
+// getPlaceholderSegmentInfos returns segment infos for placeholder content.
+// Used when manifest is requested before real content is available.
+func (p *DASHProcessor) getPlaceholderSegmentInfos() []SegmentInfo {
+	// Initialize placeholder generator if needed
+	p.placeholderInitOnce.Do(func() {
+		gen, err := NewPlaceholderSegmentGenerator(
+			p.variant,
+			p.config.TargetSegmentDuration,
+			p.config.Logger,
+		)
+		if err != nil {
+			p.placeholderInitError = err
+			p.config.Logger.Warn("Failed to initialize placeholder generator for manifest",
+				slog.String("variant", p.variant.String()),
+				slog.String("error", err.Error()))
+			return
+		}
+		p.placeholderGen = gen
+
+		// Use placeholder's init segment
+		p.initSegmentMu.Lock()
+		if p.initSegment == nil {
+			p.initSegment = gen.GetInitSegment()
+			p.config.Logger.Debug("Using placeholder init segment for manifest")
+		}
+		p.initSegmentMu.Unlock()
+	})
+
+	if p.placeholderGen == nil {
+		return nil
+	}
+
+	// Generate enough placeholder segment infos for the manifest
+	// Use PlaylistSegments count, minimum 3 for DASH
+	count := p.config.PlaylistSegments
+	if count <= 0 {
+		count = 3
+	}
+
+	now := time.Now()
+	infos := make([]SegmentInfo, count)
+	for i := 0; i < count; i++ {
+		infos[i] = SegmentInfo{
+			Sequence:  uint64(i),
+			Duration:  p.config.TargetSegmentDuration,
+			Timestamp: now.Add(-time.Duration(count-1-i) * time.Duration(p.config.TargetSegmentDuration*float64(time.Second))),
+		}
+	}
+
+	p.config.Logger.Debug("Generated placeholder segment infos for manifest",
+		slog.Int("count", count),
+		slog.Float64("duration", p.config.TargetSegmentDuration))
+
+	return infos
+}
+
 // GetSegment implements SegmentProvider.
 func (p *DASHProcessor) GetSegment(sequence uint64) (*Segment, error) {
 	p.segmentsMu.RLock()
-	defer p.segmentsMu.RUnlock()
 
+	// First, check if we have the real segment
 	for _, seg := range p.segments {
 		if seg.sequence == sequence {
+			p.segmentsMu.RUnlock()
 			return &Segment{
 				Sequence:     seg.sequence,
 				Duration:     seg.duration,
@@ -543,25 +631,124 @@ func (p *DASHProcessor) GetSegment(sequence uint64) (*Segment, error) {
 		}
 	}
 
+	// Segment not found - check if we should serve placeholder
+	bufferCount := len(p.segments)
+	var minSeq, maxSeq uint64
+	if bufferCount > 0 {
+		minSeq = p.segments[0].sequence
+		maxSeq = p.segments[bufferCount-1].sequence
+	}
+	nextSeq := p.nextSequence
+	p.segmentsMu.RUnlock()
+
+	// Serve placeholder if:
+	// 1. We haven't received real transcoder content yet
+	// 2. The requested sequence is not in the past (before our buffer)
+	// 3. The processor context is still active
+	if !p.hasRealContent.Load() && p.shouldServePlaceholder(sequence, minSeq, maxSeq, nextSeq) {
+		return p.getPlaceholderSegment(sequence)
+	}
+
 	// Log available segments when requested segment is not found
-	if len(p.segments) > 0 {
-		minSeq := p.segments[0].sequence
-		maxSeq := p.segments[len(p.segments)-1].sequence
+	if bufferCount > 0 {
 		p.config.Logger.Info("DASH segment not found - buffer state",
 			slog.String("processor_id", p.id),
 			slog.Uint64("requested_seq", sequence),
-			slog.Int("buffer_count", len(p.segments)),
+			slog.Int("buffer_count", bufferCount),
 			slog.Uint64("buffer_min_seq", minSeq),
 			slog.Uint64("buffer_max_seq", maxSeq),
-			slog.Uint64("next_sequence", p.nextSequence))
+			slog.Uint64("next_sequence", nextSeq),
+			slog.Bool("has_real_content", p.hasRealContent.Load()))
 	} else {
 		p.config.Logger.Info("DASH segment not found - buffer empty",
 			slog.String("processor_id", p.id),
 			slog.Uint64("requested_seq", sequence),
-			slog.Uint64("next_sequence", p.nextSequence))
+			slog.Uint64("next_sequence", nextSeq),
+			slog.Bool("has_real_content", p.hasRealContent.Load()))
 	}
 
 	return nil, ErrSegmentNotFound
+}
+
+// shouldServePlaceholder determines if we should serve a placeholder for this sequence.
+func (p *DASHProcessor) shouldServePlaceholder(sequence, minSeq, maxSeq, nextSeq uint64) bool {
+	// Check if processor is still running
+	select {
+	case <-p.Context().Done():
+		return false
+	default:
+	}
+
+	// If we have real segments and this sequence is before them, it's a stale request
+	if minSeq > 0 && sequence < minSeq {
+		p.config.Logger.Debug("Not serving placeholder - sequence before buffer",
+			slog.Uint64("sequence", sequence),
+			slog.Uint64("min_seq", minSeq))
+		return false
+	}
+
+	// Don't serve placeholder for sequences too far in the future
+	// Allow up to 10 segments ahead to handle aggressive client buffering
+	maxFutureSeq := nextSeq + 10
+	if sequence > maxFutureSeq {
+		p.config.Logger.Debug("Not serving placeholder - sequence too far ahead",
+			slog.Uint64("sequence", sequence),
+			slog.Uint64("next_seq", nextSeq),
+			slog.Uint64("max_future", maxFutureSeq))
+		return false
+	}
+
+	return true
+}
+
+// getPlaceholderSegment returns a placeholder segment for the given sequence.
+func (p *DASHProcessor) getPlaceholderSegment(sequence uint64) (*Segment, error) {
+	// Initialize placeholder generator lazily
+	p.placeholderInitOnce.Do(func() {
+		gen, err := NewPlaceholderSegmentGenerator(
+			p.variant,
+			p.config.TargetSegmentDuration,
+			p.config.Logger,
+		)
+		if err != nil {
+			p.placeholderInitError = err
+			p.config.Logger.Warn("Failed to initialize placeholder generator",
+				slog.String("variant", p.variant.String()),
+				slog.String("error", err.Error()))
+			return
+		}
+		p.placeholderGen = gen
+
+		// Use placeholder's init segment if we don't have one yet
+		p.initSegmentMu.Lock()
+		if p.initSegment == nil {
+			p.initSegment = gen.GetInitSegment()
+			p.config.Logger.Debug("Using placeholder init segment")
+		}
+		p.initSegmentMu.Unlock()
+	})
+
+	if p.placeholderInitError != nil {
+		return nil, p.placeholderInitError
+	}
+	if p.placeholderGen == nil {
+		return nil, ErrSegmentNotFound
+	}
+
+	seg, err := p.placeholderGen.GenerateSegment(sequence)
+	if err != nil {
+		p.config.Logger.Warn("Failed to generate placeholder segment",
+			slog.Uint64("sequence", sequence),
+			slog.String("error", err.Error()))
+		return nil, err
+	}
+
+	p.config.Logger.Debug("Serving placeholder segment",
+		slog.Uint64("sequence", sequence),
+		slog.Float64("duration", seg.Duration),
+		slog.Int("size", len(seg.Data)))
+
+	return seg, nil
 }
 
 // TargetDuration implements SegmentProvider.
@@ -723,6 +910,10 @@ func (p *DASHProcessor) flushSegment(videoSamples, audioSamples []ESSample) {
 	if len(videoSamples) == 0 && len(audioSamples) == 0 {
 		return
 	}
+
+	// Mark that we've received real content from the transcoder
+	// This disables placeholder fallback for future segment requests
+	p.hasRealContent.Store(true)
 
 	// Extract codec parameters if not already done
 	if len(videoSamples) > 0 {
