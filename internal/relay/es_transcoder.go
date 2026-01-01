@@ -1028,9 +1028,21 @@ func (t *ESTranscoder) runOutputLoop(target *ESVariant) {
 
 // handleOutputSamples writes transcoded samples to target variant.
 func (t *ESTranscoder) handleOutputSamples(target *ESVariant, batch *proto.ESSampleBatch) error {
+	// Track PTS range for timestamp debugging
+	var minVideoPTS, maxVideoPTS int64 = -1, -1
+	var minAudioPTS, maxAudioPTS int64 = -1, -1
+	keyframeCount := 0
+
 	// Process video samples
 	for _, sample := range batch.VideoSamples {
+		if minVideoPTS < 0 || sample.Pts < minVideoPTS {
+			minVideoPTS = sample.Pts
+		}
+		if sample.Pts > maxVideoPTS {
+			maxVideoPTS = sample.Pts
+		}
 		if sample.IsKeyframe {
+			keyframeCount++
 			t.logger.Log(t.ctx, observability.LevelTrace, "ES transcoder: writing keyframe to target variant",
 				slog.String("id", t.id),
 				slog.String("target_variant", target.Variant().String()),
@@ -1047,9 +1059,29 @@ func (t *ESTranscoder) handleOutputSamples(target *ESVariant, batch *proto.ESSam
 
 	// Process audio samples
 	for _, sample := range batch.AudioSamples {
+		if minAudioPTS < 0 || sample.Pts < minAudioPTS {
+			minAudioPTS = sample.Pts
+		}
+		if sample.Pts > maxAudioPTS {
+			maxAudioPTS = sample.Pts
+		}
 		target.WriteAudio(sample.Pts, sample.Data)
 		t.samplesOut.Add(1)
 		t.bytesOut.Add(uint64(len(sample.Data)))
+	}
+
+	// Log PTS range for debugging timestamp issues
+	if len(batch.VideoSamples) > 0 || len(batch.AudioSamples) > 0 {
+		t.logger.Info("ES transcoder: output batch PTS range",
+			slog.String("id", t.id),
+			slog.Int("video_samples", len(batch.VideoSamples)),
+			slog.Int("audio_samples", len(batch.AudioSamples)),
+			slog.Int("keyframes", keyframeCount),
+			slog.Int64("video_pts_min", minVideoPTS),
+			slog.Int64("video_pts_max", maxVideoPTS),
+			slog.Int64("audio_pts_min", minAudioPTS),
+			slog.Int64("audio_pts_max", maxAudioPTS),
+			slog.Uint64("total_samples_out", t.samplesOut.Load()))
 	}
 
 	t.recordActivity()

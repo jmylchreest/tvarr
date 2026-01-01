@@ -757,6 +757,32 @@ func (p *DASHProcessor) flushSegment(videoSamples, audioSamples []ESSample) {
 	normalizedAudioTime := audioBaseTime - p.audioTimeOffset
 	p.timeOffsetInitMu.Unlock()
 
+	// Log sample PTS/DTS for timestamp debugging
+	var firstVideoPTS, firstVideoDTS, lastVideoPTS int64
+	if len(videoSamples) > 0 {
+		firstVideoPTS = videoSamples[0].PTS
+		firstVideoDTS = videoSamples[0].DTS
+		lastVideoPTS = videoSamples[len(videoSamples)-1].PTS
+	}
+	var firstAudioPTS, lastAudioPTS int64
+	if len(audioSamples) > 0 {
+		firstAudioPTS = audioSamples[0].PTS
+		lastAudioPTS = audioSamples[len(audioSamples)-1].PTS
+	}
+
+	// Detect potential timestamp discontinuity (base time less than offset)
+	var timestampDiscontinuity bool
+	if p.timeOffsetInitSet && (videoBaseTime < p.videoTimeOffset || audioBaseTime < p.audioTimeOffset) {
+		timestampDiscontinuity = true
+		p.config.Logger.Warn("DASH timestamp discontinuity detected",
+			slog.String("processor_id", p.id),
+			slog.Uint64("video_base_time", videoBaseTime),
+			slog.Uint64("video_offset", p.videoTimeOffset),
+			slog.Uint64("audio_base_time", audioBaseTime),
+			slog.Uint64("audio_offset", p.audioTimeOffset),
+			slog.Uint64("next_sequence", p.nextSequence))
+	}
+
 	// Debug: Log sample counts for each segment
 	var videoFormat string
 	if len(videoSamples) > 0 && len(videoSamples[0].Data) >= 4 {
@@ -767,6 +793,26 @@ func (p *DASHProcessor) flushSegment(videoSamples, audioSamples []ESSample) {
 			videoFormat = "avcc"
 		}
 	}
+
+	// INFO-level timestamp tracking for debugging
+	p.config.Logger.Info("DASH segment timestamp info",
+		slog.String("processor_id", p.id),
+		slog.Uint64("sequence", p.nextSequence),
+		slog.Int64("video_first_pts", firstVideoPTS),
+		slog.Int64("video_first_dts", firstVideoDTS),
+		slog.Int64("video_last_pts", lastVideoPTS),
+		slog.Int64("audio_first_pts", firstAudioPTS),
+		slog.Int64("audio_last_pts", lastAudioPTS),
+		slog.Uint64("video_base_time", videoBaseTime),
+		slog.Uint64("audio_base_time", audioBaseTime),
+		slog.Uint64("video_offset", p.videoTimeOffset),
+		slog.Uint64("audio_offset", p.audioTimeOffset),
+		slog.Uint64("normalized_video_time", normalizedVideoTime),
+		slog.Uint64("normalized_audio_time", normalizedAudioTime),
+		slog.Bool("discontinuity", timestampDiscontinuity),
+		slog.Int("video_samples", len(videoSamples)),
+		slog.Int("audio_samples", len(audioSamples)))
+
 	p.config.Logger.Debug("DASH segment samples",
 		slog.Int("video_es_samples", len(videoSamples)),
 		slog.Int("audio_es_samples", len(audioSamples)),
