@@ -173,14 +173,14 @@ func (p *DASHProcessor) WaitForSegments(ctx context.Context, minSegments int) er
 }
 
 // SegmentCount returns the current number of segments.
-// Returns placeholder segment count if no real segments exist yet.
+// Returns placeholder segment count if we don't have enough real segments yet.
 func (p *DASHProcessor) SegmentCount() int {
 	p.segmentsMu.RLock()
 	count := len(p.segments)
 	p.segmentsMu.RUnlock()
 
-	// If no real segments, return placeholder count to satisfy WaitForSegments
-	if count == 0 && !p.hasRealContent.Load() {
+	// If we don't have enough real segments, return placeholder count to satisfy WaitForSegments
+	if !p.hasEnoughRealSegments() {
 		// Check if placeholder is available for this variant
 		injector := GetBufferInjector()
 		if injector.HasPlaceholder(p.variant) {
@@ -514,15 +514,11 @@ func (p *DASHProcessor) GetFilteredInitSegment(trackType string) ([]byte, error)
 
 // GetSegmentInfos implements SegmentProvider.
 // Returns only the latest PlaylistSegments segments so new clients start near live edge.
-// If no real segments exist yet, returns placeholder segment info to allow manifest generation.
+// If we don't have enough real segments yet, returns placeholder segment info to allow manifest generation.
 func (p *DASHProcessor) GetSegmentInfos() []SegmentInfo {
-	p.segmentsMu.RLock()
-	segmentCount := len(p.segments)
-	p.segmentsMu.RUnlock()
-
-	// If we have no real segments, generate placeholder segment infos
-	// This allows the manifest to be served before the transcoder produces content
-	if segmentCount == 0 && !p.hasRealContent.Load() {
+	// If we don't have enough real segments for smooth playback, generate placeholder segment infos
+	// This allows the manifest to be served before the transcoder has produced enough content
+	if !p.hasEnoughRealSegments() {
 		return p.getPlaceholderSegmentInfos()
 	}
 
@@ -642,10 +638,11 @@ func (p *DASHProcessor) GetSegment(sequence uint64) (*Segment, error) {
 	p.segmentsMu.RUnlock()
 
 	// Serve placeholder if:
-	// 1. We haven't received real transcoder content yet
+	// 1. We don't have enough real segments yet for smooth playback, OR no real content at all
 	// 2. The requested sequence is not in the past (before our buffer)
 	// 3. The processor context is still active
-	if !p.hasRealContent.Load() && p.shouldServePlaceholder(sequence, minSeq, maxSeq, nextSeq) {
+	// This ensures smooth startup even if transcoder produces a few segments quickly
+	if !p.hasEnoughRealSegments() && p.shouldServePlaceholder(sequence, minSeq, maxSeq, nextSeq) {
 		return p.getPlaceholderSegment(sequence)
 	}
 
@@ -699,6 +696,21 @@ func (p *DASHProcessor) shouldServePlaceholder(sequence, minSeq, maxSeq, nextSeq
 	}
 
 	return true
+}
+
+// hasEnoughRealSegments returns true if we have enough real segments for smooth playback.
+// Until we have PlaylistSegments worth of real content, we should still use placeholder fallback.
+func (p *DASHProcessor) hasEnoughRealSegments() bool {
+	p.segmentsMu.RLock()
+	count := len(p.segments)
+	p.segmentsMu.RUnlock()
+
+	minRequired := p.config.PlaylistSegments
+	if minRequired <= 0 {
+		minRequired = 5 // Default
+	}
+
+	return count >= minRequired
 }
 
 // getPlaceholderSegment returns a placeholder segment for the given sequence.
