@@ -173,18 +173,16 @@ func (p *DASHProcessor) WaitForSegments(ctx context.Context, minSegments int) er
 }
 
 // SegmentCount returns the current number of segments.
-// Returns placeholder segment count if we don't have enough real segments yet.
+// Returns placeholder segment count if we have no real segments yet.
 func (p *DASHProcessor) SegmentCount() int {
 	p.segmentsMu.RLock()
 	count := len(p.segments)
 	p.segmentsMu.RUnlock()
 
-	// If we don't have enough real segments, return placeholder count to satisfy WaitForSegments
-	if !p.hasEnoughRealSegments() {
-		// Check if placeholder is available for this variant
+	// If no real segments, return placeholder count to satisfy WaitForSegments
+	if count == 0 {
 		injector := GetBufferInjector()
 		if injector.HasPlaceholder(p.variant) {
-			// Return enough segments to satisfy minimum DASH requirement
 			return p.config.PlaylistSegments
 		}
 	}
@@ -516,9 +514,12 @@ func (p *DASHProcessor) GetFilteredInitSegment(trackType string) ([]byte, error)
 // Returns only the latest PlaylistSegments segments so new clients start near live edge.
 // If we don't have enough real segments yet, returns placeholder segment info to allow manifest generation.
 func (p *DASHProcessor) GetSegmentInfos() []SegmentInfo {
-	// If we don't have enough real segments for smooth playback, generate placeholder segment infos
-	// This allows the manifest to be served before the transcoder has produced enough content
-	if !p.hasEnoughRealSegments() {
+	p.segmentsMu.RLock()
+	segmentCount := len(p.segments)
+	p.segmentsMu.RUnlock()
+
+	// If we have no real segments yet, return placeholder segment infos
+	if segmentCount == 0 {
 		return p.getPlaceholderSegmentInfos()
 	}
 
@@ -637,12 +638,9 @@ func (p *DASHProcessor) GetSegment(sequence uint64) (*Segment, error) {
 	nextSeq := p.nextSequence
 	p.segmentsMu.RUnlock()
 
-	// Serve placeholder if:
-	// 1. We don't have enough real segments yet for smooth playback, OR no real content at all
-	// 2. The requested sequence is not in the past (before our buffer)
-	// 3. The processor context is still active
-	// This ensures smooth startup even if transcoder produces a few segments quickly
-	if !p.hasEnoughRealSegments() && p.shouldServePlaceholder(sequence, minSeq, maxSeq, nextSeq) {
+	// Serve placeholder for any missing segment that's within a valid range
+	// This covers both startup (transcoder catching up) and gaps in the buffer
+	if p.shouldServePlaceholder(sequence, minSeq, maxSeq, nextSeq) {
 		return p.getPlaceholderSegment(sequence)
 	}
 
