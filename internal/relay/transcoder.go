@@ -185,16 +185,19 @@ func (f *TranscoderFactory) ShouldUseRemote() bool {
 	return f.PreferRemote && f.CanCreateRemoteTranscoder()
 }
 
-// SelectRemoteDaemon selects a remote daemon for the given encoder requirement.
+// SelectRemoteDaemon selects a remote daemon for the given codec requirements.
+// sourceCodec and targetCodec are normalized codec names (e.g., "h264", "hevc", "vp9").
+// The daemon selection will prefer daemons with HW encoders for the target codec.
 // Returns nil if no suitable daemon is available.
-func (f *TranscoderFactory) SelectRemoteDaemon(requiredEncoder string, requireGPU bool) *types.Daemon {
+func (f *TranscoderFactory) SelectRemoteDaemon(sourceCodec, targetCodec string, requireGPU bool) *types.Daemon {
 	if f.DaemonRegistry == nil {
 		return nil
 	}
 
 	criteria := SelectionCriteria{
-		RequiredEncoder: requiredEncoder,
-		RequireGPU:      requireGPU,
+		SourceCodec: sourceCodec,
+		TargetCodec: targetCodec,
+		RequireGPU:  requireGPU,
 	}
 
 	return f.DaemonRegistry.SelectDaemon(f.SelectionStrategy, criteria)
@@ -296,18 +299,21 @@ func (f *TranscoderFactory) CreateTranscoderFromProfile(
 		)
 	}
 
-	// Determine if HW encoding is requested
+	// Determine if HW encoding is explicitly requested via encoder name
 	requireGPU := isHardwareEncoder(videoEncoder)
 
 	// 1. Try remote daemon first if preferred
+	// Use codec-level selection so daemons with HW encoders (e.g., vp9_vaapi) are found
+	// even when the default software encoder (e.g., libvpx-vp9) was mapped
 	if f.ShouldUseRemote() {
-		daemon := f.SelectRemoteDaemon(videoEncoder, requireGPU)
+		daemon := f.SelectRemoteDaemon(sourceVariant.VideoCodec(), targetVariant.VideoCodec(), requireGPU)
 		if daemon != nil {
 			f.Logger.Log(context.Background(), observability.LevelTrace, "Selected remote daemon for transcoding",
 				slog.String("id", id),
 				slog.String("daemon_id", string(daemon.ID)),
 				slog.String("daemon_name", daemon.Name),
-				slog.String("video_encoder", videoEncoder),
+				slog.String("source_codec", sourceVariant.VideoCodec()),
+				slog.String("target_codec", targetVariant.VideoCodec()),
 			)
 			return f.createRemoteTranscoder(id, buffer, sourceVariant, targetVariant,
 				videoEncoder, audioEncoder, videoBitrate, audioBitrate,
@@ -315,7 +321,7 @@ func (f *TranscoderFactory) CreateTranscoderFromProfile(
 		}
 		f.Logger.Log(context.Background(), observability.LevelTrace, "No suitable remote daemon found, falling back to local subprocess",
 			slog.String("id", id),
-			slog.String("video_encoder", videoEncoder),
+			slog.String("target_codec", targetVariant.VideoCodec()),
 		)
 	}
 
@@ -346,13 +352,15 @@ func (f *TranscoderFactory) CreateTranscoderFromVariant(
 	requireGPU := isHardwareEncoder(videoEncoder)
 
 	// 1. Try remote daemon first if preferred
+	// Use codec-level selection so daemons with HW encoders are found
 	if f.ShouldUseRemote() {
-		daemon := f.SelectRemoteDaemon(videoEncoder, requireGPU)
+		daemon := f.SelectRemoteDaemon(sourceVariant.VideoCodec(), targetVariant.VideoCodec(), requireGPU)
 		if daemon != nil {
 			f.Logger.Log(context.Background(), observability.LevelTrace, "Selected remote daemon for transcoding",
 				slog.String("id", id),
 				slog.String("daemon_id", string(daemon.ID)),
-				slog.String("video_encoder", videoEncoder),
+				slog.String("source_codec", sourceVariant.VideoCodec()),
+				slog.String("target_codec", targetVariant.VideoCodec()),
 			)
 			return f.createRemoteTranscoder(id, buffer, sourceVariant, targetVariant,
 				videoEncoder, audioEncoder, 0, 0, "medium", "", "", daemon, opts)
