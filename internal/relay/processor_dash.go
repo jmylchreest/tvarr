@@ -172,21 +172,11 @@ func (p *DASHProcessor) WaitForSegments(ctx context.Context, minSegments int) er
 	}
 }
 
-// SegmentCount returns the current number of segments.
-// Returns placeholder segment count if we have no real segments yet.
+// SegmentCount returns the current number of real segments.
 func (p *DASHProcessor) SegmentCount() int {
 	p.segmentsMu.RLock()
 	count := len(p.segments)
 	p.segmentsMu.RUnlock()
-
-	// If no real segments, return placeholder count to satisfy WaitForSegments
-	if count == 0 {
-		injector := GetBufferInjector()
-		if injector.HasPlaceholder(p.variant) {
-			return p.config.PlaylistSegments
-		}
-	}
-
 	return count
 }
 
@@ -518,9 +508,11 @@ func (p *DASHProcessor) GetSegmentInfos() []SegmentInfo {
 	segmentCount := len(p.segments)
 	p.segmentsMu.RUnlock()
 
-	// If we have no real segments yet, return placeholder segment infos
+	// If we have no real segments yet, return nil - client will need to wait
+	// NOTE: Placeholder is disabled because DASH requires init segment to match
+	// media segments, and we can't switch from placeholder to real content mid-stream
 	if segmentCount == 0 {
-		return p.getPlaceholderSegmentInfos()
+		return nil
 	}
 
 	p.segmentsMu.RLock()
@@ -572,14 +564,8 @@ func (p *DASHProcessor) getPlaceholderSegmentInfos() []SegmentInfo {
 			return
 		}
 		p.placeholderGen = gen
-
-		// Use placeholder's init segment
-		p.initSegmentMu.Lock()
-		if p.initSegment == nil {
-			p.initSegment = gen.GetInitSegment()
-			p.config.Logger.Debug("Using placeholder init segment for manifest")
-		}
-		p.initSegmentMu.Unlock()
+		// NOTE: Do NOT set p.initSegment from placeholder - it would cause
+		// track ID mismatches when real content arrives with a different init segment
 	})
 
 	if p.placeholderGen == nil {
@@ -639,15 +625,9 @@ func (p *DASHProcessor) getSegmentWithWait(sequence uint64, maxWait time.Duratio
 		return nil, p.logAndReturnNotFound(sequence, bufferCount, minSeq, maxSeq, nextSeq)
 	}
 
-	// IMPORTANT: Only serve placeholder during startup (before ANY real segments exist)
-	// Once real content is in the buffer, placeholder timestamps won't match the stream
-	// and will cause DTS discontinuity errors in players
-	// Use bufferCount directly instead of hasRealContent flag to avoid race conditions
-	if bufferCount == 0 {
-		p.config.Logger.Debug("Serving placeholder - no real segments in buffer yet",
-			slog.Uint64("sequence", sequence))
-		return p.getPlaceholderSegment(sequence)
-	}
+	// NOTE: Placeholder is disabled because DASH requires init segment to match
+	// media segments, and we can't switch from placeholder to real content mid-stream.
+	// If no real segments exist, we wait for them (the waiting logic below handles this).
 
 	// Real content is flowing - wait for the real segment
 	// This is the only safe option to avoid timestamp discontinuity
@@ -790,14 +770,8 @@ func (p *DASHProcessor) getPlaceholderSegment(sequence uint64) (*Segment, error)
 			return
 		}
 		p.placeholderGen = gen
-
-		// Use placeholder's init segment if we don't have one yet
-		p.initSegmentMu.Lock()
-		if p.initSegment == nil {
-			p.initSegment = gen.GetInitSegment()
-			p.config.Logger.Debug("Using placeholder init segment")
-		}
-		p.initSegmentMu.Unlock()
+		// NOTE: Do NOT set p.initSegment from placeholder - it would cause
+		// track ID mismatches when real content arrives with a different init segment
 	})
 
 	if p.placeholderInitError != nil {
