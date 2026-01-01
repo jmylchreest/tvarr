@@ -940,6 +940,11 @@ type SharedESBufferConfig struct {
 
 	ExpectedContainer string
 	ExpectedIsLive    bool
+
+	// TargetSegmentDuration is used for placeholder injection to provide
+	// immediate content while the transcoder starts. Set to 0 to disable.
+	// Placeholder content will be looped to fill at least one segment.
+	TargetSegmentDuration time.Duration
 }
 
 // DefaultMaxVariantBytes is the default maximum bytes per variant.
@@ -1201,6 +1206,21 @@ func (b *SharedESBuffer) GetOrCreateVariantWithContext(ctx context.Context, vari
 	v = NewESVariantWithMaxBytes(variant, maxVariantBytes, false)
 	b.variants[variant] = v
 	b.variantsMu.Unlock()
+
+	// Inject placeholder content if configured and available for this variant
+	if b.config.TargetSegmentDuration > 0 {
+		injector := GetBufferInjector()
+		if injector.HasPlaceholder(variant) {
+			if err := injector.InjectStartupPlaceholder(v, b.config.TargetSegmentDuration); err != nil {
+				b.config.Logger.Warn("Failed to inject startup placeholder",
+					slog.String("variant", variant.String()),
+					slog.String("error", err.Error()))
+			}
+		} else {
+			b.config.Logger.Debug("No placeholder available for variant",
+				slog.String("variant", variant.String()))
+		}
+	}
 
 	b.config.Logger.Log(context.Background(), observability.LevelTrace, "Created new codec variant - triggering transcoding callback",
 		slog.String("channel_id", b.channelID),

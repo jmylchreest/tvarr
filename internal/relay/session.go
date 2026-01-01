@@ -533,6 +533,8 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 		esConfig.ExpectedContainer = s.CachedCodecInfo.ContainerFormat
 		esConfig.ExpectedIsLive = s.CachedCodecInfo.IsLiveStream
 	}
+	// Set target segment duration for placeholder injection during transcoder startup
+	esConfig.TargetSegmentDuration = time.Duration(s.manager.config.HLSConfig.TargetSegmentDuration * float64(time.Second))
 	s.esBuffer = NewSharedESBuffer(s.ChannelID.String(), s.ID.String(), esConfig)
 
 	// Set up the transcoding callback
@@ -729,6 +731,8 @@ func (s *RelaySession) runESPipeline() error {
 		esConfig.ExpectedContainer = s.CachedCodecInfo.ContainerFormat
 		esConfig.ExpectedIsLive = s.CachedCodecInfo.IsLiveStream
 	}
+	// Set target segment duration for placeholder injection during transcoder startup
+	esConfig.TargetSegmentDuration = time.Duration(s.manager.config.HLSConfig.TargetSegmentDuration * float64(time.Second))
 	s.esBuffer = NewSharedESBuffer(s.ChannelID.String(), s.ID.String(), esConfig)
 
 	// Set up the transcoding callback - spawns FFmpeg transcoder when new codec variant is requested
