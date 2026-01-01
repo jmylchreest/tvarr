@@ -77,7 +77,7 @@ type mpegtsStreamClient struct {
 	mu              sync.Mutex    // Protects waitForKeyframe only
 	bytesWritten    atomic.Uint64 // Atomic for lock-free updates
 	startedAt       time.Time
-	waitForKeyframe bool // True if client is waiting for next keyframe before receiving data
+	waitForKeyframe bool        // True if client is waiting for next keyframe before receiving data
 	slowClient      atomic.Bool // True if client is falling behind
 }
 

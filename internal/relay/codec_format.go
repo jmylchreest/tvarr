@@ -110,4 +110,3 @@ func NewStreamTarget(videoCodec, audioCodec, containerFormat string) StreamTarge
 		ContainerFormat: containerFormat,
 	})
 }
-

@@ -174,4 +174,3 @@ func AreCodecsCompatible(format ContainerFormat, codecs []string) bool {
 	}
 	return true
 }
-

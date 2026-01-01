@@ -125,14 +125,14 @@ func getDialector(cfg config.DatabaseConfig) (gorm.Dialector, error) {
 		}
 		// Apply SQLite PRAGMAs via DSN for the pure Go driver
 		// These are applied to every connection from the pool.
-		dsn += "_pragma=busy_timeout(30000)" +      // Wait 30s when database is locked
-			"&_pragma=journal_mode(WAL)" +           // Better read/write concurrency
-			"&_pragma=synchronous(NORMAL)" +         // Better performance with WAL
-			"&_pragma=foreign_keys(ON)" +            // Enable foreign key constraints
-			"&_pragma=cache_size(-64000)" +          // 64MB cache (negative = KB)
-			"&_pragma=mmap_size(268435456)" +        // 256MB memory-mapped I/O for faster reads
-			"&_pragma=temp_store(MEMORY)" +          // Store temp tables/indices in RAM
-			"&_pragma=wal_autocheckpoint(1000)"      // Checkpoint every 1000 pages
+		dsn += "_pragma=busy_timeout(30000)" + // Wait 30s when database is locked
+			"&_pragma=journal_mode(WAL)" + // Better read/write concurrency
+			"&_pragma=synchronous(NORMAL)" + // Better performance with WAL
+			"&_pragma=foreign_keys(ON)" + // Enable foreign key constraints
+			"&_pragma=cache_size(-64000)" + // 64MB cache (negative = KB)
+			"&_pragma=mmap_size(268435456)" + // 256MB memory-mapped I/O for faster reads
+			"&_pragma=temp_store(MEMORY)" + // Store temp tables/indices in RAM
+			"&_pragma=wal_autocheckpoint(1000)" // Checkpoint every 1000 pages
 
 		return sqlite.Open(dsn), nil
 	case "postgres":
@@ -178,9 +178,9 @@ func (l *slogGormLogger) SetSQLDB(db *sql.DB) {
 type slogGormLogger struct {
 	logger        *slog.Logger
 	level         logger.LogLevel
-	sqlDB         *sql.DB        // Optional: for stats logging on errors
-	lastStatsLog  time.Time      // Rate limit stats logging
-	statsLogMutex sync.Mutex     // Protect lastStatsLog
+	sqlDB         *sql.DB    // Optional: for stats logging on errors
+	lastStatsLog  time.Time  // Rate limit stats logging
+	statsLogMutex sync.Mutex // Protect lastStatsLog
 }
 
 func (l *slogGormLogger) LogMode(level logger.LogLevel) logger.Interface {
@@ -476,7 +476,7 @@ func (db *DB) logSQLiteConfig() {
 		slog.Int("open_conns", stats.OpenConnections),
 		slog.Int("in_use", stats.InUse),
 		slog.Int("idle", stats.Idle),
-		slog.Int64("wait_count", stats.WaitCount),               // Total blocked connections
+		slog.Int64("wait_count", stats.WaitCount),                 // Total blocked connections
 		slog.String("wait_duration", stats.WaitDuration.String()), // Total time blocked
 	)
 }

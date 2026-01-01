@@ -186,7 +186,6 @@ func (r *ClientDetectionRule) AcceptsAudioCodec(codecName string) bool {
 	return false
 }
 
-
 // ClientDetectionResult contains the result of evaluating client detection rules.
 // Multiple rules can contribute to the result - the first rule to set each attribute wins.
 type ClientDetectionResult struct {

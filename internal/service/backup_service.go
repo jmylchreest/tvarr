@@ -19,10 +19,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/glebarez/sqlite"
 	"github.com/jmylchreest/tvarr/internal/config"
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/version"
-	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
 

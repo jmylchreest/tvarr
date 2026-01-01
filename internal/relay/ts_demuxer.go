@@ -600,4 +600,3 @@ func (d *TSDemuxer) Tracks() []*mpegts.Track {
 	}
 	return d.reader.Tracks()
 }
-

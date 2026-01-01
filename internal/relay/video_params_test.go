@@ -290,4 +290,3 @@ func TestParseAnnexBNALUs_3ByteStartCode(t *testing.T) {
 		t.Fatalf("Expected 2 NAL units, got %d", len(nalus))
 	}
 }
-

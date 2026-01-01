@@ -995,4 +995,3 @@ func (a *ESSampleAdapter) ConfigureWriter(writer *FMP4Writer) error {
 
 	return nil
 }
-

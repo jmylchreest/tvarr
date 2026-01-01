@@ -262,4 +262,3 @@ func extractHost(rawURL string) (string, error) {
 	}
 	return u.Host, nil
 }
-

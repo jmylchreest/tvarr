@@ -50,4 +50,3 @@ func TestGetStaticFS(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, staticFS)
 }
-

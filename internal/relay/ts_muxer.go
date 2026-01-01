@@ -545,7 +545,6 @@ func extractADTSFrames(data []byte) [][]byte {
 	return frames
 }
 
-
 // VideoTrack returns the video track.
 func (m *TSMuxer) VideoTrack() *mpegts.Track {
 	return m.videoTrack

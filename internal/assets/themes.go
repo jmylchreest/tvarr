@@ -16,4 +16,3 @@ func GetThemesFS() (fs.FS, error) {
 	}
 	return fs.Sub(staticFS, "themes")
 }
-
