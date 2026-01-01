@@ -1768,19 +1768,43 @@ func (s *RelaySession) UpdateIdleState() {
 
 	clientCount := s.ClientCount()
 
-	if clientCount == 0 {
-		// No clients - transition to Idle if currently Active or Ready
+	// For DASH (stateless HTTP), also check processor activity since clients
+	// are only registered during individual HTTP requests, not persistently.
+	// A DASH processor with recent activity indicates an active client even if
+	// clientCount is 0 (between segment requests).
+	hasDASHActivity := s.hasDASHProcessorActivity()
+
+	if clientCount == 0 && !hasDASHActivity {
+		// No clients and no recent DASH activity - transition to Idle if currently Active or Ready
 		if currentState == SessionStateActive || currentState == SessionStateReady {
 			s.transitionTo(SessionStateIdle)
 		}
 	} else {
-		// Has clients - transition to Active if currently Idle or Ready
+		// Has clients or recent DASH activity - transition to Active if currently Idle or Ready
 		if currentState == SessionStateIdle || currentState == SessionStateReady {
 			s.transitionTo(SessionStateActive)
 		}
 	}
 
 	s.lastActivity.Store(time.Now())
+}
+
+// hasDASHProcessorActivity returns true if any DASH processor has had recent activity.
+// "Recent" is defined as within 2x the segment duration to account for buffering delays.
+func (s *RelaySession) hasDASHProcessorActivity() bool {
+	// Default segment duration is typically 4-8 seconds, so use 20s as a generous threshold
+	activityThreshold := 20 * time.Second
+
+	hasActivity := false
+	s.dashProcessors.Range(func(_ CodecVariant, p *DASHProcessor) bool {
+		stats := p.Stats()
+		if !stats.LastActivity.IsZero() && time.Since(stats.LastActivity) < activityThreshold {
+			hasActivity = true
+			return false // Stop iteration
+		}
+		return true
+	})
+	return hasActivity
 }
 
 // ClearIdleState is called when an HTTP request arrives to ensure the session

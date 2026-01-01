@@ -160,6 +160,12 @@ func (d *DASHHandler) ServeSegment(w http.ResponseWriter, sequence uint64) error
 // ServeSegmentFiltered serves a media segment filtered to a specific track type.
 // trackType should be "video", "audio", or empty for unfiltered segments.
 func (d *DASHHandler) ServeSegmentFiltered(w http.ResponseWriter, sequence uint64, trackType string) error {
+	// Record segment activity - keeps session alive even when client isn't requesting manifests
+	// This is critical for DASH where clients may buffer ahead and not request manifests frequently
+	if recorder, ok := d.provider.(SegmentActivityRecorder); ok {
+		recorder.RecordSegmentRequest()
+	}
+
 	seg, err := d.provider.GetSegment(sequence)
 	if err != nil {
 		if err == ErrSegmentNotFound {

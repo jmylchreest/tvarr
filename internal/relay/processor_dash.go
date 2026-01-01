@@ -577,6 +577,19 @@ func (p *DASHProcessor) GetStreamStartTime() time.Time {
 	return p.streamStartTime
 }
 
+// RecordPlaylistRequest implements PlaylistActivityRecorder interface.
+// Records that a manifest was requested, updating the processor's last activity time.
+func (p *DASHProcessor) RecordPlaylistRequest() {
+	p.lastActivity.Store(time.Now())
+}
+
+// RecordSegmentRequest implements SegmentActivityRecorder interface.
+// Records that a segment was requested, updating the processor's last activity time.
+// This is critical for DASH clients that may buffer segments and not request manifests frequently.
+func (p *DASHProcessor) RecordSegmentRequest() {
+	p.lastActivity.Store(time.Now())
+}
+
 // initNewSegment initializes a new segment accumulator.
 func (p *DASHProcessor) initNewSegment() {
 	p.currentSegment.startPTS = -1

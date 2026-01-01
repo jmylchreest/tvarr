@@ -25,6 +25,15 @@ type PlaylistActivityRecorder interface {
 	RecordPlaylistRequest()
 }
 
+// SegmentActivityRecorder is an optional interface that providers can implement
+// to track segment request activity. For protocols like DASH where clients may
+// buffer segments and not request playlists frequently, this helps maintain
+// accurate client activity tracking.
+type SegmentActivityRecorder interface {
+	// RecordSegmentRequest records that a segment was requested.
+	RecordSegmentRequest()
+}
+
 // HLSHandler handles HLS output.
 // Implements the OutputHandler interface for serving HLS playlists and segments.
 // Supports both HLS v3 (MPEG-TS) and HLS v7 (fMP4/CMAF) formats.
