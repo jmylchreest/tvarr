@@ -639,10 +639,13 @@ func (p *DASHProcessor) getSegmentWithWait(sequence uint64, maxWait time.Duratio
 		return nil, p.logAndReturnNotFound(sequence, bufferCount, minSeq, maxSeq, nextSeq)
 	}
 
-	// IMPORTANT: Only serve placeholder during startup (before ANY real content)
-	// Once real content is flowing, placeholder timestamps won't match the stream
+	// IMPORTANT: Only serve placeholder during startup (before ANY real segments exist)
+	// Once real content is in the buffer, placeholder timestamps won't match the stream
 	// and will cause DTS discontinuity errors in players
-	if !p.hasRealContent.Load() {
+	// Use bufferCount directly instead of hasRealContent flag to avoid race conditions
+	if bufferCount == 0 {
+		p.config.Logger.Debug("Serving placeholder - no real segments in buffer yet",
+			slog.Uint64("sequence", sequence))
 		return p.getPlaceholderSegment(sequence)
 	}
 
