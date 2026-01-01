@@ -634,41 +634,52 @@ func (p *DASHProcessor) getSegmentWithWait(sequence uint64, maxWait time.Duratio
 	nextSeq := p.nextSequence
 	p.segmentsMu.RUnlock()
 
-	// If segment isn't expected (too old or too far future), don't wait
-	if !p.shouldServePlaceholder(sequence, minSeq, maxSeq, nextSeq) {
+	// If segment isn't expected (too old or too far future), reject immediately
+	if !p.isSegmentInExpectedRange(sequence, minSeq, maxSeq, nextSeq) {
 		return nil, p.logAndReturnNotFound(sequence, bufferCount, minSeq, maxSeq, nextSeq)
 	}
 
-	// If we have real content and the segment is expected soon, wait for it
-	// This prevents 404s when transcoder is just slightly behind
-	if p.hasRealContent.Load() && sequence <= nextSeq+3 {
-		deadline := time.Now().Add(maxWait)
-		pollInterval := 100 * time.Millisecond
+	// IMPORTANT: Only serve placeholder during startup (before ANY real content)
+	// Once real content is flowing, placeholder timestamps won't match the stream
+	// and will cause DTS discontinuity errors in players
+	if !p.hasRealContent.Load() {
+		return p.getPlaceholderSegment(sequence)
+	}
 
-		for time.Now().Before(deadline) {
-			select {
-			case <-p.ctx.Done():
-				// Processor shutting down, fall back to placeholder
-				break
-			case <-time.After(pollInterval):
-				if seg := p.findSegment(sequence); seg != nil {
-					p.config.Logger.Debug("Segment appeared after waiting",
-						slog.Uint64("sequence", sequence))
-					return seg, nil
-				}
-				// Check if segment is now too old (buffer moved past it)
-				p.segmentsMu.RLock()
-				if len(p.segments) > 0 && sequence < p.segments[0].sequence {
-					p.segmentsMu.RUnlock()
-					break // Segment expired, stop waiting
-				}
-				p.segmentsMu.RUnlock()
+	// Real content is flowing - wait for the real segment
+	// This is the only safe option to avoid timestamp discontinuity
+	deadline := time.Now().Add(maxWait)
+	pollInterval := 100 * time.Millisecond
+
+	for time.Now().Before(deadline) {
+		select {
+		case <-p.ctx.Done():
+			// Processor shutting down
+			return nil, ErrSegmentNotFound
+		case <-time.After(pollInterval):
+			if seg := p.findSegment(sequence); seg != nil {
+				p.config.Logger.Debug("Segment appeared after waiting",
+					slog.Uint64("sequence", sequence))
+				return seg, nil
 			}
+			// Check if segment is now too old (buffer moved past it)
+			p.segmentsMu.RLock()
+			if len(p.segments) > 0 && sequence < p.segments[0].sequence {
+				p.segmentsMu.RUnlock()
+				p.config.Logger.Debug("Segment expired while waiting",
+					slog.Uint64("sequence", sequence))
+				return nil, ErrSegmentNotFound
+			}
+			p.segmentsMu.RUnlock()
 		}
 	}
 
-	// Fall back to placeholder for expected segments
-	return p.getPlaceholderSegment(sequence)
+	// Timeout waiting for segment - return 404 to let client handle it
+	// DO NOT fall back to placeholder here as it would cause timestamp issues
+	p.config.Logger.Info("Timeout waiting for segment",
+		slog.Uint64("sequence", sequence),
+		slog.Duration("waited", maxWait))
+	return nil, ErrSegmentNotFound
 }
 
 // findSegment looks up a segment by sequence number.
@@ -712,8 +723,9 @@ func (p *DASHProcessor) logAndReturnNotFound(sequence uint64, bufferCount int, m
 	return ErrSegmentNotFound
 }
 
-// shouldServePlaceholder determines if we should serve a placeholder for this sequence.
-func (p *DASHProcessor) shouldServePlaceholder(sequence, minSeq, maxSeq, nextSeq uint64) bool {
+// isSegmentInExpectedRange determines if a segment is within expected range for serving.
+// Returns true if the segment is not too old (before buffer) and not too far in future.
+func (p *DASHProcessor) isSegmentInExpectedRange(sequence, minSeq, maxSeq, nextSeq uint64) bool {
 	// Check if processor is still running
 	select {
 	case <-p.Context().Done():
@@ -723,17 +735,17 @@ func (p *DASHProcessor) shouldServePlaceholder(sequence, minSeq, maxSeq, nextSeq
 
 	// If we have real segments and this sequence is before them, it's a stale request
 	if minSeq > 0 && sequence < minSeq {
-		p.config.Logger.Debug("Not serving placeholder - sequence before buffer",
+		p.config.Logger.Debug("Segment before buffer range",
 			slog.Uint64("sequence", sequence),
 			slog.Uint64("min_seq", minSeq))
 		return false
 	}
 
-	// Don't serve placeholder for sequences too far in the future
+	// Reject sequences too far in the future
 	// Allow up to 10 segments ahead to handle aggressive client buffering
 	maxFutureSeq := nextSeq + 10
 	if sequence > maxFutureSeq {
-		p.config.Logger.Debug("Not serving placeholder - sequence too far ahead",
+		p.config.Logger.Debug("Segment too far ahead",
 			slog.Uint64("sequence", sequence),
 			slog.Uint64("next_seq", nextSeq),
 			slog.Uint64("max_future", maxFutureSeq))
