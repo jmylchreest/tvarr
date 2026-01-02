@@ -155,6 +155,26 @@ func TestDefaultRoutingDecider_DecideWithTranscodingProfile(t *testing.T) {
 			// Raw MPEGTS is not segmented, needs FFmpeg for segmentation
 			expectedDecision: RouteTranscode,
 		},
+		{
+			name:         "unknown source codecs with restricted client - transcode required",
+			sourceFormat: SourceFormatMPEGTS,
+			sourceCodecs: []string{}, // Unknown source codecs (probe not complete)
+			client: ClientCapabilities{
+				PlayerName:          "test-player",
+				SupportsFMP4:        true,
+				SupportsMPEGTS:      true,
+				AcceptedVideoCodecs: []string{"vp9"}, // Restricted client
+				AcceptedAudioCodecs: []string{"opus"},
+			},
+			profile: &models.EncodingProfile{
+				Name:             "VP9 Profile",
+				TargetVideoCodec: models.VideoCodecVP9,
+				TargetAudioCodec: models.AudioCodecOpus,
+				QualityPreset:    models.QualityPresetMedium,
+			},
+			// Unknown source + restricted client = require transcoding
+			expectedDecision: RouteTranscode,
+		},
 	}
 
 	for _, tt := range tests {

@@ -246,9 +246,15 @@ func (d *DefaultRoutingDecider) isRepackageCompatible(sourceFormat SourceFormat,
 
 // clientAcceptsSourceCodecs checks if the client can accept all source codecs.
 // Returns true if client has no codec restrictions or accepts all source codecs.
+// When source codecs are unknown and client has restrictions, returns false to be safe.
 func (d *DefaultRoutingDecider) clientAcceptsSourceCodecs(sourceCodecs []string, client ClientCapabilities) bool {
 	if len(sourceCodecs) == 0 {
-		return true // No source codecs known, assume compatible
+		// If client has explicit codec restrictions and we don't know source codecs,
+		// we cannot assume compatibility - force transcoding to be safe.
+		if len(client.AcceptedVideoCodecs) > 0 || len(client.AcceptedAudioCodecs) > 0 {
+			return false // Unknown source + restricted client = require transcoding
+		}
+		return true // No source codecs known, no client restrictions = assume compatible
 	}
 
 	for _, codecStr := range sourceCodecs {
