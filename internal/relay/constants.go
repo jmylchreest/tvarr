@@ -96,9 +96,9 @@ const (
 	DefaultMaxBufferSize = 100 * 1024 * 1024
 
 	// SegmentWaitTimeout is the maximum time to wait for segments to become available.
-	// This matches the HTTP server WriteTimeout (30s) to ensure we don't exceed
-	// the server's response deadline while waiting for slow transcoders (e.g., VP9/AV1).
-	SegmentWaitTimeout = 30 * time.Second
+	// This is set to 60s to accommodate slow software transcoders (e.g., VP9/AV1 without GPU).
+	// The HTTP server WriteTimeout should be configured to exceed this value.
+	SegmentWaitTimeout = 60 * time.Second
 )
 
 // Default DASH manifest values when metadata is not available.

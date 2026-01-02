@@ -306,9 +306,35 @@ func (f *TranscoderFactory) CreateTranscoderFromProfile(
 	// Use codec-level selection so daemons with HW encoders (e.g., vp9_vaapi) are found
 	// even when the default software encoder (e.g., libvpx-vp9) was mapped
 	if f.ShouldUseRemote() {
+		// Log available daemons for debugging
+		if f.DaemonRegistry != nil {
+			available := f.DaemonRegistry.GetAvailable()
+			f.Logger.Info("Checking remote daemons for transcoding",
+				slog.String("id", id),
+				slog.Int("available_daemons", len(available)),
+				slog.String("source_codec", sourceVariant.VideoCodec()),
+				slog.String("target_codec", targetVariant.VideoCodec()),
+				slog.Bool("require_gpu", requireGPU),
+			)
+			for _, d := range available {
+				hasCaps := d.Capabilities != nil
+				var capInfo string
+				if hasCaps {
+					capInfo = fmt.Sprintf("encoders=%d, gpus=%d", len(d.Capabilities.VideoEncoders), len(d.Capabilities.GPUs))
+				} else {
+					capInfo = "no capabilities"
+				}
+				f.Logger.Info("Available daemon",
+					slog.String("daemon_id", string(d.ID)),
+					slog.String("daemon_name", d.Name),
+					slog.String("state", d.State.String()),
+					slog.String("capabilities", capInfo),
+				)
+			}
+		}
 		daemon := f.SelectRemoteDaemon(sourceVariant.VideoCodec(), targetVariant.VideoCodec(), requireGPU)
 		if daemon != nil {
-			f.Logger.Log(context.Background(), observability.LevelTrace, "Selected remote daemon for transcoding",
+			f.Logger.Info("Selected remote daemon for transcoding",
 				slog.String("id", id),
 				slog.String("daemon_id", string(daemon.ID)),
 				slog.String("daemon_name", daemon.Name),
@@ -319,9 +345,17 @@ func (f *TranscoderFactory) CreateTranscoderFromProfile(
 				videoEncoder, audioEncoder, videoBitrate, audioBitrate,
 				videoPreset, hwAccel, "", daemon, opts)
 		}
-		f.Logger.Log(context.Background(), observability.LevelTrace, "No suitable remote daemon found, falling back to local subprocess",
+		f.Logger.Warn("No suitable remote daemon found, falling back to local subprocess",
 			slog.String("id", id),
+			slog.String("source_codec", sourceVariant.VideoCodec()),
 			slog.String("target_codec", targetVariant.VideoCodec()),
+			slog.Bool("require_gpu", requireGPU),
+		)
+	} else {
+		f.Logger.Info("Remote transcoding not preferred or not available",
+			slog.String("id", id),
+			slog.Bool("prefer_remote", f.PreferRemote),
+			slog.Bool("can_use_remote", f.CanCreateRemoteTranscoder()),
 		)
 	}
 
