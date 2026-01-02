@@ -352,10 +352,26 @@ func (f *TranscoderFactory) CreateTranscoderFromProfile(
 			slog.Bool("require_gpu", requireGPU),
 		)
 	} else {
+		// Detailed breakdown of why remote is not available
+		hasRegistry := f.DaemonRegistry != nil
+		hasStreamMgr := f.DaemonStreamManager != nil
+		hasJobMgr := f.ActiveJobManager != nil
+		var activeCount, streamCount int
+		if hasRegistry {
+			activeCount = f.DaemonRegistry.CountActive()
+		}
+		if hasStreamMgr {
+			streamCount = f.DaemonStreamManager.Count()
+		}
 		f.Logger.Info("Remote transcoding not preferred or not available",
 			slog.String("id", id),
 			slog.Bool("prefer_remote", f.PreferRemote),
 			slog.Bool("can_use_remote", f.CanCreateRemoteTranscoder()),
+			slog.Bool("has_registry", hasRegistry),
+			slog.Bool("has_stream_mgr", hasStreamMgr),
+			slog.Bool("has_job_mgr", hasJobMgr),
+			slog.Int("active_daemons", activeCount),
+			slog.Int("stream_count", streamCount),
 		)
 	}
 
