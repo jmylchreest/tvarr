@@ -215,6 +215,26 @@ func (d *DASHHandler) ServeSegmentFiltered(w http.ResponseWriter, sequence uint6
 func (d *DASHHandler) ServeInitSegment(w http.ResponseWriter, streamType string) error {
 	// Try to get init segment from FMP4SegmentProvider (CMAF mode)
 	if fmp4Provider, ok := d.provider.(FMP4SegmentProvider); ok {
+		if fmp4Provider.IsFMP4Mode() {
+			// Wait for init segment to be ready if not available yet
+			if !fmp4Provider.HasInitSegment() {
+				waitCtx, cancel := context.WithTimeout(context.Background(), SegmentWaitTimeout)
+				defer cancel()
+
+				ticker := time.NewTicker(100 * time.Millisecond)
+				defer ticker.Stop()
+
+				for !fmp4Provider.HasInitSegment() {
+					select {
+					case <-waitCtx.Done():
+						http.Error(w, "Init segment not available yet, please retry", http.StatusServiceUnavailable)
+						return fmt.Errorf("waiting for init segment: %w", waitCtx.Err())
+					case <-ticker.C:
+						// Check again
+					}
+				}
+			}
+		}
 		if fmp4Provider.IsFMP4Mode() && fmp4Provider.HasInitSegment() {
 			// For DASH with separate video/audio AdaptationSets, serve filtered init segments
 			// This is required because FFmpeg's DASH demuxer assigns one stream_index per
