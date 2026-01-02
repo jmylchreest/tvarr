@@ -16,7 +16,6 @@ import (
 
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/fmp4"
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/fmp4/seekablebuffer"
-	"github.com/bluenviron/mediacommon/v2/pkg/formats/mp4"
 )
 
 // DASH Processor errors.
@@ -316,8 +315,22 @@ func (p *DASHProcessor) ServeManifest(w http.ResponseWriter, r *http.Request) er
 	buf.WriteString("        </SegmentTimeline>\n")
 	buf.WriteString("      </SegmentTemplate>\n")
 
+	// Get codec strings from init segment
+	videoCodecStr := "avc1.64001f" // Default fallback
+	audioCodecStr := "mp4a.40.2"   // Default fallback
+	p.initSegmentMu.RLock()
+	if p.initSegment != nil {
+		if p.initSegment.VideoCodec != "" {
+			videoCodecStr = p.initSegment.VideoCodec
+		}
+		if p.initSegment.AudioCodec != "" {
+			audioCodecStr = p.initSegment.AudioCodec
+		}
+	}
+	p.initSegmentMu.RUnlock()
+
 	// Representation
-	buf.WriteString("      <Representation id=\"v0\" mimeType=\"video/mp4\" codecs=\"avc1.42c01e\" ")
+	buf.WriteString(fmt.Sprintf("      <Representation id=\"v0\" mimeType=\"video/mp4\" codecs=\"%s\" ", videoCodecStr))
 	buf.WriteString(`bandwidth="2000000" width="1920" height="1080" frameRate="30"/>`)
 	buf.WriteString("\n")
 
@@ -333,7 +346,7 @@ func (p *DASHProcessor) ServeManifest(w http.ResponseWriter, r *http.Request) er
 	buf.WriteString("/>\n")
 
 	// Audio representation
-	buf.WriteString("      <Representation id=\"a0\" mimeType=\"audio/mp4\" codecs=\"mp4a.40.2\" ")
+	buf.WriteString(fmt.Sprintf("      <Representation id=\"a0\" mimeType=\"audio/mp4\" codecs=\"%s\" ", audioCodecStr))
 	buf.WriteString(`bandwidth="128000" audioSamplingRate="48000"/>`)
 	buf.WriteString("\n")
 
@@ -472,15 +485,16 @@ func (p *DASHProcessor) GetFilteredInitSegment(trackType string) ([]byte, error)
 	}
 
 	for _, track := range parsedInit.Tracks {
-		isVideo := false
-		isAudio := false
+		// Use the Codec interface's IsVideo() method for robust codec type detection
+		// This handles all codec types correctly without needing an exhaustive type switch
+		isVideo := track.Codec.IsVideo()
+		isAudio := !isVideo // Audio is any non-video codec
 
-		switch track.Codec.(type) {
-		case *mp4.CodecH264, *mp4.CodecH265, *mp4.CodecAV1, *mp4.CodecVP9:
-			isVideo = true
-		case *mp4.CodecMPEG4Audio, *mp4.CodecAC3, *mp4.CodecEAC3, *mp4.CodecOpus, *mp4.CodecMPEG1Audio:
-			isAudio = true
-		}
+		p.config.Logger.Debug("GetFilteredInitSegment: examining track",
+			slog.String("track_type", trackType),
+			slog.Int("track_id", track.ID),
+			slog.Bool("is_video", isVideo),
+			slog.String("codec_type", fmt.Sprintf("%T", track.Codec)))
 
 		if (trackType == "video" && isVideo) || (trackType == "audio" && isAudio) {
 			filteredInit.Tracks = append(filteredInit.Tracks, track)
@@ -1159,16 +1173,27 @@ func (p *DASHProcessor) generateInitSegment(hasVideo, hasAudio bool) error {
 	hash := sha256.Sum256(initData)
 	etag := `"` + hex.EncodeToString(hash[:8]) + `"` // Use first 8 bytes (16 hex chars)
 
+	// Extract codec strings from init segment for DASH manifest
+	videoCodec, audioCodec, codecErr := ExtractCodecsFromInitData(initData)
+	if codecErr != nil {
+		p.config.Logger.Warn("Failed to extract codec strings from init segment",
+			slog.String("error", codecErr.Error()))
+	}
+
 	p.initSegmentMu.Lock()
 	p.initSegment = &InitSegment{
-		Data: initData,
-		ETag: etag,
+		Data:       initData,
+		ETag:       etag,
+		VideoCodec: videoCodec,
+		AudioCodec: audioCodec,
 	}
 	p.initSegmentMu.Unlock()
 
 	p.config.Logger.Debug("Generated DASH init segment",
 		slog.Int("size", len(initData)),
-		slog.String("etag", etag))
+		slog.String("etag", etag),
+		slog.String("video_codec", videoCodec),
+		slog.String("audio_codec", audioCodec))
 
 	return nil
 }

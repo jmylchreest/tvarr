@@ -78,6 +78,12 @@ type InitSegment struct {
 
 	// AudioTrackID is the track ID for the audio track (if present).
 	AudioTrackID uint32
+
+	// VideoCodec is the RFC 6381 codec string for the video track (e.g., "vp09.02.10.08", "avc1.64001f").
+	VideoCodec string
+
+	// AudioCodec is the RFC 6381 codec string for the audio track (e.g., "opus", "mp4a.40.2").
+	AudioCodec string
 }
 
 // GetTimescale returns the timescale for a specific track.

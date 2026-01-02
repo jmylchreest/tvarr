@@ -325,11 +325,23 @@ func (d *DASHHandler) GenerateManifest(baseURL string) string {
 	// Check FMP4SegmentProvider for CMAF-style init segment
 	// In CMAF mode, a single init segment contains both video and audio tracks (muxed)
 	isCMAFMode := false
+	videoCodecStr := "avc1.64001f" // Default fallback
+	audioCodecStr := "mp4a.40.2"   // Default fallback
 	if fmp4Provider, ok := d.provider.(FMP4SegmentProvider); ok {
 		if fmp4Provider.IsFMP4Mode() && fmp4Provider.HasInitSegment() {
 			hasVideoInit = true
 			hasAudioInit = true
 			isCMAFMode = true
+
+			// Extract codec strings from init segment for accurate manifest
+			if initSeg := fmp4Provider.GetInitSegment(); initSeg != nil {
+				if initSeg.VideoCodec != "" {
+					videoCodecStr = initSeg.VideoCodec
+				}
+				if initSeg.AudioCodec != "" {
+					audioCodecStr = initSeg.AudioCodec
+				}
+			}
 		}
 	}
 
@@ -460,9 +472,9 @@ func (d *DASHHandler) GenerateManifest(baseURL string) string {
 		}
 
 		// Video AdaptationSet
-		sb.WriteString(fmt.Sprintf(`    <AdaptationSet id="0" contentType="video" mimeType="video/mp4" codecs="avc1.64001f" `+
+		sb.WriteString(fmt.Sprintf(`    <AdaptationSet id="0" contentType="video" mimeType="video/mp4" codecs="%s" `+
 			`width="%d" height="%d" frameRate="30" segmentAlignment="true" startWithSAP="1">`,
-			videoWidth, videoHeight,
+			videoCodecStr, videoWidth, videoHeight,
 		))
 		sb.WriteString("\n")
 
@@ -498,8 +510,8 @@ func (d *DASHHandler) GenerateManifest(baseURL string) string {
 		sb.WriteString("\n")
 
 		// Audio AdaptationSet - uses same muxed segments
-		sb.WriteString(`    <AdaptationSet id="1" contentType="audio" mimeType="audio/mp4" codecs="mp4a.40.2" ` +
-			`lang="und" segmentAlignment="true" startWithSAP="1">`)
+		sb.WriteString(fmt.Sprintf(`    <AdaptationSet id="1" contentType="audio" mimeType="audio/mp4" codecs="%s" `+
+			`lang="und" segmentAlignment="true" startWithSAP="1">`, audioCodecStr))
 		sb.WriteString("\n")
 
 		// AudioChannelConfiguration
@@ -542,9 +554,9 @@ func (d *DASHHandler) GenerateManifest(baseURL string) string {
 		// Non-CMAF mode: separate video and audio AdaptationSets
 
 		// Video AdaptationSet
-		sb.WriteString(fmt.Sprintf(`    <AdaptationSet id="0" mimeType="video/mp4" codecs="avc1.64001f" `+
+		sb.WriteString(fmt.Sprintf(`    <AdaptationSet id="0" mimeType="video/mp4" codecs="%s" `+
 			`width="%d" height="%d" frameRate="30" segmentAlignment="true" startWithSAP="1">`,
-			videoWidth, videoHeight,
+			videoCodecStr, videoWidth, videoHeight,
 		))
 		sb.WriteString("\n")
 
@@ -581,8 +593,8 @@ func (d *DASHHandler) GenerateManifest(baseURL string) string {
 		sb.WriteString("\n")
 
 		// Audio AdaptationSet
-		sb.WriteString(fmt.Sprintf(`    <AdaptationSet id="1" mimeType="audio/mp4" codecs="mp4a.40.2" ` +
-			`audioSamplingRate="48000" segmentAlignment="true" startWithSAP="1">`,
+		sb.WriteString(fmt.Sprintf(`    <AdaptationSet id="1" mimeType="audio/mp4" codecs="%s" `+
+			`audioSamplingRate="48000" segmentAlignment="true" startWithSAP="1">`, audioCodecStr,
 		))
 		sb.WriteString("\n")
 
