@@ -897,12 +897,36 @@ func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
 			return
 
 		case <-ticker.C:
-			// Read video samples
+			// IMPORTANT: Read BOTH video and audio samples BEFORE making flush decisions.
+			// This ensures audio samples from the current tick are included in the segment
+			// when a keyframe triggers a flush, preventing audio-less segments.
+
+			// Read video samples first (into temp slice)
 			newVideoSamples := videoTrack.ReadFrom(p.LastVideoSeq(), 100)
+
+			// Read audio samples BEFORE processing video (critical for alignment)
+			var newAudioSamples []ESSample
+			if audioTrack != nil {
+				newAudioSamples = audioTrack.ReadFrom(p.LastAudioSeq(), 200)
+			}
+
+			// Now accumulate audio samples first, so they're available for flush decisions
 			var bytesRead uint64
+			for _, sample := range newAudioSamples {
+				bytesRead += uint64(len(sample.Data))
+				audioSamples = append(audioSamples, sample)
+				p.SetLastAudioSeq(sample.Sequence)
+				p.currentSegment.hasAudio = true
+				if p.currentSegment.startPTS < 0 {
+					p.currentSegment.startPTS = sample.PTS
+				}
+			}
+
+			// Now process video samples with audio already accumulated
 			for _, sample := range newVideoSamples {
 				bytesRead += uint64(len(sample.Data))
 				// Check if this keyframe should trigger a new segment
+				// Audio from this tick is already accumulated above
 				if sample.IsKeyframe && len(videoSamples) > 0 && p.hasEnoughContent() {
 					p.flushSegment(videoSamples, audioSamples)
 					p.initNewSegment()
@@ -917,21 +941,6 @@ func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
 					p.currentSegment.startPTS = sample.PTS
 				}
 				p.currentSegment.endPTS = sample.PTS
-			}
-
-			// Read audio samples
-			var newAudioSamples []ESSample
-			if audioTrack != nil {
-				newAudioSamples = audioTrack.ReadFrom(p.LastAudioSeq(), 200)
-				for _, sample := range newAudioSamples {
-					bytesRead += uint64(len(sample.Data))
-					audioSamples = append(audioSamples, sample)
-					p.SetLastAudioSeq(sample.Sequence)
-					p.currentSegment.hasAudio = true
-					if p.currentSegment.startPTS < 0 {
-						p.currentSegment.startPTS = sample.PTS
-					}
-				}
 			}
 
 			// Track bytes read from buffer for bandwidth stats
