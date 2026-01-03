@@ -1010,7 +1010,7 @@ func (p *DASHProcessor) hasEnoughContent() bool {
 
 // shouldFinalizeSegment returns true if current segment should be finalized.
 // This is a timeout fallback for when we exceed target duration significantly.
-// For the first segment, we still try to wait for audio to ensure proper initialization.
+// Waits for audio to ensure segments have both tracks for DASH compliance.
 func (p *DASHProcessor) shouldFinalizeSegment() bool {
 	if !p.currentSegment.hasVideo && !p.currentSegment.hasAudio {
 		return false
@@ -1018,15 +1018,20 @@ func (p *DASHProcessor) shouldFinalizeSegment() bool {
 
 	elapsed := time.Since(p.currentSegment.startTime).Seconds()
 
-	// For first segment, use the same logic as hasEnoughContent (wait for audio)
-	// This ensures we don't finalize the first segment without audio
-	if p.nextSequence == 0 && p.expectsAudio.Load() && !p.currentSegment.hasAudio {
-		// First segment: wait up to 3x target duration for audio
-		maxWait := p.config.TargetSegmentDuration * 3
+	// If we expect audio but don't have it, wait longer before finalizing
+	if p.expectsAudio.Load() && !p.currentSegment.hasAudio {
+		var maxWait float64
+		if p.nextSequence == 0 {
+			// First segment: wait up to 3x target duration for audio
+			maxWait = p.config.TargetSegmentDuration * 3
+		} else {
+			// Subsequent segments: wait up to 2x target duration for audio
+			maxWait = p.config.TargetSegmentDuration * 2
+		}
 		return elapsed >= maxWait
 	}
 
-	// For subsequent segments, finalize if we've exceeded target duration by 50%
+	// For segments with audio (or no audio expected), finalize at 1.5x
 	return elapsed >= p.config.TargetSegmentDuration*1.5
 }
 
