@@ -114,6 +114,10 @@ type DASHProcessor struct {
 	hasRealContent       atomic.Bool // True once we've received real transcoder content
 	placeholderInitOnce  sync.Once
 	placeholderInitError error
+
+	// Audio/video alignment for DASH standards compliance
+	// DASH requires segments to have aligned audio/video boundaries
+	expectsAudio atomic.Bool // True if audio track exists (set during processing loop start)
 }
 
 // NewDASHProcessor creates a new DASH processor.
@@ -852,11 +856,18 @@ func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
 	videoTrack := esVariant.VideoTrack()
 	audioTrack := esVariant.AudioTrack()
 
+	// Track if we expect audio - used for segment alignment checks
+	// DASH requires segments to have aligned audio/video boundaries
+	if audioTrack != nil {
+		p.expectsAudio.Store(true)
+	}
+
 	p.config.Logger.Info("DASH processor loop started, waiting for keyframe",
 		slog.String("id", p.id),
 		slog.String("variant", p.variant.String()),
 		slog.Bool("has_video_track", videoTrack != nil),
-		slog.Bool("has_audio_track", audioTrack != nil))
+		slog.Bool("has_audio_track", audioTrack != nil),
+		slog.Bool("expects_audio", p.expectsAudio.Load()))
 
 	// Wait for initial video keyframe using base class helper
 	if _, ok := p.WaitForKeyframe(videoTrack); !ok {
@@ -945,23 +956,68 @@ func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
 }
 
 // hasEnoughContent returns true if we have enough content for a segment.
+// For DASH standards compliance, this ensures audio/video alignment:
+// - First segment MUST have audio (if audio track exists) to initialize time offsets correctly
+// - Subsequent segments should have audio too, but with a timeout fallback
 func (p *DASHProcessor) hasEnoughContent() bool {
 	if !p.currentSegment.hasVideo {
 		return false
 	}
 
 	elapsed := time.Since(p.currentSegment.startTime).Seconds()
-	return elapsed >= p.config.TargetSegmentDuration
+	if elapsed < p.config.TargetSegmentDuration {
+		return false
+	}
+
+	// Option 1: For first segment, require audio to ensure proper timestamp initialization
+	// Option 3: For all segments, prefer having audio but allow timeout fallback
+	if p.expectsAudio.Load() && !p.currentSegment.hasAudio {
+		// First segment: must wait for audio (with generous timeout of 3x target duration)
+		// This ensures time offsets are initialized correctly for both tracks
+		if p.nextSequence == 0 {
+			maxWait := p.config.TargetSegmentDuration * 3
+			if elapsed < maxWait {
+				return false // Keep waiting for audio on first segment
+			}
+			p.config.Logger.Warn("DASH first segment timeout waiting for audio, proceeding without",
+				slog.String("id", p.id),
+				slog.Float64("elapsed_seconds", elapsed),
+				slog.Float64("max_wait_seconds", maxWait))
+		} else {
+			// Subsequent segments: wait up to 1.5x target duration for audio
+			maxWait := p.config.TargetSegmentDuration * 1.5
+			if elapsed < maxWait {
+				return false // Keep waiting for audio
+			}
+			p.config.Logger.Debug("DASH segment timeout waiting for audio, proceeding",
+				slog.String("id", p.id),
+				slog.Uint64("sequence", p.nextSequence),
+				slog.Float64("elapsed_seconds", elapsed))
+		}
+	}
+
+	return true
 }
 
 // shouldFinalizeSegment returns true if current segment should be finalized.
+// This is a timeout fallback for when we exceed target duration significantly.
+// For the first segment, we still try to wait for audio to ensure proper initialization.
 func (p *DASHProcessor) shouldFinalizeSegment() bool {
 	if !p.currentSegment.hasVideo && !p.currentSegment.hasAudio {
 		return false
 	}
 
 	elapsed := time.Since(p.currentSegment.startTime).Seconds()
-	// Finalize if we've exceeded target duration by 50%
+
+	// For first segment, use the same logic as hasEnoughContent (wait for audio)
+	// This ensures we don't finalize the first segment without audio
+	if p.nextSequence == 0 && p.expectsAudio.Load() && !p.currentSegment.hasAudio {
+		// First segment: wait up to 3x target duration for audio
+		maxWait := p.config.TargetSegmentDuration * 3
+		return elapsed >= maxWait
+	}
+
+	// For subsequent segments, finalize if we've exceeded target duration by 50%
 	return elapsed >= p.config.TargetSegmentDuration*1.5
 }
 
@@ -1004,21 +1060,46 @@ func (p *DASHProcessor) flushSegment(videoSamples, audioSamples []ESSample) {
 	fmp4VideoSamples, videoBaseTime := p.adapter.ConvertVideoSamples(videoSamples)
 	fmp4AudioSamples, audioBaseTime := p.adapter.ConvertAudioSamples(audioSamples)
 
-	// Initialize time offsets on first segment to normalize timestamps to start from 0
+	// Option 2: Initialize time offsets only when we have BOTH audio and video samples
+	// This ensures the offsets are synchronized correctly for aligned playback.
 	// This is critical for DASH because the manifest's SegmentTemplate assumes segments
 	// start at time 0, but source streams may have arbitrary starting timestamps.
 	p.timeOffsetInitMu.Lock()
 	if !p.timeOffsetInitSet {
-		p.videoTimeOffset = videoBaseTime
-		p.audioTimeOffset = audioBaseTime
-		p.timeOffsetInitSet = true
-		p.config.Logger.Debug("DASH timestamp offset initialized",
-			slog.Uint64("video_offset", p.videoTimeOffset),
-			slog.Uint64("audio_offset", p.audioTimeOffset))
+		// Only initialize when we have both tracks (if audio is expected)
+		// This prevents misaligned offsets when audio lags behind video
+		canInitialize := len(fmp4VideoSamples) > 0
+		if p.expectsAudio.Load() {
+			canInitialize = canInitialize && len(fmp4AudioSamples) > 0
+		}
+
+		if canInitialize {
+			p.videoTimeOffset = videoBaseTime
+			p.audioTimeOffset = audioBaseTime
+			p.timeOffsetInitSet = true
+			p.config.Logger.Info("DASH timestamp offset initialized with synchronized audio/video",
+				slog.Uint64("video_offset", p.videoTimeOffset),
+				slog.Uint64("audio_offset", p.audioTimeOffset),
+				slog.Int("video_samples", len(fmp4VideoSamples)),
+				slog.Int("audio_samples", len(fmp4AudioSamples)))
+		} else {
+			p.config.Logger.Debug("DASH deferring offset initialization until both tracks available",
+				slog.Int("video_samples", len(fmp4VideoSamples)),
+				slog.Int("audio_samples", len(fmp4AudioSamples)),
+				slog.Bool("expects_audio", p.expectsAudio.Load()))
+		}
 	}
-	// Apply offset to normalize timestamps
-	normalizedVideoTime := videoBaseTime - p.videoTimeOffset
-	normalizedAudioTime := audioBaseTime - p.audioTimeOffset
+
+	// Apply offset to normalize timestamps (only if offsets are initialized)
+	var normalizedVideoTime, normalizedAudioTime uint64
+	if p.timeOffsetInitSet {
+		normalizedVideoTime = videoBaseTime - p.videoTimeOffset
+		normalizedAudioTime = audioBaseTime - p.audioTimeOffset
+	} else {
+		// Offsets not yet initialized - use raw times (will be corrected on next segment)
+		normalizedVideoTime = videoBaseTime
+		normalizedAudioTime = audioBaseTime
+	}
 	p.timeOffsetInitMu.Unlock()
 
 	// Log sample PTS/DTS for timestamp debugging
