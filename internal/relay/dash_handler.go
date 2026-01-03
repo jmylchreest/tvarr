@@ -183,11 +183,14 @@ func (d *DASHHandler) ServeSegmentFiltered(w http.ResponseWriter, sequence uint6
 		if fmp4Provider, ok := d.provider.(FMP4SegmentProvider); ok {
 			filteredData, err := filterSegmentByTrack(data, trackType, fmp4Provider)
 			if err != nil {
-				slog.Warn("Failed to filter segment by track, serving unfiltered",
+				// Log at debug level - segments now always include both tracks
+				// with empty samples if needed, so filtering should work.
+				// If this still fails, serve the original segment (muxed).
+				slog.Debug("Failed to filter segment by track",
 					slog.String("track_type", trackType),
 					slog.Int("sequence", int(sequence)),
 					slog.String("error", err.Error()))
-				// Fall back to unfiltered segment
+				// Fall through to serve original segment
 			} else {
 				data = filteredData
 			}
