@@ -612,7 +612,7 @@ func (p *DASHProcessor) getPlaceholderSegmentInfos() []SegmentInfo {
 
 // GetSegment implements SegmentProvider.
 func (p *DASHProcessor) GetSegment(sequence uint64) (*Segment, error) {
-	return p.getSegmentWithWait(sequence, 5*time.Second)
+	return p.getSegmentWithWait(sequence, SegmentWaitTimeout)
 }
 
 // getSegmentWithWait looks for a segment with optional waiting for it to appear.
