@@ -966,8 +966,8 @@ func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
 
 // hasEnoughContent returns true if we have enough content for a segment.
 // For DASH standards compliance, this ensures audio/video alignment:
-// - First segment MUST have audio (if audio track exists) to initialize time offsets correctly
-// - Subsequent segments should have audio too, but with a timeout fallback
+// - ALL segments MUST have audio (if audio track exists)
+// - We use a long timeout (30s) as an absolute safety net, but should never hit it in practice
 func (p *DASHProcessor) hasEnoughContent() bool {
 	if !p.currentSegment.hasVideo {
 		return false
@@ -978,31 +978,23 @@ func (p *DASHProcessor) hasEnoughContent() bool {
 		return false
 	}
 
-	// Option 1: For first segment, require audio to ensure proper timestamp initialization
-	// Option 3: For all segments, prefer having audio but allow timeout fallback
+	// CRITICAL: For DASH with separate audio/video representations, we MUST have audio
+	// in every segment. Otherwise, clients get 404s for the audio representation and
+	// playback fails with DTS errors.
+	//
+	// Video keyframes may be 10+ seconds apart, but audio arrives in bursts. We must
+	// wait for audio to arrive rather than flushing video-only segments.
+	//
+	// Use a 30-second absolute timeout as a safety net (e.g., if audio track fails).
 	if p.expectsAudio.Load() && !p.currentSegment.hasAudio {
-		// First segment: must wait for audio (with generous timeout of 3x target duration)
-		// This ensures time offsets are initialized correctly for both tracks
-		if p.nextSequence == 0 {
-			maxWait := p.config.TargetSegmentDuration * 3
-			if elapsed < maxWait {
-				return false // Keep waiting for audio on first segment
-			}
-			p.config.Logger.Warn("DASH first segment timeout waiting for audio, proceeding without",
-				slog.String("id", p.id),
-				slog.Float64("elapsed_seconds", elapsed),
-				slog.Float64("max_wait_seconds", maxWait))
-		} else {
-			// Subsequent segments: wait up to 1.5x target duration for audio
-			maxWait := p.config.TargetSegmentDuration * 1.5
-			if elapsed < maxWait {
-				return false // Keep waiting for audio
-			}
-			p.config.Logger.Debug("DASH segment timeout waiting for audio, proceeding",
-				slog.String("id", p.id),
-				slog.Uint64("sequence", p.nextSequence),
-				slog.Float64("elapsed_seconds", elapsed))
+		const absoluteMaxWait = 30.0 // 30 seconds absolute maximum
+		if elapsed < absoluteMaxWait {
+			return false // Keep waiting for audio
 		}
+		p.config.Logger.Warn("DASH segment absolute timeout waiting for audio, proceeding without",
+			slog.String("id", p.id),
+			slog.Uint64("sequence", p.nextSequence),
+			slog.Float64("elapsed_seconds", elapsed))
 	}
 
 	return true
@@ -1018,17 +1010,10 @@ func (p *DASHProcessor) shouldFinalizeSegment() bool {
 
 	elapsed := time.Since(p.currentSegment.startTime).Seconds()
 
-	// If we expect audio but don't have it, wait longer before finalizing
+	// If we expect audio but don't have it, use absolute timeout (same as hasEnoughContent)
 	if p.expectsAudio.Load() && !p.currentSegment.hasAudio {
-		var maxWait float64
-		if p.nextSequence == 0 {
-			// First segment: wait up to 3x target duration for audio
-			maxWait = p.config.TargetSegmentDuration * 3
-		} else {
-			// Subsequent segments: wait up to 2x target duration for audio
-			maxWait = p.config.TargetSegmentDuration * 2
-		}
-		return elapsed >= maxWait
+		const absoluteMaxWait = 30.0 // Must match hasEnoughContent
+		return elapsed >= absoluteMaxWait
 	}
 
 	// For segments with audio (or no audio expected), finalize at 1.5x
