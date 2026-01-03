@@ -183,17 +183,18 @@ func (d *DASHHandler) ServeSegmentFiltered(w http.ResponseWriter, sequence uint6
 		if fmp4Provider, ok := d.provider.(FMP4SegmentProvider); ok {
 			filteredData, err := filterSegmentByTrack(data, trackType, fmp4Provider)
 			if err != nil {
-				// Log at debug level - segments now always include both tracks
-				// with empty samples if needed, so filtering should work.
-				// If this still fails, serve the original segment (muxed).
-				slog.Debug("Failed to filter segment by track",
+				// For DASH, we must NOT serve wrong track type data.
+				// If a segment has no audio, serving video data to the audio
+				// representation causes "could not find corresponding trex" errors.
+				// Return 404 - the player should buffer and retry, or skip this segment.
+				slog.Debug("Segment has no data for requested track type",
 					slog.String("track_type", trackType),
 					slog.Int("sequence", int(sequence)),
 					slog.String("error", err.Error()))
-				// Fall through to serve original segment
-			} else {
-				data = filteredData
+				http.Error(w, fmt.Sprintf("no %s data in segment %d", trackType, sequence), http.StatusNotFound)
+				return fmt.Errorf("segment %d has no %s track: %w", sequence, trackType, err)
 			}
+			data = filteredData
 		}
 	}
 

@@ -317,10 +317,7 @@ func (w *FMP4Writer) GenerateInit(hasVideo, hasAudio bool, videoTimescale, audio
 }
 
 // GeneratePart generates an fMP4 media part.
-// For DASH compatibility, all configured tracks are included in every segment,
-// even if they have no samples. This ensures segment filtering works correctly
-// and prevents "could not find corresponding trex" errors when track data is
-// temporarily missing (e.g., audio lagging behind video during transcoding).
+// Only tracks with actual samples are included to avoid timestamp discontinuities.
 func (w *FMP4Writer) GeneratePart(videoSamples, audioSamples []*fmp4.Sample, videoBaseTime, audioBaseTime uint64) ([]byte, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -334,46 +331,23 @@ func (w *FMP4Writer) GeneratePart(videoSamples, audioSamples []*fmp4.Sample, vid
 		Tracks:         make([]*fmp4.PartTrack, 0),
 	}
 
-	// Always include video track if configured (even with empty samples)
-	// This ensures consistent segment structure for DASH demuxers
-	if w.videoTrack != nil {
-		samples := videoSamples
-		if samples == nil {
-			samples = []*fmp4.Sample{}
-		}
+	if w.videoTrack != nil && len(videoSamples) > 0 {
 		part.Tracks = append(part.Tracks, &fmp4.PartTrack{
 			ID:       w.videoTrack.ID,
 			BaseTime: videoBaseTime,
-			Samples:  samples,
+			Samples:  videoSamples,
 		})
 	}
 
-	// Always include audio track if configured (even with empty samples)
-	if w.audioTrack != nil {
-		samples := audioSamples
-		if samples == nil {
-			samples = []*fmp4.Sample{}
-		}
+	if w.audioTrack != nil && len(audioSamples) > 0 {
 		part.Tracks = append(part.Tracks, &fmp4.PartTrack{
 			ID:       w.audioTrack.ID,
 			BaseTime: audioBaseTime,
-			Samples:  samples,
+			Samples:  audioSamples,
 		})
 	}
 
 	if len(part.Tracks) == 0 {
-		return nil, errors.New("no tracks configured")
-	}
-
-	// Check if at least one track has samples (avoid generating completely empty segments)
-	hasSamples := false
-	for _, track := range part.Tracks {
-		if len(track.Samples) > 0 {
-			hasSamples = true
-			break
-		}
-	}
-	if !hasSamples {
 		return nil, errors.New("no samples to write")
 	}
 
