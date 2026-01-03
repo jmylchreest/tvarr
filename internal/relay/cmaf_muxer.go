@@ -2,6 +2,7 @@
 package relay
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"sync"
@@ -399,20 +400,40 @@ func (w *FMP4Writer) SequenceNumber() uint32 {
 // filterSegmentByTrack filters an fMP4 segment to contain only the specified track type.
 // trackType should be "video" or "audio".
 // The function uses mediacommon's fmp4 library to parse and filter the segment.
+// It determines the correct track ID by parsing the init segment from the provider.
 func filterSegmentByTrack(segmentData []byte, trackType string, provider FMP4SegmentProvider) ([]byte, error) {
 	if len(segmentData) == 0 {
 		return nil, fmt.Errorf("empty segment data")
 	}
 
-	// Determine the target track ID from the init segment
-	// Video is typically track 1, audio is track 2 based on generation order
-	var targetTrackID int
-	if trackType == "video" {
-		targetTrackID = 1
-	} else if trackType == "audio" {
-		targetTrackID = 2
-	} else {
+	if trackType == "" {
 		return segmentData, nil // No filtering needed
+	}
+
+	// Get the init segment to determine actual track IDs
+	initSeg := provider.GetInitSegment()
+	if initSeg == nil || initSeg.IsEmpty() {
+		return nil, fmt.Errorf("no init segment available for track ID lookup")
+	}
+
+	// Parse the init segment to find track IDs by codec type
+	var parsedInit fmp4.Init
+	if err := parsedInit.Unmarshal(bytes.NewReader(initSeg.Data)); err != nil {
+		return nil, fmt.Errorf("parsing init segment for track IDs: %w", err)
+	}
+
+	// Find the track ID that matches the requested type
+	var targetTrackID int
+	for _, track := range parsedInit.Tracks {
+		isVideo := track.Codec.IsVideo()
+		if (trackType == "video" && isVideo) || (trackType == "audio" && !isVideo) {
+			targetTrackID = track.ID
+			break
+		}
+	}
+
+	if targetTrackID == 0 {
+		return nil, fmt.Errorf("no %s track found in init segment", trackType)
 	}
 
 	// Parse the segment using mediacommon (Parts has Unmarshal, Part does not)
@@ -444,7 +465,7 @@ func filterSegmentByTrack(segmentData []byte, trackType string, provider FMP4Seg
 	}
 
 	if len(filteredParts) == 0 {
-		return nil, fmt.Errorf("no %s track found in segment", trackType)
+		return nil, fmt.Errorf("no %s track (id=%d) found in segment", trackType, targetTrackID)
 	}
 
 	// Marshal the filtered parts
