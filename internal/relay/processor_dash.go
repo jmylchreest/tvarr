@@ -1051,6 +1051,18 @@ func (p *DASHProcessor) flushSegment(videoSamples, audioSamples []ESSample) {
 		return
 	}
 
+	// CRITICAL: For DASH, never create audio-only segments.
+	// Audio-only segments have video_base_time=0 which causes "DTS out of order" errors
+	// when clients request the video representation. The audio from this period should
+	// accumulate and be included in the next segment that has video.
+	if len(videoSamples) == 0 {
+		p.config.Logger.Debug("Skipping audio-only segment for DASH - audio will roll into next segment",
+			slog.String("id", p.id),
+			slog.Int("audio_samples", len(audioSamples)),
+			slog.Uint64("next_sequence", p.nextSequence))
+		return
+	}
+
 	// Mark that we've received real content from the transcoder
 	// This disables placeholder fallback for future segment requests
 	p.hasRealContent.Store(true)
