@@ -306,10 +306,8 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("connecting to coordinator: %w", err)
 	}
 
-	// Start the persistent transcode stream
-	if err := regClient.StartTranscodeStream(ctx, binInfo); err != nil {
-		logger.Warn("failed to start transcode stream", slog.String("error", err.Error()))
-	}
+	// Start the persistent transcode stream (runs in background with automatic retry)
+	_ = regClient.StartTranscodeStream(ctx, binInfo)
 
 	logger.Info("daemon registered and running",
 		slog.String("state", regClient.GetState().String()),

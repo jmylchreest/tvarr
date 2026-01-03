@@ -40,6 +40,12 @@ type RegistrationClient struct {
 	reconnectDelay    time.Duration
 	reconnectMaxDelay time.Duration
 	reconnectAttempts int
+
+	// Transcode stream management
+	binInfo         *ffmpeg.BinaryInfo
+	streamHandler   *TranscodeStreamHandler
+	streamCtx       context.Context // Context for the transcode stream
+	streamCtxCancel context.CancelFunc
 }
 
 // RegistrationConfig holds configuration for coordinator registration.
@@ -52,6 +58,12 @@ type RegistrationConfig struct {
 	HeartbeatInterval time.Duration
 	ReconnectDelay    time.Duration
 	ReconnectMaxDelay time.Duration
+	// StreamRetryDelay is the delay between transcode stream connection retries.
+	// Default: 30 seconds
+	StreamRetryDelay time.Duration
+	// StreamRetryMaxAttempts is the max number of transcode stream retry attempts.
+	// 0 means retry forever. Default: 0 (retry forever)
+	StreamRetryMaxAttempts int
 }
 
 // NewRegistrationClient creates a new registration client.
@@ -67,6 +79,9 @@ func NewRegistrationClient(logger *slog.Logger, cfg *RegistrationConfig) *Regist
 	}
 	if cfg.MaxConcurrentJobs == 0 {
 		cfg.MaxConcurrentJobs = 4
+	}
+	if cfg.StreamRetryDelay == 0 {
+		cfg.StreamRetryDelay = 30 * time.Second
 	}
 
 	return &RegistrationClient{
@@ -254,14 +269,24 @@ func (c *RegistrationClient) heartbeatLoop(ctx context.Context, interval time.Du
 
 // reconnect attempts to reconnect and re-register with exponential backoff.
 func (c *RegistrationClient) reconnect(ctx context.Context) error {
-	// Close existing connection
+	// Close existing stream handler before reconnection
 	c.mu.Lock()
+	if c.streamCtxCancel != nil {
+		c.streamCtxCancel()
+		c.streamCtxCancel = nil
+	}
+	if c.streamHandler != nil {
+		c.streamHandler.Stop()
+		c.streamHandler = nil
+	}
+	// Close existing connection
 	if c.conn != nil {
 		c.conn.Close()
 		c.conn = nil
 		c.client = nil
 	}
 	c.registered = false
+	binInfo := c.binInfo // Capture binInfo for stream restart
 	c.mu.Unlock()
 
 	delay := c.reconnectDelay
@@ -307,6 +332,12 @@ func (c *RegistrationClient) reconnect(ctx context.Context) error {
 			time.Sleep(delay)
 			delay = min(delay*2, c.reconnectMaxDelay)
 			continue
+		}
+
+		// Restart transcode stream management if we had one before
+		// StartTranscodeStream runs in the background with automatic retry
+		if binInfo != nil {
+			_ = c.StartTranscodeStream(ctx, binInfo)
 		}
 
 		// Success - state already set to Active in Register()
@@ -456,6 +487,16 @@ func (c *RegistrationClient) Close() error {
 		c.heartbeatCancel()
 	}
 
+	// Stop the transcode stream
+	if c.streamCtxCancel != nil {
+		c.streamCtxCancel()
+		c.streamCtxCancel = nil
+	}
+	if c.streamHandler != nil {
+		c.streamHandler.Stop()
+		c.streamHandler = nil
+	}
+
 	if c.conn != nil {
 		if err := c.conn.Close(); err != nil {
 			return fmt.Errorf("closing connection: %w", err)
@@ -551,6 +592,10 @@ type TranscodeStreamHandler struct {
 
 	// sendMu protects stream.Send() calls - gRPC streams are not thread-safe for concurrent sends
 	sendMu sync.Mutex
+
+	// done is closed when the handler exits (stream dies or stopped)
+	done     chan struct{}
+	doneOnce sync.Once
 }
 
 // NewTranscodeStreamHandler creates a new transcode stream handler.
@@ -571,7 +616,20 @@ func NewTranscodeStreamHandler(
 		binInfo:    binInfo,
 		maxJobs:    maxJobs,
 		activeJobs: make(map[string]*TranscodeJob),
+		done:       make(chan struct{}),
 	}
+}
+
+// Done returns a channel that is closed when the handler exits.
+func (h *TranscodeStreamHandler) Done() <-chan struct{} {
+	return h.done
+}
+
+// signalDone closes the done channel to signal handler exit.
+func (h *TranscodeStreamHandler) signalDone() {
+	h.doneOnce.Do(func() {
+		close(h.done)
+	})
 }
 
 // Start opens the persistent transcode stream and begins processing jobs.
@@ -643,6 +701,9 @@ func (h *TranscodeStreamHandler) processMessages(ctx context.Context) {
 		}
 		h.activeJobs = make(map[string]*TranscodeJob)
 		h.mu.Unlock()
+
+		// Signal that the handler has exited
+		h.signalDone()
 	}()
 
 	for {
@@ -1005,18 +1066,152 @@ func (h *TranscodeStreamHandler) sendStatsLoop(ctx context.Context, jobID string
 
 // StartTranscodeStream starts the persistent transcode stream after registration.
 // Call this after ConnectAndRegister succeeds.
+// The stream connection runs in the background with automatic retry on failure.
+// Returns nil immediately - connection happens asynchronously.
 func (c *RegistrationClient) StartTranscodeStream(ctx context.Context, binInfo *ffmpeg.BinaryInfo) error {
-	c.mu.RLock()
-	client := c.client
-	maxJobs := c.config.MaxConcurrentJobs
-	c.mu.RUnlock()
+	c.mu.Lock()
+	// Store binInfo for reconnection
+	c.binInfo = binInfo
 
-	if client == nil {
-		return fmt.Errorf("not connected to coordinator")
+	// Cancel any existing stream management goroutine
+	if c.streamCtxCancel != nil {
+		c.streamCtxCancel()
 	}
 
-	handler := NewTranscodeStreamHandler(c.logger, client, c.config.DaemonID, binInfo, maxJobs)
-	return handler.Start(ctx)
+	// Create new context for the stream management
+	streamCtx, cancel := context.WithCancel(ctx)
+	c.streamCtx = streamCtx
+	c.streamCtxCancel = cancel
+	c.mu.Unlock()
+
+	// Start background goroutine to manage the transcode stream with retries
+	go c.manageTranscodeStream(ctx, streamCtx)
+
+	return nil
+}
+
+// manageTranscodeStream handles the transcode stream lifecycle including
+// initial connection, monitoring, and retry on failure.
+// This runs in a background goroutine and respects the StreamRetryDelay config.
+func (c *RegistrationClient) manageTranscodeStream(parentCtx, streamCtx context.Context) {
+	attempt := 0
+
+	for {
+		// Check if we should stop
+		select {
+		case <-parentCtx.Done():
+			return
+		case <-streamCtx.Done():
+			return
+		default:
+		}
+
+		c.mu.RLock()
+		binInfo := c.binInfo
+		retryDelay := c.config.StreamRetryDelay
+		maxAttempts := c.config.StreamRetryMaxAttempts
+		registered := c.registered
+		client := c.client
+		maxJobs := c.config.MaxConcurrentJobs
+		c.mu.RUnlock()
+
+		if binInfo == nil {
+			return // No binInfo, can't start stream
+		}
+
+		if !registered || client == nil {
+			// Not registered, wait for reconnection to restart us
+			c.logger.Debug("transcode stream manager: not registered, waiting")
+			select {
+			case <-parentCtx.Done():
+				return
+			case <-streamCtx.Done():
+				return
+			case <-time.After(retryDelay):
+				continue
+			}
+		}
+
+		// If this isn't our first attempt, wait before retrying
+		if attempt > 0 {
+			// Check max attempts (0 = unlimited)
+			if maxAttempts > 0 && attempt >= maxAttempts {
+				c.logger.Error("transcode stream connection failed after max attempts",
+					slog.Int("attempts", maxAttempts),
+				)
+				return
+			}
+
+			c.logger.Info("attempting to connect transcode stream",
+				slog.Int("attempt", attempt+1),
+				slog.Duration("retry_delay", retryDelay),
+			)
+
+			select {
+			case <-parentCtx.Done():
+				return
+			case <-streamCtx.Done():
+				return
+			case <-time.After(retryDelay):
+			}
+
+			// Re-check registration after waiting
+			c.mu.RLock()
+			registered = c.registered
+			client = c.client
+			c.mu.RUnlock()
+
+			if !registered || client == nil {
+				continue
+			}
+		}
+
+		attempt++
+
+		// Create a sub-context for this stream attempt
+		handlerCtx, handlerCancel := context.WithCancel(streamCtx)
+
+		handler := NewTranscodeStreamHandler(c.logger, client, c.config.DaemonID, binInfo, maxJobs)
+		if err := handler.Start(handlerCtx); err != nil {
+			handlerCancel()
+			c.logger.Warn("transcode stream connection failed",
+				slog.String("error", err.Error()),
+				slog.Int("attempt", attempt),
+			)
+			continue
+		}
+
+		c.mu.Lock()
+		c.streamHandler = handler
+		c.mu.Unlock()
+
+		if attempt == 1 {
+			c.logger.Info("transcode stream connected")
+		} else {
+			c.logger.Info("transcode stream reconnected",
+				slog.Int("attempts", attempt),
+			)
+		}
+
+		// Reset attempt counter on successful connection
+		attempt = 0
+
+		// Wait for the handler to exit (stream died or intentional shutdown)
+		select {
+		case <-parentCtx.Done():
+			handlerCancel()
+			return
+		case <-streamCtx.Done():
+			handlerCancel()
+			return
+		case <-handler.Done():
+			// Stream died, will retry
+			handlerCancel()
+			c.logger.Warn("transcode stream connection lost, will retry",
+				slog.Duration("retry_delay", retryDelay),
+			)
+		}
+	}
 }
 
 // handleProbeRequest handles a probe request from the coordinator.
