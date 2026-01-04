@@ -646,6 +646,14 @@ func (p *MPEGTSProcessor) clientWriteLoop(client *mpegtsStreamClient) {
 			return
 
 		case data := <-client.writeCh:
+			// Check if client was closed while we were waiting for data
+			// This prevents writing to a closed connection (which can panic)
+			select {
+			case <-client.done:
+				return
+			default:
+			}
+
 			// Write with timeout using deadline
 			_, err := client.writer.Write(data)
 			if err != nil {
