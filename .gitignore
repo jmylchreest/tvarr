@@ -81,3 +81,9 @@ frontend/test-results/
 frontend/playwright-report/
 frontend/*.tsbuildinfo
 frontend/next-env.d.ts
+
+# Documentation build artifacts
+docs/node_modules/
+docs/build/
+docs/.docusaurus/
+docs/.cache-loader/
