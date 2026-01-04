@@ -1200,7 +1200,12 @@ func (p *DASHProcessor) flushSegment(videoSamples, audioSamples []ESSample) {
 		slog.String("video_format", videoFormat))
 
 	// Generate fragment using mediacommon with normalized timestamps
-	fragmentData, err := p.writer.GeneratePart(fmp4VideoSamples, fmp4AudioSamples, normalizedVideoTime, normalizedAudioTime)
+	// CRITICAL: Use the SAME BaseTime for both audio and video tracks.
+	// DASH manifests use a single SegmentTimeline for timing, and when segments are
+	// filtered into separate audio/video representations, both must have matching
+	// BaseTime values or clients will report "DTS out of order" errors.
+	// Using video's normalized time for both ensures consistency with the manifest.
+	fragmentData, err := p.writer.GeneratePart(fmp4VideoSamples, fmp4AudioSamples, normalizedVideoTime, normalizedVideoTime)
 	if err != nil {
 		p.config.Logger.Error("Failed to generate DASH fragment",
 			slog.String("error", err.Error()))
