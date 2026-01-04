@@ -86,13 +86,13 @@ type DASHProcessor struct {
 
 	// Current segment accumulator
 	currentSegment struct {
-		startPTS         int64
-		endPTS           int64
-		hasVideo         bool
-		hasAudio         bool
-		startTime        time.Time
-		videoSampleCount int // Track video samples for proportional audio check
-		audioSampleCount int // Track audio samples for proportional check
+		startPTS      int64
+		endPTS        int64
+		hasVideo      bool
+		hasAudio      bool
+		startTime     time.Time
+		videoLastPTS  int64 // Last video PTS for A/V alignment check
+		audioLastPTS  int64 // Last audio PTS for A/V alignment check
 	}
 
 	// fMP4 muxer using mediacommon
@@ -850,8 +850,8 @@ func (p *DASHProcessor) initNewSegment() {
 	p.currentSegment.hasVideo = false
 	p.currentSegment.hasAudio = false
 	p.currentSegment.startTime = time.Now()
-	p.currentSegment.videoSampleCount = 0
-	p.currentSegment.audioSampleCount = 0
+	p.currentSegment.videoLastPTS = -1
+	p.currentSegment.audioLastPTS = -1
 }
 
 // runProcessingLoop is the main processing loop.
@@ -921,7 +921,7 @@ func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
 				audioSamples = append(audioSamples, sample)
 				p.SetLastAudioSeq(sample.Sequence)
 				p.currentSegment.hasAudio = true
-				p.currentSegment.audioSampleCount++
+				p.currentSegment.audioLastPTS = sample.PTS
 				if p.currentSegment.startPTS < 0 {
 					p.currentSegment.startPTS = sample.PTS
 				}
@@ -942,7 +942,7 @@ func (p *DASHProcessor) runProcessingLoop(esVariant *ESVariant) {
 				videoSamples = append(videoSamples, sample)
 				p.SetLastVideoSeq(sample.Sequence)
 				p.currentSegment.hasVideo = true
-				p.currentSegment.videoSampleCount++
+				p.currentSegment.videoLastPTS = sample.PTS
 				if p.currentSegment.startPTS < 0 {
 					p.currentSegment.startPTS = sample.PTS
 				}
@@ -984,33 +984,31 @@ func (p *DASHProcessor) hasEnoughContent() bool {
 		return false
 	}
 
-	// CRITICAL: For DASH with separate audio/video representations, segments must have
-	// PROPORTIONAL audio to video content. If we flush with only a few audio samples,
+	// CRITICAL: For DASH with separate audio/video representations, audio must have
+	// caught up to video before flushing. If we flush with audio behind video,
 	// the remaining audio arrives in a subsequent audio-only segment, causing:
 	// 1. DTS out of order errors (audio-only segment has base_time=0)
 	// 2. 404 errors when clients request video from audio-only segments
 	//
-	// Expected ratio: ~1.9 audio samples per video sample (AAC) or ~2.0 (Opus)
-	// Require full proportional audio before flushing to ensure complete A/V alignment.
+	// Compare PTS timestamps directly - this works regardless of frame rate.
 	if p.expectsAudio.Load() {
-		const minAudioToVideoRatio = 2.0 // Require ~2 audio samples per video sample (full alignment)
-		const absoluteMaxWait = 30.0     // 30 seconds absolute maximum
+		const absoluteMaxWait = 30.0 // 30 seconds absolute maximum
 
-		videoCount := p.currentSegment.videoSampleCount
-		audioCount := p.currentSegment.audioSampleCount
-		expectedAudio := int(float64(videoCount) * minAudioToVideoRatio)
+		videoPTS := p.currentSegment.videoLastPTS
+		audioPTS := p.currentSegment.audioLastPTS
 
-		if audioCount < expectedAudio {
+		// Wait until audio PTS has caught up to video PTS
+		if audioPTS < videoPTS {
 			if elapsed < absoluteMaxWait {
-				return false // Keep waiting for proportional audio
+				return false // Keep waiting for audio to catch up
 			}
-			p.config.Logger.Warn("DASH segment absolute timeout waiting for proportional audio, proceeding",
+			p.config.Logger.Warn("DASH segment absolute timeout waiting for audio to catch up, proceeding",
 				slog.String("id", p.id),
 				slog.Uint64("sequence", p.nextSequence),
 				slog.Float64("elapsed_seconds", elapsed),
-				slog.Int("video_samples", videoCount),
-				slog.Int("audio_samples", audioCount),
-				slog.Int("expected_min_audio", expectedAudio))
+				slog.Int64("video_pts", videoPTS),
+				slog.Int64("audio_pts", audioPTS),
+				slog.Int64("pts_gap", videoPTS-audioPTS))
 		}
 	}
 
@@ -1019,7 +1017,7 @@ func (p *DASHProcessor) hasEnoughContent() bool {
 
 // shouldFinalizeSegment returns true if current segment should be finalized.
 // This is a timeout fallback for when we exceed target duration significantly.
-// Waits for proportional audio to ensure segments have aligned tracks for DASH compliance.
+// Waits for audio to catch up to video to ensure segments have aligned tracks for DASH compliance.
 func (p *DASHProcessor) shouldFinalizeSegment() bool {
 	if !p.currentSegment.hasVideo && !p.currentSegment.hasAudio {
 		return false
@@ -1027,21 +1025,19 @@ func (p *DASHProcessor) shouldFinalizeSegment() bool {
 
 	elapsed := time.Since(p.currentSegment.startTime).Seconds()
 
-	// If we expect audio, check for proportional audio (same as hasEnoughContent)
+	// If we expect audio, wait for audio PTS to catch up to video PTS (same as hasEnoughContent)
 	if p.expectsAudio.Load() {
-		const minAudioToVideoRatio = 2.0 // Must match hasEnoughContent
-		const absoluteMaxWait = 30.0     // Must match hasEnoughContent
+		const absoluteMaxWait = 30.0 // Must match hasEnoughContent
 
-		videoCount := p.currentSegment.videoSampleCount
-		audioCount := p.currentSegment.audioSampleCount
-		expectedAudio := int(float64(videoCount) * minAudioToVideoRatio)
+		videoPTS := p.currentSegment.videoLastPTS
+		audioPTS := p.currentSegment.audioLastPTS
 
-		if audioCount < expectedAudio {
+		if audioPTS < videoPTS {
 			return elapsed >= absoluteMaxWait
 		}
 	}
 
-	// For segments with proportional audio (or no audio expected), finalize at 1.5x
+	// For segments with aligned audio (or no audio expected), finalize at 1.5x target duration
 	return elapsed >= p.config.TargetSegmentDuration*1.5
 }
 
