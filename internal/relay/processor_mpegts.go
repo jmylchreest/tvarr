@@ -27,6 +27,12 @@ type MPEGTSProcessorConfig struct {
 	// MaxBufferSize is the maximum size of the output buffer per client.
 	MaxBufferSize int
 
+	// CongestionGracePeriod is how long to tolerate buffer-full conditions before
+	// disconnecting a slow client. During this period, data is dropped but the client
+	// remains connected, allowing temporary congestion (e.g., Jellyfin buffering,
+	// network hiccups) without disconnection. Default: 20 seconds.
+	CongestionGracePeriod time.Duration
+
 	// Logger for structured logging.
 	Logger *slog.Logger
 
@@ -38,9 +44,10 @@ type MPEGTSProcessorConfig struct {
 // DefaultMPEGTSProcessorConfig returns sensible defaults.
 func DefaultMPEGTSProcessorConfig() MPEGTSProcessorConfig {
 	return MPEGTSProcessorConfig{
-		ChunkSize:     188 * 7 * 10, // 70 TS packets (~13KB)
-		MaxBufferSize: 188 * 1000,   // ~188KB per client
-		Logger:        slog.Default(),
+		ChunkSize:             188 * 7 * 10,  // 70 TS packets (~13KB)
+		MaxBufferSize:         188 * 1000,    // ~188KB per client
+		CongestionGracePeriod: 20 * time.Second,
+		Logger:                slog.Default(),
 	}
 }
 
@@ -74,11 +81,19 @@ type mpegtsStreamClient struct {
 	reqCtx          context.Context // Request context - signals when client disconnects
 	done            chan struct{}
 	writeCh         chan []byte   // Buffered channel for data to write
-	mu              sync.Mutex    // Protects waitForKeyframe only
+	mu              sync.Mutex    // Protects waitForKeyframe and congestion tracking
 	bytesWritten    atomic.Uint64 // Atomic for lock-free updates
 	startedAt       time.Time
 	waitForKeyframe bool        // True if client is waiting for next keyframe before receiving data
 	slowClient      atomic.Bool // True if client is falling behind
+
+	// Congestion tracking for robust slow client detection
+	// Instead of disconnecting immediately when buffer is full, we track
+	// sustained congestion over time and only disconnect after a grace period.
+	congestionStart   time.Time // When buffer first became full (zero if not congested)
+	droppedBytes      uint64    // Bytes dropped during current congestion period
+	droppedChunks     int       // Chunks dropped during current congestion period
+	lastCongestionLog time.Time // Last time we logged a congestion warning
 }
 
 // NewMPEGTSProcessor creates a new MPEG-TS processor.
@@ -506,18 +521,56 @@ func (p *MPEGTSProcessor) broadcastToExistingClients(data []byte) {
 		// Non-blocking send to client's write channel
 		select {
 		case client.writeCh <- dataCopy:
-			// Data queued successfully
+			// Data queued successfully - reset congestion tracking if we were congested
+			client.mu.Lock()
+			if !client.congestionStart.IsZero() {
+				p.config.Logger.Info("Client recovered from congestion (pre-keyframe)",
+					slog.String("client_id", client.id),
+					slog.String("processor_id", p.id),
+					slog.Duration("congestion_duration", time.Since(client.congestionStart)),
+					slog.Uint64("dropped_bytes", client.droppedBytes),
+					slog.Int("dropped_chunks", client.droppedChunks))
+				client.congestionStart = time.Time{}
+				client.droppedBytes = 0
+				client.droppedChunks = 0
+			}
+			client.mu.Unlock()
 		default:
-			// Channel full - client is too slow
-			if !client.slowClient.Swap(true) {
-				// First time detecting slow client, log warning
-				p.config.Logger.Warn("Client write buffer full (pre-keyframe), disconnecting slow client",
+			// Channel full - use same congestion tracking as broadcastToClients
+			client.mu.Lock()
+			now := time.Now()
+
+			if client.congestionStart.IsZero() {
+				client.congestionStart = now
+				client.droppedBytes = 0
+				client.droppedChunks = 0
+				p.config.Logger.Warn("Client buffer full (pre-keyframe), starting congestion tracking",
 					slog.String("client_id", client.id),
 					slog.String("processor_id", p.id),
 					slog.Uint64("bytes_written", client.bytesWritten.Load()),
 					slog.Duration("connected_duration", time.Since(client.startedAt)))
 			}
-			p.UnregisterClient(client.id)
+
+			client.droppedBytes += uint64(len(dataCopy))
+			client.droppedChunks++
+
+			congestionDuration := now.Sub(client.congestionStart)
+			shouldDisconnect := congestionDuration >= p.config.CongestionGracePeriod
+
+			client.mu.Unlock()
+
+			if shouldDisconnect {
+				client.slowClient.Store(true)
+				p.config.Logger.Warn("Disconnecting slow client after sustained congestion (pre-keyframe)",
+					slog.String("client_id", client.id),
+					slog.String("processor_id", p.id),
+					slog.Duration("congestion_duration", congestionDuration),
+					slog.Uint64("dropped_bytes", client.droppedBytes),
+					slog.Int("dropped_chunks", client.droppedChunks),
+					slog.Uint64("bytes_written", client.bytesWritten.Load()),
+					slog.Duration("connected_duration", time.Since(client.startedAt)))
+				p.UnregisterClient(client.id)
+			}
 		}
 	}
 
@@ -605,19 +658,75 @@ func (p *MPEGTSProcessor) broadcastToClients(data []byte, hasKeyframe bool) {
 		// Non-blocking send to client's write channel
 		select {
 		case client.writeCh <- dataCopy:
-			// Data queued successfully
+			// Data queued successfully - reset congestion tracking if we were congested
+			client.mu.Lock()
+			if !client.congestionStart.IsZero() {
+				// Client recovered from congestion
+				p.config.Logger.Info("Client recovered from congestion",
+					slog.String("client_id", clientID),
+					slog.String("processor_id", p.id),
+					slog.Duration("congestion_duration", time.Since(client.congestionStart)),
+					slog.Uint64("dropped_bytes", client.droppedBytes),
+					slog.Int("dropped_chunks", client.droppedChunks))
+				client.congestionStart = time.Time{}
+				client.droppedBytes = 0
+				client.droppedChunks = 0
+			}
+			client.mu.Unlock()
 		default:
-			// Channel full - client is too slow
-			if !client.slowClient.Swap(true) {
-				// First time detecting slow client, log warning
-				p.config.Logger.Warn("Client write buffer full, disconnecting slow client",
+			// Channel full - client is congested, track and possibly disconnect
+			client.mu.Lock()
+			now := time.Now()
+
+			// Start congestion tracking if not already started
+			if client.congestionStart.IsZero() {
+				client.congestionStart = now
+				client.droppedBytes = 0
+				client.droppedChunks = 0
+				p.config.Logger.Warn("Client buffer full, starting congestion tracking",
 					slog.String("client_id", clientID),
 					slog.String("processor_id", p.id),
 					slog.Uint64("bytes_written", client.bytesWritten.Load()),
-					slog.Duration("connected_duration", time.Since(client.startedAt)),
-					slog.Int("pending_write_bytes", len(dataCopy)))
+					slog.Duration("connected_duration", time.Since(client.startedAt)))
 			}
-			p.UnregisterClient(clientID)
+
+			// Track dropped data
+			client.droppedBytes += uint64(len(dataCopy))
+			client.droppedChunks++
+
+			// Log periodic updates during congestion (every 5 seconds)
+			if now.Sub(client.lastCongestionLog) >= 5*time.Second {
+				client.lastCongestionLog = now
+				congestionDuration := now.Sub(client.congestionStart)
+				p.config.Logger.Warn("Client still congested, dropping data",
+					slog.String("client_id", clientID),
+					slog.String("processor_id", p.id),
+					slog.Duration("congestion_duration", congestionDuration),
+					slog.Uint64("dropped_bytes", client.droppedBytes),
+					slog.Int("dropped_chunks", client.droppedChunks),
+					slog.Uint64("bytes_written", client.bytesWritten.Load()))
+			}
+
+			// Check if congestion has exceeded grace period
+			// Only disconnect after sustained inability to consume data
+			congestionDuration := now.Sub(client.congestionStart)
+			shouldDisconnect := congestionDuration >= p.config.CongestionGracePeriod
+
+			client.mu.Unlock()
+
+			if shouldDisconnect {
+				client.slowClient.Store(true)
+				p.config.Logger.Warn("Disconnecting slow client after sustained congestion",
+					slog.String("client_id", clientID),
+					slog.String("processor_id", p.id),
+					slog.Duration("congestion_duration", congestionDuration),
+					slog.Uint64("dropped_bytes", client.droppedBytes),
+					slog.Int("dropped_chunks", client.droppedChunks),
+					slog.Uint64("bytes_written", client.bytesWritten.Load()),
+					slog.Duration("connected_duration", time.Since(client.startedAt)))
+				p.UnregisterClient(clientID)
+			}
+			// Otherwise, just drop the data and continue - client might recover
 		}
 	}
 
