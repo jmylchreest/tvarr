@@ -991,9 +991,9 @@ func (p *DASHProcessor) hasEnoughContent() bool {
 	// 2. 404 errors when clients request video from audio-only segments
 	//
 	// Expected ratio: ~1.9 audio samples per video sample (AAC) or ~2.0 (Opus)
-	// We require at least 1.8 as a minimum (90% of expected) before flushing.
+	// Require full proportional audio before flushing to ensure complete A/V alignment.
 	if p.expectsAudio.Load() {
-		const minAudioToVideoRatio = 1.8 // Minimum 1.8 audio samples per video sample (90% of typical)
+		const minAudioToVideoRatio = 2.0 // Require ~2 audio samples per video sample (full alignment)
 		const absoluteMaxWait = 30.0     // 30 seconds absolute maximum
 
 		videoCount := p.currentSegment.videoSampleCount
@@ -1029,7 +1029,7 @@ func (p *DASHProcessor) shouldFinalizeSegment() bool {
 
 	// If we expect audio, check for proportional audio (same as hasEnoughContent)
 	if p.expectsAudio.Load() {
-		const minAudioToVideoRatio = 1.8 // Must match hasEnoughContent
+		const minAudioToVideoRatio = 2.0 // Must match hasEnoughContent
 		const absoluteMaxWait = 30.0     // Must match hasEnoughContent
 
 		videoCount := p.currentSegment.videoSampleCount
