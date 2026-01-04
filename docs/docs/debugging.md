@@ -76,7 +76,7 @@ docker logs tvarr 2>&1 | grep -i epg
 **Fix:** Use data mapping to set correct tvg-id
 
 ```
-channel_name contains "BBC One" SET tvg_id = "bbc1.uk"
+channel_name contains "News Channel" SET tvg_id = "news1.example"
 ```
 
 ### "Stream won't play"

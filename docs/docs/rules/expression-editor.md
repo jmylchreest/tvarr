@@ -19,9 +19,9 @@ field operator "value"
 Examples:
 
 ```
-channel_name equals "BBC One"
+channel_name equals "News Channel"
 group_title contains "Sports"
-tvg_id starts_with "uk."
+tvg_id starts_with "sports."
 ```
 
 ## Operators
@@ -30,11 +30,11 @@ tvg_id starts_with "uk."
 
 | Operator | Description | Example |
 |----------|-------------|---------|
-| `equals` | Exact match | `channel_name equals "BBC One"` |
-| `contains` | Substring match | `channel_name contains "BBC"` |
-| `starts_with` | Prefix match | `channel_name starts_with "BBC"` |
+| `equals` | Exact match | `channel_name equals "News Channel"` |
+| `contains` | Substring match | `channel_name contains "News"` |
+| `starts_with` | Prefix match | `channel_name starts_with "Sports"` |
 | `ends_with` | Suffix match | `channel_name ends_with "HD"` |
-| `matches` | Regex match | `channel_name matches "BBC.*HD"` |
+| `matches` | Regex match | `channel_name matches "Sports.*HD"` |
 
 ### Negated Operators
 
@@ -75,9 +75,9 @@ You can also use familiar symbols:
 Use `AND`, `OR`, and parentheses:
 
 ```
-channel_name contains "BBC" AND group_title equals "UK"
+channel_name contains "News" AND group_title equals "News"
 
-(channel_name contains "BBC" OR channel_name contains "ITV") AND group_title not_equals "Radio"
+(channel_name contains "Sports" OR channel_name contains "Movies") AND group_title not_equals "Radio"
 
 NOT channel_name contains "Adult"
 ```
@@ -160,7 +160,7 @@ channel_name matches "^(.+) (HD|SD|FHD)$" SET tvg_name = "$1", quality = "$2"
 ### Mapping: Fix Logos
 
 ```
-channel_name contains "BBC" SET tvg_logo = "https://example.com/bbc-logo.png"
+channel_name contains "Sports" SET tvg_logo = "https://example.com/sports-logo.png"
 ```
 
 ### Client Detection: Mobile Gets Lower Quality

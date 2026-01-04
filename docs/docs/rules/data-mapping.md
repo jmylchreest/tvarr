@@ -57,7 +57,7 @@ group_title contains "Sport" SET group_title = "Sports"
 Create new groups:
 
 ```
-channel_name starts_with "BBC" SET group_title = "BBC Channels"
+channel_name starts_with "Sports" SET group_title = "Sports Channels"
 ```
 
 ### Fix EPG IDs
@@ -65,7 +65,7 @@ channel_name starts_with "BBC" SET group_title = "BBC Channels"
 When EPG doesn't match automatically:
 
 ```
-channel_name equals "BBC One" SET tvg_id = "bbc1.uk"
+channel_name equals "News Channel" SET tvg_id = "news1.example"
 ```
 
 ### Set Logos
@@ -79,7 +79,7 @@ tvg_logo equals "" SET tvg_logo = "https://example.com/default.png"
 Use cached logos:
 
 ```
-channel_name contains "BBC" SET tvg_logo = "@logo:01ABC123DEF456"
+channel_name contains "Sports" SET tvg_logo = "@logo:01ABC123DEF456"
 ```
 
 ### Regex Capture Groups

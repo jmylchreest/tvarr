@@ -125,7 +125,7 @@ POST /api/v1/expressions/validate
 Content-Type: application/json
 
 {
-  "expression": "channel_name contains \"BBC\""
+  "expression": "channel_name contains \"Sports\""
 }
 ```
 

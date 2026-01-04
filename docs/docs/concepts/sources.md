@@ -18,8 +18,8 @@ Standard playlist format supported by most providers:
 
 ```m3u
 #EXTM3U
-#EXTINF:-1 tvg-id="bbc1" tvg-name="BBC One" tvg-logo="http://..." group-title="UK",BBC One
-http://stream.example.com/live/bbc1.m3u8
+#EXTINF:-1 tvg-id="news1" tvg-name="News Channel" tvg-logo="http://..." group-title="News",News Channel
+http://stream.example.com/live/news1.m3u8
 ```
 
 ### Xtream Codes API
@@ -46,11 +46,11 @@ Standard format for TV guide data:
 
 ```xml
 <tv>
-  <channel id="bbc1">
-    <display-name>BBC One</display-name>
+  <channel id="news1">
+    <display-name>News Channel</display-name>
   </channel>
-  <programme channel="bbc1" start="20240101120000" stop="20240101130000">
-    <title>News at Noon</title>
+  <programme channel="news1" start="20240101120000" stop="20240101130000">
+    <title>Midday Report</title>
   </programme>
 </tv>
 ```

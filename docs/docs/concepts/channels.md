@@ -36,15 +36,15 @@ The **Channels** page shows all ingested channels across all sources:
 
 Channels link to EPG data via `tvg_id`:
 
-1. Your M3U has `tvg-id="bbc1"`
-2. Your XMLTV has `<channel id="bbc1">`
+1. Your M3U has `tvg-id="news1"`
+2. Your XMLTV has `<channel id="news1">`
 3. tvarr links them automatically
 
 :::tip Fixing EPG Matches
 If EPG isn't matching, use [data mapping](/docs/next/rules/data-mapping) to set the correct `tvg_id`:
 
 ```
-channel_name contains "BBC One" SET tvg_id = "bbc1.uk"
+channel_name contains "News Channel" SET tvg_id = "news1.example"
 ```
 :::
 
