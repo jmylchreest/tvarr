@@ -664,4 +664,3 @@ func (m *OperationManager) ReportItemProgress(ctx context.Context, stageID strin
 	updater := &StageUpdater{manager: m, stageID: stageID}
 	updater.SetItemProgress(current, total, item)
 }
-
