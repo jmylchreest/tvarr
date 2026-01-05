@@ -48,6 +48,7 @@ import {
   BadgeGroup,
   BadgeItem,
 } from '@/components/shared';
+import { useProgressContext, ProgressEvent } from '@/providers/ProgressProvider';
 
 // Selection can be either 'schedule' or a backup filename
 type Selection = { type: 'schedule' } | { type: 'backup'; backup: BackupInfo } | null;
@@ -438,6 +439,9 @@ export function Backups() {
   // Restore confirmation dialog
   const [restoreDialog, setRestoreDialog] = useState<BackupInfo | null>(null);
 
+  // Progress context for SSE backup events
+  const progressContext = useProgressContext();
+
   const loadBackups = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -462,20 +466,49 @@ export function Backups() {
     loadBackups();
   }, [loadBackups]);
 
+  // Subscribe to backup SSE events
+  useEffect(() => {
+    const handleBackupEvent = (event: ProgressEvent) => {
+      // Only handle backup operation events
+      if (event.operation_type !== 'backup') return;
+
+      // Get the backup event type from metadata
+      const backupEventType = event.metadata?.backup_event as string;
+
+      if (backupEventType === 'backup_started') {
+        setCreating(true);
+        setSuccess('Backup started...');
+        setError(null);
+      } else if (backupEventType === 'backup_completed') {
+        setCreating(false);
+        const filename = event.metadata?.filename as string;
+        setSuccess(filename ? `Backup completed: ${filename}` : 'Backup completed');
+        // Refresh the backup list to show the new backup
+        loadBackups();
+      } else if (backupEventType === 'backup_failed') {
+        setCreating(false);
+        setError(event.error || 'Backup failed');
+        setSuccess(null);
+      }
+    };
+
+    const unsubscribe = progressContext.subscribeToAll(handleBackupEvent);
+    return unsubscribe;
+  }, [progressContext, loadBackups]);
+
   const handleCreateBackup = async () => {
     setCreating(true);
     setError(null);
     setSuccess(null);
 
     try {
-      const backup = await apiClient.createBackup();
-      setSuccess(`Backup created: ${backup.filename}`);
-      await loadBackups();
-      // Select the new backup
-      setSelection({ type: 'backup', backup });
+      // This now returns immediately with a status message
+      // Actual completion will come via SSE event
+      const response = await apiClient.createBackup();
+      setSuccess(response.message);
+      // Don't set creating=false here - wait for SSE event
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create backup');
-    } finally {
+      setError(err instanceof Error ? err.message : 'Failed to start backup');
       setCreating(false);
     }
   };

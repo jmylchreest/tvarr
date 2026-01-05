@@ -53,12 +53,13 @@ func (h *BackupHandler) Register(api huma.API) {
 	}, h.ListBackups)
 
 	huma.Register(api, huma.Operation{
-		OperationID: "createBackup",
-		Method:      "POST",
-		Path:        "/api/v1/backups",
-		Summary:     "Create a backup",
-		Description: "Creates a new full database backup with gzip compression",
-		Tags:        []string{"Backup"},
+		OperationID:   "createBackup",
+		Method:        "POST",
+		Path:          "/api/v1/backups",
+		Summary:       "Create a backup",
+		Description:   "Starts a new database backup asynchronously. Progress and completion are reported via SSE events on /api/v1/progress/events.",
+		Tags:          []string{"Backup"},
+		DefaultStatus: 202,
 	}, h.CreateBackup)
 
 	huma.Register(api, huma.Operation{
@@ -162,18 +163,30 @@ func (h *BackupHandler) ListBackups(ctx context.Context, _ *ListBackupsInput) (*
 type CreateBackupInput struct{}
 
 // CreateBackupOutput is the output for creating a backup.
+// For async backups, the body contains a status message.
 type CreateBackupOutput struct {
-	Body *models.BackupMetadata
+	Body struct {
+		Message string `json:"message"`
+		Status  string `json:"status"`
+	}
 }
 
-// CreateBackup creates a new database backup.
-func (h *BackupHandler) CreateBackup(ctx context.Context, _ *CreateBackupInput) (*CreateBackupOutput, error) {
-	meta, err := h.backupService.CreateBackup(ctx)
-	if err != nil {
-		return nil, huma.Error500InternalServerError("failed to create backup", err)
-	}
+// CreateBackup starts a new database backup asynchronously.
+// The backup runs in the background; progress and completion are reported via SSE events.
+// Returns 202 Accepted immediately with a status message.
+func (h *BackupHandler) CreateBackup(_ context.Context, _ *CreateBackupInput) (*CreateBackupOutput, error) {
+	// Start backup asynchronously - this returns immediately
+	h.backupService.CreateBackupAsync()
 
-	return &CreateBackupOutput{Body: meta}, nil
+	return &CreateBackupOutput{
+		Body: struct {
+			Message string `json:"message"`
+			Status  string `json:"status"`
+		}{
+			Message: "Backup started. You will be notified when it completes.",
+			Status:  "started",
+		},
+	}, nil
 }
 
 // Get types

@@ -422,7 +422,8 @@ func runServe(_ *cobra.Command, _ []string) error {
 		},
 	}
 	backupService := service.NewBackupService(db.DB, backupConfig, viper.GetString("storage.base_dir")).
-		WithLogger(logger)
+		WithLogger(logger).
+		WithProgressService(progressService)
 
 	// Configure internal recurring jobs
 	var internalJobs []scheduler.InternalJobConfig

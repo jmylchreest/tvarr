@@ -34,10 +34,17 @@ const (
 
 // BackupService provides business logic for database backup and restore.
 type BackupService struct {
-	db         *gorm.DB
-	cfg        config.BackupConfig
-	storageDir string
-	logger     *slog.Logger
+	db              *gorm.DB
+	cfg             config.BackupConfig
+	storageDir      string
+	logger          *slog.Logger
+	progressService ProgressService
+}
+
+// ProgressService is the interface for progress/SSE notifications.
+type ProgressService interface {
+	// BroadcastBackupEvent sends a backup event to all subscribers.
+	BroadcastBackupEvent(eventType string, filename string, err error)
 }
 
 // NewBackupService creates a new backup service.
@@ -55,6 +62,12 @@ func NewBackupService(db *gorm.DB, cfg config.BackupConfig, storageBaseDir strin
 // WithLogger sets the logger for the service.
 func (s *BackupService) WithLogger(logger *slog.Logger) *BackupService {
 	s.logger = logger
+	return s
+}
+
+// WithProgressService sets the progress service for SSE notifications.
+func (s *BackupService) WithProgressService(ps ProgressService) *BackupService {
+	s.progressService = ps
 	return s
 }
 
@@ -242,7 +255,33 @@ func (s *BackupService) CreateBackup(ctx context.Context) (*models.BackupMetadat
 		slog.String("checksum", truncateChecksum(meta.Checksum)),
 	)
 
+	// Broadcast completion event
+	s.broadcastEvent("backup_completed", meta.Filename, nil)
+
 	return meta, nil
+}
+
+// CreateBackupAsync starts a backup operation in the background and returns immediately.
+// Progress and completion are reported via SSE events.
+func (s *BackupService) CreateBackupAsync() {
+	// Broadcast start event
+	s.broadcastEvent("backup_started", "", nil)
+
+	go func() {
+		_, err := s.CreateBackup(context.Background())
+		if err != nil {
+			s.logger.Error("async backup failed", slog.String("error", err.Error()))
+			s.broadcastEvent("backup_failed", "", err)
+		}
+		// Note: CreateBackup already broadcasts backup_completed on success
+	}()
+}
+
+// broadcastEvent sends a backup event to all SSE subscribers.
+func (s *BackupService) broadcastEvent(eventType, filename string, err error) {
+	if s.progressService != nil {
+		s.progressService.BroadcastBackupEvent(eventType, filename, err)
+	}
 }
 
 // createTarGzArchive creates a tar.gz archive containing the database and metadata.

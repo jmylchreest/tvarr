@@ -66,6 +66,8 @@ const (
 	OpMaintenance OperationType = "maintenance"
 	// OpDatabase is performing database operations.
 	OpDatabase OperationType = "database"
+	// OpBackup is creating or restoring a database backup.
+	OpBackup OperationType = "backup"
 )
 
 // ErrorDetail provides structured error information for UI display.

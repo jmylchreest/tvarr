@@ -664,3 +664,103 @@ func (m *OperationManager) ReportItemProgress(ctx context.Context, stageID strin
 	updater := &StageUpdater{manager: m, stageID: stageID}
 	updater.SetItemProgress(current, total, item)
 }
+
+// BackupEvent represents a backup-specific SSE event.
+type BackupEvent struct {
+	EventType string `json:"event_type"`
+	Filename  string `json:"filename,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// BroadcastBackupEvent sends a backup-specific event to all SSE subscribers.
+// Event types: backup_started, backup_completed, backup_failed
+func (s *Service) BroadcastBackupEvent(eventType string, filename string, err error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Create a minimal progress event for backup notifications
+	// We create a synthetic progress object that backup subscribers can filter on
+	now := time.Now()
+	progress := &UniversalProgress{
+		OperationID:   "backup-" + now.Format("20060102150405"),
+		OperationType: OpBackup,
+		OwnerID:       models.ULID{}, // Empty ULID for system-level operations
+		OwnerType:     "system",
+		OwnerName:     "Database Backup",
+		State:         stateForBackupEvent(eventType),
+		Message:       messageForBackupEvent(eventType, filename, err),
+		StartedAt:     now,
+		UpdatedAt:     now,
+		Metadata: map[string]any{
+			"backup_event": eventType,
+			"filename":     filename,
+		},
+	}
+
+	if eventType == "backup_failed" && err != nil {
+		progress.Error = err.Error()
+	}
+
+	if progress.State.IsTerminal() {
+		progress.CompletedAt = &now
+	}
+
+	event := &ProgressEvent{
+		EventType: eventType,
+		Progress:  progress,
+		Timestamp: now,
+	}
+
+	// Send to all subscribers (backup events are global, no filtering needed)
+	for _, sub := range s.subscribers {
+		// Backup events go to all subscribers
+		select {
+		case sub.Events <- event:
+			s.logger.Debug("broadcast backup event",
+				"event_type", eventType,
+				"subscriber_id", sub.ID,
+				"filename", filename,
+			)
+		case <-time.After(100 * time.Millisecond):
+			s.logger.Warn("failed to deliver backup event - channel full",
+				"event_type", eventType,
+				"subscriber_id", sub.ID,
+			)
+		}
+	}
+}
+
+// stateForBackupEvent returns the appropriate state for a backup event type.
+func stateForBackupEvent(eventType string) UniversalState {
+	switch eventType {
+	case "backup_started":
+		return StateProcessing
+	case "backup_completed":
+		return StateCompleted
+	case "backup_failed":
+		return StateError
+	default:
+		return StateIdle
+	}
+}
+
+// messageForBackupEvent returns a user-friendly message for a backup event.
+func messageForBackupEvent(eventType, filename string, err error) string {
+	switch eventType {
+	case "backup_started":
+		return "Database backup started"
+	case "backup_completed":
+		if filename != "" {
+			return "Backup completed: " + filename
+		}
+		return "Database backup completed"
+	case "backup_failed":
+		if err != nil {
+			return "Backup failed: " + err.Error()
+		}
+		return "Database backup failed"
+	default:
+		return "Unknown backup event"
+	}
+}

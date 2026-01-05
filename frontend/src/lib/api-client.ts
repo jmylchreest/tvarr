@@ -1391,8 +1391,8 @@ class ApiClient {
     return this.request<BackupListResponse>('/api/v1/backups');
   }
 
-  async createBackup(): Promise<BackupInfo> {
-    return this.request<BackupInfo>('/api/v1/backups', {
+  async createBackup(): Promise<{ message: string; status: string }> {
+    return this.request<{ message: string; status: string }>('/api/v1/backups', {
       method: 'POST',
     });
   }

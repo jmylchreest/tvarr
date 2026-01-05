@@ -811,8 +811,8 @@ export interface ErrorDetail {
 export interface ProgressEvent {
   id: string;
   operation_name: string;
-  operation_type: 'epg_ingestion' | 'stream_ingestion' | 'proxy_regeneration';
-  owner_type: 'epg_source' | 'stream_source' | 'proxy';
+  operation_type: 'epg_ingestion' | 'stream_ingestion' | 'proxy_regeneration' | 'backup';
+  owner_type: 'epg_source' | 'stream_source' | 'proxy' | 'system';
   owner_id: string;
   state:
     | 'idle'
@@ -836,6 +836,8 @@ export interface ProgressEvent {
   error_detail?: ErrorDetail;
   warning_count?: number;
   warnings?: string[];
+  // Metadata for operation-specific data
+  metadata?: Record<string, unknown>;
 }
 
 export type EventHandler = (event: ServiceEvent | ProgressEvent) => void;
