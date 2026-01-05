@@ -73,8 +73,8 @@ func (a *RequestContextAccessor) getClientIP() string {
 	// Check X-Forwarded-For first (may contain multiple IPs)
 	if xff := a.request.Header.Get("X-Forwarded-For"); xff != "" {
 		// Take the first IP (original client)
-		if idx := strings.Index(xff, ","); idx != -1 {
-			return strings.TrimSpace(xff[:idx])
+		if before, _, ok := strings.Cut(xff, ","); ok {
+			return strings.TrimSpace(before)
 		}
 		return strings.TrimSpace(xff)
 	}

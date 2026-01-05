@@ -253,11 +253,9 @@ func (t *TranscodeJob) Start(ctx context.Context) (*proto.TranscodeAck, error) {
 	// Start the async input writer goroutine BEFORE sending any data
 	// This goroutine reads from inputCh and writes to FFmpeg stdin asynchronously,
 	// preventing gRPC flow control from blocking when FFmpeg stdin buffer fills
-	t.wg.Add(1)
-	go func() {
-		defer t.wg.Done()
+	t.wg.Go(func() {
 		t.runInputWriter()
-	}()
+	})
 
 	// Flush the PAT/PMT header to FFmpeg stdin immediately after starting
 	// This ensures FFmpeg sees the codec information before any media data
@@ -289,11 +287,9 @@ func (t *TranscodeJob) Start(ctx context.Context) (*proto.TranscodeAck, error) {
 	)
 
 	// Start output reader goroutine
-	t.wg.Add(1)
-	go func() {
-		defer t.wg.Done()
+	t.wg.Go(func() {
 		t.runOutputLoop()
-	}()
+	})
 
 	return &proto.TranscodeAck{
 		Success:            true,
@@ -1070,7 +1066,7 @@ func scanLinesWithCR(data []byte, atEOF bool) (advance int, token []byte, err er
 		return 0, nil, nil
 	}
 
-	for i := 0; i < len(data); i++ {
+	for i := range data {
 		if data[i] == '\r' || data[i] == '\n' {
 			advance = i + 1
 			for advance < len(data) && (data[advance] == '\r' || data[advance] == '\n') {
@@ -1089,12 +1085,12 @@ func scanLinesWithCR(data []byte, atEOF bool) (advance int, token []byte, err er
 
 // parseEncodingSpeed extracts the encoding speed from FFmpeg stderr output.
 func (t *TranscodeJob) parseEncodingSpeed(line string) float64 {
-	idx := strings.Index(line, "speed=")
-	if idx == -1 {
+	_, after, ok := strings.Cut(line, "speed=")
+	if !ok {
 		return 0
 	}
 
-	speedStr := line[idx+6:]
+	speedStr := after
 	speedStr = strings.TrimLeft(speedStr, " ")
 
 	endIdx := strings.IndexAny(speedStr, "x \t")

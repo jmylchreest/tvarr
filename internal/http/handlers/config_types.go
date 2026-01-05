@@ -98,7 +98,7 @@ type IngestionConfigData struct {
 type ConfigMeta struct {
 	ConfigPath   string    `json:"config_path,omitempty"`
 	CanPersist   bool      `json:"can_persist"`
-	LastModified time.Time `json:"last_modified,omitempty"`
+	LastModified time.Time `json:"last_modified"`
 	Source       string    `json:"source"` // "file", "env", "defaults"
 }
 

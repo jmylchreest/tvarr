@@ -215,10 +215,7 @@ func (m *jobMockJobRepo) GetHistory(ctx context.Context, jobType *models.JobType
 	if offset >= len(filtered) {
 		return nil, total, nil
 	}
-	end := offset + limit
-	if end > len(filtered) {
-		end = len(filtered)
-	}
+	end := min(offset+limit, len(filtered))
 	return filtered[offset:end], total, nil
 }
 
@@ -938,7 +935,7 @@ func TestJobService_GetHistory(t *testing.T) {
 
 	// Create some history records
 	now := models.Now()
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		h := &models.JobHistory{
 			JobID:       models.NewULID(),
 			Type:        models.JobTypeStreamIngestion,
@@ -950,7 +947,7 @@ func TestJobService_GetHistory(t *testing.T) {
 	}
 
 	// Add some EPG history
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		h := &models.JobHistory{
 			JobID:       models.NewULID(),
 			Type:        models.JobTypeEpgIngestion,

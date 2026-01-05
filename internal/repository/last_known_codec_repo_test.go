@@ -140,7 +140,7 @@ func TestLastKnownCodecRepo_GetBySourceID(t *testing.T) {
 	sourceID := models.NewULID()
 
 	// Create codecs for this source
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		codec := createTestCodec(t, "http://source.com/stream"+string(rune('1'+i)))
 		codec.SourceID = sourceID
 		require.NoError(t, repo.Create(ctx, codec))
@@ -262,7 +262,7 @@ func TestLastKnownCodecRepo_DeleteBySourceID(t *testing.T) {
 	sourceID := models.NewULID()
 
 	// Create codecs for this source
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		codec := createTestCodec(t, "http://source.com/stream"+string(rune('1'+i)))
 		codec.SourceID = sourceID
 		require.NoError(t, repo.Create(ctx, codec))
@@ -337,7 +337,7 @@ func TestLastKnownCodecRepo_Touch(t *testing.T) {
 	assert.Equal(t, int64(0), found.HitCount)
 
 	// Touch multiple times
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		err := repo.Touch(ctx, "http://touch.com/stream")
 		require.NoError(t, err)
 	}
@@ -394,7 +394,7 @@ func TestLastKnownCodecRepo_GetStats(t *testing.T) {
 	ctx := context.Background()
 
 	// Create valid codecs with hits
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		codec := createTestCodec(t, "http://valid"+string(rune('1'+i))+".com/stream")
 		codec.HitCount = int64(10 * (i + 1))
 		require.NoError(t, repo.Create(ctx, codec))

@@ -219,7 +219,7 @@ func (r *jobRepo) acquireJobSQLite(ctx context.Context, workerID string) (*model
 	result := r.db.WithContext(ctx).
 		Model(&models.Job{}).
 		Where("id = (?)", subQuery).
-		UpdateColumns(map[string]interface{}{
+		UpdateColumns(map[string]any{
 			"status":        models.JobStatusRunning,
 			"started_at":    nowTime,
 			"locked_by":     workerID,
@@ -253,7 +253,7 @@ func (r *jobRepo) acquireJobSQLite(ctx context.Context, workerID string) (*model
 func (r *jobRepo) ReleaseJob(ctx context.Context, id models.ULID) error {
 	// Use UpdateColumns to avoid triggering hooks (BeforeUpdate validation)
 	result := r.db.WithContext(ctx).Model(&models.Job{}).Where("id = ?", id).
-		UpdateColumns(map[string]interface{}{
+		UpdateColumns(map[string]any{
 			"locked_by": nil,
 			"locked_at": nil,
 			"status":    models.JobStatusPending,

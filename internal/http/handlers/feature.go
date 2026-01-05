@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"maps"
 	"sync"
 	"time"
 
@@ -13,7 +14,7 @@ import (
 type FeatureHandler struct {
 	mu     sync.RWMutex
 	flags  map[string]bool
-	config map[string]map[string]interface{}
+	config map[string]map[string]any
 }
 
 // NewFeatureHandler creates a new feature handler with default flags.
@@ -23,7 +24,7 @@ func NewFeatureHandler() *FeatureHandler {
 			"debug-frontend": false, // Controls frontend debug logging
 			"feature-cache":  false, // Controls whether feature flags are cached by frontend
 		},
-		config: map[string]map[string]interface{}{
+		config: map[string]map[string]any{
 			// Cache configuration (only used when feature-cache is true)
 			"feature-cache": {
 				"cache-duration": 300000, // 5 minutes in milliseconds
@@ -55,9 +56,9 @@ func (h *FeatureHandler) Register(api huma.API) {
 
 // FeaturesData represents the feature flags data.
 type FeaturesData struct {
-	Flags     map[string]bool                   `json:"flags"`
-	Config    map[string]map[string]interface{} `json:"config"`
-	Timestamp string                            `json:"timestamp"`
+	Flags     map[string]bool           `json:"flags"`
+	Config    map[string]map[string]any `json:"config"`
+	Timestamp string                    `json:"timestamp"`
 }
 
 // GetFeaturesInput is the input for getting feature flags.
@@ -78,16 +79,12 @@ func (h *FeatureHandler) GetFeatures(ctx context.Context, input *GetFeaturesInpu
 
 	// Copy current state to avoid data races
 	flags := make(map[string]bool, len(h.flags))
-	for k, v := range h.flags {
-		flags[k] = v
-	}
+	maps.Copy(flags, h.flags)
 
-	config := make(map[string]map[string]interface{}, len(h.config))
+	config := make(map[string]map[string]any, len(h.config))
 	for k, v := range h.config {
-		configCopy := make(map[string]interface{}, len(v))
-		for ck, cv := range v {
-			configCopy[ck] = cv
-		}
+		configCopy := make(map[string]any, len(v))
+		maps.Copy(configCopy, v)
 		config[k] = configCopy
 	}
 
@@ -104,8 +101,8 @@ func (h *FeatureHandler) GetFeatures(ctx context.Context, input *GetFeaturesInpu
 // UpdateFeaturesInput is the input for updating feature flags.
 type UpdateFeaturesInput struct {
 	Body struct {
-		Flags  map[string]bool                   `json:"flags"`
-		Config map[string]map[string]interface{} `json:"config"`
+		Flags  map[string]bool           `json:"flags"`
+		Config map[string]map[string]any `json:"config"`
 	}
 }
 
@@ -138,11 +135,9 @@ func (h *FeatureHandler) UpdateFeatures(ctx context.Context, input *UpdateFeatur
 	// Update config
 	for key, value := range input.Body.Config {
 		if h.config[key] == nil {
-			h.config[key] = make(map[string]interface{})
+			h.config[key] = make(map[string]any)
 		}
-		for ck, cv := range value {
-			h.config[key][ck] = cv
-		}
+		maps.Copy(h.config[key], value)
 		configsUpdated++
 	}
 

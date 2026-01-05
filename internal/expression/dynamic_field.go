@@ -96,13 +96,13 @@ func (r *DynamicFieldRegistry) resolveLegacy(fieldName string) (string, bool) {
 	remainder := fieldName[len(DynamicFieldPrefix):]
 
 	// Split into prefix:parameter
-	colonIdx := strings.Index(remainder, ":")
-	if colonIdx == -1 {
+	before, after, ok := strings.Cut(remainder, ":")
+	if !ok {
 		return "", false
 	}
 
-	prefix := strings.ToLower(remainder[:colonIdx])
-	parameter := remainder[colonIdx+1:]
+	prefix := strings.ToLower(before)
+	parameter := after
 
 	// Find the resolver for this prefix
 	resolver, ok := r.resolvers[prefix]

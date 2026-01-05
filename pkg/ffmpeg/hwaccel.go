@@ -313,8 +313,8 @@ func (d *HWAccelDetector) getAccelEncoders(ctx context.Context, accel string) ([
 		return encoders, filtered
 	}
 
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(string(output), "\n")
+	for line := range lines {
 		for _, suffix := range suffixList {
 			if strings.Contains(line, suffix) {
 				parts := strings.Fields(line)
@@ -403,8 +403,8 @@ func (d *HWAccelDetector) getVaapiProfiles(ctx context.Context, entrypoint strin
 		return supported
 	}
 
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(string(output), "\n")
+	for line := range lines {
 		line = strings.TrimSpace(line)
 
 		// Look for lines like "VAProfileH264High: VAEntrypointEncSlice" or "VAEntrypointVLD"
@@ -502,8 +502,8 @@ func (d *HWAccelDetector) getAccelDecoders(ctx context.Context, accel string) []
 		return decoders
 	}
 
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(string(output), "\n")
+	for line := range lines {
 		for _, pattern := range patternList {
 			if strings.Contains(line, pattern) {
 				parts := strings.Fields(line)

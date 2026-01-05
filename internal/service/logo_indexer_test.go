@@ -181,7 +181,7 @@ func TestLogoIndexer_Stats(t *testing.T) {
 	assert.Equal(t, int64(0), stats.TotalSize)
 
 	// Add some logos with different sizes
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		meta := storage.NewCachedLogoMetadata("https://example.com/logo" + string(rune('a'+i)) + ".png")
 		meta.ContentType = "image/png"
 		meta.FileSize = int64(1000 * (i + 1))
@@ -201,7 +201,7 @@ func TestLogoIndexer_ConcurrentAccess(t *testing.T) {
 
 	// Concurrent adds
 	done := make(chan bool)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		go func(i int) {
 			meta := storage.NewCachedLogoMetadata("https://example.com/concurrent-" + string(rune(i)) + ".png")
 			meta.ContentType = "image/png"
@@ -211,7 +211,7 @@ func TestLogoIndexer_ConcurrentAccess(t *testing.T) {
 	}
 
 	// Wait for all goroutines
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		<-done
 	}
 
@@ -220,7 +220,7 @@ func TestLogoIndexer_ConcurrentAccess(t *testing.T) {
 	assert.Equal(t, 100, stats.TotalLogos)
 
 	// Test concurrent reads
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		go func() {
 			_ = indexer.Stats()
 		}()
@@ -264,7 +264,7 @@ func TestLogoIndexer_Clear(t *testing.T) {
 	indexer, _ := setupTestLogoIndexer(t)
 
 	// Add some logos
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		meta := storage.NewCachedLogoMetadata("https://example.com/clear-" + string(rune('a'+i)) + ".png")
 		meta.ContentType = "image/png"
 		indexer.Add(meta)
@@ -387,7 +387,7 @@ func TestLogoIndexer_Stats_BySource(t *testing.T) {
 	indexer, _ := setupTestLogoIndexer(t)
 
 	// Add cached logos
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		meta := storage.NewCachedLogoMetadata("https://example.com/cached-" + string(rune('a'+i)) + ".png")
 		meta.ContentType = "image/png"
 		meta.FileSize = 1000
@@ -395,7 +395,7 @@ func TestLogoIndexer_Stats_BySource(t *testing.T) {
 	}
 
 	// Add uploaded logos
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		meta := storage.NewUploadedLogoMetadata()
 		meta.ContentType = "image/png"
 		meta.FileSize = 2000

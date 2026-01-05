@@ -314,9 +314,9 @@ func readPSI(path string) *proto.PressureStats {
 	}
 
 	stats := &proto.PressureStats{}
-	lines := strings.Split(string(data), "\n")
+	lines := strings.SplitSeq(string(data), "\n")
 
-	for _, line := range lines {
+	for line := range lines {
 		if strings.HasPrefix(line, "some") {
 			// Parse: some avg10=X.XX avg60=X.XX avg300=X.XX total=XXXX
 			parts := strings.Fields(line)

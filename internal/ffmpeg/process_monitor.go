@@ -309,7 +309,7 @@ func getTotalMemory() uint64 {
 		return 0
 	}
 
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		if strings.HasPrefix(line, "MemTotal:") {
 			fields := strings.Fields(line)
 			if len(fields) >= 2 {

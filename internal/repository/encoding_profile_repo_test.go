@@ -347,7 +347,7 @@ func TestEncodingProfileRepo_Count(t *testing.T) {
 	assert.Equal(t, int64(0), count)
 
 	// Create profiles
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		profile := &models.EncodingProfile{
 			Name:             "Profile " + string(rune('A'+i)),
 			TargetVideoCodec: models.VideoCodecH264,
@@ -368,7 +368,7 @@ func TestEncodingProfileRepo_CountEnabled(t *testing.T) {
 	ctx := context.Background()
 
 	// Create enabled profiles
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		profile := &models.EncodingProfile{
 			Name:             "Enabled " + string(rune('A'+i)),
 			TargetVideoCodec: models.VideoCodecH264,
@@ -380,7 +380,7 @@ func TestEncodingProfileRepo_CountEnabled(t *testing.T) {
 	}
 
 	// Create profiles to be disabled (GORM default:true interferes with false on create)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		profile := &models.EncodingProfile{
 			Name:             "Disabled " + string(rune('A'+i)),
 			TargetVideoCodec: models.VideoCodecH265,

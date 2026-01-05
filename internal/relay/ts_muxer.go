@@ -435,7 +435,7 @@ func (m *TSMuxer) InitializeAndGetHeader() ([]byte, error) {
 		// Append null packets
 		result := make([]byte, len(patPmt)+packetsNeeded*TSPacketSize)
 		copy(result, patPmt)
-		for i := 0; i < packetsNeeded; i++ {
+		for i := range packetsNeeded {
 			copy(result[len(patPmt)+i*TSPacketSize:], nullPacket)
 		}
 		return result, nil

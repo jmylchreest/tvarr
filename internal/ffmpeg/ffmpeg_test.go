@@ -3,6 +3,7 @@ package ffmpeg
 import (
 	"context"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -453,13 +454,7 @@ func TestIntegration_BinaryDetector_GetEncoders(t *testing.T) {
 	require.NotEmpty(t, encoders)
 
 	// Check for common encoders
-	hasLibx264 := false
-	for _, enc := range encoders {
-		if enc == "libx264" {
-			hasLibx264 = true
-			break
-		}
-	}
+	hasLibx264 := slices.Contains(encoders, "libx264")
 
 	// libx264 might not be available in all builds
 	if hasLibx264 {

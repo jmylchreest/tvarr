@@ -143,11 +143,9 @@ func (p *HLSTSProcessor) Start(ctx context.Context) error {
 		slog.Bool("has_aac_config", p.AACConfig() != nil))
 
 	// Start processing loop
-	p.WaitGroup().Add(1)
-	go func() {
-		defer p.WaitGroup().Done()
+	p.WaitGroup().Go(func() {
 		p.runProcessingLoop(esVariant)
-	}()
+	})
 
 	return nil
 }

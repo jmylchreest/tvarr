@@ -281,8 +281,8 @@ func (d *HWAccelDetector) getAccelEncoders(ctx context.Context, accel string) []
 		return encoders
 	}
 
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(string(output), "\n")
+	for line := range lines {
 		for _, suffix := range suffixList {
 			if strings.Contains(line, suffix) {
 				parts := strings.Fields(line)
@@ -321,8 +321,8 @@ func (d *HWAccelDetector) getAccelDecoders(ctx context.Context, accel string) []
 		return decoders
 	}
 
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(string(output), "\n")
+	for line := range lines {
 		for _, pattern := range patternList {
 			if strings.Contains(line, pattern) {
 				parts := strings.Fields(line)

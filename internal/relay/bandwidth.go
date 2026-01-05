@@ -283,8 +283,8 @@ type EdgeBandwidthInfo struct {
 // EdgeBandwidthStats contains bandwidth stats for all edges in the pipeline.
 type EdgeBandwidthStats struct {
 	OriginToBuffer     EdgeBandwidthInfo            `json:"origin_to_buffer"`
-	BufferToTranscoder EdgeBandwidthInfo            `json:"buffer_to_transcoder,omitempty"`
-	TranscoderToBuffer EdgeBandwidthInfo            `json:"transcoder_to_buffer,omitempty"`
+	BufferToTranscoder EdgeBandwidthInfo            `json:"buffer_to_transcoder"`
+	TranscoderToBuffer EdgeBandwidthInfo            `json:"transcoder_to_buffer"`
 	BufferToProcessor  map[string]EdgeBandwidthInfo `json:"buffer_to_processor,omitempty"`
 	ProcessorToClient  map[string]EdgeBandwidthInfo `json:"processor_to_client,omitempty"`
 }

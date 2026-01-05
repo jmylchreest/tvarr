@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"maps"
 	"net/url"
 	"sync"
 	"time"
@@ -227,9 +228,7 @@ func (p *ConnectionPool) Stats() ConnectionPoolStats {
 	defer p.mu.Unlock()
 
 	hostStats := make(map[string]int, len(p.hostConns))
-	for host, count := range p.hostConns {
-		hostStats[host] = count
-	}
+	maps.Copy(hostStats, p.hostConns)
 
 	waitingCount := 0
 	for _, waiters := range p.waiters {

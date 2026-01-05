@@ -40,8 +40,8 @@ func ValidateM3U(content string) (channelCount int, err error) {
 	}
 
 	// Count EXTINF entries (one per channel)
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(content, "\n")
+	for line := range lines {
 		if strings.HasPrefix(line, "#EXTINF:") {
 			channelCount++
 		}

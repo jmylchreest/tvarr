@@ -324,11 +324,11 @@ type EnhancedCircuitBreakerStats struct {
 	Transitions []StateTransition `json:"transitions,omitempty"`
 
 	// Timestamps
-	LastFailure time.Time `json:"last_failure,omitempty"`
-	LastSuccess time.Time `json:"last_success,omitempty"`
+	LastFailure time.Time `json:"last_failure"`
+	LastSuccess time.Time `json:"last_success"`
 
 	// Recovery info (when open)
-	NextHalfOpenAt time.Time `json:"next_half_open_at,omitempty"`
+	NextHalfOpenAt time.Time `json:"next_half_open_at"`
 
 	// Config reference
 	Config CircuitBreakerProfileConfig `json:"config"`

@@ -238,8 +238,8 @@ func (d *CodecDetector) DetectSourceCodecs(ctx context.Context, streamURL string
 	info := &SourceCodecInfo{}
 
 	// Parse output
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(string(output), "\n")
+	for line := range lines {
 		parts := strings.SplitN(line, "=", 2)
 		if len(parts) != 2 {
 			continue
@@ -282,8 +282,8 @@ func (d *CodecDetector) DetectSourceCodecs(ctx context.Context, streamURL string
 	audioOutput, err := audioCmd.Output()
 	if err == nil {
 		// Parse audio output
-		audioLines := strings.Split(string(audioOutput), "\n")
-		for _, line := range audioLines {
+		audioLines := strings.SplitSeq(string(audioOutput), "\n")
+		for line := range audioLines {
 			parts := strings.SplitN(line, "=", 2)
 			if len(parts) == 2 && strings.TrimSpace(parts[0]) == "codec_name" {
 				info.AudioCodec = strings.TrimSpace(parts[1])

@@ -239,10 +239,7 @@ func (b *BufferInjector) demuxFMP4(data []byte, variant CodecVariant) (*CachedPl
 	}
 
 	// Calculate duration from max PTS (90kHz timescale)
-	maxPTS := maxVideoPTS
-	if maxAudioPTS > maxPTS {
-		maxPTS = maxAudioPTS
-	}
+	maxPTS := max(maxAudioPTS, maxVideoPTS)
 	cached.Duration = time.Duration(maxPTS) * time.Second / 90000
 
 	return cached, nil
@@ -306,10 +303,7 @@ func (b *BufferInjector) InjectStartupPlaceholder(variant *ESVariant, targetDura
 	}
 
 	// Calculate how many loops needed to fill target duration
-	loopCount := int(targetDuration / cached.Duration)
-	if loopCount < 1 {
-		loopCount = 1
-	}
+	loopCount := max(int(targetDuration/cached.Duration), 1)
 
 	// Calculate PTS increment per loop (in 90kHz timescale)
 	loopDurationPTS := int64(cached.Duration.Seconds() * 90000)

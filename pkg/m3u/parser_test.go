@@ -368,7 +368,7 @@ func TestParser_LargeFile(t *testing.T) {
 	builder.WriteString("#EXTM3U\n")
 
 	numChannels := 10000
-	for i := 0; i < numChannels; i++ {
+	for range numChannels {
 		builder.WriteString("#EXTINF:-1 tvg-id=\"ch")
 		builder.WriteString(strings.Repeat("x", 100)) // Long ID
 		builder.WriteString("\" tvg-name=\"Channel with a very long name that goes on and on\",Title\n")
@@ -626,14 +626,13 @@ func BenchmarkParser_Parse(b *testing.B) {
 	// Build a sample M3U with 1000 channels
 	var builder strings.Builder
 	builder.WriteString("#EXTM3U\n")
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		builder.WriteString("#EXTINF:-1 tvg-id=\"ch1\" tvg-name=\"Channel Name\" tvg-logo=\"http://logo.com/logo.png\" group-title=\"Category\",Channel Title\n")
 		builder.WriteString("http://example.com/stream.m3u8\n")
 	}
 	content := builder.String()
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		p := &Parser{
 			OnEntry: func(entry *Entry) error {
 				return nil
@@ -647,7 +646,7 @@ func BenchmarkParser_ParseCompressed_Gzip(b *testing.B) {
 	// Build and compress content
 	var builder strings.Builder
 	builder.WriteString("#EXTM3U\n")
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		builder.WriteString("#EXTINF:-1 tvg-id=\"ch1\" tvg-name=\"Channel Name\" group-title=\"Category\",Channel Title\n")
 		builder.WriteString("http://example.com/stream.m3u8\n")
 	}
@@ -658,8 +657,7 @@ func BenchmarkParser_ParseCompressed_Gzip(b *testing.B) {
 	_ = gw.Close()
 	compressed := buf.Bytes()
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		p := &Parser{
 			OnEntry: func(entry *Entry) error {
 				return nil

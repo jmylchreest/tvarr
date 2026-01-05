@@ -379,7 +379,7 @@ func TestEpgService_List(t *testing.T) {
 	service := NewEpgService(sourceRepo, programRepo, factory, stateManager)
 
 	// Create multiple sources
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		source := &models.EpgSource{
 			Name:    "Test EPG",
 			Type:    models.EpgSourceTypeXMLTV,

@@ -219,19 +219,19 @@ func (l *slogGormLogger) logStatsOnError() {
 	)
 }
 
-func (l *slogGormLogger) Info(ctx context.Context, msg string, args ...interface{}) {
+func (l *slogGormLogger) Info(ctx context.Context, msg string, args ...any) {
 	if l.level >= logger.Info {
 		l.logger.InfoContext(ctx, fmt.Sprintf(msg, args...))
 	}
 }
 
-func (l *slogGormLogger) Warn(ctx context.Context, msg string, args ...interface{}) {
+func (l *slogGormLogger) Warn(ctx context.Context, msg string, args ...any) {
 	if l.level >= logger.Warn {
 		l.logger.WarnContext(ctx, fmt.Sprintf(msg, args...))
 	}
 }
 
-func (l *slogGormLogger) Error(ctx context.Context, msg string, args ...interface{}) {
+func (l *slogGormLogger) Error(ctx context.Context, msg string, args ...any) {
 	if l.level >= logger.Error {
 		l.logger.ErrorContext(ctx, fmt.Sprintf(msg, args...))
 	}
@@ -417,14 +417,14 @@ func (db *DB) Driver() string {
 }
 
 // Stats returns database connection pool statistics.
-func (db *DB) Stats() (map[string]interface{}, error) {
+func (db *DB) Stats() (map[string]any, error) {
 	sqlDB, err := db.DB.DB()
 	if err != nil {
 		return nil, fmt.Errorf("getting underlying sql.DB: %w", err)
 	}
 
 	stats := sqlDB.Stats()
-	return map[string]interface{}{
+	return map[string]any{
 		"max_open_connections": stats.MaxOpenConnections,
 		"open_connections":     stats.OpenConnections,
 		"in_use":               stats.InUse,

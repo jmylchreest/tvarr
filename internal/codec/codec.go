@@ -3,6 +3,8 @@
 // used throughout tvarr for transcoding, muxing, and stream handling.
 package codec
 
+import "maps"
+
 import "strings"
 
 // Video represents a video codec.
@@ -687,9 +689,7 @@ func ValidVideoCodecs() map[string]Video {
 		"vp9":  VideoVP9,
 		"av1":  VideoAV1,
 	}
-	for name, codec := range commonAliases {
-		result[name] = codec
-	}
+	maps.Copy(result, commonAliases)
 	return result
 }
 
@@ -704,9 +704,7 @@ func ValidAudioCodecs() map[string]Audio {
 		"eac3": AudioEAC3,
 		"opus": AudioOpus,
 	}
-	for name, codec := range commonAliases {
-		result[name] = codec
-	}
+	maps.Copy(result, commonAliases)
 	return result
 }
 

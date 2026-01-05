@@ -135,25 +135,26 @@ func WithTimeout(timeout time.Duration) ClientOption {
 
 // apiURL builds the player_api.php URL with the given action and parameters.
 func (c *Client) apiURL(action string, params map[string]string) string {
-	u := fmt.Sprintf("%s%s?%s=%s&%s=%s",
+	var u strings.Builder
+	u.WriteString(fmt.Sprintf("%s%s?%s=%s&%s=%s",
 		c.BaseURL,
 		pathPlayerAPI,
 		paramUsername, url.QueryEscape(c.Username),
-		paramPassword, url.QueryEscape(c.Password))
+		paramPassword, url.QueryEscape(c.Password)))
 
 	if action != "" {
-		u += "&" + paramAction + "=" + url.QueryEscape(action)
+		u.WriteString("&" + paramAction + "=" + url.QueryEscape(action))
 	}
 
 	for k, v := range params {
-		u += "&" + url.QueryEscape(k) + "=" + url.QueryEscape(v)
+		u.WriteString("&" + url.QueryEscape(k) + "=" + url.QueryEscape(v))
 	}
 
-	return u
+	return u.String()
 }
 
 // doRequest performs an HTTP GET request and decodes the JSON response.
-func (c *Client) doRequest(ctx context.Context, requestURL string, target interface{}) error {
+func (c *Client) doRequest(ctx context.Context, requestURL string, target any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)

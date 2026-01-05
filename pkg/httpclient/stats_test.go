@@ -140,7 +140,7 @@ func TestStateTracker(t *testing.T) {
 		tracker := NewStateTracker()
 
 		// Record more than MaxTransitionHistory transitions
-		for i := 0; i < MaxTransitionHistory+10; i++ {
+		for i := range MaxTransitionHistory + 10 {
 			tracker.RecordTransition(CircuitClosed, CircuitOpen, TransitionReasonThresholdExceeded, i)
 		}
 

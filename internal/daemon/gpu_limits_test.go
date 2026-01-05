@@ -81,7 +81,7 @@ func TestGPUSessionTracker_AcquireEncodeSession(t *testing.T) {
 		tracker := NewGPUSessionTracker(gpus)
 
 		// Should allow many sessions
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			assert.True(t, tracker.AcquireEncodeSession(0))
 		}
 		assert.Equal(t, 100, tracker.encodeSessions[0])
@@ -142,7 +142,7 @@ func TestGPUSessionTracker_DecodeSession(t *testing.T) {
 		tracker := NewGPUSessionTracker(gpus)
 
 		// Decode max is 2x encode (6 sessions)
-		for i := 0; i < 6; i++ {
+		for range 6 {
 			assert.True(t, tracker.AcquireDecodeSession(0))
 		}
 		assert.False(t, tracker.AcquireDecodeSession(0))
@@ -205,7 +205,7 @@ func TestGPUSessionTracker_HasAvailableEncodeSessions(t *testing.T) {
 		tracker := NewGPUSessionTracker(gpus)
 
 		// Even with many sessions, unlimited should return true
-		for i := 0; i < 50; i++ {
+		for range 50 {
 			tracker.AcquireEncodeSession(0)
 		}
 		assert.True(t, tracker.HasAvailableEncodeSessions())
@@ -333,9 +333,9 @@ func TestGPUSessionTracker_Concurrency(t *testing.T) {
 		done := make(chan bool)
 
 		// Spawn goroutines that acquire and release
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			go func() {
-				for j := 0; j < 100; j++ {
+				for range 100 {
 					if tracker.AcquireEncodeSession(0) {
 						tracker.ReleaseEncodeSession(0)
 					}
@@ -345,7 +345,7 @@ func TestGPUSessionTracker_Concurrency(t *testing.T) {
 		}
 
 		// Wait for all goroutines
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			<-done
 		}
 

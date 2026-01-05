@@ -37,16 +37,16 @@ func (h *LogsHandler) SetHeartbeatInterval(interval time.Duration) {
 // LogEntryResponse represents a log entry in API responses.
 // Matches frontend LogEntry type.
 type LogEntryResponse struct {
-	ID        string                 `json:"id"`
-	Timestamp time.Time              `json:"timestamp"`
-	Level     string                 `json:"level"`
-	Message   string                 `json:"message"`
-	Module    string                 `json:"module,omitempty"`
-	Target    string                 `json:"target,omitempty"`
-	File      string                 `json:"file,omitempty"`
-	Line      int                    `json:"line,omitempty"`
-	Fields    map[string]interface{} `json:"fields,omitempty"`
-	Context   map[string]interface{} `json:"context,omitempty"`
+	ID        string         `json:"id"`
+	Timestamp time.Time      `json:"timestamp"`
+	Level     string         `json:"level"`
+	Message   string         `json:"message"`
+	Module    string         `json:"module,omitempty"`
+	Target    string         `json:"target,omitempty"`
+	File      string         `json:"file,omitempty"`
+	Line      int            `json:"line,omitempty"`
+	Fields    map[string]any `json:"fields,omitempty"`
+	Context   map[string]any `json:"context,omitempty"`
 }
 
 // LogStatsResponse represents log statistics in API responses.

@@ -2,6 +2,7 @@
 package relay
 
 import (
+	"maps"
 	"time"
 
 	"github.com/jmylchreest/tvarr/internal/models"
@@ -158,9 +159,7 @@ func (i *InitSegment) Clone() *InitSegment {
 	}
 	if len(i.TrackTimescales) > 0 {
 		clone.TrackTimescales = make(map[uint32]uint32, len(i.TrackTimescales))
-		for k, v := range i.TrackTimescales {
-			clone.TrackTimescales[k] = v
-		}
+		maps.Copy(clone.TrackTimescales, i.TrackTimescales)
 	}
 	return clone
 }

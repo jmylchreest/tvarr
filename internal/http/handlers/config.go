@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"maps"
 	"os"
 	"time"
 
@@ -225,9 +226,7 @@ func (h *ConfigHandler) getFeatures() map[string]bool {
 	defer h.featureHandler.mu.RUnlock()
 
 	flags := make(map[string]bool, len(h.featureHandler.flags))
-	for k, v := range h.featureHandler.flags {
-		flags[k] = v
-	}
+	maps.Copy(flags, h.featureHandler.flags)
 	return flags
 }
 
@@ -246,9 +245,7 @@ func (h *ConfigHandler) getFeatureConfig() map[string]map[string]any {
 	config := make(map[string]map[string]any, len(h.featureHandler.config))
 	for k, v := range h.featureHandler.config {
 		configCopy := make(map[string]any, len(v))
-		for ck, cv := range v {
-			configCopy[ck] = cv
-		}
+		maps.Copy(configCopy, v)
 		config[k] = configCopy
 	}
 	return config
@@ -262,9 +259,7 @@ func (h *ConfigHandler) updateFeatures(features map[string]bool) {
 	h.featureHandler.mu.Lock()
 	defer h.featureHandler.mu.Unlock()
 
-	for key, value := range features {
-		h.featureHandler.flags[key] = value
-	}
+	maps.Copy(h.featureHandler.flags, features)
 }
 
 func (h *ConfigHandler) getCircuitBreakerConfig() CircuitBreakerConfigData {

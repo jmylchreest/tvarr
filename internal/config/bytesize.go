@@ -66,7 +66,7 @@ func (b ByteSize) MarshalText() ([]byte, error) {
 
 // MarshalYAML implements yaml.Marshaler for pointer receivers.
 // This handles nil pointers gracefully for YAML serialization.
-func (b *ByteSize) MarshalYAML() (interface{}, error) {
+func (b *ByteSize) MarshalYAML() (any, error) {
 	if b == nil {
 		return nil, nil
 	}

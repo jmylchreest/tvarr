@@ -407,8 +407,8 @@ type GetStatsOutput struct {
 			CurrentlyAiring  int64     `json:"currently_airing"`
 			UpcomingPrograms int64     `json:"upcoming_programs"`
 			ExpiredPrograms  int64     `json:"expired_programs"`
-			EarliestProgram  time.Time `json:"earliest_program,omitempty"`
-			LatestProgram    time.Time `json:"latest_program,omitempty"`
+			EarliestProgram  time.Time `json:"earliest_program"`
+			LatestProgram    time.Time `json:"latest_program"`
 		} `json:"stats"`
 	}
 }

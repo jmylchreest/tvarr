@@ -431,10 +431,9 @@ func (d *DASHHandler) GenerateManifest(baseURL string) string {
 	// Calculate timeShiftBufferDepth based on how many segments we keep
 	// This tells clients how far back in time they can seek
 	// Use PlaylistSegments * targetDuration as a conservative estimate
-	timeShiftBuffer := segmentCount * targetDuration
-	if timeShiftBuffer < targetDuration*3 {
-		timeShiftBuffer = targetDuration * 3 // Minimum 3 segments worth
-	}
+	timeShiftBuffer := max(segmentCount*targetDuration,
+		// Minimum 3 segments worth
+		targetDuration*3)
 
 	sb.WriteString(fmt.Sprintf(`<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" `+
 		`xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" `+

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -123,10 +124,7 @@ func (h *ResourceHistory) GetHistory() (cpuHistory, memHistory []float64) {
 	}
 
 	// Calculate the actual number of samples to return
-	count := h.sampleCount
-	if count > ResourceHistorySize {
-		count = ResourceHistorySize
-	}
+	count := min(h.sampleCount, ResourceHistorySize)
 
 	cpuHistory = make([]float64, count)
 	memHistory = make([]float64, count)
@@ -1132,13 +1130,7 @@ func (s *RelaySession) cleanupUnusedVariants() {
 		removedVariants := make(map[CodecVariant]bool)
 
 		for _, v := range variantsBefore {
-			found := false
-			for _, va := range variantsAfter {
-				if v == va {
-					found = true
-					break
-				}
-			}
+			found := slices.Contains(variantsAfter, v)
 			if !found {
 				removedVariants[v] = true
 			}
@@ -2360,7 +2352,7 @@ type SessionStats struct {
 	Classification    string    `json:"classification"`
 	StartedAt         time.Time `json:"started_at"`
 	LastActivity      time.Time `json:"last_activity"`
-	IdleSince         time.Time `json:"idle_since,omitempty"`
+	IdleSince         time.Time `json:"idle_since"`
 	ClientCount       int       `json:"client_count"`
 	BytesWritten      uint64    `json:"bytes_written"`
 	BytesFromUpstream uint64    `json:"bytes_from_upstream"`
@@ -2403,7 +2395,7 @@ type ClientStats struct {
 	BytesRead     uint64    `json:"bytes_read"`
 	LastSequence  uint64    `json:"last_sequence"`
 	ConnectedAt   time.Time `json:"connected_at"`
-	LastRead      time.Time `json:"last_read,omitempty"`
+	LastRead      time.Time `json:"last_read"`
 	UserAgent     string    `json:"user_agent,omitempty"`
 	RemoteAddr    string    `json:"remote_addr,omitempty"`
 	ClientFormat  string    `json:"client_format,omitempty"`  // Format this client is using (hls, mpegts, dash)

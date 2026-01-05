@@ -995,10 +995,7 @@ func (c *Command) StreamToWriterWithRetry(ctx context.Context, w io.Writer, cfg 
 		}
 
 		// Increase delay with exponential backoff
-		delay = time.Duration(float64(delay) * cfg.BackoffFactor)
-		if delay > cfg.MaxDelay {
-			delay = cfg.MaxDelay
-		}
+		delay = min(time.Duration(float64(delay)*cfg.BackoffFactor), cfg.MaxDelay)
 	}
 
 	return fmt.Errorf("ffmpeg failed after %d attempts: %w", cfg.MaxAttempts, lastErr)

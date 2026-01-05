@@ -180,7 +180,7 @@ func TestDaemonDetailResponse(t *testing.T) {
 		data, err := json.Marshal(response)
 		require.NoError(t, err)
 
-		var parsed map[string]interface{}
+		var parsed map[string]any
 		err = json.Unmarshal(data, &parsed)
 		require.NoError(t, err)
 

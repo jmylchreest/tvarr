@@ -191,10 +191,7 @@ func (r *mockChannelRepo) GetBySourceIDPaginated(ctx context.Context, sourceID m
 	if offset >= len(channels) {
 		return []*models.Channel{}, total, nil
 	}
-	end := offset + limit
-	if end > len(channels) {
-		end = len(channels)
-	}
+	end := min(offset+limit, len(channels))
 	return channels[offset:end], total, nil
 }
 

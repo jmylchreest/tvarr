@@ -4,6 +4,7 @@ package relay
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/fmp4"
@@ -59,12 +60,7 @@ func IsFormatCompatibleWithCodec(codecName, format string) bool {
 		// Unknown codec - assume fMP4 formats are safe
 		return strings.Contains(format, "fmp4") || format == "dash"
 	}
-	for _, f := range formats {
-		if f == format {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(formats, format)
 }
 
 // ValidateAndFix ensures codec/format compatibility, fixing invalid combinations.

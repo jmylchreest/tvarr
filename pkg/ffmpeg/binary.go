@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -457,22 +458,12 @@ func (d *BinaryDetector) getFormats(ctx context.Context, ffmpegPath string) ([]F
 
 // HasEncoder returns true if the encoder is available.
 func (info *BinaryInfo) HasEncoder(name string) bool {
-	for _, enc := range info.Encoders {
-		if enc == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(info.Encoders, name)
 }
 
 // HasDecoder returns true if the decoder is available.
 func (info *BinaryInfo) HasDecoder(name string) bool {
-	for _, dec := range info.Decoders {
-		if dec == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(info.Decoders, name)
 }
 
 // HasFormat returns true if the format is available for muxing.

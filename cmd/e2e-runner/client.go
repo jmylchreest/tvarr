@@ -72,7 +72,7 @@ func (c *APIClient) CreateStreamSource(ctx context.Context, name, url string) (s
 		return "", fmt.Errorf("create stream source failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", err
 	}
@@ -110,7 +110,7 @@ func (c *APIClient) CreateEPGSource(ctx context.Context, name, url string) (stri
 		return "", fmt.Errorf("create EPG source failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", err
 	}
@@ -235,9 +235,9 @@ func (c *APIClient) waitForSSECompletionWithReady(ctx context.Context, ownerID s
 				return result.err
 			}
 			line := result.line
-			if strings.HasPrefix(line, "data: ") {
-				data := strings.TrimPrefix(line, "data: ")
-				var event map[string]interface{}
+			if after, ok := strings.CutPrefix(line, "data: "); ok {
+				data := after
+				var event map[string]any
 				if err := json.Unmarshal([]byte(data), &event); err != nil {
 					continue
 				}
@@ -275,7 +275,7 @@ func (c *APIClient) GetChannelCount(ctx context.Context) (int, error) {
 	}
 	defer resp.Body.Close()
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return 0, err
 	}
@@ -283,11 +283,11 @@ func (c *APIClient) GetChannelCount(ctx context.Context) (int, error) {
 	total, ok := result["total"].(float64)
 	if !ok {
 		// Try to count items array
-		items, ok := result["items"].([]interface{})
+		items, ok := result["items"].([]any)
 		if ok {
 			return len(items), nil
 		}
-		channels, ok := result["channels"].([]interface{})
+		channels, ok := result["channels"].([]any)
 		if ok {
 			return len(channels), nil
 		}
@@ -298,7 +298,7 @@ func (c *APIClient) GetChannelCount(ctx context.Context) (int, error) {
 
 // CreateStreamProxy creates a new stream proxy.
 func (c *APIClient) CreateStreamProxy(ctx context.Context, opts CreateStreamProxyOptions) (string, error) {
-	body := map[string]interface{}{
+	body := map[string]any{
 		"name":                opts.Name,
 		"source_ids":          opts.StreamSourceIDs,
 		"epg_source_ids":      opts.EpgSourceIDs,
@@ -332,7 +332,7 @@ func (c *APIClient) CreateStreamProxy(ctx context.Context, opts CreateStreamProx
 		return "", fmt.Errorf("create proxy failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", err
 	}
@@ -399,7 +399,7 @@ func (c *APIClient) TriggerProxyGeneration(ctx context.Context, proxyID string, 
 }
 
 // GetProxy fetches a proxy by ID.
-func (c *APIClient) GetProxy(ctx context.Context, proxyID string) (map[string]interface{}, error) {
+func (c *APIClient) GetProxy(ctx context.Context, proxyID string) (map[string]any, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/proxies/"+proxyID, nil)
 	if err != nil {
 		return nil, err
@@ -416,7 +416,7 @@ func (c *APIClient) GetProxy(ctx context.Context, proxyID string) (map[string]in
 		return nil, fmt.Errorf("get proxy failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
@@ -622,7 +622,7 @@ func (c *APIClient) UploadLogo(ctx context.Context, name string, fileData []byte
 		return nil, fmt.Errorf("upload logo failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode response failed: %w", err)
 	}
@@ -641,7 +641,7 @@ func (c *APIClient) UploadLogo(ctx context.Context, name string, fileData []byte
 // CreateDataMappingRule creates a new data mapping rule.
 func (c *APIClient) CreateDataMappingRule(ctx context.Context, name, sourceType, expression string, priority int) (string, error) {
 	isEnabled := true
-	body := map[string]interface{}{
+	body := map[string]any{
 		"name":        name,
 		"source_type": sourceType,
 		"expression":  expression,
@@ -667,7 +667,7 @@ func (c *APIClient) CreateDataMappingRule(ctx context.Context, name, sourceType,
 		return "", fmt.Errorf("create data mapping rule failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", fmt.Errorf("decode response failed: %w", err)
 	}
@@ -680,7 +680,7 @@ func (c *APIClient) CreateDataMappingRule(ctx context.Context, name, sourceType,
 }
 
 // GetEncodingProfiles fetches all encoding profiles (formerly relay profiles).
-func (c *APIClient) GetEncodingProfiles(ctx context.Context) ([]map[string]interface{}, error) {
+func (c *APIClient) GetEncodingProfiles(ctx context.Context) ([]map[string]any, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/encoding-profiles", nil)
 	if err != nil {
 		return nil, err
@@ -697,19 +697,19 @@ func (c *APIClient) GetEncodingProfiles(ctx context.Context) ([]map[string]inter
 		return nil, fmt.Errorf("fetch encoding profiles failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode response failed: %w", err)
 	}
 
-	profiles, ok := result["profiles"].([]interface{})
+	profiles, ok := result["profiles"].([]any)
 	if !ok {
 		return nil, nil // No profiles
 	}
 
-	var profileMaps []map[string]interface{}
+	var profileMaps []map[string]any
 	for _, p := range profiles {
-		if pm, ok := p.(map[string]interface{}); ok {
+		if pm, ok := p.(map[string]any); ok {
 			profileMaps = append(profileMaps, pm)
 		}
 	}
@@ -717,7 +717,7 @@ func (c *APIClient) GetEncodingProfiles(ctx context.Context) ([]map[string]inter
 }
 
 // GetRelayProfiles is deprecated - use GetEncodingProfiles instead.
-func (c *APIClient) GetRelayProfiles(ctx context.Context) ([]map[string]interface{}, error) {
+func (c *APIClient) GetRelayProfiles(ctx context.Context) ([]map[string]any, error) {
 	return c.GetEncodingProfiles(ctx)
 }
 
@@ -800,7 +800,7 @@ func (c *APIClient) TestClientDetectionExpression(ctx context.Context, expressio
 
 // TestClientDetectionExpressionWithHeaders tests an expression against a User-Agent and optional headers.
 func (c *APIClient) TestClientDetectionExpressionWithHeaders(ctx context.Context, expression, userAgent string, headers map[string]string) (bool, error) {
-	body := map[string]interface{}{
+	body := map[string]any{
 		"expression": expression,
 		"user_agent": userAgent,
 	}

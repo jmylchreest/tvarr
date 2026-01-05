@@ -609,7 +609,7 @@ func (s *Server) GetState() types.DaemonState {
 }
 
 // unaryInterceptor adds logging to unary RPCs.
-func (s *Server) unaryInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+func (s *Server) unaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 	start := time.Now()
 	resp, err := handler(ctx, req)
 	duration := time.Since(start)
@@ -631,7 +631,7 @@ func (s *Server) unaryInterceptor(ctx context.Context, req interface{}, info *gr
 }
 
 // streamInterceptor adds logging to streaming RPCs.
-func (s *Server) streamInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+func (s *Server) streamInterceptor(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 	start := time.Now()
 	err := handler(srv, ss)
 	duration := time.Since(start)

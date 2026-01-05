@@ -234,10 +234,7 @@ func (c *Client) DoWithContext(ctx context.Context, req *http.Request) (*http.Re
 			}
 
 			// Exponential backoff
-			delay = time.Duration(float64(delay) * c.config.BackoffMultiplier)
-			if delay > c.config.RetryMaxDelay {
-				delay = c.config.RetryMaxDelay
-			}
+			delay = min(time.Duration(float64(delay)*c.config.BackoffMultiplier), c.config.RetryMaxDelay)
 		}
 
 		// Check circuit breaker
@@ -748,7 +745,7 @@ type CircuitBreakerStats struct {
 	TotalRequests       int64                       `json:"total_requests"`
 	TotalSuccesses      int64                       `json:"total_successes"`
 	TotalFailures       int64                       `json:"total_failures"`
-	LastFailure         time.Time                   `json:"last_failure,omitempty"`
+	LastFailure         time.Time                   `json:"last_failure"`
 	Config              CircuitBreakerProfileConfig `json:"config"`
 }
 

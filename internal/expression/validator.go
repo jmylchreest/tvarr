@@ -95,10 +95,7 @@ func (v *Validator) Validate(expression string, domains ...ExpressionDomain) *Va
 				if start > 10 {
 					start = pe.Column - 10
 				}
-				end := pe.Column + 20
-				if end > len(preprocessed) {
-					end = len(preprocessed)
-				}
+				end := min(pe.Column+20, len(preprocessed))
 				context = preprocessed[start:end]
 			}
 		}
@@ -256,10 +253,7 @@ func similarity(a, b string) int {
 		}
 	}
 
-	maxLen := len(aLower)
-	if len(bLower) > maxLen {
-		maxLen = len(bLower)
-	}
+	maxLen := max(len(bLower), len(aLower))
 	if maxLen == 0 {
 		return 0
 	}

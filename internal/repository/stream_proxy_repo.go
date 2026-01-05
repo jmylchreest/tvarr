@@ -125,7 +125,7 @@ func (r *streamProxyRepo) GetByName(ctx context.Context, name string) (*models.S
 func (r *streamProxyRepo) UpdateStatus(ctx context.Context, id models.ULID, status models.StreamProxyStatus, lastError string) error {
 	// Use UpdateColumns to skip hooks (BeforeUpdate validation requires full model)
 	// Note: Must explicitly set updated_at since UpdateColumns bypasses GORM auto-update
-	if err := r.db.WithContext(ctx).Model(&models.StreamProxy{}).Where("id = ?", id).UpdateColumns(map[string]interface{}{
+	if err := r.db.WithContext(ctx).Model(&models.StreamProxy{}).Where("id = ?", id).UpdateColumns(map[string]any{
 		"status":     status,
 		"last_error": lastError,
 		"updated_at": models.Now(),
@@ -140,7 +140,7 @@ func (r *streamProxyRepo) UpdateLastGeneration(ctx context.Context, id models.UL
 	now := models.Now()
 	// Use UpdateColumns to skip hooks (BeforeUpdate validation requires full model)
 	// Note: Must explicitly set updated_at since UpdateColumns bypasses GORM auto-update
-	if err := r.db.WithContext(ctx).Model(&models.StreamProxy{}).Where("id = ?", id).UpdateColumns(map[string]interface{}{
+	if err := r.db.WithContext(ctx).Model(&models.StreamProxy{}).Where("id = ?", id).UpdateColumns(map[string]any{
 		"status":            models.StreamProxyStatusSuccess,
 		"last_generated_at": now,
 		"channel_count":     channelCount,

@@ -421,7 +421,7 @@ func TestTSMuxer_RoundTrip(t *testing.T) {
 		}
 
 		// Write more frames to ensure we have enough data
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			if err := muxer.WriteVideo(int64((i+1)*3000), int64((i+1)*3000), videoData, false); err != nil {
 				select {
 				case writeErr <- err:

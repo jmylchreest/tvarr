@@ -389,7 +389,7 @@ func TestMultipleDaemonsReconnect(t *testing.T) {
 	errChan := make(chan error, numDaemons)
 	successChan := make(chan string, numDaemons)
 
-	for i := 0; i < numDaemons; i++ {
+	for i := range numDaemons {
 		go func(idx int) {
 			conn, err := grpc.NewClient(
 				listener.Addr().String(),
@@ -429,7 +429,7 @@ func TestMultipleDaemonsReconnect(t *testing.T) {
 	// Collect results
 	var registered []string
 	var errors []error
-	for i := 0; i < numDaemons; i++ {
+	for range numDaemons {
 		select {
 		case err := <-errChan:
 			errors = append(errors, err)

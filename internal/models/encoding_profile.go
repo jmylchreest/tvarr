@@ -1,6 +1,8 @@
 package models
 
 import (
+	"strings"
+
 	"gorm.io/gorm"
 )
 
@@ -399,14 +401,14 @@ func (p *EncodingProfile) generateDefaultInputFlags() string {
 	flags = append(flags, "-f mpegts", "-analyzeduration 500000", "-probesize 500000")
 
 	// Join all flags with spaces
-	result := ""
+	var result strings.Builder
 	for i, f := range flags {
 		if i > 0 {
-			result += " "
+			result.WriteString(" ")
 		}
-		result += f
+		result.WriteString(f)
 	}
-	return result
+	return result.String()
 }
 
 // generateDefaultOutputFlags returns auto-generated output flags.
@@ -462,14 +464,14 @@ func (p *EncodingProfile) generateDefaultOutputFlags() string {
 	flags = append(flags, "-flush_packets 1", "-muxdelay 0")
 
 	// Join all flags with spaces
-	result := ""
+	var result strings.Builder
 	for i, f := range flags {
 		if i > 0 {
-			result += " "
+			result.WriteString(" ")
 		}
-		result += f
+		result.WriteString(f)
 	}
-	return result
+	return result.String()
 }
 
 // isHardwareEncoder returns true if the encoder name indicates a hardware encoder.

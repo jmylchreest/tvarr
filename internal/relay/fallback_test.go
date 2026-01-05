@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os/exec"
+	"slices"
 	"testing"
 	"time"
 )
@@ -257,13 +258,7 @@ func TestDefaultErrorPatterns(t *testing.T) {
 	}
 
 	for _, expected := range expectedPatterns {
-		found := false
-		for _, pattern := range patterns {
-			if pattern == expected {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(patterns, expected)
 		if !found {
 			t.Errorf("expected pattern %q not found", expected)
 		}
@@ -404,7 +399,7 @@ func TestFallbackController_CheckError(t *testing.T) {
 	controller := NewFallbackController(gen, 3, 30*time.Second, nil)
 
 	// First two errors shouldn't trigger fallback
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		triggered := controller.CheckError("Connection refused")
 		if triggered {
 			t.Errorf("error %d shouldn't trigger fallback", i+1)

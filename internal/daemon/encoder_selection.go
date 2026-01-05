@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -75,13 +76,7 @@ func (s *EncoderSelector) SelectVideoEncoderWithPreference(targetCodec, preferre
 				accelType := strings.ToLower(string(accel.Type))
 				if accelType == preferredHWAccel && accel.Available {
 					// Check if this specific encoder is in the GPU-validated encoder list
-					encoderSupported := false
-					for _, validEnc := range accel.Encoders {
-						if validEnc == enc {
-							encoderSupported = true
-							break
-						}
-					}
+					encoderSupported := slices.Contains(accel.Encoders, enc)
 
 					slog.Debug("checking preferred hwaccel encoder support",
 						slog.String("hwaccel", preferredHWAccel),
@@ -129,13 +124,7 @@ func (s *EncoderSelector) SelectVideoEncoderWithPreference(targetCodec, preferre
 					// Check if this specific encoder is in the GPU-validated encoder list
 					// This is critical because FFmpeg may list encoders (e.g., vp9_vaapi)
 					// even when the GPU only supports decoding, not encoding
-					encoderSupported := false
-					for _, validEnc := range accel.Encoders {
-						if validEnc == enc {
-							encoderSupported = true
-							break
-						}
-					}
+					encoderSupported := slices.Contains(accel.Encoders, enc)
 
 					slog.Debug("checking hwaccel encoder support",
 						slog.String("hwaccel", hwType),

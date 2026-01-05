@@ -44,7 +44,7 @@ type Theme struct {
 	Source ThemeSource `json:"source"`
 
 	// ModifiedAt is the file modification time (for custom themes and caching).
-	ModifiedAt time.Time `json:"modified_at,omitempty"`
+	ModifiedAt time.Time `json:"modified_at"`
 
 	// Colors contains extracted color values for theme previews.
 	Colors *ThemeColors `json:"colors,omitempty"`

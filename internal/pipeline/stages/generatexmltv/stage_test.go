@@ -242,7 +242,7 @@ func TestStage_Interface(t *testing.T) {
 func TestStage_ContextCancellation(t *testing.T) {
 	state := newTestState(t)
 	// Create many channels and programs to increase chance of cancellation during iteration
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		state.Channels = append(state.Channels, &models.Channel{
 			TvgID:       "test",
 			ChannelName: "Test",

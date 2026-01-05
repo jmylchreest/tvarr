@@ -172,10 +172,7 @@ func (m *mockJobRepo) GetHistory(ctx context.Context, jobType *models.JobType, o
 	if offset >= len(filtered) {
 		return nil, total, nil
 	}
-	end := offset + limit
-	if end > len(filtered) {
-		end = len(filtered)
-	}
+	end := min(offset+limit, len(filtered))
 	return filtered[offset:end], total, nil
 }
 

@@ -213,7 +213,7 @@ type CircuitStats struct {
 	State           string    `json:"state"`
 	Failures        int       `json:"failures"`
 	Successes       int       `json:"successes"`
-	LastFailureTime time.Time `json:"last_failure_time,omitempty"`
+	LastFailureTime time.Time `json:"last_failure_time"`
 	LastStateChange time.Time `json:"last_state_change"`
 }
 

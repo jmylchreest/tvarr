@@ -150,7 +150,7 @@ func TestStateManager_GetAllStates(t *testing.T) {
 	m := NewStateManager()
 
 	// Start multiple ingestions
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		sourceID := models.NewULID()
 		_ = m.Start(&models.StreamSource{BaseModel: models.BaseModel{ID: sourceID}, Name: "Source"})
 	}

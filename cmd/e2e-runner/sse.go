@@ -56,9 +56,9 @@ func (c *SSECollector) Start(ctx context.Context) error {
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
 			line := scanner.Text()
-			if strings.HasPrefix(line, "data: ") {
-				data := strings.TrimPrefix(line, "data: ")
-				var event map[string]interface{}
+			if after, ok := strings.CutPrefix(line, "data: "); ok {
+				data := after
+				var event map[string]any
 				if err := json.Unmarshal([]byte(data), &event); err != nil {
 					continue
 				}

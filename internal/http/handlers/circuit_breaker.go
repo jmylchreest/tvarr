@@ -95,7 +95,7 @@ type CircuitBreakerStatusData struct {
 	TotalRequests    int64     `json:"total_requests"`
 	TotalSuccesses   int64     `json:"total_successes"`
 	TotalFailures    int64     `json:"total_failures"`
-	LastFailure      time.Time `json:"last_failure,omitempty"`
+	LastFailure      time.Time `json:"last_failure"`
 }
 
 // Enhanced stats types - mirrors pkg/httpclient/stats.go for API response

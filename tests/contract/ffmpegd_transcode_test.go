@@ -476,7 +476,7 @@ func TestTranscodeMessage_LargeBatch(t *testing.T) {
 	}
 
 	// Fill with realistic sample sizes
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		isKey := i%30 == 0 // Keyframe every 30 frames
 		dataSize := 10000  // ~10KB per frame
 		if isKey {
@@ -491,7 +491,7 @@ func TestTranscodeMessage_LargeBatch(t *testing.T) {
 		}
 	}
 
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		batch.AudioSamples[i] = &pb.ESSample{
 			Pts:      int64(i * 1920), // 48kHz audio at 90kHz timescale
 			Data:     make([]byte, 1024),

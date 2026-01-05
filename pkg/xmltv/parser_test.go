@@ -327,7 +327,7 @@ func TestParser_LargeFile(t *testing.T) {
 	builder.WriteString(`<?xml version="1.0" encoding="UTF-8"?><tv>`)
 
 	numProgrammes := 10000
-	for i := 0; i < numProgrammes; i++ {
+	for range numProgrammes {
 		builder.WriteString(`<programme start="20240115180000 +0000" stop="20240115190000 +0000" channel="ch1">`)
 		builder.WriteString(`<title>Programme Title</title>`)
 		builder.WriteString(`<desc>Programme description goes here.</desc>`)
@@ -413,7 +413,7 @@ func BenchmarkParser_Parse(b *testing.B) {
 	// Build sample content
 	var builder strings.Builder
 	builder.WriteString(`<?xml version="1.0" encoding="UTF-8"?><tv>`)
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		builder.WriteString(`<programme start="20240115180000 +0000" stop="20240115190000 +0000" channel="ch1">`)
 		builder.WriteString(`<title>Programme Title</title><desc>Description</desc><category>Category</category>`)
 		builder.WriteString(`</programme>`)
@@ -421,8 +421,7 @@ func BenchmarkParser_Parse(b *testing.B) {
 	builder.WriteString(`</tv>`)
 	content := builder.String()
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		p := &Parser{
 			OnProgramme: func(prog *Programme) error {
 				return nil

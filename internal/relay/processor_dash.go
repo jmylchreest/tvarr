@@ -210,11 +210,9 @@ func (p *DASHProcessor) Start(ctx context.Context) error {
 		slog.String("variant", p.Variant().String()))
 
 	// Start processing loop
-	p.WaitGroup().Add(1)
-	go func() {
-		defer p.WaitGroup().Done()
+	p.WaitGroup().Go(func() {
 		p.runProcessingLoop(esVariant)
-	}()
+	})
 
 	return nil
 }

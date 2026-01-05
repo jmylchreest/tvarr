@@ -182,7 +182,7 @@ func (h *ExpressionHandler) Validate(ctx context.Context, input *ValidateExpress
 	// Parse domain parameter
 	var domains []expression.ExpressionDomain
 	if input.Domain != "" {
-		for _, part := range strings.Split(input.Domain, ",") {
+		for part := range strings.SplitSeq(input.Domain, ",") {
 			part = strings.TrimSpace(strings.ToLower(part))
 			if domain, ok := expression.ParseExpressionDomain(part); ok {
 				domains = append(domains, domain)

@@ -30,7 +30,7 @@ func TestNewLogger_JSONFormat(t *testing.T) {
 	assert.Contains(t, output, `"key":"value"`)
 
 	// Verify it's valid JSON
-	var parsed map[string]interface{}
+	var parsed map[string]any
 	err := json.Unmarshal([]byte(output), &parsed)
 	require.NoError(t, err)
 }

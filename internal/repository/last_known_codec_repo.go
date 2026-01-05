@@ -132,7 +132,7 @@ func (r *lastKnownCodecRepository) Touch(ctx context.Context, streamURL string) 
 	// Use UpdateColumns to skip hooks since we're doing a partial update
 	result := r.db.WithContext(ctx).Model(&models.LastKnownCodec{}).
 		Where("stream_url = ?", streamURL).
-		UpdateColumns(map[string]interface{}{
+		UpdateColumns(map[string]any{
 			"hit_count":  gorm.Expr("hit_count + 1"),
 			"updated_at": now,
 		})

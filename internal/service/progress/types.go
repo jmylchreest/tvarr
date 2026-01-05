@@ -2,6 +2,7 @@
 package progress
 
 import (
+	"maps"
 	"time"
 
 	"github.com/jmylchreest/tvarr/internal/models"
@@ -162,9 +163,7 @@ func (p *UniversalProgress) Clone() *UniversalProgress {
 	}
 	if p.Metadata != nil {
 		clone.Metadata = make(map[string]any, len(p.Metadata))
-		for k, v := range p.Metadata {
-			clone.Metadata[k] = v
-		}
+		maps.Copy(clone.Metadata, p.Metadata)
 	}
 	return &clone
 }

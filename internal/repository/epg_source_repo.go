@@ -99,7 +99,7 @@ func (r *epgSourceRepo) GetByURL(ctx context.Context, url string) (*models.EpgSo
 // UpdateLastIngestion updates the last ingestion timestamp and status.
 func (r *epgSourceRepo) UpdateLastIngestion(ctx context.Context, id models.ULID, status string, programCount int) error {
 	now := models.Now()
-	updates := map[string]interface{}{
+	updates := map[string]any{
 		"status":            status,
 		"program_count":     programCount,
 		"last_ingestion_at": now,

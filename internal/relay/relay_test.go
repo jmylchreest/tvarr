@@ -29,7 +29,7 @@ func TestCircuitBreaker_OpensAfterFailures(t *testing.T) {
 	cb := NewCircuitBreaker(config)
 
 	// Record failures
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		cb.RecordFailure()
 	}
 
@@ -289,7 +289,7 @@ func TestConnectionPool_GlobalMax(t *testing.T) {
 	ctx := context.Background()
 
 	releases := make([]func(), 3)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		var err error
 		releases[i], err = pool.AcquireForHost(ctx, "host"+string(rune('1'+i)))
 		require.NoError(t, err)

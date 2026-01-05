@@ -211,13 +211,13 @@ func (r *DynamicContextResolver) Resolve(parameter string) (string, bool) {
 	}
 
 	// Parse "path):key" format
-	parenIdx := strings.Index(parameter, ")")
-	if parenIdx == -1 {
+	before, after, ok := strings.Cut(parameter, ")")
+	if !ok {
 		return "", false
 	}
 
-	path := parameter[:parenIdx]
-	rest := parameter[parenIdx+1:]
+	path := before
+	rest := after
 
 	// Expect ":key" after the closing paren
 	if !strings.HasPrefix(rest, ":") || len(rest) < 2 {
@@ -243,15 +243,15 @@ func ParseDynamicSyntax(s string) (path, key string, ok bool) {
 
 	// Find closing paren
 	rest := s[len("@dynamic("):]
-	parenIdx := strings.Index(rest, ")")
-	if parenIdx == -1 {
+	before, after, ok0 := strings.Cut(rest, ")")
+	if !ok0 {
 		return "", "", false
 	}
 
-	path = rest[:parenIdx]
+	path = before
 
 	// Expect ":key" after closing paren
-	afterParen := rest[parenIdx+1:]
+	afterParen := after
 	if !strings.HasPrefix(afterParen, ":") || len(afterParen) < 2 {
 		return "", "", false
 	}

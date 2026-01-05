@@ -70,7 +70,7 @@ func TestBandwidthTracker_SampleWindowLimit(t *testing.T) {
 	tracker := NewBandwidthTrackerWithConfig(windowSize, time.Second)
 
 	// Add samples beyond window size
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		tracker.Add(1000)
 		tracker.Sample()
 	}
@@ -151,9 +151,9 @@ func TestBandwidthTracker_ConcurrentAccess(t *testing.T) {
 	done := make(chan bool)
 
 	// Concurrent writes
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				tracker.Add(100)
 			}
 			done <- true
@@ -161,9 +161,9 @@ func TestBandwidthTracker_ConcurrentAccess(t *testing.T) {
 	}
 
 	// Concurrent reads
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		go func() {
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				_ = tracker.TotalBytes()
 				_ = tracker.CurrentBps()
 				_ = tracker.History()
@@ -173,7 +173,7 @@ func TestBandwidthTracker_ConcurrentAccess(t *testing.T) {
 	}
 
 	// Wait for all goroutines
-	for i := 0; i < 15; i++ {
+	for range 15 {
 		<-done
 	}
 

@@ -224,7 +224,7 @@ func (f *FallbackGenerator) Stats() FallbackStats {
 type FallbackStats struct {
 	Initialized     bool      `json:"initialized"`
 	SegmentSize     int       `json:"segment_size"`
-	LastGenerated   time.Time `json:"last_generated,omitempty"`
+	LastGenerated   time.Time `json:"last_generated"`
 	Width           int       `json:"width"`
 	Height          int       `json:"height"`
 	SegmentDuration float64   `json:"segment_duration"`
@@ -547,11 +547,11 @@ func (c *FallbackController) Stats() FallbackControllerStats {
 // FallbackControllerStats holds statistics for the fallback controller.
 type FallbackControllerStats struct {
 	InFallback        bool          `json:"in_fallback"`
-	FallbackStart     time.Time     `json:"fallback_start,omitempty"`
+	FallbackStart     time.Time     `json:"fallback_start"`
 	FallbackDuration  time.Duration `json:"fallback_duration_ns,omitempty"`
 	ErrorCount        int           `json:"error_count"`
 	ErrorThreshold    int           `json:"error_threshold"`
 	RecoveryInterval  time.Duration `json:"recovery_interval_ns"`
 	RecoveryAttempts  int           `json:"recovery_attempts"`
-	LastRecoveryCheck time.Time     `json:"last_recovery_check,omitempty"`
+	LastRecoveryCheck time.Time     `json:"last_recovery_check"`
 }

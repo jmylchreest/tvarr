@@ -210,11 +210,9 @@ func TestProgressHandler_SSEEvents(t *testing.T) {
 
 		// Run handler in goroutine with WaitGroup to ensure completion
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			router.ServeHTTP(rec, req)
-		}()
+		})
 
 		// Give handler time to start
 		time.Sleep(50 * time.Millisecond)
@@ -246,11 +244,9 @@ func TestProgressHandler_SSEEvents(t *testing.T) {
 		rec := httptest.NewRecorder()
 
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			router.ServeHTTP(rec, req)
-		}()
+		})
 
 		time.Sleep(50 * time.Millisecond)
 
@@ -288,11 +284,9 @@ func TestProgressHandler_SSEHeartbeat(t *testing.T) {
 		rec := httptest.NewRecorder()
 
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			router.ServeHTTP(rec, req)
-		}()
+		})
 
 		// Wait for handler to complete
 		wg.Wait()
@@ -350,11 +344,9 @@ func TestProgressHandler_SSEIntegration(t *testing.T) {
 		rec := httptest.NewRecorder()
 
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			router.ServeHTTP(rec, req)
-		}()
+		})
 
 		// Wait for handler to start
 		time.Sleep(50 * time.Millisecond)

@@ -486,7 +486,7 @@ func (s *GRPCServer) GetStats(ctx context.Context, req *proto.GetStatsRequest) (
 }
 
 // unaryInterceptor adds logging to unary RPCs.
-func (s *GRPCServer) unaryInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+func (s *GRPCServer) unaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 	start := time.Now()
 	resp, err := handler(ctx, req)
 	duration := time.Since(start)
@@ -514,7 +514,7 @@ func (s *GRPCServer) unaryInterceptor(ctx context.Context, req interface{}, info
 }
 
 // streamInterceptor adds logging to streaming RPCs.
-func (s *GRPCServer) streamInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+func (s *GRPCServer) streamInterceptor(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 	start := time.Now()
 	err := handler(srv, ss)
 	duration := time.Since(start)

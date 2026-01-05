@@ -67,9 +67,9 @@ type TranscodeJob struct {
 	// Assignment
 	State       JobState  `json:"state"`
 	DaemonID    DaemonID  `json:"daemon_id,omitempty"`
-	AssignedAt  time.Time `json:"assigned_at,omitempty"`
-	StartedAt   time.Time `json:"started_at,omitempty"`
-	CompletedAt time.Time `json:"completed_at,omitempty"`
+	AssignedAt  time.Time `json:"assigned_at"`
+	StartedAt   time.Time `json:"started_at"`
+	CompletedAt time.Time `json:"completed_at"`
 
 	// Configuration
 	Config *TranscodeConfig `json:"config"`

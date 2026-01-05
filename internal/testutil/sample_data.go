@@ -317,7 +317,7 @@ func DefaultGenerateOptions() GenerateOptions {
 func (g *SampleDataGenerator) GenerateSampleChannels(count int, opts GenerateOptions) []SampleChannel {
 	channels := make([]SampleChannel, count)
 
-	for i := 0; i < count; i++ {
+	for i := range count {
 		var channelName string
 		if g.rng.Float64() < opts.TimeshiftRatio {
 			channelName = g.GenerateTimeshiftChannelName(opts.Category)
@@ -399,7 +399,7 @@ func (g *SampleDataGenerator) GenerateMixedChannels(count int) []SampleChannel {
 	categories := []string{"news", "sports", "movies", "entertainment", "music", "kids"}
 	channels := make([]SampleChannel, count)
 
-	for i := 0; i < count; i++ {
+	for i := range count {
 		category := categories[g.rng.Intn(len(categories))]
 		opts := DefaultGenerateOptions()
 		opts.Category = category
@@ -471,7 +471,7 @@ func (g *SampleDataGenerator) GenerateProgramsForChannel(channelID string, count
 	programs := make([]SampleProgram, count)
 	currentTime := opts.AnchorTime.Truncate(time.Hour)
 
-	for i := 0; i < count; i++ {
+	for i := range count {
 		// Pick a random duration
 		duration := opts.Durations[g.rng.Intn(len(opts.Durations))]
 

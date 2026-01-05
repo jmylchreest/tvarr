@@ -48,8 +48,8 @@ func ParseStatusCodes(s string) (*StatusCodeSet, error) {
 
 	set := NewStatusCodeSet()
 
-	parts := strings.Split(s, ",")
-	for _, part := range parts {
+	parts := strings.SplitSeq(s, ",")
+	for part := range parts {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue

@@ -2,6 +2,7 @@ package shared
 
 import (
 	"context"
+	"maps"
 	"sync"
 
 	"github.com/jmylchreest/tvarr/internal/pipeline/core"
@@ -91,9 +92,7 @@ func (pm *ProgressManager) GetAllProgress() map[string]*StageProgress {
 	defer pm.mu.RUnlock()
 
 	result := make(map[string]*StageProgress, len(pm.stages))
-	for k, v := range pm.stages {
-		result[k] = v
-	}
+	maps.Copy(result, pm.stages)
 	return result
 }
 

@@ -397,10 +397,7 @@ func (s *SourceService) Ingest(ctx context.Context, id models.ULID) error {
 
 	// Batch upsert channels in smaller transactions to reduce lock duration
 	for i := 0; i < len(allChannels); i += batchSize {
-		end := i + batchSize
-		if end > len(allChannels) {
-			end = len(allChannels)
-		}
+		end := min(i+batchSize, len(allChannels))
 		batch := allChannels[i:end]
 
 		if err := s.channelRepo.UpsertBatch(ctx, batch); err != nil {

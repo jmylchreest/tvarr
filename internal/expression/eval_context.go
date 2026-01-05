@@ -1,5 +1,7 @@
 package expression
 
+import "maps"
+
 // SourceMetadata contains metadata about the source of a record.
 type SourceMetadata struct {
 	Name string
@@ -66,9 +68,7 @@ func (c *BaseEvalContext) SetSourceMetadata(name, sourceType, url string) {
 // GetAllFields returns a copy of all field values including source metadata.
 func (c *BaseEvalContext) GetAllFields() map[string]string {
 	result := make(map[string]string, len(c.fields)+3)
-	for k, v := range c.fields {
-		result[k] = v
-	}
+	maps.Copy(result, c.fields)
 	if c.source.Name != "" {
 		result["source_name"] = c.source.Name
 	}
@@ -132,8 +132,6 @@ func (c *MapEvalContext) SetFieldValue(name, value string) {
 // GetAllFields returns a copy of all field values.
 func (c *MapEvalContext) GetAllFields() map[string]string {
 	result := make(map[string]string, len(c.fields))
-	for k, v := range c.fields {
-		result[k] = v
-	}
+	maps.Copy(result, c.fields)
 	return result
 }

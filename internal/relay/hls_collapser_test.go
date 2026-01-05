@@ -389,8 +389,7 @@ func BenchmarkMarshalAnnexB(b *testing.B) {
 		bytes.Repeat([]byte{0x65}, 5000), // IDR slice ~5KB
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = marshalAnnexB(nalus)
 	}
 }
@@ -417,7 +416,7 @@ func TestHLSCollapser_HandlePTSOffset_Concurrent(t *testing.T) {
 	collapser := NewHLSCollapser(&http.Client{}, "http://example.com/playlist.m3u8")
 
 	var wg sync.WaitGroup
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		wg.Add(1)
 		go func(pts int64) {
 			defer wg.Done()

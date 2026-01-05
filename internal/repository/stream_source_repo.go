@@ -87,7 +87,7 @@ func (r *streamSourceRepo) GetByName(ctx context.Context, name string) (*models.
 // UpdateLastIngestion updates the last ingestion timestamp and status.
 func (r *streamSourceRepo) UpdateLastIngestion(ctx context.Context, id models.ULID, status string, channelCount int) error {
 	now := models.Now()
-	updates := map[string]interface{}{
+	updates := map[string]any{
 		"status":            status,
 		"channel_count":     channelCount,
 		"last_ingestion_at": now,
@@ -102,7 +102,7 @@ func (r *streamSourceRepo) UpdateLastIngestion(ctx context.Context, id models.UL
 
 // UpdateStatus updates only the status and optionally the error.
 func (r *streamSourceRepo) UpdateStatus(ctx context.Context, id models.ULID, status string, lastError string) error {
-	updates := map[string]interface{}{
+	updates := map[string]any{
 		"status":     status,
 		"last_error": lastError,
 	}

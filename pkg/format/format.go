@@ -140,10 +140,7 @@ func CronDescription(cronExpr string) string {
 	if strings.Contains(hour, "/") {
 		if step := extractStep(hour); step != nil {
 			// Determine start hour (default to 0 if * or not specified)
-			startHour := 0
-			if step.start >= 0 {
-				startHour = step.start
-			}
+			startHour := max(step.start, 0)
 			// Get the minute value
 			minVal := 0
 			if m, err := strconv.Atoi(min); err == nil {
@@ -247,15 +244,15 @@ type stepInfo struct {
 }
 
 func extractStep(field string) *stepInfo {
-	idx := strings.Index(field, "/")
-	if idx < 0 {
+	before, after, ok := strings.Cut(field, "/")
+	if !ok {
 		return nil
 	}
-	interval, err := strconv.Atoi(field[idx+1:])
+	interval, err := strconv.Atoi(after)
 	if err != nil {
 		return nil
 	}
-	startPart := field[:idx]
+	startPart := before
 	start := -1
 	if startPart != "*" {
 		if s, err := strconv.Atoi(startPart); err == nil {

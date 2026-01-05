@@ -201,8 +201,8 @@ func (s *ManualChannelService) validateLogoFormat(logo string) error {
 	}
 
 	// Check for @logo: token format
-	if strings.HasPrefix(logo, "@logo:") {
-		token := strings.TrimPrefix(logo, "@logo:")
+	if after, ok := strings.CutPrefix(logo, "@logo:"); ok {
+		token := after
 		if token == "" {
 			return fmt.Errorf("invalid logo reference format: @logo: requires a token")
 		}

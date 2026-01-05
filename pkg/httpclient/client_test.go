@@ -351,7 +351,7 @@ func TestClient_CircuitBreakerIntegration(t *testing.T) {
 		client := New(cfg)
 
 		// Make requests until circuit opens
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			client.Get(context.Background(), server.URL)
 		}
 
@@ -478,7 +478,7 @@ func TestClient_AcceptableStatusCodes_CircuitBreaker(t *testing.T) {
 		client := New(cfg)
 
 		// Make 3 requests that return 404
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			resp, err := client.Get(context.Background(), server.URL)
 			require.NoError(t, err)
 			resp.Body.Close()
@@ -502,7 +502,7 @@ func TestClient_AcceptableStatusCodes_CircuitBreaker(t *testing.T) {
 		client := New(cfg)
 
 		// Make 5 requests that return 404
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			resp, err := client.Get(context.Background(), server.URL)
 			require.NoError(t, err)
 			resp.Body.Close()
@@ -532,7 +532,7 @@ func TestClient_AcceptableStatusCodes_CircuitBreaker(t *testing.T) {
 		client := New(cfg)
 
 		// Make requests: 2x404 (acceptable) + 3x500 (failure)
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			resp, err := client.Get(context.Background(), server.URL)
 			require.NoError(t, err)
 			resp.Body.Close()
@@ -565,7 +565,7 @@ func TestClient_AcceptableStatusCodes_CircuitBreaker(t *testing.T) {
 		client := New(cfg)
 
 		// Make 9 requests alternating 404, 410, 200
-		for i := 0; i < 9; i++ {
+		for range 9 {
 			resp, err := client.Get(context.Background(), server.URL)
 			require.NoError(t, err)
 			resp.Body.Close()
@@ -589,7 +589,7 @@ func TestClient_AcceptableStatusCodes_CircuitBreaker(t *testing.T) {
 		client := New(cfg)
 
 		// Make 3 requests that return 200 (not in acceptable list)
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			resp, err := client.Get(context.Background(), server.URL)
 			require.NoError(t, err)
 			resp.Body.Close()

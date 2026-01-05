@@ -76,7 +76,7 @@ func (u ULID) Value() (driver.Value, error) {
 }
 
 // Scan implements sql.Scanner for database retrieval.
-func (u *ULID) Scan(value interface{}) error {
+func (u *ULID) Scan(value any) error {
 	if value == nil {
 		*u = ULID{}
 		return nil
@@ -151,7 +151,7 @@ type BaseModel struct {
 	ID        ULID           `gorm:"primarykey;type:varchar(26)" json:"id"`
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at"`
 }
 
 // BeforeCreate generates a ULID if not already set.

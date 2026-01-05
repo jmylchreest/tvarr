@@ -98,7 +98,7 @@ type CachedLogoMetadata struct {
 	// LastSeenAt is when this logo was last seen in channel/program data.
 	// Updated each time the logo URL appears during pipeline processing.
 	// Used for time-based pruning of stale logos.
-	LastSeenAt time.Time `json:"last_seen_at,omitempty"`
+	LastSeenAt time.Time `json:"last_seen_at"`
 
 	// SourceHint is optional context about where this logo came from.
 	// Examples: "channel:BBC One", "program:News at Ten"

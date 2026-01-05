@@ -120,7 +120,7 @@ func (ms *ManagedServer) Start(ctx context.Context) error {
 	client := &http.Client{Timeout: 2 * time.Second}
 	healthURL := ms.baseURL + "/health"
 
-	for i := 0; i < 30; i++ {
+	for range 30 {
 		select {
 		case <-ctx.Done():
 			ms.Stop()

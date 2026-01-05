@@ -802,9 +802,9 @@ func (s *BackupService) loadBackupMetadata(backupPath string) (*models.BackupMet
 				slog.String("error", err.Error()),
 			)
 		}
-	} else if strings.HasSuffix(backupPath, ".db.gz") {
+	} else if before, ok := strings.CutSuffix(backupPath, ".db.gz"); ok {
 		// Legacy format: read from companion .meta.json file
-		metaPath := strings.TrimSuffix(backupPath, ".db.gz") + ".meta.json"
+		metaPath := before + ".meta.json"
 		metaData, err := os.ReadFile(metaPath)
 		if err == nil {
 			if err := json.Unmarshal(metaData, &metaFile); err != nil {

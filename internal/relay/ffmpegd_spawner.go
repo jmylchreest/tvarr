@@ -532,8 +532,8 @@ func (s *FFmpegDSpawner) GetVersion() string {
 	// Parse version from output like "tvarr-ffmpegd version dev (7d124c1d*)"
 	// Extract just the version part after "version "
 	line := strings.TrimSpace(string(output))
-	if idx := strings.Index(line, "version "); idx != -1 {
-		return strings.TrimSpace(line[idx+8:])
+	if _, after, ok := strings.Cut(line, "version "); ok {
+		return strings.TrimSpace(after)
 	}
 
 	return line

@@ -1,5 +1,7 @@
 package expression
 
+import "slices"
+
 import "sync"
 
 // FieldType represents the data type of a field.
@@ -142,13 +144,7 @@ func (r *FieldRegistry) ValidateForDomain(name string, domain FieldDomain) bool 
 		return true
 	}
 
-	for _, d := range def.Domains {
-		if d == domain {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(def.Domains, domain)
 }
 
 // ListByDomain returns all field definitions valid for the given domain.

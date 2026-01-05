@@ -73,7 +73,7 @@ func (r *E2ERunner) RunID() string {
 }
 
 // log prints a message if verbose mode is enabled.
-func (r *E2ERunner) log(format string, args ...interface{}) {
+func (r *E2ERunner) log(format string, args ...any) {
 	if r.verbose {
 		fmt.Printf(format+"\n", args...)
 	}

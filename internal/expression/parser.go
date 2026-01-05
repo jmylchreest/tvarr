@@ -2,6 +2,7 @@ package expression
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -600,10 +601,8 @@ func conditionUsesRegex(node ConditionNode) bool {
 	case *Condition:
 		return c.Operator.IsRegex()
 	case *ConditionGroup:
-		for _, child := range c.Children {
-			if conditionUsesRegex(child) {
-				return true
-			}
+		if slices.ContainsFunc(c.Children, conditionUsesRegex) {
+			return true
 		}
 	}
 	return false

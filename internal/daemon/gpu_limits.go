@@ -261,8 +261,8 @@ func detectNVIDIASessionLimits(ctx context.Context) (map[int]GPUSessionLimits, e
 		return nil, err
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(strings.TrimSpace(string(output)), "\n")
+	for line := range lines {
 		parts := strings.SplitN(line, ", ", 2)
 		if len(parts) < 2 {
 			continue

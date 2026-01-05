@@ -1,5 +1,7 @@
 package types
 
+import "slices"
+
 // Capabilities describes what a daemon can do.
 type Capabilities struct {
 	// Hardware acceleration
@@ -29,32 +31,18 @@ type Capabilities struct {
 
 // HasEncoder returns true if the capability includes the given encoder.
 func (c *Capabilities) HasEncoder(encoder string) bool {
-	for _, enc := range c.VideoEncoders {
-		if enc == encoder {
-			return true
-		}
+	if slices.Contains(c.VideoEncoders, encoder) {
+		return true
 	}
-	for _, enc := range c.AudioEncoders {
-		if enc == encoder {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(c.AudioEncoders, encoder)
 }
 
 // HasDecoder returns true if the capability includes the given decoder.
 func (c *Capabilities) HasDecoder(decoder string) bool {
-	for _, dec := range c.VideoDecoders {
-		if dec == decoder {
-			return true
-		}
+	if slices.Contains(c.VideoDecoders, decoder) {
+		return true
 	}
-	for _, dec := range c.AudioDecoders {
-		if dec == decoder {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(c.AudioDecoders, decoder)
 }
 
 // HasHWAccel returns true if the capability includes the given hardware acceleration type.

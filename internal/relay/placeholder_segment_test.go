@@ -82,7 +82,7 @@ func TestPlaceholderSegmentGenerator_MultipleVariants(t *testing.T) {
 			}
 
 			// Generate a few segments
-			for seq := uint64(0); seq < 3; seq++ {
+			for seq := range uint64(3) {
 				seg, err := gen.GenerateSegment(seq)
 				if err != nil {
 					t.Fatalf("GenerateSegment(%d) error = %v", seq, err)

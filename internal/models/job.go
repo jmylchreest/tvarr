@@ -202,15 +202,11 @@ func (j *Job) CalculateNextBackoff() time.Duration {
 
 	// Calculate exponential backoff
 	// Ensure attemptCount is at least 1 to avoid negative shift
-	attempts := j.AttemptCount
-	if attempts < 1 {
-		attempts = 1
-	}
+	attempts := max(j.AttemptCount, 1)
 
-	multiplier := 1 << (attempts - 1) // 2^(attempts-1)
-	if multiplier < 1 {
-		multiplier = 1
-	}
+	multiplier := max(
+		// 2^(attempts-1)
+		1<<(attempts-1), 1)
 
 	backoffSecs := j.BackoffSeconds * multiplier
 

@@ -278,6 +278,6 @@ func (m *Migrator) appliedRecords(ctx context.Context) (map[string]MigrationReco
 
 // AutoMigrateModels performs GORM AutoMigrate on the given models.
 // This is a convenience function for simple schema updates.
-func (m *Migrator) AutoMigrateModels(ctx context.Context, models ...interface{}) error {
+func (m *Migrator) AutoMigrateModels(ctx context.Context, models ...any) error {
 	return m.db.WithContext(ctx).AutoMigrate(models...)
 }

@@ -4,6 +4,7 @@ package logs
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"sync"
 	"time"
 
@@ -21,16 +22,16 @@ const (
 
 // LogEntry represents a single log entry for streaming to clients.
 type LogEntry struct {
-	ID        string                 `json:"id"`
-	Timestamp time.Time              `json:"timestamp"`
-	Level     string                 `json:"level"`
-	Message   string                 `json:"message"`
-	Module    string                 `json:"module,omitempty"`
-	Target    string                 `json:"target,omitempty"`
-	File      string                 `json:"file,omitempty"`
-	Line      int                    `json:"line,omitempty"`
-	Fields    map[string]interface{} `json:"fields,omitempty"`
-	Context   map[string]interface{} `json:"context,omitempty"`
+	ID        string         `json:"id"`
+	Timestamp time.Time      `json:"timestamp"`
+	Level     string         `json:"level"`
+	Message   string         `json:"message"`
+	Module    string         `json:"module,omitempty"`
+	Target    string         `json:"target,omitempty"`
+	File      string         `json:"file,omitempty"`
+	Line      int            `json:"line,omitempty"`
+	Fields    map[string]any `json:"fields,omitempty"`
+	Context   map[string]any `json:"context,omitempty"`
 }
 
 // LogStats provides statistics about the log stream.
@@ -182,9 +183,7 @@ func (s *Service) GetStats() LogStats {
 	}
 
 	// Copy level stats
-	for level, count := range s.stats.byLevel {
-		stats.LogsByLevel[level] = count
-	}
+	maps.Copy(stats.LogsByLevel, s.stats.byLevel)
 
 	// Ensure all levels exist
 	for _, level := range []string{"trace", "debug", "info", "warn", "error"} {
@@ -194,9 +193,7 @@ func (s *Service) GetStats() LogStats {
 	}
 
 	// Copy module stats
-	for module, count := range s.stats.byModule {
-		stats.LogsByModule[module] = count
-	}
+	maps.Copy(stats.LogsByModule, s.stats.byModule)
 
 	// Copy recent errors
 	copy(stats.RecentErrors, s.recentErrors)
@@ -228,10 +225,7 @@ func (s *Service) GetRecentLogs(limit int) []LogEntry {
 	}
 
 	// Return most recent logs
-	start := len(s.logs) - limit
-	if start < 0 {
-		start = 0
-	}
+	start := max(len(s.logs)-limit, 0)
 
 	result := make([]LogEntry, limit)
 	copy(result, s.logs[start:])
@@ -281,7 +275,7 @@ func (h *logsHandler) Handle(ctx context.Context, r slog.Record) error {
 			Timestamp: r.Time,
 			Level:     levelToString(r.Level),
 			Message:   r.Message,
-			Fields:    make(map[string]interface{}),
+			Fields:    make(map[string]any),
 		}
 
 		// Add pre-set attributes
@@ -356,12 +350,12 @@ func (h *logsHandler) addAttr(entry *LogEntry, attr slog.Attr) {
 		}
 	case "request_id":
 		if entry.Context == nil {
-			entry.Context = make(map[string]interface{})
+			entry.Context = make(map[string]any)
 		}
 		entry.Context["request_id"] = value
 	case "correlation_id":
 		if entry.Context == nil {
-			entry.Context = make(map[string]interface{})
+			entry.Context = make(map[string]any)
 		}
 		entry.Context["correlation_id"] = value
 	default:

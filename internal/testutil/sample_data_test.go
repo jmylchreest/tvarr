@@ -27,7 +27,7 @@ func TestNewSampleDataGeneratorWithSeed(t *testing.T) {
 func TestRandomBroadcaster(t *testing.T) {
 	gen := NewSampleDataGenerator()
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		broadcaster := gen.RandomBroadcaster()
 		assert.NotEmpty(t, broadcaster)
 		assert.Contains(t, Broadcasters, broadcaster)
@@ -37,7 +37,7 @@ func TestRandomBroadcaster(t *testing.T) {
 func TestRandomQuality(t *testing.T) {
 	gen := NewSampleDataGenerator()
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		quality := gen.RandomQuality()
 		assert.NotEmpty(t, quality)
 		assert.Contains(t, QualityVariants, quality)
@@ -47,7 +47,7 @@ func TestRandomQuality(t *testing.T) {
 func TestRandomTimeshift(t *testing.T) {
 	gen := NewSampleDataGenerator()
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		timeshift := gen.RandomTimeshift()
 		assert.NotEmpty(t, timeshift)
 		assert.Contains(t, TimeshiftVariants, timeshift)
@@ -368,7 +368,7 @@ func TestNoRealBrandNames(t *testing.T) {
 
 	// Check generated channel names don't start with real brand names
 	gen := NewSampleDataGenerator()
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		name := gen.GenerateChannelName("entertainment")
 		words := strings.Fields(name)
 		if len(words) > 0 {

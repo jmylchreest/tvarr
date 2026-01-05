@@ -335,7 +335,7 @@ func TestEncodingProfileService_Count(t *testing.T) {
 	assert.Equal(t, int64(0), count)
 
 	// Create profiles
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		profile := &models.EncodingProfile{
 			Name:             "Profile " + string(rune('A'+i)),
 			TargetVideoCodec: models.VideoCodecH264,

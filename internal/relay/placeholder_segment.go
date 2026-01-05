@@ -252,10 +252,7 @@ func (g *PlaceholderSegmentGenerator) GenerateSegment(sequence uint64) (*Segment
 	segmentStartPTS := int64(float64(sequence) * g.targetDuration * 90000)
 
 	// Calculate how many placeholder loops needed to fill target duration
-	loopCount := int(g.targetDuration / g.cached.Duration.Seconds())
-	if loopCount < 1 {
-		loopCount = 1
-	}
+	loopCount := max(int(g.targetDuration/g.cached.Duration.Seconds()), 1)
 
 	loopDurationPTS := int64(g.cached.Duration.Seconds() * 90000)
 

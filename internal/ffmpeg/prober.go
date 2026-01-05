@@ -69,7 +69,7 @@ type ProbeStream struct {
 	BitRate        string            `json:"bit_rate,omitempty"`
 	MaxBitRate     string            `json:"max_bit_rate,omitempty"`
 	NumFrames      string            `json:"nb_frames,omitempty"`
-	Disposition    ProbeDisposition  `json:"disposition,omitempty"`
+	Disposition    ProbeDisposition  `json:"disposition"`
 	Tags           map[string]string `json:"tags,omitempty"`
 }
 
@@ -378,10 +378,7 @@ func (p *Prober) simplify(result *ProbeResult) *StreamInfo {
 
 	// Set the "primary" video/audio properties from the selected/default track
 	// Default to first track if no default is marked
-	selectedVideo := 0
-	if defaultVideoIdx >= 0 {
-		selectedVideo = defaultVideoIdx
-	}
+	selectedVideo := max(defaultVideoIdx, 0)
 	if len(info.VideoTracks) > 0 {
 		vt := info.VideoTracks[selectedVideo]
 		info.VideoCodec = vt.Codec
@@ -395,10 +392,7 @@ func (p *Prober) simplify(result *ProbeResult) *StreamInfo {
 		info.SelectedVideoTrack = selectedVideo
 	}
 
-	selectedAudio := 0
-	if defaultAudioIdx >= 0 {
-		selectedAudio = defaultAudioIdx
-	}
+	selectedAudio := max(defaultAudioIdx, 0)
 	if len(info.AudioTracks) > 0 {
 		at := info.AudioTracks[selectedAudio]
 		info.AudioCodec = at.Codec

@@ -266,26 +266,20 @@ func (t *ESTranscoder) Start(ctx context.Context) error {
 	// Start input goroutine (sends samples to ffmpegd via stream)
 	// Only needed when NOT using direct input mode
 	if !t.config.UseDirectInput {
-		t.wg.Add(1)
-		go func() {
-			defer t.wg.Done()
+		t.wg.Go(func() {
 			t.runInputLoop(sourceVariant, stream)
-		}()
+		})
 	}
 
 	// Start output goroutine (receives transcoded samples from job)
-	t.wg.Add(1)
-	go func() {
-		defer t.wg.Done()
+	t.wg.Go(func() {
 		t.runOutputLoop(targetVariant)
-	}()
+	})
 
 	// Start stats polling goroutine (samples resource history for sparklines)
-	t.wg.Add(1)
-	go func() {
-		defer t.wg.Done()
+	t.wg.Go(func() {
 		t.runStatsPoller()
-	}()
+	})
 
 	return nil
 }
