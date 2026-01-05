@@ -160,8 +160,8 @@ func (s *BackupService) GetBackupDirectory() string {
 func (s *BackupService) CreateBackup(ctx context.Context) (*models.BackupMetadata, error) {
 	// Start progress tracking if service is available
 	var progressMgr *progress.OperationManager
-	// Use a system-level ULID for backup operations (empty ULID)
-	backupID := models.ULID{}
+	// Generate a unique ULID for this backup operation
+	backupID := models.NewULID()
 
 	if s.progressService != nil {
 		stages := getBackupStages()
