@@ -472,20 +472,21 @@ export function Backups() {
       // Only handle backup operation events
       if (event.operation_type !== 'backup') return;
 
-      // Get the backup event type from metadata
-      const backupEventType = event.metadata?.backup_event as string;
-
-      if (backupEventType === 'backup_started') {
+      // Handle based on state
+      if (event.state === 'processing' || event.state === 'preparing' || event.state === 'saving') {
         setCreating(true);
-        setSuccess('Backup started...');
+        // Show current stage message if available
+        const currentStage = event.stages?.find(s => s.id === event.current_stage);
+        const message = currentStage?.stage_step || 'Backup in progress...';
+        setSuccess(message);
         setError(null);
-      } else if (backupEventType === 'backup_completed') {
+      } else if (event.state === 'completed') {
         setCreating(false);
-        const filename = event.metadata?.filename as string;
-        setSuccess(filename ? `Backup completed: ${filename}` : 'Backup completed');
+        setSuccess('Backup completed successfully');
+        setError(null);
         // Refresh the backup list to show the new backup
         loadBackups();
-      } else if (backupEventType === 'backup_failed') {
+      } else if (event.state === 'error') {
         setCreating(false);
         setError(event.error || 'Backup failed');
         setSuccess(null);

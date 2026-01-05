@@ -22,6 +22,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/jmylchreest/tvarr/internal/config"
 	"github.com/jmylchreest/tvarr/internal/models"
+	"github.com/jmylchreest/tvarr/internal/service/progress"
 	"github.com/jmylchreest/tvarr/internal/version"
 	"gorm.io/gorm"
 )
@@ -38,13 +39,17 @@ type BackupService struct {
 	cfg             config.BackupConfig
 	storageDir      string
 	logger          *slog.Logger
-	progressService ProgressService
+	progressService *progress.Service
 }
 
-// ProgressService is the interface for progress/SSE notifications.
-type ProgressService interface {
-	// BroadcastBackupEvent sends a backup event to all subscribers.
-	BroadcastBackupEvent(eventType string, filename string, err error)
+// getBackupStages returns the stages for backup progress tracking.
+func getBackupStages() []progress.StageInfo {
+	return []progress.StageInfo{
+		{ID: "prepare", Name: "Preparing", Weight: 0.05},
+		{ID: "vacuum", Name: "Creating snapshot", Weight: 0.60},
+		{ID: "archive", Name: "Compressing", Weight: 0.25},
+		{ID: "finalize", Name: "Finalizing", Weight: 0.10},
+	}
 }
 
 // NewBackupService creates a new backup service.
@@ -66,7 +71,7 @@ func (s *BackupService) WithLogger(logger *slog.Logger) *BackupService {
 }
 
 // WithProgressService sets the progress service for SSE notifications.
-func (s *BackupService) WithProgressService(ps ProgressService) *BackupService {
+func (s *BackupService) WithProgressService(ps *progress.Service) *BackupService {
 	s.progressService = ps
 	return s
 }
@@ -153,14 +158,44 @@ func (s *BackupService) GetBackupDirectory() string {
 // CreateBackup creates a full database backup as a tar.gz archive containing
 // both the database and metadata.
 func (s *BackupService) CreateBackup(ctx context.Context) (*models.BackupMetadata, error) {
+	// Start progress tracking if service is available
+	var progressMgr *progress.OperationManager
+	// Use a system-level ULID for backup operations (empty ULID)
+	backupID := models.ULID{}
+
+	if s.progressService != nil {
+		stages := getBackupStages()
+		var err error
+		progressMgr, err = s.progressService.StartOperation(progress.OpBackup, backupID, "system", "Database Backup", stages)
+		if err != nil {
+			s.logger.Warn("failed to start progress tracking", slog.String("error", err.Error()))
+			progressMgr = nil
+		}
+	}
+
+	// Helper to fail with progress update
+	failWithError := func(err error) (*models.BackupMetadata, error) {
+		if progressMgr != nil {
+			progressMgr.Fail(err)
+		}
+		return nil, err
+	}
+
+	// Stage 1: Prepare
+	var prepareStage *progress.StageUpdater
+	if progressMgr != nil {
+		prepareStage = progressMgr.StartStage("prepare")
+		prepareStage.SetProgress(0.0, "Checking disk space")
+	}
+
 	// Ensure backup directory exists
 	if err := os.MkdirAll(s.storageDir, 0755); err != nil {
-		return nil, fmt.Errorf("creating backup directory: %w", err)
+		return failWithError(fmt.Errorf("creating backup directory: %w", err))
 	}
 
 	// Check available disk space before proceeding
 	if err := s.checkDiskSpace(); err != nil {
-		return nil, err
+		return failWithError(err)
 	}
 
 	// Generate timestamp-based filename with milliseconds for uniqueness
@@ -171,7 +206,18 @@ func (s *BackupService) CreateBackup(ctx context.Context) (*models.BackupMetadat
 
 	// Check if backup with same name already exists (extremely rare with ms precision)
 	if _, err := os.Stat(tarGzPath); err == nil {
-		return nil, fmt.Errorf("backup already exists: %s", filepath.Base(tarGzPath))
+		return failWithError(fmt.Errorf("backup already exists: %s", filepath.Base(tarGzPath)))
+	}
+
+	if prepareStage != nil {
+		prepareStage.Complete()
+	}
+
+	// Stage 2: Vacuum (database snapshot)
+	var vacuumStage *progress.StageUpdater
+	if progressMgr != nil {
+		vacuumStage = progressMgr.StartStage("vacuum")
+		vacuumStage.SetProgress(0.0, "Creating database snapshot (this may take a few minutes)")
 	}
 
 	// Use VACUUM INTO for consistent SQLite backup
@@ -182,22 +228,37 @@ func (s *BackupService) CreateBackup(ctx context.Context) (*models.BackupMetadat
 	s.logger.Debug("creating backup using VACUUM INTO", slog.String("path", dbPath))
 	vacuumCtx := context.WithoutCancel(ctx)
 	if err := s.db.WithContext(vacuumCtx).Exec("VACUUM INTO ?", dbPath).Error; err != nil {
-		return nil, fmt.Errorf("vacuum into backup: %w", err)
+		return failWithError(fmt.Errorf("vacuum into backup: %w", err))
 	}
 	defer os.Remove(dbPath) // Clean up temp database file
 
 	// Get uncompressed size
 	dbInfo, err := os.Stat(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("stat backup db: %w", err)
+		return failWithError(fmt.Errorf("stat backup db: %w", err))
 	}
 	uncompressedSize := dbInfo.Size()
+
+	if vacuumStage != nil {
+		vacuumStage.SetProgress(0.8, "Collecting table statistics")
+	}
 
 	// Get table counts using detached context to avoid timeout issues
 	tableCounts, err := s.getTableCounts(vacuumCtx)
 	if err != nil {
 		s.logger.Warn("failed to get table counts", slog.String("error", err.Error()))
 		tableCounts = make(map[string]int)
+	}
+
+	if vacuumStage != nil {
+		vacuumStage.Complete()
+	}
+
+	// Stage 3: Archive (compression)
+	var archiveStage *progress.StageUpdater
+	if progressMgr != nil {
+		archiveStage = progressMgr.StartStage("archive")
+		archiveStage.SetProgress(0.0, "Compressing database")
 	}
 
 	// Create metadata struct (checksum will be added after we know the archive size)
@@ -211,18 +272,33 @@ func (s *BackupService) CreateBackup(ctx context.Context) (*models.BackupMetadat
 	// Create the tar.gz archive
 	if err := s.createTarGzArchive(tarGzPath, dbPath, metaFile); err != nil {
 		os.Remove(tarGzPath)
-		return nil, fmt.Errorf("creating archive: %w", err)
+		return failWithError(fmt.Errorf("creating archive: %w", err))
+	}
+
+	if archiveStage != nil {
+		archiveStage.Complete()
+	}
+
+	// Stage 4: Finalize
+	var finalizeStage *progress.StageUpdater
+	if progressMgr != nil {
+		finalizeStage = progressMgr.StartStage("finalize")
+		finalizeStage.SetProgress(0.0, "Calculating checksum")
 	}
 
 	// Get archive size and calculate checksum
 	archiveInfo, err := os.Stat(tarGzPath)
 	if err != nil {
-		return nil, fmt.Errorf("stat archive: %w", err)
+		return failWithError(fmt.Errorf("stat archive: %w", err))
 	}
 
 	checksum, err := s.calculateChecksum(tarGzPath)
 	if err != nil {
-		return nil, fmt.Errorf("calculating checksum: %w", err)
+		return failWithError(fmt.Errorf("calculating checksum: %w", err))
+	}
+
+	if finalizeStage != nil {
+		finalizeStage.SetProgress(0.5, "Writing final metadata")
 	}
 
 	// Update the archive with the checksum in metadata
@@ -230,7 +306,7 @@ func (s *BackupService) CreateBackup(ctx context.Context) (*models.BackupMetadat
 	metaFile.Checksum = checksum
 	if err := s.createTarGzArchive(tarGzPath, dbPath, metaFile); err != nil {
 		os.Remove(tarGzPath)
-		return nil, fmt.Errorf("updating archive with checksum: %w", err)
+		return failWithError(fmt.Errorf("updating archive with checksum: %w", err))
 	}
 
 	// Get final archive size (should be nearly identical)
@@ -249,39 +325,34 @@ func (s *BackupService) CreateBackup(ctx context.Context) (*models.BackupMetadat
 		TableCounts:    metaFile.ToTableCounts(),
 	}
 
+	// Complete progress tracking
+	if finalizeStage != nil {
+		finalizeStage.Complete()
+	}
+	if progressMgr != nil {
+		progressMgr.Complete("Backup created successfully")
+	}
+
 	s.logger.Info("backup created",
 		slog.String("filename", meta.Filename),
 		slog.Int64("size", meta.FileSize),
 		slog.String("checksum", truncateChecksum(meta.Checksum)),
 	)
 
-	// Broadcast completion event
-	s.broadcastEvent("backup_completed", meta.Filename, nil)
-
 	return meta, nil
 }
 
 // CreateBackupAsync starts a backup operation in the background and returns immediately.
-// Progress and completion are reported via SSE events.
+// Progress and completion are reported via SSE events through the progress service.
 func (s *BackupService) CreateBackupAsync() {
-	// Broadcast start event
-	s.broadcastEvent("backup_started", "", nil)
-
 	go func() {
 		_, err := s.CreateBackup(context.Background())
 		if err != nil {
 			s.logger.Error("async backup failed", slog.String("error", err.Error()))
-			s.broadcastEvent("backup_failed", "", err)
+			// Note: CreateBackup already handles progress.Fail() on error
 		}
-		// Note: CreateBackup already broadcasts backup_completed on success
+		// Note: CreateBackup already handles progress.Complete() on success
 	}()
-}
-
-// broadcastEvent sends a backup event to all SSE subscribers.
-func (s *BackupService) broadcastEvent(eventType, filename string, err error) {
-	if s.progressService != nil {
-		s.progressService.BroadcastBackupEvent(eventType, filename, err)
-	}
 }
 
 // createTarGzArchive creates a tar.gz archive containing the database and metadata.
