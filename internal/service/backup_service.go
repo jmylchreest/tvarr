@@ -162,8 +162,13 @@ func (s *BackupService) CreateBackup(ctx context.Context) (*models.BackupMetadat
 	}
 
 	// Use VACUUM INTO for consistent SQLite backup
+	// Note: VACUUM INTO can take several minutes for large databases (100MB+).
+	// We use context.WithoutCancel to prevent HTTP request timeouts from
+	// interrupting the backup operation. The backup will complete even if
+	// the client disconnects.
 	s.logger.Debug("creating backup using VACUUM INTO", slog.String("path", dbPath))
-	if err := s.db.Exec("VACUUM INTO ?", dbPath).Error; err != nil {
+	vacuumCtx := context.WithoutCancel(ctx)
+	if err := s.db.WithContext(vacuumCtx).Exec("VACUUM INTO ?", dbPath).Error; err != nil {
 		return nil, fmt.Errorf("vacuum into backup: %w", err)
 	}
 	defer os.Remove(dbPath) // Clean up temp database file
@@ -175,8 +180,8 @@ func (s *BackupService) CreateBackup(ctx context.Context) (*models.BackupMetadat
 	}
 	uncompressedSize := dbInfo.Size()
 
-	// Get table counts
-	tableCounts, err := s.getTableCounts(ctx)
+	// Get table counts using detached context to avoid timeout issues
+	tableCounts, err := s.getTableCounts(vacuumCtx)
 	if err != nil {
 		s.logger.Warn("failed to get table counts", slog.String("error", err.Error()))
 		tableCounts = make(map[string]int)
