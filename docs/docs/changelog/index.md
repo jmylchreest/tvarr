@@ -1,7 +1,6 @@
 ---
 title: Changelog
 description: Release history and changes
-sidebar_position: 9
 ---
 
 # Changelog
