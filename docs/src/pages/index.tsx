@@ -1,79 +1,154 @@
-import React from 'react';
-import clsx from 'clsx';
+import type {ReactNode} from 'react';
 import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
+
 import styles from './index.module.css';
 
-function HomepageHeader() {
-  const { siteConfig } = useDocusaurusContext();
+function HeroSection() {
   return (
-    <header className={clsx('hero hero--primary', styles.heroBanner)}>
-      <div className="container">
-        <h1 className="hero__title">{siteConfig.title}</h1>
-        <p className="hero__subtitle">{siteConfig.tagline}</p>
+    <section className={styles.hero}>
+      <div className={styles.heroInner}>
+        <h1 className={styles.title}>
+          tv<span className={styles.titleAccent}>arr</span>
+        </h1>
+        <p className={styles.pronunciation}>/tee-vee-arr/</p>
+        <p className={styles.tagline}>
+          An IPTV proxy and stream aggregator for home users.
+          Combine multiple sources into one curated manifest for your favorite player.
+        </p>
+
         <div className={styles.buttons}>
-          <Link
-            className="button button--secondary button--lg"
-            to="/docs/next/">
+          <Link className={styles.primaryBtn} to="/docs/next">
             Get Started
           </Link>
-          <Link
-            className="button button--outline button--lg"
-            style={{ marginLeft: '1rem', color: 'white', borderColor: 'white' }}
-            href="https://github.com/jmylchreest/tvarr">
+          <Link className={styles.secondaryBtn} to="https://github.com/jmylchreest/tvarr">
             View on GitHub
           </Link>
         </div>
+
+        <div className={styles.codePreview}>
+          <div className={styles.codeHeader}>
+            <span className={`${styles.codeDot} ${styles.codeDotRed}`}></span>
+            <span className={`${styles.codeDot} ${styles.codeDotYellow}`}></span>
+            <span className={`${styles.codeDot} ${styles.codeDotGreen}`}></span>
+            <span className={styles.codeTitle}>docker-compose.yml</span>
+          </div>
+          <div className={styles.codeContent}>
+            <div className={styles.codeLine}>
+              <span className={styles.codeKey}>services</span><span className={styles.codePunct}>:</span>
+            </div>
+            <div className={styles.codeLine}>
+              <span className={styles.codeIndent}>  </span><span className={styles.codeKey}>tvarr</span><span className={styles.codePunct}>:</span>
+            </div>
+            <div className={styles.codeLine}>
+              <span className={styles.codeIndent}>    </span><span className={styles.codeKey}>image</span><span className={styles.codePunct}>:</span> <span className={styles.codeValue}>ghcr.io/jmylchreest/tvarr:latest</span>
+            </div>
+            <div className={styles.codeLine}>
+              <span className={styles.codeIndent}>    </span><span className={styles.codeKey}>ports</span><span className={styles.codePunct}>:</span>
+            </div>
+            <div className={styles.codeLine}>
+              <span className={styles.codeIndent}>      </span><span className={styles.codePunct}>-</span> <span className={styles.codeValue}>"8080:8080"</span>
+            </div>
+            <div className={styles.codeLine}>
+              <span className={styles.codeIndent}>    </span><span className={styles.codeKey}>volumes</span><span className={styles.codePunct}>:</span>
+            </div>
+            <div className={styles.codeLine}>
+              <span className={styles.codeIndent}>      </span><span className={styles.codePunct}>-</span> <span className={styles.codeValue}>./data:/data</span>
+            </div>
+          </div>
+        </div>
       </div>
-    </header>
+    </section>
   );
 }
 
-const features = [
+type FeatureItem = {
+  icon: string;
+  title: string;
+  description: string;
+};
+
+const features: FeatureItem[] = [
   {
-    title: 'Aggregate Streams',
-    description: 'Combine multiple M3U and Xtream sources into unified playlists. Merge EPG data from XMLTV sources.',
+    icon: '',
+    title: 'Aggregate Multiple Sources',
+    description: 'Import from M3U files, URLs, or Xtream Codes APIs. Merge EPG data from XMLTV sources into unified playlists.',
   },
   {
+    icon: '',
     title: 'Filter & Transform',
-    description: 'Powerful expression-based rules to include/exclude channels and transform metadata.',
+    description: 'Powerful expression-based rules to include/exclude channels. Data mapping transforms names, logos, and groups.',
   },
   {
+    icon: '',
     title: 'Transcode On-Demand',
-    description: 'Real-time transcoding with FFmpeg. Hardware acceleration with VAAPI, NVENC, QSV, and AMF.',
+    description: 'Real-time transcoding with FFmpeg. Hardware acceleration with VAAPI, NVENC, QSV, and AMF support.',
+  },
+  {
+    icon: '',
+    title: 'Multiple Output Formats',
+    description: 'Serve HLS, DASH, or raw MPEG-TS. Client detection serves appropriate quality profiles per device.',
+  },
+  {
+    icon: '',
+    title: 'Distributed Workers',
+    description: 'Scale transcoding across multiple machines. Main node coordinates, workers process streams.',
+  },
+  {
+    icon: '',
+    title: 'Modern Web UI',
+    description: 'Intuitive dashboard for managing sources, channels, and rules. Real-time status and job monitoring.',
   },
 ];
 
-function Feature({ title, description }) {
+function FeaturesSection() {
   return (
-    <div className={clsx('col col--4')}>
-      <div className="padding-horiz--md padding-vert--lg">
-        <h3>{title}</h3>
-        <p>{description}</p>
+    <section className={styles.features}>
+      <div className={styles.featuresInner}>
+        <h2 className={styles.featuresTitle}>Built for IPTV Enthusiasts</h2>
+        <div className={styles.featuresGrid}>
+          {features.map((feature, idx) => (
+            <div key={idx} className={styles.featureCard}>
+              <div className={styles.featureIcon}>{feature.icon}</div>
+              <h3 className={styles.featureTitle}>{feature.title}</h3>
+              <p className={styles.featureDesc}>{feature.description}</p>
+            </div>
+          ))}
+        </div>
       </div>
-    </div>
+    </section>
   );
 }
 
-export default function Home(): JSX.Element {
-  const { siteConfig } = useDocusaurusContext();
+function InstallSection() {
+  return (
+    <section className={styles.install}>
+      <div className={styles.installInner}>
+        <h2 className={styles.installTitle}>Quick Start</h2>
+        <div className={styles.installCode}>
+          <span>
+            <span className={styles.installPrompt}>$ </span>
+            docker compose up -d
+          </span>
+        </div>
+        <p style={{marginTop: '1rem', color: '#666', fontSize: '0.875rem'}}>
+          See <Link to="/docs/next/quickstart">Quickstart Guide</Link> for Docker Compose and Kubernetes options
+        </p>
+      </div>
+    </section>
+  );
+}
+
+export default function Home(): ReactNode {
+  const {siteConfig} = useDocusaurusContext();
   return (
     <Layout
-      title={siteConfig.title}
-      description="IPTV Proxy & Stream Aggregator">
-      <HomepageHeader />
-      <main>
-        <section className={styles.features}>
-          <div className="container">
-            <div className="row">
-              {features.map((props, idx) => (
-                <Feature key={idx} {...props} />
-              ))}
-            </div>
-          </div>
-        </section>
-      </main>
+      title="Home"
+      description={siteConfig.tagline}>
+      <HeroSection />
+      <FeaturesSection />
+      <InstallSection />
     </Layout>
   );
 }
