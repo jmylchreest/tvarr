@@ -35,7 +35,7 @@ tvarr uses FFmpeg for transcoding, with support for:
 
 ### Built-in Transcoding
 
-The standalone image (`ghcr.io/jmylchreest/tvarr:latest`) includes FFmpeg and can transcode locally.
+The standalone image (`ghcr.io/jmylchreest/tvarr:release`) includes FFmpeg and can transcode locally.
 
 ### Distributed Transcoding
 

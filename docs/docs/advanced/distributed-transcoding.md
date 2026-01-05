@@ -119,7 +119,7 @@ Mix worker types for flexibility:
 
 ```yaml
 ffmpegd-gpu:
-  image: ghcr.io/jmylchreest/tvarr-transcoder:latest
+  image: ghcr.io/jmylchreest/tvarr-transcoder:release
   deploy:
     resources:
       reservations:
@@ -129,7 +129,7 @@ ffmpegd-gpu:
             capabilities: [gpu, video]
 
 ffmpegd-cpu:
-  image: ghcr.io/jmylchreest/tvarr-transcoder:latest
+  image: ghcr.io/jmylchreest/tvarr-transcoder:release
   environment:
     - TVARR_MAX_JOBS=8
   deploy:

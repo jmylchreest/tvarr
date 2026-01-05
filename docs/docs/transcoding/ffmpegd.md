@@ -57,7 +57,7 @@ docker run -d \
   -e TVARR_COORDINATOR_URL=tvarr:9090 \
   -e TVARR_MAX_JOBS=4 \
   --device /dev/dri:/dev/dri \
-  ghcr.io/jmylchreest/tvarr-transcoder:latest
+  ghcr.io/jmylchreest/tvarr-transcoder:release
 ```
 
 ### Docker Compose
@@ -65,7 +65,7 @@ docker run -d \
 ```yaml
 services:
   ffmpegd:
-    image: ghcr.io/jmylchreest/tvarr-transcoder:latest
+    image: ghcr.io/jmylchreest/tvarr-transcoder:release
     environment:
       - TVARR_COORDINATOR_URL=tvarr:9090
       - TVARR_MAX_JOBS=4

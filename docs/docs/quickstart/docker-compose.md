@@ -8,6 +8,15 @@ sidebar_position: 1
 
 The fastest way to get started with tvarr.
 
+## Image Tags
+
+| Tag | Description |
+|-----|-------------|
+| `:release` | Latest stable release (recommended) |
+| `:latest` | Most recent build (includes main branch and releases) |
+| `:preview` | Latest main branch build |
+| `:X.Y.Z` | Specific version (e.g., `1.0.0`) |
+
 ## Standalone (Single Container)
 
 For most home users, the standalone all-in-one image is recommended:
@@ -15,7 +24,7 @@ For most home users, the standalone all-in-one image is recommended:
 ```yaml title="docker-compose.yml"
 services:
   tvarr:
-    image: ghcr.io/jmylchreest/tvarr:latest
+    image: ghcr.io/jmylchreest/tvarr:release
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -47,7 +56,7 @@ For larger setups or dedicated transcoding hardware:
 ```yaml title="docker-compose.yml"
 services:
   tvarr:
-    image: ghcr.io/jmylchreest/tvarr-coordinator:latest
+    image: ghcr.io/jmylchreest/tvarr-coordinator:release
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -60,7 +69,7 @@ services:
       - tvarr-data:/data
 
   ffmpegd:
-    image: ghcr.io/jmylchreest/tvarr-transcoder:latest
+    image: ghcr.io/jmylchreest/tvarr-transcoder:release
     restart: unless-stopped
     depends_on:
       tvarr:
@@ -83,7 +92,7 @@ Add NVIDIA runtime to your transcoder service:
 ```yaml
 services:
   ffmpegd:
-    image: ghcr.io/jmylchreest/tvarr-transcoder:latest
+    image: ghcr.io/jmylchreest/tvarr-transcoder:release
     deploy:
       resources:
         reservations:

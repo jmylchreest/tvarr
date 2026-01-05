@@ -42,7 +42,7 @@ function HeroSection() {
               <span className={styles.codeIndent}>  </span><span className={styles.codeKey}>tvarr</span><span className={styles.codePunct}>:</span>
             </div>
             <div className={styles.codeLine}>
-              <span className={styles.codeIndent}>    </span><span className={styles.codeKey}>image</span><span className={styles.codePunct}>:</span> <span className={styles.codeValue}>ghcr.io/jmylchreest/tvarr:latest</span>
+              <span className={styles.codeIndent}>    </span><span className={styles.codeKey}>image</span><span className={styles.codePunct}>:</span> <span className={styles.codeValue}>ghcr.io/jmylchreest/tvarr:release</span>
             </div>
             <div className={styles.codeLine}>
               <span className={styles.codeIndent}>    </span><span className={styles.codeKey}>ports</span><span className={styles.codePunct}>:</span>

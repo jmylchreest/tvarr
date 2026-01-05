@@ -26,7 +26,7 @@ Pass the DRI device to your container:
 ```yaml
 services:
   tvarr:
-    image: ghcr.io/jmylchreest/tvarr:latest
+    image: ghcr.io/jmylchreest/tvarr:release
     devices:
       - /dev/dri:/dev/dri
 ```
@@ -45,7 +45,7 @@ Use the NVIDIA container runtime:
 ```yaml
 services:
   tvarr:
-    image: ghcr.io/jmylchreest/tvarr:latest
+    image: ghcr.io/jmylchreest/tvarr:release
     deploy:
       resources:
         reservations:
@@ -60,7 +60,7 @@ Or with the legacy runtime flag:
 ```yaml
 services:
   tvarr:
-    image: ghcr.io/jmylchreest/tvarr:latest
+    image: ghcr.io/jmylchreest/tvarr:release
     runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
