@@ -10,27 +10,18 @@ Changes that will be included in the next release.
 
 ## Added
 
-- Documentation site with Docusaurus
+- Docusaurus documentation site
 - Comprehensive guides for all features
 - Expression editor documentation
-- Pipeline and relay architecture docs
-
-## Changed
-
-- (Nothing yet)
+- Pipeline and relay architecture documentation
+- Versioned changelog
 
 ## Fixed
 
-- (Nothing yet)
+- Slow client detection with grace period to prevent false positives
+- Panic when writing to closed MPEG-TS client connections
 
-## Deprecated
+## Changed
 
-- (Nothing yet)
-
-## Removed
-
-- (Nothing yet)
-
-## Security
-
-- (Nothing yet)
+- Documentation now recommends `:release` tag for stable deployments
+- Improved documentation theme matching project style
