@@ -1,7 +1,5 @@
 // Package main provides an E2E test runner for validating the tvarr pipeline.
 // This binary tests the complete flow from source ingestion through M3U/XMLTV output.
-//
-//nolint:errcheck,gocognit,gocyclo,nestif,gocritic,godot,wrapcheck,gosec,revive,goprintffuncname,modernize // E2E test runner uses relaxed linting for cleaner test code
 package main
 
 import (

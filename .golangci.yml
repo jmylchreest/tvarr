@@ -33,7 +33,8 @@ linters:
     - gosec           # Security problems
 
     # Modern Go features
-    - gomoddirectives # Manage replace, retract directives in go.mod
+    # gomoddirectives disabled - we use intentional replace for forked dependencies
+    # - gomoddirectives # Manage replace, retract directives in go.mod
     - gomodguard      # Check for blocked dependencies
 
     # Testing
@@ -162,6 +163,20 @@ linters:
         linters:
           - govet
 
+      # E2E test runner uses relaxed linting
+      - path: cmd/e2e-runner/
+        linters:
+          - errcheck
+          - gocognit
+          - gocyclo
+          - nestif
+          - gocritic
+          - godot
+          - wrapcheck
+          - gosec
+          - revive
+          - goprintffuncname
+          - staticcheck
 
 # Formatters configuration
 formatters:

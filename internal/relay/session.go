@@ -344,7 +344,7 @@ func (s *RelaySession) runNormalPipeline() error {
 func (s *RelaySession) logPipelineDecision() {
 	// Determine pipeline type and reason based on classification
 	pipelineType := "es"
-	reason := "default"
+	var reason string
 
 	switch s.Classification.Mode {
 	case StreamModeCollapsedHLS:

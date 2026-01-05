@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	_ "net/http/pprof" // Register pprof handlers on DefaultServeMux
+	_ "net/http/pprof" //nolint:gosec // G108: Intentional pprof exposure for debugging
 	"os"
 	"os/signal"
 	"syscall"
@@ -101,7 +101,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 				slog.String("heap_profile", fmt.Sprintf("http://%s/debug/pprof/heap", pprofAddr)),
 			)
 			// Uses http.DefaultServeMux which has pprof handlers registered via blank import
-			if err := http.ListenAndServe(pprofAddr, nil); err != nil {
+			if err := http.ListenAndServe(pprofAddr, nil); err != nil { //nolint:gosec // G114: pprof server doesn't need timeouts
 				logger.Error("pprof server failed", slog.String("error", err.Error()))
 			}
 		}()

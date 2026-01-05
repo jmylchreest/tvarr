@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"context"
-	"crypto/md5"
+	"crypto/md5" //nolint:gosec // G501: MD5 used for non-cryptographic user-agent hashing
 	"fmt"
 	"log/slog"
 	"net"
@@ -949,7 +949,7 @@ func (h *RelayStreamHandler) handleMultiFormatOutput(w http.ResponseWriter, r *h
 	// Create a short hash of User-Agent to distinguish different clients from same IP
 	// (e.g., multiple browser tabs, different players)
 	userAgent := r.UserAgent()
-	uaHash := fmt.Sprintf("%x", md5.Sum([]byte(userAgent)))[:8]
+	uaHash := fmt.Sprintf("%x", md5.Sum([]byte(userAgent)))[:8] //nolint:gosec // G401: non-cryptographic hash for client identification
 	// Determine format prefix for client ID
 	formatPrefix := string(clientFormat)
 	if formatPrefix == "" {

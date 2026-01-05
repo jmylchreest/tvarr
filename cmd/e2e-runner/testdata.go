@@ -1,4 +1,3 @@
-//nolint:gocritic,staticcheck,ineffassign // E2E test data generator uses relaxed linting
 package main
 
 import (

@@ -31,7 +31,7 @@ func TestPlaceholderSegmentGenerator_New(t *testing.T) {
 			// Check init segment was generated
 			initSeg := gen.GetInitSegment()
 			if initSeg == nil {
-				t.Errorf("GetInitSegment() returned nil")
+				t.Fatalf("GetInitSegment() returned nil")
 			}
 			if len(initSeg.Data) == 0 {
 				t.Errorf("GetInitSegment() returned empty data")

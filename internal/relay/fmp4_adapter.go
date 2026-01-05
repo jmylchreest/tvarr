@@ -515,7 +515,7 @@ func ConvertESSamplesToFMP4Video(samples []ESSample, timescale uint32) ([]*fmp4.
 			duration = uint32(samples[i+1].DTS - sample.DTS)
 		} else if i > 0 {
 			// Use average of previous samples
-			duration = uint32(sample.DTS-samples[0].DTS) / uint32(i)
+			duration = uint32(sample.DTS-samples[0].DTS) / uint32(i) //nolint:gosec // G602: bounds checked by i > 0 condition
 		} else {
 			// Default to 1/30 second at 90kHz
 			duration = timescale / 30

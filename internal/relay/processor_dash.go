@@ -86,13 +86,13 @@ type DASHProcessor struct {
 
 	// Current segment accumulator
 	currentSegment struct {
-		startPTS      int64
-		endPTS        int64
-		hasVideo      bool
-		hasAudio      bool
-		startTime     time.Time
-		videoLastPTS  int64 // Last video PTS for A/V alignment check
-		audioLastPTS  int64 // Last audio PTS for A/V alignment check
+		startPTS     int64
+		endPTS       int64
+		hasVideo     bool
+		hasAudio     bool
+		startTime    time.Time
+		videoLastPTS int64 // Last video PTS for A/V alignment check
+		audioLastPTS int64 // Last audio PTS for A/V alignment check
 	}
 
 	// fMP4 muxer using mediacommon
@@ -111,11 +111,8 @@ type DASHProcessor struct {
 	streamStartTime   time.Time
 	streamStartTimeMu sync.RWMutex
 
-	// Placeholder fallback for segments not yet produced by transcoder
-	placeholderGen       *PlaceholderSegmentGenerator
-	hasRealContent       atomic.Bool // True once we've received real transcoder content
-	placeholderInitOnce  sync.Once
-	placeholderInitError error
+	// Track whether real content has been received from transcoder
+	hasRealContent atomic.Bool // True once we've received real transcoder content
 
 	// Audio/video alignment for DASH standards compliance
 	// DASH requires segments to have aligned audio/video boundaries
@@ -566,56 +563,6 @@ func (p *DASHProcessor) GetSegmentInfos() []SegmentInfo {
 	return infos
 }
 
-// getPlaceholderSegmentInfos returns segment infos for placeholder content.
-// Used when manifest is requested before real content is available.
-func (p *DASHProcessor) getPlaceholderSegmentInfos() []SegmentInfo {
-	// Initialize placeholder generator if needed
-	p.placeholderInitOnce.Do(func() {
-		gen, err := NewPlaceholderSegmentGenerator(
-			p.variant,
-			p.config.TargetSegmentDuration,
-			p.config.Logger,
-		)
-		if err != nil {
-			p.placeholderInitError = err
-			p.config.Logger.Warn("Failed to initialize placeholder generator for manifest",
-				slog.String("variant", p.variant.String()),
-				slog.String("error", err.Error()))
-			return
-		}
-		p.placeholderGen = gen
-		// NOTE: Do NOT set p.initSegment from placeholder - it would cause
-		// track ID mismatches when real content arrives with a different init segment
-	})
-
-	if p.placeholderGen == nil {
-		return nil
-	}
-
-	// Generate enough placeholder segment infos for the manifest
-	// Use PlaylistSegments count, minimum 3 for DASH
-	count := p.config.PlaylistSegments
-	if count <= 0 {
-		count = 3
-	}
-
-	now := time.Now()
-	infos := make([]SegmentInfo, count)
-	for i := 0; i < count; i++ {
-		infos[i] = SegmentInfo{
-			Sequence:  uint64(i),
-			Duration:  p.config.TargetSegmentDuration,
-			Timestamp: now.Add(-time.Duration(count-1-i) * time.Duration(p.config.TargetSegmentDuration*float64(time.Second))),
-		}
-	}
-
-	p.config.Logger.Debug("Generated placeholder segment infos for manifest",
-		slog.Int("count", count),
-		slog.Float64("duration", p.config.TargetSegmentDuration))
-
-	return infos
-}
-
 // GetSegment implements SegmentProvider.
 func (p *DASHProcessor) GetSegment(sequence uint64) (*Segment, error) {
 	return p.getSegmentWithWait(sequence, SegmentWaitTimeout)
@@ -756,65 +703,6 @@ func (p *DASHProcessor) isSegmentInExpectedRange(sequence, minSeq, maxSeq, nextS
 	}
 
 	return true
-}
-
-// hasEnoughRealSegments returns true if we have enough real segments for smooth playback.
-// Until we have PlaylistSegments worth of real content, we should still use placeholder fallback.
-func (p *DASHProcessor) hasEnoughRealSegments() bool {
-	p.segmentsMu.RLock()
-	count := len(p.segments)
-	p.segmentsMu.RUnlock()
-
-	minRequired := p.config.PlaylistSegments
-	if minRequired <= 0 {
-		minRequired = 5 // Default
-	}
-
-	return count >= minRequired
-}
-
-// getPlaceholderSegment returns a placeholder segment for the given sequence.
-func (p *DASHProcessor) getPlaceholderSegment(sequence uint64) (*Segment, error) {
-	// Initialize placeholder generator lazily
-	p.placeholderInitOnce.Do(func() {
-		gen, err := NewPlaceholderSegmentGenerator(
-			p.variant,
-			p.config.TargetSegmentDuration,
-			p.config.Logger,
-		)
-		if err != nil {
-			p.placeholderInitError = err
-			p.config.Logger.Warn("Failed to initialize placeholder generator",
-				slog.String("variant", p.variant.String()),
-				slog.String("error", err.Error()))
-			return
-		}
-		p.placeholderGen = gen
-		// NOTE: Do NOT set p.initSegment from placeholder - it would cause
-		// track ID mismatches when real content arrives with a different init segment
-	})
-
-	if p.placeholderInitError != nil {
-		return nil, p.placeholderInitError
-	}
-	if p.placeholderGen == nil {
-		return nil, ErrSegmentNotFound
-	}
-
-	seg, err := p.placeholderGen.GenerateSegment(sequence)
-	if err != nil {
-		p.config.Logger.Warn("Failed to generate placeholder segment",
-			slog.Uint64("sequence", sequence),
-			slog.String("error", err.Error()))
-		return nil, err
-	}
-
-	p.config.Logger.Debug("Serving placeholder segment",
-		slog.Uint64("sequence", sequence),
-		slog.Float64("duration", seg.Duration),
-		slog.Int("size", len(seg.Data)))
-
-	return seg, nil
 }
 
 // TargetDuration implements SegmentProvider.

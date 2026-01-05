@@ -34,7 +34,7 @@ func Bytes(bytes int64) string {
 	}
 
 	sizes := []string{"KB", "MB", "GB", "TB", "PB"}
-	return fmt.Sprintf("%.1f %s", float64(bytes)/float64(div), sizes[exp])
+	return fmt.Sprintf("%.1f %s", float64(bytes)/float64(div), sizes[exp]) //nolint:gosec // G602: exp max is 4 (1024^6 > int64 max)
 }
 
 // FileSize is an alias for Bytes for semantic clarity.

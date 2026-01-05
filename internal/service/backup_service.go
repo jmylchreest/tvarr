@@ -738,7 +738,7 @@ func (s *BackupService) decompressFile(src, dst string) error {
 	}
 	defer dstFile.Close()
 
-	_, err = io.Copy(dstFile, gzReader)
+	_, err = io.Copy(dstFile, gzReader) //nolint:gosec // G110: internal backup files, not arbitrary user input
 	return err
 }
 
@@ -920,7 +920,7 @@ func (s *BackupService) extractDatabaseFromArchive(archivePath, destPath string)
 			}
 			defer destFile.Close()
 
-			if _, err := io.Copy(destFile, tarReader); err != nil {
+			if _, err := io.Copy(destFile, tarReader); err != nil { //nolint:gosec // G110: internal backup files, not arbitrary user input
 				return fmt.Errorf("extracting database: %w", err)
 			}
 			return nil

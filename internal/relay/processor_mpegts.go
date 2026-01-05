@@ -44,8 +44,8 @@ type MPEGTSProcessorConfig struct {
 // DefaultMPEGTSProcessorConfig returns sensible defaults.
 func DefaultMPEGTSProcessorConfig() MPEGTSProcessorConfig {
 	return MPEGTSProcessorConfig{
-		ChunkSize:             188 * 7 * 10,  // 70 TS packets (~13KB)
-		MaxBufferSize:         188 * 1000,    // ~188KB per client
+		ChunkSize:             188 * 7 * 10, // 70 TS packets (~13KB)
+		MaxBufferSize:         188 * 1000,   // ~188KB per client
 		CongestionGracePeriod: 20 * time.Second,
 		Logger:                slog.Default(),
 	}
