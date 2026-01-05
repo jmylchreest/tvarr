@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -12,9 +13,14 @@ import {
   Zap,
   Trash2,
   Loader2,
+  ChevronDown,
+  ChevronUp,
+  PlusCircle,
 } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
-import type { VideoTrackInfo, AudioTrackInfo, SubtitleTrackInfo } from '@/types/api';
+import type { VideoTrackInfo, AudioTrackInfo, SubtitleTrackInfo, FilterTestChannel } from '@/types/api';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { FilterExpressionEditor } from '@/components/filter-expression-editor';
 import {
   Select,
   SelectContent,
@@ -148,6 +154,20 @@ export default function ChannelsPage() {
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [clearingCache, setClearingCache] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
+
+  // Filter Preview state
+  const [filterPreviewOpen, setFilterPreviewOpen] = useState(false);
+  const [filterExpression, setFilterExpression] = useState('');
+  const [filterResults, setFilterResults] = useState<Channel[] | null>(null);
+  const [filterLoading, setFilterLoading] = useState(false);
+  const [filterMatchCount, setFilterMatchCount] = useState(0);
+  const [filterTotalCount, setFilterTotalCount] = useState(0);
+  const [filterHasMore, setFilterHasMore] = useState(false);
+  const [filterPage, setFilterPage] = useState(1);
+  const [filterError, setFilterError] = useState<string | null>(null);
+  const filterDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const filterAbortRef = useRef<AbortController | null>(null);
+  const router = useRouter();
 
   // No longer need proxy resolution - only using direct stream sources
   // Fetch stream sources (id + name) for reliable ID-based filtering
@@ -377,6 +397,181 @@ export default function ChannelsPage() {
       setSelectedSources(sources.map((s) => s.id));
     }
   };
+
+  // Convert FilterTestChannel to Channel format
+  const convertFilterChannelToChannel = useCallback((fc: FilterTestChannel): Channel => {
+    // Build resolution string if we have dimensions
+    const resolution = fc.video_width && fc.video_height
+      ? `${fc.video_width}x${fc.video_height}`
+      : undefined;
+
+    return {
+      id: fc.id,
+      name: fc.name,
+      logo_url: fc.logo_url || fc.tvg_logo,
+      group: fc.group,
+      stream_url: fc.stream_url,
+      source_type: fc.stream_type || 'unknown',
+      source_name: fc.source_name,
+      tvg_id: fc.tvg_id,
+      tvg_name: fc.tvg_name,
+      tvg_chno: fc.tvg_chno,
+      video_codec: fc.video_codec,
+      audio_codec: fc.audio_codec,
+      resolution,
+      video_width: fc.video_width,
+      video_height: fc.video_height,
+      framerate: fc.video_framerate?.toString(),
+      audio_channels: fc.audio_channels,
+      audio_sample_rate: fc.audio_sample_rate,
+      container_format: fc.container_format,
+      last_probed_at: fc.last_probed_at,
+    };
+  }, []);
+
+  // Fetch filter results with abort support
+  const fetchFilterResults = useCallback(async (expression: string, page: number = 1, append: boolean = false) => {
+    // Cancel any in-flight request
+    if (filterAbortRef.current) {
+      filterAbortRef.current.abort();
+    }
+
+    if (!expression.trim()) {
+      setFilterResults(null);
+      setFilterMatchCount(0);
+      setFilterTotalCount(0);
+      setFilterHasMore(false);
+      setFilterError(null);
+      return;
+    }
+
+    // Create new abort controller for this request
+    const abortController = new AbortController();
+    filterAbortRef.current = abortController;
+
+    try {
+      setFilterLoading(true);
+      setFilterError(null);
+
+      const response = await apiClient.testFilterWithChannels({
+        sourceType: 'stream',
+        expression,
+        includeChannels: true,
+        page,
+        limit: 100, // Reduced from 200 for faster initial response
+      });
+
+      // Check if request was aborted
+      if (abortController.signal.aborted) {
+        return;
+      }
+
+      if (!response.success) {
+        setFilterError(response.error || 'Filter test failed');
+        if (!append) {
+          setFilterResults(null);
+        }
+        return;
+      }
+
+      const newChannels = (response.channels || []).map(convertFilterChannelToChannel);
+
+      if (append) {
+        setFilterResults((prev) => {
+          if (!prev) return newChannels;
+          const existing = new Set(prev.map((c) => c.id));
+          const merged = newChannels.filter((c) => !existing.has(c.id));
+          return [...prev, ...merged];
+        });
+      } else {
+        setFilterResults(newChannels);
+      }
+
+      setFilterMatchCount(response.matched_count);
+      setFilterTotalCount(response.total_channels);
+      setFilterHasMore(response.has_more || false);
+      setFilterPage(page);
+    } catch (err) {
+      // Ignore abort errors
+      if (err instanceof Error && err.name === 'AbortError') {
+        return;
+      }
+      setFilterError(err instanceof Error ? err.message : 'Failed to test filter');
+      if (!append) {
+        setFilterResults(null);
+      }
+    } finally {
+      // Only clear loading if this is still the current request
+      if (!abortController.signal.aborted) {
+        setFilterLoading(false);
+      }
+    }
+  }, [convertFilterChannelToChannel]);
+
+  // Handle filter expression change with debounce
+  const handleFilterExpressionChange = useCallback((value: string) => {
+    setFilterExpression(value);
+
+    // Clear existing debounce timer
+    if (filterDebounceRef.current) {
+      clearTimeout(filterDebounceRef.current);
+    }
+
+    // Clear results immediately if expression is empty or too short
+    if (!value.trim() || value.trim().length < 3) {
+      setFilterResults(null);
+      setFilterMatchCount(0);
+      setFilterTotalCount(0);
+      setFilterError(null);
+      return;
+    }
+
+    // Set new debounce timer (800ms for smoother typing experience)
+    filterDebounceRef.current = setTimeout(() => {
+      fetchFilterResults(value, 1, false);
+    }, 800);
+  }, [fetchFilterResults]);
+
+  // Handle load more for filter results
+  const handleLoadMoreFilterResults = useCallback(() => {
+    if (filterHasMore && !filterLoading) {
+      fetchFilterResults(filterExpression, filterPage + 1, true);
+    }
+  }, [filterHasMore, filterLoading, filterExpression, filterPage, fetchFilterResults]);
+
+  // Toggle filter preview mode - preserves state when collapsing
+  const handleFilterPreviewToggle = useCallback((open: boolean) => {
+    setFilterPreviewOpen(open);
+    if (open) {
+      // Clear search when opening filter preview (modes are mutually exclusive)
+      setSearch('');
+      setDebouncedSearch('');
+    }
+    // Don't clear filter state when collapsing - preserve for re-expansion
+  }, []);
+
+  // Create filter from expression
+  const handleCreateFilter = useCallback(() => {
+    if (!filterExpression.trim()) return;
+    const params = new URLSearchParams({
+      create: 'true',
+      expression: filterExpression,
+      source_type: 'stream',
+    });
+    router.push(`/admin/filters?${params.toString()}`);
+  }, [filterExpression, router]);
+
+  // Cleanup debounce timer and abort controller on unmount
+  useEffect(() => {
+    return () => {
+      if (filterDebounceRef.current) {
+        clearTimeout(filterDebounceRef.current);
+      }
+      if (filterAbortRef.current) {
+        filterAbortRef.current.abort();
+      }
+    };
+  }, []);
 
   const handlePlayChannel = async (channel: Channel) => {
     try {
@@ -797,10 +992,10 @@ export default function ChannelsPage() {
           <CardContent className="p-6">
             <div className="flex flex-col sm:flex-row gap-4">
               <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
+                <Search className={`absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 ${filterPreviewOpen ? 'text-muted-foreground/50' : 'text-muted-foreground'}`} />
                 <Input
                   ref={searchInputRef}
-                  placeholder="Search channels..."
+                  placeholder={filterPreviewOpen ? "Search disabled while Filter Preview is open" : "Search channels..."}
                   value={search}
                   onChange={(e) => handleSearch(e.target.value)}
                   onKeyDown={(e) => {
@@ -809,6 +1004,7 @@ export default function ChannelsPage() {
                     }
                   }}
                   className="pl-10"
+                  disabled={filterPreviewOpen}
                 />
               </div>
 
@@ -869,8 +1065,88 @@ export default function ChannelsPage() {
           </CardContent>
         </Card>
 
+        {/* Filter Preview Panel */}
+        <Collapsible open={filterPreviewOpen} onOpenChange={handleFilterPreviewToggle} className="mb-6">
+          <Card>
+            <CollapsibleTrigger asChild>
+              <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors py-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Filter className="w-4 h-4" />
+                    <CardTitle className="text-base">Filter Preview</CardTitle>
+                    {filterPreviewOpen && filterMatchCount > 0 && (
+                      <Badge variant="secondary" className="ml-2">
+                        {filterMatchCount}/{filterTotalCount} matched
+                      </Badge>
+                    )}
+                    {filterLoading && (
+                      <Loader2 className="w-4 h-4 animate-spin ml-2" />
+                    )}
+                  </div>
+                  {filterPreviewOpen ? (
+                    <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                  )}
+                </div>
+                <CardDescription className="text-xs mt-1">
+                  Test filter expressions and see matched channels in real-time
+                </CardDescription>
+              </CardHeader>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <CardContent className="pt-0 pb-4">
+                <div className="space-y-4">
+                  {/* Filter Expression Editor */}
+                  <FilterExpressionEditor
+                    value={filterExpression}
+                    onChange={handleFilterExpressionChange}
+                    sourceType="stream"
+                    placeholder='Try: group_title contains "Sports" OR channel_name contains "News"'
+                    showTestResults={false}
+                    autoTest={false}
+                  />
+
+                  {/* Filter Error Display */}
+                  {filterError && (
+                    <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-md">
+                      {filterError}
+                    </div>
+                  )}
+
+                  {/* Actions */}
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm text-muted-foreground">
+                      {filterExpression.trim() && !filterLoading && filterResults !== null && (
+                        <>
+                          Showing {filterResults.length} of {filterMatchCount} matched channels
+                          {filterMatchCount > 0 && (
+                            <span className="text-muted-foreground ml-1">
+                              ({filterTotalCount} total)
+                            </span>
+                          )}
+                        </>
+                      )}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleCreateFilter}
+                      disabled={!filterExpression.trim()}
+                      className="gap-2"
+                    >
+                      <PlusCircle className="w-4 h-4" />
+                      Create Filter
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </CollapsibleContent>
+          </Card>
+        </Collapsible>
+
         {/* Error Display */}
-        {error && (
+        {error && !filterPreviewOpen && (
           <Card className="mb-6 border-destructive">
             <CardContent className="p-4">
               <p className="text-destructive">{error}</p>
@@ -894,8 +1170,8 @@ export default function ChannelsPage() {
           </Card>
         )}
 
-        {/* Results Summary */}
-        {channels.length > 0 && (
+        {/* Results Summary - Only show when NOT in filter preview mode */}
+        {!filterPreviewOpen && channels.length > 0 && (
           <div className="mb-4 text-sm text-muted-foreground">
             Showing {channels.length} of {total} channels
             {debouncedSearch && (
@@ -912,81 +1188,99 @@ export default function ChannelsPage() {
           </div>
         )}
 
-        {/* Channels Display */}
-        {channels.length > 0 ? (
-          <>
-            <Card className="mb-6">
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-16">Logo</TableHead>
-                      <TableHead>Channel Name</TableHead>
-                      <TableHead>Probe Info</TableHead>
-                      <TableHead>Last Probed</TableHead>
-                      <TableHead className="w-32">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {channels.map((channel) => (
-                      <ChannelTableRow key={channel.id} channel={channel} />
-                    ))}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
+        {/* Channels Display - Use filter results when in filter preview mode */}
+        {(() => {
+          const displayedChannels = filterPreviewOpen && filterResults !== null ? filterResults : channels;
+          const isFilterMode = filterPreviewOpen && filterResults !== null;
+          const currentHasMore = isFilterMode ? filterHasMore : hasMore;
+          const currentLoading = isFilterMode ? filterLoading : loading;
+          const currentTotal = isFilterMode ? filterMatchCount : total;
 
-            {/* Progressive Loading - only show when not searching */}
-            {hasMore && !debouncedSearch && (
-              <div ref={loadMoreRef} className="flex justify-center mt-6">
-                <Card className="w-full max-w-md">
-                  <CardContent className="p-4 text-center">
-                    {loading ? (
-                      <div className="flex items-center justify-center space-x-2">
-                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-primary border-t-transparent"></div>
-                        <p className="text-sm text-muted-foreground">Loading more channels...</p>
-                      </div>
-                    ) : (
-                      <>
-                        <p className="text-sm text-muted-foreground mb-2">
-                          {Math.ceil((total - channels.length) / 200)} pages remaining
-                        </p>
-                        <Button
-                          variant="outline"
-                          onClick={handleLoadMore}
-                          size="sm"
-                          className="gap-2"
-                        >
-                          Load More Channels
-                        </Button>
+          return displayedChannels.length > 0 ? (
+            <>
+              <Card className="mb-6">
+                <CardContent className="p-0">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-16">Logo</TableHead>
+                        <TableHead>Channel Name</TableHead>
+                        <TableHead>Probe Info</TableHead>
+                        <TableHead>Last Probed</TableHead>
+                        <TableHead className="w-32">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {displayedChannels.map((channel) => (
+                        <ChannelTableRow key={channel.id} channel={channel} />
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+
+              {/* Progressive Loading */}
+              {currentHasMore && (
+                <div ref={isFilterMode ? undefined : loadMoreRef} className="flex justify-center mt-6">
+                  <Card className="w-full max-w-md">
+                    <CardContent className="p-4 text-center">
+                      {currentLoading ? (
+                        <div className="flex items-center justify-center space-x-2">
+                          <div className="animate-spin rounded-full h-4 w-4 border-2 border-primary border-t-transparent"></div>
+                          <p className="text-sm text-muted-foreground">Loading more channels...</p>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="text-sm text-muted-foreground mb-2">
+                            {Math.ceil((currentTotal - displayedChannels.length) / 200)} pages remaining
+                          </p>
+                          <Button
+                            variant="outline"
+                            onClick={isFilterMode ? handleLoadMoreFilterResults : handleLoadMore}
+                            size="sm"
+                            className="gap-2"
+                          >
+                            Load More Channels
+                          </Button>
                       </>
                     )}
                   </CardContent>
                 </Card>
               </div>
             )}
-          </>
-        ) : (
-          !loading && (
-            <Card>
-              <CardContent className="p-8 text-center">
-                <p className="text-muted-foreground">No channels found</p>
-                {(search || selectedSources.length > 0) && (
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setSearch('');
-                      setSelectedSources([]);
-                    }}
-                    className="mt-4"
-                  >
-                    Clear Filters
-                  </Button>
-                )}
-              </CardContent>
-            </Card>
-          )
-        )}
+            </>
+          ) : (
+            !currentLoading && (
+              <Card>
+                <CardContent className="p-8 text-center">
+                  {isFilterMode ? (
+                    <>
+                      <p className="text-muted-foreground">
+                        {filterExpression.trim() ? 'No channels matched the filter expression' : 'Enter a filter expression to preview matching channels'}
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-muted-foreground">No channels found</p>
+                      {(search || selectedSources.length > 0) && (
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setSearch('');
+                            setSelectedSources([]);
+                          }}
+                          className="mt-4"
+                        >
+                          Clear Filters
+                        </Button>
+                      )}
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            )
+          );
+        })()}
 
         {/* Video Player Modal */}
         {selectedChannel && (

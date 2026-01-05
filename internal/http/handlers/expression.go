@@ -509,8 +509,13 @@ func (h *ExpressionHandler) AutocompleteChannelValues(ctx context.Context, input
 
 // TestFilterExpressionInput is the input for testing a filter expression.
 type TestFilterExpressionInput struct {
+	// Query parameters for extended functionality
+	IncludeChannels bool `query:"include_channels" doc:"If true, return matched channels in addition to counts" required:"false"`
+	Page            int  `query:"page" doc:"Page number for channel results (default: 1)" required:"false"`
+	Limit           int  `query:"limit" doc:"Max channels per page (default: 200)" required:"false"`
+
 	Body struct {
-		SourceID         string `json:"source_id" doc:"Source ID to test against" minLength:"1"`
+		SourceID         string `json:"source_id,omitempty" doc:"Source ID to test against (optional - if omitted, tests all sources)"`
 		SourceType       string `json:"source_type" doc:"Source type (stream or epg)" enum:"stream,epg"`
 		FilterExpression string `json:"filter_expression" doc:"Filter expression to test" minLength:"1"`
 		IsInverse        bool   `json:"is_inverse" doc:"Whether to invert the match result"`
@@ -520,22 +525,35 @@ type TestFilterExpressionInput struct {
 // TestFilterExpressionOutput is the output for testing a filter expression.
 type TestFilterExpressionOutput struct {
 	Body struct {
-		Success       bool   `json:"success" doc:"Whether the test completed successfully"`
-		MatchedCount  int    `json:"matched_count" doc:"Number of records that matched the expression"`
-		TotalChannels int    `json:"total_channels" doc:"Total number of records tested"`
-		Error         string `json:"error,omitempty" doc:"Error message if test failed"`
+		Success       bool              `json:"success" doc:"Whether the test completed successfully"`
+		MatchedCount  int               `json:"matched_count" doc:"Number of records that matched the expression"`
+		TotalChannels int               `json:"total_channels" doc:"Total number of records tested"`
+		Error         string            `json:"error,omitempty" doc:"Error message if test failed"`
+		Channels      []ChannelResponse `json:"channels,omitempty" doc:"Matched channels (when include_channels=true)"`
+		Page          int               `json:"page,omitempty" doc:"Current page number"`
+		TotalPages    int               `json:"total_pages,omitempty" doc:"Total number of pages"`
+		HasMore       bool              `json:"has_more,omitempty" doc:"Whether there are more pages"`
 	}
 }
 
 // TestFilterExpression tests a filter expression against a source.
+// If source_id is omitted in the request body, it tests against ALL sources.
+// When include_channels=true query param is set, returns matched channels with pagination.
 func (h *ExpressionHandler) TestFilterExpression(ctx context.Context, input *TestFilterExpressionInput) (*TestFilterExpressionOutput, error) {
 	resp := &TestFilterExpressionOutput{}
 
-	// Parse source ID
-	sourceID, err := models.ParseULID(input.Body.SourceID)
-	if err != nil {
-		resp.Body.Error = "invalid source_id format"
-		return resp, nil
+	// Parse source ID (optional - empty means all sources)
+	var sourceID models.ULID
+	var filterAllSources bool
+	if input.Body.SourceID == "" {
+		filterAllSources = true
+	} else {
+		var err error
+		sourceID, err = models.ParseULID(input.Body.SourceID)
+		if err != nil {
+			resp.Body.Error = "invalid source_id format"
+			return resp, nil
+		}
 	}
 
 	// Parse the expression
@@ -549,11 +567,29 @@ func (h *ExpressionHandler) TestFilterExpression(ctx context.Context, input *Tes
 	evaluator := expression.NewEvaluator()
 	evaluator.SetCaseSensitive(false)
 
+	// Setup pagination defaults
+	page := input.Page
+	if page < 1 {
+		page = 1
+	}
+	limit := input.Limit
+	if limit < 1 {
+		limit = 200
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
 	var matchCount, totalCount int
+	var matchedChannels []*models.Channel
+
+	// Track pagination: we need to skip (page-1)*limit and take limit items
+	skipCount := (page - 1) * limit
+	collectChannels := input.IncludeChannels && input.Body.SourceType == "stream"
 
 	if input.Body.SourceType == "stream" {
-		// Test against channels
-		err = h.channelRepo.GetBySourceID(ctx, sourceID, func(ch *models.Channel) error {
+		// Define the channel evaluation callback
+		processChannel := func(ch *models.Channel) error {
 			totalCount++
 
 			// Create evaluation context
@@ -581,16 +617,30 @@ func (h *ExpressionHandler) TestFilterExpression(ctx context.Context, input *Tes
 
 			if matches {
 				matchCount++
+				// Collect channels for pagination if requested
+				if collectChannels {
+					// Skip items before the current page
+					if matchCount > skipCount && len(matchedChannels) < limit {
+						matchedChannels = append(matchedChannels, ch)
+					}
+				}
 			}
 			return nil
-		})
+		}
+
+		// Test against channels - either specific source or all sources
+		if filterAllSources {
+			err = h.channelRepo.GetAllStreaming(ctx, processChannel)
+		} else {
+			err = h.channelRepo.GetBySourceID(ctx, sourceID, processChannel)
+		}
 		if err != nil {
 			resp.Body.Error = "failed to read channels: " + err.Error()
 			return resp, nil
 		}
 	} else {
-		// Test against EPG programs
-		err = h.epgProgramRepo.GetBySourceID(ctx, sourceID, func(prog *models.EpgProgram) error {
+		// Test against EPG programs (no channel return support for EPG)
+		processProgram := func(prog *models.EpgProgram) error {
 			totalCount++
 
 			// Create evaluation context
@@ -623,7 +673,14 @@ func (h *ExpressionHandler) TestFilterExpression(ctx context.Context, input *Tes
 				matchCount++
 			}
 			return nil
-		})
+		}
+
+		// For EPG, we don't support filtering all sources yet (would need GetAllStreaming equivalent)
+		if filterAllSources {
+			resp.Body.Error = "filtering all EPG sources is not supported; please specify a source_id"
+			return resp, nil
+		}
+		err = h.epgProgramRepo.GetBySourceID(ctx, sourceID, processProgram)
 		if err != nil {
 			resp.Body.Error = "failed to read programs: " + err.Error()
 			return resp, nil
@@ -633,6 +690,18 @@ func (h *ExpressionHandler) TestFilterExpression(ctx context.Context, input *Tes
 	resp.Body.Success = true
 	resp.Body.MatchedCount = matchCount
 	resp.Body.TotalChannels = totalCount
+
+	// Include matched channels if requested
+	if collectChannels && len(matchedChannels) > 0 {
+		resp.Body.Channels = make([]ChannelResponse, len(matchedChannels))
+		for i, ch := range matchedChannels {
+			resp.Body.Channels[i] = ChannelFromModel(ch)
+		}
+		resp.Body.Page = page
+		totalPages := (matchCount + limit - 1) / limit
+		resp.Body.TotalPages = totalPages
+		resp.Body.HasMore = page < totalPages
+	}
 
 	return resp, nil
 }

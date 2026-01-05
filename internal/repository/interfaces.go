@@ -53,6 +53,9 @@ type ChannelRepository interface {
 	GetBySourceID(ctx context.Context, sourceID models.ULID, callback func(*models.Channel) error) error
 	// GetBySourceIDPaginated retrieves channels for a source with pagination.
 	GetBySourceIDPaginated(ctx context.Context, sourceID models.ULID, offset, limit int) ([]*models.Channel, int64, error)
+	// GetAllStreaming retrieves all channels across all sources using a callback for streaming.
+	// Used for filter preview functionality.
+	GetAllStreaming(ctx context.Context, callback func(*models.Channel) error) error
 	// Update updates an existing channel.
 	Update(ctx context.Context, channel *models.Channel) error
 	// Delete deletes a channel by ID.

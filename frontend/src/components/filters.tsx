@@ -73,19 +73,21 @@ function FilterCreatePanel({
   onCancel,
   loading,
   error,
+  initialValues,
 }: {
   onCreate: (filter: Omit<Filter, 'id' | 'created_at' | 'updated_at'>) => Promise<void>;
   onCancel: () => void;
   loading: boolean;
   error: string | null;
+  initialValues?: { expression: string; sourceType: 'stream' | 'epg' } | null;
 }) {
   const [formData, setFormData] = useState<Omit<Filter, 'id' | 'created_at' | 'updated_at'>>({
     name: '',
-    source_type: 'stream',
+    source_type: initialValues?.sourceType || 'stream',
     action: 'include',
-    expression: '',
+    expression: initialValues?.expression || '',
   });
-  const [filterExpression, setFilterExpression] = useState('');
+  const [filterExpression, setFilterExpression] = useState(initialValues?.expression || '');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -362,7 +364,17 @@ function FilterDetailPanel({
   );
 }
 
-export function Filters() {
+interface FiltersProps {
+  initialCreateMode?: boolean;
+  initialExpression?: string;
+  initialSourceType?: 'stream' | 'epg';
+}
+
+export function Filters({
+  initialCreateMode = false,
+  initialExpression = '',
+  initialSourceType = 'stream',
+}: FiltersProps) {
   const [allFilters, setAllFilters] = useState<Filter[]>([]);
   const [pagination, setPagination] = useState<{ total: number } | null>(null);
 
@@ -387,7 +399,27 @@ export function Filters() {
 
   const [selectedFilter, setSelectedFilter] = useState<FilterMasterItem | null>(null);
   const [isOnline, setIsOnline] = useState(true);
-  const [isCreating, setIsCreating] = useState(false);
+  const [isCreating, setIsCreating] = useState(initialCreateMode);
+
+  // Track initial values for create mode (passed from URL params)
+  const [createInitialValues, setCreateInitialValues] = useState<{
+    expression: string;
+    sourceType: 'stream' | 'epg';
+  } | null>(
+    initialCreateMode ? { expression: initialExpression, sourceType: initialSourceType } : null
+  );
+
+  // Clear URL params after component mounts with initial create mode
+  useEffect(() => {
+    if (initialCreateMode && typeof window !== 'undefined') {
+      // Replace the URL without the query params (without triggering a navigation)
+      const url = new URL(window.location.href);
+      url.searchParams.delete('create');
+      url.searchParams.delete('expression');
+      url.searchParams.delete('source_type');
+      window.history.replaceState({}, '', url.pathname);
+    }
+  }, [initialCreateMode]);
 
   // Sort filters alphabetically by name
   const sortedFilters = useMemo(() => {
@@ -675,10 +707,18 @@ export function Filters() {
             {(selected) =>
               isCreating ? (
                 <FilterCreatePanel
-                  onCreate={handleCreateFilter}
-                  onCancel={() => setIsCreating(false)}
+                  onCreate={async (filter) => {
+                    await handleCreateFilter(filter);
+                    // Clear initial values after successful creation
+                    setCreateInitialValues(null);
+                  }}
+                  onCancel={() => {
+                    setIsCreating(false);
+                    setCreateInitialValues(null);
+                  }}
                   loading={loading.create}
                   error={errors.create}
+                  initialValues={createInitialValues}
                 />
               ) : selected ? (
                 <FilterDetailPanel

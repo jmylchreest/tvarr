@@ -764,10 +764,57 @@ export interface UpdateStreamProxyRequest {
 }
 
 export interface FilterTestRequest {
-  source_id: string;
+  source_id?: string; // Optional - when omitted, tests all sources
   source_type: FilterSourceType;
   filter_expression: string;
   is_inverse: boolean;
+}
+
+// Channel response from filter test endpoint (matches backend ChannelResponse)
+export interface FilterTestChannel {
+  id: string;
+  source_id: string;
+  source_name?: string;
+  ext_id?: string;
+  tvg_id?: string;
+  tvg_name?: string;
+  tvg_chno?: string;
+  tvg_logo?: string;
+  logo_url?: string;
+  group?: string;
+  name: string;
+  channel_number?: number;
+  stream_url: string;
+  stream_type?: string;
+  language?: string;
+  country?: string;
+  is_adult: boolean;
+  created_at: string;
+  updated_at: string;
+  // Codec info (optional, populated when available)
+  video_codec?: string;
+  video_width?: number;
+  video_height?: number;
+  video_framerate?: number;
+  audio_codec?: string;
+  audio_channels?: number;
+  audio_sample_rate?: number;
+  container_format?: string;
+  is_live_stream?: boolean;
+  last_probed_at?: string;
+}
+
+// Response from filter test endpoint with channels
+export interface FilterTestWithChannelsResponse {
+  success: boolean;
+  matched_count: number;
+  total_channels: number;
+  error?: string;
+  // Only present when include_channels=true
+  channels?: FilterTestChannel[];
+  page?: number;
+  total_pages?: number;
+  has_more?: boolean;
 }
 
 // Event Types for SSE

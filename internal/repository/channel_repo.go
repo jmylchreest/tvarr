@@ -153,6 +153,35 @@ func (r *channelRepo) GetBySourceIDPaginated(ctx context.Context, sourceID model
 	return channels, total, nil
 }
 
+// GetAllStreaming retrieves all channels across all sources using a callback for streaming.
+// Uses GORM's Rows() iterator for reliable row-by-row processing without batch issues.
+func (r *channelRepo) GetAllStreaming(ctx context.Context, callback func(*models.Channel) error) error {
+	rows, err := r.db.WithContext(ctx).
+		Model(&models.Channel{}).
+		Order("source_id ASC, id ASC").
+		Rows()
+	if err != nil {
+		return fmt.Errorf("querying all channels: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var channel models.Channel
+		if err := r.db.ScanRows(rows, &channel); err != nil {
+			return fmt.Errorf("scanning channel row: %w", err)
+		}
+		if err := callback(&channel); err != nil {
+			return err
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterating channels: %w", err)
+	}
+
+	return nil
+}
+
 // Update updates an existing channel.
 func (r *channelRepo) Update(ctx context.Context, channel *models.Channel) error {
 	if err := r.db.WithContext(ctx).Save(channel).Error; err != nil {

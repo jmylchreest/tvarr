@@ -246,6 +246,15 @@ func (r *mockChannelRepo) GetDistinctFieldValues(ctx context.Context, field stri
 	return []repository.FieldValueResult{}, nil
 }
 
+func (r *mockChannelRepo) GetAllStreaming(ctx context.Context, callback func(*models.Channel) error) error {
+	for _, ch := range r.channels {
+		if err := callback(ch); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func TestSourceService_CreateSource(t *testing.T) {
 	sourceRepo := newMockStreamSourceRepo()
 	channelRepo := newMockChannelRepo()

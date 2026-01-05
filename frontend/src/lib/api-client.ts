@@ -14,6 +14,7 @@ import {
   Filter,
   FilterListResponse,
   FilterTestRequest,
+  FilterTestWithChannelsResponse,
   DataMappingRule,
   DataMappingRuleListResponse,
   EncodingProfile,
@@ -732,6 +733,45 @@ class ApiClient {
     return this.request<any>(`${API_CONFIG.endpoints.filters}/test`, {
       method: 'POST',
       body: JSON.stringify(testRequest),
+    });
+  }
+
+  /**
+   * Test a filter expression with optional channel results.
+   * When include_channels is true, returns matched channels with pagination.
+   * When source_id is omitted, tests across ALL stream sources.
+   */
+  async testFilterWithChannels(params: {
+    sourceId?: string;
+    sourceType: 'stream' | 'epg';
+    expression: string;
+    isInverse?: boolean;
+    includeChannels?: boolean;
+    page?: number;
+    limit?: number;
+  }): Promise<FilterTestWithChannelsResponse> {
+    const queryParams = new URLSearchParams();
+    if (params.includeChannels) {
+      queryParams.set('include_channels', 'true');
+    }
+    if (params.page) {
+      queryParams.set('page', params.page.toString());
+    }
+    if (params.limit) {
+      queryParams.set('limit', params.limit.toString());
+    }
+
+    const queryString = queryParams.toString();
+    const url = `${API_CONFIG.endpoints.filters}/test${queryString ? `?${queryString}` : ''}`;
+
+    return this.request<FilterTestWithChannelsResponse>(url, {
+      method: 'POST',
+      body: JSON.stringify({
+        source_id: params.sourceId || '',
+        source_type: params.sourceType,
+        filter_expression: params.expression,
+        is_inverse: params.isInverse ?? false,
+      }),
     });
   }
 
