@@ -11,6 +11,7 @@ import (
 
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h264"
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h265"
+	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts"
 	"github.com/jmylchreest/tvarr/internal/observability"
 )
@@ -53,6 +54,11 @@ type TSDemuxer struct {
 	// Audio frame duration for PTS calculation (in 90kHz ticks)
 	audioFrameDuration int64
 	audioSampleRate    int
+
+	// AAC channel count resolution for channel_config=0
+	aacConfig                *mpeg4audio.AudioSpecificConfig
+	aacNeedsChannelResolve   bool
+	aacChannelResolveOnce    sync.Once
 
 	// Buffer for incremental writes
 	pipeMu     sync.Mutex
@@ -209,16 +215,26 @@ func (d *TSDemuxer) setupTrackCallback(track *mpegts.Track) {
 		// AAC frames are typically 1024 samples per frame
 		// Frame duration in 90kHz ticks = 1024 * 90000 / sampleRate
 		d.audioFrameDuration = int64(1024 * 90000 / d.audioSampleRate)
+
+		// Store config for potential channel count resolution
+		// Use AAC-LC as the ObjectType since:
+		// 1. ADTS only supports profiles 0-3 (AAC Main, LC, SSR, LTP)
+		// 2. HE-AAC streams often have mislabeled headers (claim AAC Main but contain AAC-LC + SBR)
+		// 3. FFmpeg and other decoders detect actual codec from bitstream, not ADTS header
+		// 4. AAC-LC is the correct core codec for HE-AAC
+		aacConfig := codec.Config
+		aacConfig.Type = mpeg4audio.ObjectTypeAACLC
+		d.aacConfig = &aacConfig
+
+		// Check if channel count needs resolution from first AU
+		// (channel_config=0 means PCE defines channel layout)
+		if aacConfig.ChannelCount == 0 {
+			d.aacNeedsChannelResolve = true
+			d.config.Logger.Debug("AAC channel_config=0, will resolve from first AU")
+		}
+
 		// Only set source codec when NOT writing to a target variant
 		if d.buffer != nil && d.config.TargetVariant == "" {
-			// Marshal AudioSpecificConfig as initData for muxer to use correct params
-			// Use AAC-LC as the ObjectType since:
-			// 1. ADTS only supports profiles 0-3 (AAC Main, LC, SSR, LTP)
-			// 2. HE-AAC streams often have mislabeled headers (claim AAC Main but contain AAC-LC + SBR)
-			// 3. FFmpeg and other decoders detect actual codec from bitstream, not ADTS header
-			// 4. AAC-LC is the correct core codec for HE-AAC
-			aacConfig := codec.Config
-			aacConfig.Type = 2 // ObjectTypeAACLC - ensures correct decoding regardless of ADTS header
 			initData, err := aacConfig.Marshal()
 			if err != nil {
 				d.config.Logger.Debug("Failed to marshal AAC config, using nil initData",
@@ -408,10 +424,50 @@ func (d *TSDemuxer) handleMPEG4Audio(pts int64, aus [][]byte) error {
 		if len(au) == 0 {
 			continue
 		}
+
+		// Resolve channel count from first AU if needed (channel_config=0)
+		if d.aacNeedsChannelResolve {
+			d.aacChannelResolveOnce.Do(func() {
+				d.resolveAACChannelCount(au)
+			})
+		}
+
 		d.emitAudioSample(currentPTS, au)
 		currentPTS += frameDuration
 	}
 	return nil
+}
+
+// resolveAACChannelCount resolves the channel count from a raw_data_block
+// when the original ADTS had channel_config=0.
+func (d *TSDemuxer) resolveAACChannelCount(au []byte) {
+	if d.aacConfig == nil || d.buffer == nil || d.config.TargetVariant != "" {
+		return
+	}
+
+	// Use the helper to resolve channel count (defaults to stereo if unresolvable)
+	channelCount := mpeg4audio.ResolveChannelCount(d.aacConfig, au, 2)
+
+	if channelCount > 0 && channelCount != d.aacConfig.ChannelCount {
+		d.config.Logger.Debug("Resolved AAC channel count from AU",
+			slog.Int("channel_count", channelCount))
+
+		// Update the config and re-marshal initData
+		d.aacConfig.ChannelCount = channelCount
+		initData, err := d.aacConfig.Marshal()
+		if err != nil {
+			d.config.Logger.Debug("Failed to marshal updated AAC config",
+				slog.String("error", err.Error()))
+			return
+		}
+
+		// Update the buffer's audio track initData
+		if source := d.buffer.GetSourceVariant(); source != nil {
+			if audioTrack := source.AudioTrack(); audioTrack != nil {
+				audioTrack.SetInitData(initData)
+			}
+		}
+	}
 }
 
 // handleAC3 processes AC-3 frames.

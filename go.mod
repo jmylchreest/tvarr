@@ -78,7 +78,7 @@ require (
 	modernc.org/sqlite v1.42.2 // indirect
 )
 
-// Fork with E-AC3 support, PCE parsing for channel_config=0, ADTS all profiles fix,
-// and WriteTables() for late-joining MPEG-TS clients
+// Fork with E-AC3 support, channel_config=0 support with ResolveChannelCount helper,
+// ADTS all profiles fix, and WriteTables() for late-joining MPEG-TS clients
 // Branch: tvarr (github.com/jmylchreest/mediacommon)
-replace github.com/bluenviron/mediacommon/v2 => github.com/jmylchreest/mediacommon/v2 v2.5.4-0.20251222103348-862e6cd6c2fb
+replace github.com/bluenviron/mediacommon/v2 => github.com/jmylchreest/mediacommon/v2 v2.5.4-0.20260106213607-513eb933953c
