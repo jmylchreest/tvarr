@@ -1159,13 +1159,15 @@ tasks:
     cmds:
       - task: deps:update
       - task: frontend:deps:update
+      - task: docs:deps:update
       - task: deps:check:external
 
   deps:upgrade:all:
-    desc: Upgrade all dependencies to latest versions (Go + frontend + external)
+    desc: Upgrade all dependencies to latest versions (Go + frontend + docs + external)
     cmds:
       - task: deps:upgrade
       - task: frontend:deps:upgrade
+      - task: docs:deps:upgrade
       - task: deps:upgrade:external
 
   deps:check:external:
@@ -1191,6 +1193,20 @@ tasks:
     cmds:
       - npx npm-check-updates -u
       - pnpm install
+
+  # Docs dependency tasks (Docusaurus documentation site)
+  docs:deps:update:
+    desc: Update docs dependencies within semver ranges (safe)
+    dir: docs
+    cmds:
+      - npm update
+
+  docs:deps:upgrade:
+    desc: Upgrade docs dependencies to latest versions (may include breaking changes)
+    dir: docs
+    cmds:
+      - npx npm-check-updates -u
+      - npm install
 
   # ============================================
   # Code Generation Tasks
