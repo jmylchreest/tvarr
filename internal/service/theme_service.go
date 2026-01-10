@@ -360,7 +360,7 @@ func (s *ThemeService) extractPalette(cssBlock string) models.ThemePalette {
 // EnsureThemesDirectory creates the custom themes directory if it doesn't exist.
 func (s *ThemeService) EnsureThemesDirectory() error {
 	themesDir := filepath.Join(s.dataDir, "themes")
-	return os.MkdirAll(themesDir, 0755)
+	return os.MkdirAll(themesDir, 0750)
 }
 
 // IsBuiltinTheme returns true if the theme ID is a built-in theme.

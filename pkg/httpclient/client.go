@@ -281,7 +281,7 @@ func (c *Client) DoWithContext(ctx context.Context, req *http.Request) (*http.Re
 				slog.Duration("duration", duration),
 				slog.Int("attempt", attempt),
 			)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			continue
 		}
 
@@ -415,7 +415,7 @@ func (d *decompressReader) Read(p []byte) (int, error) {
 func (d *decompressReader) Close() error {
 	// Close the decompression reader if it implements io.Closer
 	if closer, ok := d.reader.(io.Closer); ok {
-		closer.Close()
+		_ = closer.Close()
 	}
 	return d.closer.Close()
 }

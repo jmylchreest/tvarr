@@ -24,7 +24,7 @@ func NewAPIClient(baseURL string) *APIClient {
 	return &APIClient{
 		baseURL: baseURL,
 		httpClient: &http.Client{
-			Timeout: 5 * time.Minute, // Long timeout for proxy generation with logo caching
+			Timeout: DefaultTimeout, // Long timeout for proxy generation with logo caching
 		},
 	}
 }
@@ -361,7 +361,7 @@ func (c *APIClient) TriggerProxyGeneration(ctx context.Context, proxyID string, 
 	if err != nil {
 		return fmt.Errorf("trigger generation failed: %w", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -531,7 +531,7 @@ func (c *APIClient) TestStreamRequestWithHeaders(ctx context.Context, streamURL 
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
-		Timeout: 10 * time.Second,
+		Timeout: StreamTestTimeout,
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", streamURL, nil)

@@ -53,7 +53,7 @@ func (h *StaticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !h.hasAssets {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`<!DOCTYPE html>
+		_, _ = w.Write([]byte(`<!DOCTYPE html>
 <html>
 <head>
     <title>tvarr</title>
@@ -158,7 +158,7 @@ func (h *StaticHandler) serveFile(w http.ResponseWriter, r *http.Request, fsys f
 
 	// Fallback: just copy the content
 	w.WriteHeader(http.StatusOK)
-	io.Copy(w, file)
+	_, _ = io.Copy(w, file)
 }
 
 // setCacheHeaders sets appropriate cache headers based on file type.

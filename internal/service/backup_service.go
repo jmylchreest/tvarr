@@ -189,7 +189,7 @@ func (s *BackupService) CreateBackup(ctx context.Context) (*models.BackupMetadat
 	}
 
 	// Ensure backup directory exists
-	if err := os.MkdirAll(s.storageDir, 0755); err != nil {
+	if err := os.MkdirAll(s.storageDir, 0750); err != nil {
 		return failWithError(fmt.Errorf("creating backup directory: %w", err))
 	}
 
@@ -271,7 +271,7 @@ func (s *BackupService) CreateBackup(ctx context.Context) (*models.BackupMetadat
 
 	// Create the tar.gz archive
 	if err := s.createTarGzArchive(tarGzPath, dbPath, metaFile); err != nil {
-		os.Remove(tarGzPath)
+		_ = os.Remove(tarGzPath)
 		return failWithError(fmt.Errorf("creating archive: %w", err))
 	}
 
@@ -305,7 +305,7 @@ func (s *BackupService) CreateBackup(ctx context.Context) (*models.BackupMetadat
 	metaFile.CompressedSize = archiveInfo.Size()
 	metaFile.Checksum = checksum
 	if err := s.createTarGzArchive(tarGzPath, dbPath, metaFile); err != nil {
-		os.Remove(tarGzPath)
+		_ = os.Remove(tarGzPath)
 		return failWithError(fmt.Errorf("updating archive with checksum: %w", err))
 	}
 
@@ -588,25 +588,25 @@ func (s *BackupService) RestoreBackup(ctx context.Context, filename string) erro
 		return fmt.Errorf("creating temp file: %w", err)
 	}
 	tempPath := tempDB.Name()
-	tempDB.Close()
+	_ = tempDB.Close()
 
 	// Handle both formats
 	if strings.HasSuffix(backupPath, ".tar.gz") {
 		if err := s.extractDatabaseFromArchive(backupPath, tempPath); err != nil {
-			os.Remove(tempPath)
+			_ = os.Remove(tempPath)
 			return fmt.Errorf("extracting database from archive: %w", err)
 		}
 	} else {
 		// Legacy .db.gz format
 		if err := s.decompressFile(backupPath, tempPath); err != nil {
-			os.Remove(tempPath)
+			_ = os.Remove(tempPath)
 			return fmt.Errorf("decompressing backup: %w", err)
 		}
 	}
 
 	// Validate the restored database can be opened
 	if err := s.validateDatabase(tempPath); err != nil {
-		os.Remove(tempPath)
+		_ = os.Remove(tempPath)
 		return fmt.Errorf("validating restored database: %w", err)
 	}
 
@@ -615,16 +615,16 @@ func (s *BackupService) RestoreBackup(ctx context.Context, filename string) erro
 	// For SQLite, we need to get the DSN from the dialector
 	currentDBPath := s.getDatabasePath()
 	if currentDBPath == "" {
-		os.Remove(tempPath)
+		_ = os.Remove(tempPath)
 		return fmt.Errorf("could not determine current database path")
 	}
 
 	// Atomic swap: rename current to .old, rename temp to current
 	oldPath := currentDBPath + ".old"
-	os.Remove(oldPath) // Remove any existing .old file
+	_ = os.Remove(oldPath)
 
 	if err := os.Rename(currentDBPath, oldPath); err != nil {
-		os.Remove(tempPath)
+		_ = os.Remove(tempPath)
 		return fmt.Errorf("backing up current database: %w", err)
 	}
 
@@ -635,7 +635,7 @@ func (s *BackupService) RestoreBackup(ctx context.Context, filename string) erro
 	}
 
 	// Remove old database file
-	os.Remove(oldPath)
+	_ = os.Remove(oldPath)
 
 	s.logger.Info("database restored",
 		slog.String("from_backup", filename),
@@ -735,7 +735,7 @@ func (s *BackupService) SetBackupProtection(ctx context.Context, filename string
 	if err != nil {
 		return fmt.Errorf("marshaling metadata: %w", err)
 	}
-	if err := os.WriteFile(metaPath, metaJSON, 0644); err != nil {
+	if err := os.WriteFile(metaPath, metaJSON, 0640); err != nil {
 		return fmt.Errorf("writing metadata: %w", err)
 	}
 
@@ -767,8 +767,8 @@ func (s *BackupService) setProtectionInArchive(archivePath string, protected boo
 		return fmt.Errorf("creating temp file: %w", err)
 	}
 	tempDBPath := tempDB.Name()
-	tempDB.Close()
-	defer os.Remove(tempDBPath)
+	_ = tempDB.Close()
+	defer func() { _ = os.Remove(tempDBPath) }()
 
 	if err := s.extractDatabaseFromArchive(archivePath, tempDBPath); err != nil {
 		return fmt.Errorf("extracting database: %w", err)
@@ -783,8 +783,8 @@ func (s *BackupService) setProtectionInArchive(archivePath string, protected boo
 		return fmt.Errorf("creating temp archive: %w", err)
 	}
 	tempArchivePath := tempArchive.Name()
-	tempArchive.Close()
-	defer os.Remove(tempArchivePath)
+	_ = tempArchive.Close()
+	defer func() { _ = os.Remove(tempArchivePath) }()
 
 	// Create new archive with updated metadata
 	if err := s.createTarGzArchive(tempArchivePath, tempDBPath, &metaFile); err != nil {
@@ -1151,7 +1151,7 @@ func truncateChecksum(checksum string) string {
 // Supports both new .tar.gz format (with embedded metadata) and legacy .db.gz format.
 func (s *BackupService) ImportBackup(ctx context.Context, reader io.Reader, originalFilename string) (*models.BackupMetadata, error) {
 	// Ensure backup directory exists
-	if err := os.MkdirAll(s.storageDir, 0755); err != nil {
+	if err := os.MkdirAll(s.storageDir, 0750); err != nil {
 		return nil, fmt.Errorf("creating backup directory: %w", err)
 	}
 
@@ -1180,11 +1180,11 @@ func (s *BackupService) ImportBackup(ctx context.Context, reader io.Reader, orig
 
 	// Copy uploaded content to temp file
 	if _, err := io.Copy(tempFile, reader); err != nil {
-		tempFile.Close()
-		os.Remove(tempPath)
+		_ = tempFile.Close()
+		_ = os.Remove(tempPath)
 		return nil, fmt.Errorf("writing uploaded file: %w", err)
 	}
-	tempFile.Close()
+	_ = tempFile.Close()
 
 	// Handle based on file format
 	if strings.HasSuffix(originalFilename, ".tar.gz") {
@@ -1197,7 +1197,7 @@ func (s *BackupService) ImportBackup(ctx context.Context, reader io.Reader, orig
 
 // importTarGzBackup handles importing a new format .tar.gz backup.
 func (s *BackupService) importTarGzBackup(ctx context.Context, tempPath, destPath, originalFilename string) (*models.BackupMetadata, error) {
-	defer os.Remove(tempPath)
+	defer func() { _ = os.Remove(tempPath) }()
 
 	// Validate the archive by trying to read its metadata
 	metaFile, err := s.readMetadataFromArchive(tempPath)
@@ -1316,7 +1316,7 @@ func (s *BackupService) importLegacyBackup(ctx context.Context, tempPath, destPa
 	if err != nil {
 		return nil, fmt.Errorf("marshaling metadata: %w", err)
 	}
-	if err := os.WriteFile(metaPath, metaJSON, 0644); err != nil {
+	if err := os.WriteFile(metaPath, metaJSON, 0640); err != nil {
 		s.logger.Warn("failed to write metadata file", slog.String("error", err.Error()))
 	}
 
@@ -1351,8 +1351,8 @@ func (s *BackupService) validateGzippedBackup(gzPath string) error {
 		return fmt.Errorf("creating temp file: %w", err)
 	}
 	tempPath := tempFile.Name()
-	tempFile.Close()
-	defer os.Remove(tempPath)
+	_ = tempFile.Close()
+	defer func() { _ = os.Remove(tempPath) }()
 
 	if err := s.decompressFile(gzPath, tempPath); err != nil {
 		return fmt.Errorf("decompressing: %w", err)
@@ -1369,8 +1369,8 @@ func (s *BackupService) inspectGzippedDatabase(gzPath string) (int64, map[string
 		return 0, nil, err
 	}
 	tempPath := tempFile.Name()
-	tempFile.Close()
-	defer os.Remove(tempPath)
+	_ = tempFile.Close()
+	defer func() { _ = os.Remove(tempPath) }()
 
 	if err := s.decompressFile(gzPath, tempPath); err != nil {
 		return 0, nil, err

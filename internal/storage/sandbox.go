@@ -236,7 +236,7 @@ func (s *Sandbox) AtomicWrite(relativePath string, data []byte) error {
 	// Rename to target (atomic on most filesystems)
 	if err := os.Rename(tempPath, targetPath); err != nil {
 		// Clean up temp file on failure
-		os.Remove(tempPath)
+		_ = os.Remove(tempPath)
 		return fmt.Errorf("renaming to target: %w", err)
 	}
 
@@ -271,17 +271,17 @@ func (s *Sandbox) AtomicWriteReader(relativePath string, r io.Reader) error {
 	closeErr := tempFile.Close()
 
 	if err != nil {
-		os.Remove(tempPath)
+		_ = os.Remove(tempPath)
 		return fmt.Errorf("writing to temporary file: %w", err)
 	}
 	if closeErr != nil {
-		os.Remove(tempPath)
+		_ = os.Remove(tempPath)
 		return fmt.Errorf("closing temporary file: %w", closeErr)
 	}
 
 	// Rename to target (atomic on most filesystems)
 	if err := os.Rename(tempPath, targetPath); err != nil {
-		os.Remove(tempPath)
+		_ = os.Remove(tempPath)
 		return fmt.Errorf("renaming to target: %w", err)
 	}
 
@@ -450,17 +450,17 @@ func (s *Sandbox) atomicCopyPublish(srcAbsPath, targetPath string) error {
 	closeErr := tempFile.Close()
 
 	if err != nil {
-		os.Remove(tempPath)
+		_ = os.Remove(tempPath)
 		return fmt.Errorf("copying to temp file: %w", err)
 	}
 	if closeErr != nil {
-		os.Remove(tempPath)
+		_ = os.Remove(tempPath)
 		return fmt.Errorf("closing temp file: %w", closeErr)
 	}
 
 	// Atomic rename (temp and dest are now on same filesystem)
 	if err := os.Rename(tempPath, targetPath); err != nil {
-		os.Remove(tempPath)
+		_ = os.Remove(tempPath)
 		return fmt.Errorf("renaming to target: %w", err)
 	}
 

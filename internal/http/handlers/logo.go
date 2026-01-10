@@ -179,7 +179,7 @@ func (h *LogoHandler) ServeLogoFile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 
 	// Copy the file to the response
-	io.Copy(w, file)
+	_, _ = io.Copy(w, file)
 }
 
 // LinkedAssetResponse represents a linked asset in API responses.

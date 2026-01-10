@@ -5,8 +5,29 @@ import (
 	"time"
 )
 
-// DefaultTimeout is the default timeout for E2E operations.
-const DefaultTimeout = 5 * time.Minute
+// Server and client timeout constants for E2E runner.
+const (
+	// DefaultTimeout is the default timeout for E2E operations.
+	DefaultTimeout = 5 * time.Minute
+
+	// HealthCheckTimeout is the timeout for health check requests.
+	HealthCheckTimeout = 2 * time.Second
+
+	// ProcessKillTimeout is the time to wait before force-killing a process.
+	ProcessKillTimeout = 5 * time.Second
+
+	// ServerReadHeaderTimeout is the ReadHeaderTimeout for HTTP servers.
+	ServerReadHeaderTimeout = 10 * time.Second
+
+	// ServerShutdownTimeout is the timeout for graceful server shutdown.
+	ServerShutdownTimeout = 2 * time.Second
+
+	// SSEWaitTimeout is the timeout for waiting on SSE events.
+	SSEWaitTimeout = 2 * time.Second
+
+	// StreamTestTimeout is the timeout for stream test requests.
+	StreamTestTimeout = 10 * time.Second
+)
 
 // TestResult represents the outcome of a single test.
 type TestResult struct {

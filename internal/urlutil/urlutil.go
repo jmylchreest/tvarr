@@ -168,7 +168,7 @@ func (f *ResourceFetcher) fetchHTTP(ctx context.Context, u string) (io.ReadClose
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 

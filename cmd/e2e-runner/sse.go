@@ -115,7 +115,7 @@ func (c *SSECollector) Stop() {
 	// Wait for the goroutine to finish (with timeout)
 	select {
 	case <-c.done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(SSEWaitTimeout):
 		// Force close - the goroutine will exit when it tries to read
 	}
 	// Close idle connections to ensure no lingering goroutines

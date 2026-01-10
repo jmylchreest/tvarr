@@ -362,7 +362,7 @@ func (r *HLSRepackager) watchClient() {
 	}
 
 	// Close the repackager when client stops
-	r.Close()
+	_ = r.Close()
 }
 
 // Handle serves HTTP requests for HLS playlists and segments.
@@ -409,7 +409,7 @@ func (r *HLSRepackager) Close() error {
 	r.mu.Unlock()
 
 	if muxer != nil {
-		muxer.Close()
+		_ = muxer.Close()
 	}
 
 	r.config.Logger.Info("HLSRepackager: closed",

@@ -412,7 +412,7 @@ func (t *TranscodeJob) Stop() {
 			t.logger.Warn("input writer did not finish in time, forcing stdin close",
 				slog.String("job_id", t.id))
 			if t.stdin != nil {
-				t.stdin.Close()
+				_ = t.stdin.Close()
 			}
 		}
 
@@ -788,15 +788,15 @@ func (t *TranscodeJob) startFFmpeg() error {
 
 	closePipes := func() {
 		if t.stdin != nil {
-			t.stdin.Close()
+			_ = t.stdin.Close()
 			t.stdin = nil
 		}
 		if t.stdout != nil {
-			t.stdout.Close()
+			_ = t.stdout.Close()
 			t.stdout = nil
 		}
 		if t.stderr != nil {
-			t.stderr.Close()
+			_ = t.stderr.Close()
 			t.stderr = nil
 		}
 	}
@@ -838,7 +838,7 @@ func (t *TranscodeJob) runInputWriter() {
 	defer func() {
 		// Close stdin to signal EOF to FFmpeg when we're done
 		if t.stdin != nil {
-			t.stdin.Close()
+			_ = t.stdin.Close()
 		}
 	}()
 

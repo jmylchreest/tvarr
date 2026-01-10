@@ -96,7 +96,7 @@ func (s *GRPCServer) Start(ctx context.Context) error {
 
 	// Ensure socket directory exists
 	socketDir := filepath.Dir(s.config.InternalSocketPath)
-	if err := os.MkdirAll(socketDir, 0755); err != nil {
+	if err := os.MkdirAll(socketDir, 0750); err != nil {
 		return fmt.Errorf("creating socket directory: %w", err)
 	}
 
@@ -116,7 +116,7 @@ func (s *GRPCServer) Start(ctx context.Context) error {
 	if s.config.ExternalListenAddr != "" {
 		externalListener, err := net.Listen("tcp", s.config.ExternalListenAddr)
 		if err != nil {
-			s.internalListener.Close()
+			_ = s.internalListener.Close()
 			return fmt.Errorf("creating external TCP listener: %w", err)
 		}
 		s.externalListener = externalListener

@@ -136,7 +136,7 @@ func main() {
 
 		defer func() {
 			if testDataDir != "" {
-				os.RemoveAll(testDataDir)
+				_ = os.RemoveAll(testDataDir)
 			}
 		}()
 	} else {
@@ -244,8 +244,8 @@ func main() {
 	exitCode := runner.PrintSummary()
 
 	// Ensure stdout is flushed before exit (helps when piped)
-	os.Stdout.Sync()
-	os.Stderr.Sync()
+	_ = os.Stdout.Sync()
+	_ = os.Stderr.Sync()
 
 	os.Exit(exitCode)
 }

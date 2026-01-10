@@ -167,7 +167,7 @@ func (h *OutputHandler) serveM3U(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "audio/x-mpegurl")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.m3u\"", proxyID))
 	w.WriteHeader(http.StatusOK)
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 // serveXMLTV handles direct HTTP requests for XMLTV files.
@@ -198,7 +198,7 @@ func (h *OutputHandler) serveXMLTV(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/xml")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.xmltv\"", proxyID))
 	w.WriteHeader(http.StatusOK)
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 // readOutputFile reads an output file from the sandbox.

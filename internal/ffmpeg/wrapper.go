@@ -1026,7 +1026,7 @@ func (c *Command) captureStderr(stderr io.ReadCloser, logPath string, done chan 
 	var logFile *os.File
 	if logPath != "" {
 		var err error
-		logFile, err = os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		logFile, err = os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0640)
 		if err != nil {
 			// Log error but continue - we'll still capture to memory
 			fmt.Fprintf(os.Stderr, "failed to open ffmpeg log file %s: %v\n", logPath, err)

@@ -281,7 +281,7 @@ func (c *RegistrationClient) reconnect(ctx context.Context) error {
 	}
 	// Close existing connection
 	if c.conn != nil {
-		c.conn.Close()
+		_ = c.conn.Close()
 		c.conn = nil
 		c.client = nil
 	}
@@ -324,7 +324,7 @@ func (c *RegistrationClient) reconnect(ctx context.Context) error {
 			)
 			c.mu.Lock()
 			if c.conn != nil {
-				c.conn.Close()
+				_ = c.conn.Close()
 				c.conn = nil
 				c.client = nil
 			}
@@ -551,7 +551,7 @@ func (c *RegistrationClient) ConnectAndRegister(ctx context.Context) error {
 				slog.String("error", err.Error()),
 				slog.Duration("delay", delay),
 			)
-			c.Close()
+			_ = c.Close()
 			time.Sleep(delay)
 			delay = min(delay*2, c.reconnectMaxDelay)
 			continue

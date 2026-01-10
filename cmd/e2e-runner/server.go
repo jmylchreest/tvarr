@@ -58,7 +58,7 @@ func NewManagedServer(binaryPath string, logFiles *LogFiles) (*ManagedServer, er
 
 	// Create unique data directory
 	dataDir := filepath.Join(os.TempDir(), fmt.Sprintf("tvarr-e2e-%d-%d", port, time.Now().UnixNano()))
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
+	if err := os.MkdirAll(dataDir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
@@ -117,7 +117,7 @@ func (ms *ManagedServer) Start(ctx context.Context) error {
 	}
 
 	// Wait for server to be ready (up to 30 seconds)
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := &http.Client{Timeout: HealthCheckTimeout}
 	healthURL := ms.baseURL + "/health"
 
 	for range 30 {
@@ -131,11 +131,11 @@ func (ms *ManagedServer) Start(ctx context.Context) error {
 		req, _ := http.NewRequestWithContext(ctx, "GET", healthURL, nil)
 		resp, err := client.Do(req)
 		if err == nil && resp.StatusCode == http.StatusOK {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil
 		}
 		if resp != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 		time.Sleep(time.Second)
 	}
@@ -148,7 +148,7 @@ func (ms *ManagedServer) Start(ctx context.Context) error {
 func (ms *ManagedServer) Stop() {
 	if ms.cmd != nil && ms.cmd.Process != nil {
 		// Send SIGTERM for graceful shutdown
-		ms.cmd.Process.Signal(syscall.SIGTERM)
+		_ = ms.cmd.Process.Signal(syscall.SIGTERM)
 
 		// Wait a bit then force kill if needed
 		done := make(chan error, 1)
@@ -159,16 +159,16 @@ func (ms *ManagedServer) Stop() {
 		select {
 		case <-done:
 			// Process exited
-		case <-time.After(5 * time.Second):
+		case <-time.After(ProcessKillTimeout):
 			// Force kill
-			ms.cmd.Process.Kill()
+			_ = ms.cmd.Process.Kill()
 			<-done
 		}
 	}
 
 	// Cleanup data directory
 	if ms.dataDir != "" {
-		os.RemoveAll(ms.dataDir)
+		_ = os.RemoveAll(ms.dataDir)
 	}
 }
 
@@ -214,14 +214,14 @@ func NewTestdataServer() (*TestdataServer, error) {
 	// Create a sub-filesystem from the embedded FS
 	subFS, err := fs.Sub(testdataFS, "testdata")
 	if err != nil {
-		listener.Close()
+		_ = listener.Close()
 		return nil, fmt.Errorf("failed to create sub filesystem: %w", err)
 	}
 
 	// Read the test stream content for serving on /live/ paths
 	testStreamData, err := fs.ReadFile(subFS, "test-stream.ts")
 	if err != nil {
-		listener.Close()
+		_ = listener.Close()
 		return nil, fmt.Errorf("failed to read test-stream.ts: %w", err)
 	}
 
@@ -234,7 +234,7 @@ func NewTestdataServer() (*TestdataServer, error) {
 		w.Header().Set("Content-Type", "video/MP2T")
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(testStreamData)))
 		w.WriteHeader(http.StatusOK)
-		w.Write(testStreamData)
+		_, _ = w.Write(testStreamData)
 	})
 
 	// Handle /logos/ paths by serving the channel.webp content
@@ -247,7 +247,7 @@ func NewTestdataServer() (*TestdataServer, error) {
 		w.Header().Set("Content-Type", "image/webp")
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(channelLogoData)))
 		w.WriteHeader(http.StatusOK)
-		w.Write(channelLogoData)
+		_, _ = w.Write(channelLogoData)
 	})
 
 	// Handle /programs/ paths by serving the program.webp content
@@ -260,7 +260,7 @@ func NewTestdataServer() (*TestdataServer, error) {
 		w.Header().Set("Content-Type", "image/webp")
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(programLogoData)))
 		w.WriteHeader(http.StatusOK)
-		w.Write(programLogoData)
+		_, _ = w.Write(programLogoData)
 	})
 
 	// Serve static files for other paths
@@ -270,7 +270,8 @@ func NewTestdataServer() (*TestdataServer, error) {
 		listener: listener,
 		baseURL:  fmt.Sprintf("http://127.0.0.1:%d", port),
 		server: &http.Server{
-			Handler: mux,
+			Handler:           mux,
+			ReadHeaderTimeout: ServerReadHeaderTimeout,
 		},
 	}
 
@@ -279,14 +280,14 @@ func NewTestdataServer() (*TestdataServer, error) {
 
 // Start starts the testdata server.
 func (ts *TestdataServer) Start() {
-	go ts.server.Serve(ts.listener)
+	go func() { _ = ts.server.Serve(ts.listener) }()
 }
 
 // Stop stops the testdata server.
 func (ts *TestdataServer) Stop() {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), ServerShutdownTimeout)
 	defer cancel()
-	ts.server.Shutdown(ctx)
+	_ = ts.server.Shutdown(ctx)
 }
 
 // BaseURL returns the base URL for the testdata server.

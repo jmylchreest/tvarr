@@ -73,7 +73,18 @@ jobs:
       - name: Run Gosec Security Scanner
         uses: securego/gosec@master
         with:
-          args: "-fmt sarif -out gosec-results.sarif -no-fail ./..."
+          # Exclude rules handled by golangci-lint or intentionally suppressed:
+          # G103: Use of unsafe (protobuf-generated code)
+          # G104: Unhandled errors (covered by errcheck with specific exclusions)
+          # G108: Profiling endpoint exposure (intentional, localhost-only)
+          # G114: HTTP server without timeout (pprof servers need long-running requests)
+          # G115: Integer overflow (acceptable for process stats parsing)
+          # G204: Subprocess with variable (FFmpeg wrapper intentionally uses dynamic commands)
+          # G301/G302/G306: File permissions (acceptable for application data)
+          # G304: File path from taint input (sandbox validates paths)
+          # G307: Deprecated
+          # G404: Weak random (acceptable for non-crypto uses)
+          args: "-exclude=G103,G104,G108,G114,G115,G204,G301,G302,G304,G306,G307,G404 -fmt sarif -out gosec-results.sarif -no-fail ./..."
         continue-on-error: true
 
       - name: Filter SARIF fixes field

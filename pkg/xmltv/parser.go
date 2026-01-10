@@ -132,7 +132,7 @@ func (p *Parser) Parse(r io.Reader) error {
 						return fmt.Errorf("channel callback: %w", err)
 					}
 				} else {
-					decoder.Skip()
+					_ = decoder.Skip()
 				}
 
 			case "programme":
@@ -146,7 +146,7 @@ func (p *Parser) Parse(r io.Reader) error {
 						return fmt.Errorf("programme callback: %w", err)
 					}
 				} else {
-					decoder.Skip()
+					_ = decoder.Skip()
 				}
 			}
 		}
@@ -227,14 +227,14 @@ func (p *Parser) parseChannel(decoder *xml.Decoder, start xml.StartElement) (*Ch
 						channel.Icon = attr.Value
 					}
 				}
-				decoder.Skip()
+				_ = decoder.Skip()
 			case "url":
 				var url string
 				if err := decoder.DecodeElement(&url, &elem); err == nil {
 					channel.URL = url
 				}
 			default:
-				decoder.Skip()
+				_ = decoder.Skip()
 			}
 		case xml.EndElement:
 			if elem.Name.Local == "channel" {
@@ -303,7 +303,7 @@ func (p *Parser) parseProgramme(decoder *xml.Decoder, start xml.StartElement) (*
 						prog.Icon = attr.Value
 					}
 				}
-				decoder.Skip()
+				_ = decoder.Skip()
 			case "episode-num":
 				var epNum string
 				if err := decoder.DecodeElement(&epNum, &elem); err == nil {
@@ -318,14 +318,14 @@ func (p *Parser) parseProgramme(decoder *xml.Decoder, start xml.StartElement) (*
 				}
 			case "new":
 				prog.IsNew = true
-				decoder.Skip()
+				_ = decoder.Skip()
 			case "premiere":
 				prog.IsPremiere = true
-				decoder.Skip()
+				_ = decoder.Skip()
 			case "credits":
 				prog.Credits = p.parseCredits(decoder)
 			default:
-				decoder.Skip()
+				_ = decoder.Skip()
 			}
 		case xml.EndElement:
 			if elem.Name.Local == "programme" {
@@ -351,7 +351,7 @@ func (p *Parser) parseRating(decoder *xml.Decoder, start *xml.StartElement, prog
 					prog.Rating = strings.TrimSpace(value)
 				}
 			} else {
-				decoder.Skip()
+				_ = decoder.Skip()
 			}
 		case xml.EndElement:
 			if elem.Name.Local == "rating" {

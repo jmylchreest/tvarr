@@ -204,11 +204,11 @@ func (r *E2ERunner) writeArtifact(filename, content string) error {
 	if r.outputDir == "" {
 		return nil
 	}
-	if err := os.MkdirAll(r.outputDir, 0755); err != nil {
+	if err := os.MkdirAll(r.outputDir, 0750); err != nil {
 		return err
 	}
 	path := filepath.Join(r.outputDir, filename)
-	return os.WriteFile(path, []byte(content), 0644)
+	return os.WriteFile(path, []byte(content), 0640)
 }
 
 // printSampleChannels displays sample channels from M3U content.

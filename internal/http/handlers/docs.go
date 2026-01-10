@@ -119,5 +119,5 @@ func (h *DocsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
   </body>
 </html>`, h.title, themeScript, h.specPath)
 
-	w.Write([]byte(html))
+	_, _ = w.Write([]byte(html))
 }

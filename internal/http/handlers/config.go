@@ -193,7 +193,7 @@ func (h *ConfigHandler) PersistConfig(ctx context.Context, input *PersistConfigI
 		if err != nil {
 			return nil, huma.Error403Forbidden("Config file is not writable: " + err.Error())
 		}
-		file.Close()
+		_ = file.Close()
 	}
 
 	// Update viper values with current runtime config
@@ -339,7 +339,7 @@ func (h *ConfigHandler) getConfigMeta() ConfigMeta {
 			// Try to open for writing to check permissions
 			if file, err := os.OpenFile(configPath, os.O_WRONLY, 0); err == nil {
 				canPersist = true
-				file.Close()
+				_ = file.Close()
 			}
 		}
 	}

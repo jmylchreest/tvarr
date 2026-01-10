@@ -69,7 +69,7 @@ func SetupLogFiles() (*LogFiles, error) {
 	}
 
 	logDir := filepath.Join(wd, LogDir)
-	if err := os.MkdirAll(logDir, 0755); err != nil {
+	if err := os.MkdirAll(logDir, 0750); err != nil {
 		return nil, err
 	}
 
@@ -98,10 +98,10 @@ func SetupLogFiles() (*LogFiles, error) {
 // Close closes the log files.
 func (lf *LogFiles) Close() {
 	if lf.StdoutFile != nil {
-		lf.StdoutFile.Close()
+		_ = lf.StdoutFile.Close()
 	}
 	if lf.StderrFile != nil {
-		lf.StderrFile.Close()
+		_ = lf.StderrFile.Close()
 	}
 }
 

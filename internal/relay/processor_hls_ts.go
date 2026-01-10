@@ -510,7 +510,7 @@ func (p *HLSTSProcessor) flushSegment() {
 
 	// Flush muxer
 	if p.muxer != nil {
-		p.muxer.Flush()
+		_ = p.muxer.Flush()
 	}
 
 	duration := time.Since(p.currentSegment.startTime).Seconds()

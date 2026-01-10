@@ -589,7 +589,7 @@ func (c *StreamClassifier) classifyDASH(ctx context.Context, streamURL string, r
 		result.Reasons = append(result.Reasons, fmt.Sprintf("Failed to probe DASH manifest: %v", err))
 		return *result
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		result.Mode = StreamModeUnknown

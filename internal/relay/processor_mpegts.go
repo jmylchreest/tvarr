@@ -408,7 +408,7 @@ func (p *MPEGTSProcessor) runProcessingLoop(esVariant *ESVariant) {
 			hasKeyframe := p.processAvailableSamples(videoTrack, audioTrack)
 
 			// Flush muxer and broadcast to clients
-			p.muxer.Flush()
+			_ = p.muxer.Flush()
 			if p.muxerBuf.Len() > 0 {
 				data := p.muxerBuf.Bytes()
 				p.broadcastToClients(data, hasKeyframe)
@@ -433,7 +433,7 @@ func (p *MPEGTSProcessor) processAvailableSamples(videoTrack, audioTrack *ESTrac
 		if sample.IsKeyframe {
 			// Before writing the keyframe, flush any buffered data to EXISTING clients only.
 			// This ensures new clients start exactly at the keyframe boundary.
-			p.muxer.Flush()
+			_ = p.muxer.Flush()
 			if p.muxerBuf.Len() > 0 {
 				preKeyframeData := make([]byte, p.muxerBuf.Len())
 				copy(preKeyframeData, p.muxerBuf.Bytes())

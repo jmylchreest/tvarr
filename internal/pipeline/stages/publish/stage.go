@@ -58,7 +58,7 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 		slog.String("output_dir", state.OutputDir))
 
 	// Ensure output directory exists
-	if err := os.MkdirAll(state.OutputDir, 0755); err != nil {
+	if err := os.MkdirAll(state.OutputDir, 0750); err != nil {
 		// T039: ERROR logging with full context
 		s.log(slog.LevelError, "failed to create output directory",
 			slog.String("output_dir", state.OutputDir),
@@ -197,14 +197,14 @@ func (s *Stage) copyThenRename(ctx context.Context, srcPath, destPath string) er
 
 	if copyErr != nil {
 		// Clean up temp file on failure
-		os.Remove(tempDestPath)
+		_ = os.Remove(tempDestPath)
 		return copyErr
 	}
 
 	// Atomic rename (temp and dest are now on same filesystem)
 	if err := os.Rename(tempDestPath, destPath); err != nil {
 		// Clean up temp file on failure
-		os.Remove(tempDestPath)
+		_ = os.Remove(tempDestPath)
 		return fmt.Errorf("renaming to final path: %w", err)
 	}
 

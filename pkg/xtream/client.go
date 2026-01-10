@@ -383,7 +383,7 @@ func (c *Client) GetXMLTVReader(ctx context.Context) (io.ReadCloser, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
 	}
 

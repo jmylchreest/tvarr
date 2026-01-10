@@ -92,7 +92,7 @@ func NewTSDemuxer(config TSDemuxerConfig) *TSDemuxer {
 // runReader runs the mediacommon reader in a goroutine.
 func (d *TSDemuxer) runReader() {
 	defer func() {
-		d.pipeReader.Close()
+		_ = d.pipeReader.Close()
 		close(d.initDone)
 	}()
 
@@ -417,7 +417,7 @@ func (d *TSDemuxer) Write(data []byte) error {
 // Flush signals end of data and waits for processing to complete.
 func (d *TSDemuxer) Flush() {
 	d.pipeMu.Lock()
-	d.pipeWriter.Close()
+	_ = d.pipeWriter.Close()
 	d.pipeMu.Unlock()
 
 	// Wait for reader to finish
@@ -427,7 +427,7 @@ func (d *TSDemuxer) Flush() {
 // Close stops the demuxer.
 func (d *TSDemuxer) Close() {
 	d.cancel()
-	d.pipeWriter.Close()
+	_ = d.pipeWriter.Close()
 }
 
 // VideoCodec returns the detected video codec.

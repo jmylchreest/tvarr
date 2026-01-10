@@ -294,19 +294,19 @@ func escapeXML(s string) string {
 // WriteToFiles writes the generated test data to files.
 func (data *GeneratedTestData) WriteToFiles(dir string) error {
 	// Ensure directory exists
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
 
 	// Write M3U file
 	data.M3UPath = filepath.Join(dir, "test.m3u")
-	if err := os.WriteFile(data.M3UPath, []byte(data.M3UContent), 0644); err != nil {
+	if err := os.WriteFile(data.M3UPath, []byte(data.M3UContent), 0640); err != nil {
 		return fmt.Errorf("failed to write M3U file: %w", err)
 	}
 
 	// Write XMLTV file
 	data.XMLTVPath = filepath.Join(dir, "test.xml")
-	if err := os.WriteFile(data.XMLTVPath, []byte(data.XMLTVContent), 0644); err != nil {
+	if err := os.WriteFile(data.XMLTVPath, []byte(data.XMLTVContent), 0640); err != nil {
 		return fmt.Errorf("failed to write XMLTV file: %w", err)
 	}
 

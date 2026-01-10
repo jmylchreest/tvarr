@@ -484,7 +484,7 @@ func (s *RelaySession) testUpstreamRecovery() bool {
 	if err != nil {
 		return false
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	return resp.StatusCode >= 200 && resp.StatusCode < 400
 }
@@ -1912,11 +1912,11 @@ func (s *RelaySession) Close() {
 	}
 
 	if s.hlsRepackager != nil {
-		s.hlsRepackager.Close()
+		_ = s.hlsRepackager.Close()
 	}
 
 	if s.inputReader != nil {
-		s.inputReader.Close()
+		_ = s.inputReader.Close()
 	}
 
 	// Collect transcoders to stop WITHOUT holding the lock during Stop calls
