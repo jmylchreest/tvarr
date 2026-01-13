@@ -12,6 +12,7 @@ import (
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h264"
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h265"
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts"
+	mpegtscodecs "github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts/codecs"
 )
 
 // TSDemuxerConfig configures the TS demuxer for the daemon.
@@ -205,7 +206,7 @@ func (d *TSDemuxer) setupTrackCallback(track *mpegts.Track) {
 			slog.Int("sample_rate", codec.SampleRate),
 			slog.Int("channels", codec.ChannelCount))
 
-	case *mpegts.CodecEAC3:
+	case *mpegtscodecs.EAC3:
 		d.audioTrack = track
 		d.audioCodec = "eac3"
 		d.audioSampleRate = codec.SampleRate

@@ -14,6 +14,7 @@ import (
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/fmp4"
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/fmp4/seekablebuffer"
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/mp4"
+	mp4codecs "github.com/bluenviron/mediacommon/v2/pkg/formats/mp4/codecs"
 	// Note: vp9 codec package is imported in fmp4_adapter.go for header parsing
 )
 
@@ -277,7 +278,7 @@ func (w *FMP4Writer) GenerateInit(hasVideo, hasAudio bool, videoTimescale, audio
 				ChannelCount: w.ac3ChannelCount,
 			}
 		} else if w.eac3Configured {
-			audioCodec = &mp4.CodecEAC3{
+			audioCodec = &mp4codecs.EAC3{
 				SampleRate:   w.eac3SampleRate,
 				ChannelCount: w.eac3ChannelCount,
 			}

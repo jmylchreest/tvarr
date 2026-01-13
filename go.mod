@@ -6,7 +6,7 @@ require (
 	github.com/andybalholm/brotli v1.2.0
 	github.com/asticode/go-astits v1.14.0
 	github.com/bluenviron/gohlslib/v2 v2.2.4
-	github.com/bluenviron/mediacommon/v2 v2.6.0
+	github.com/bluenviron/mediacommon/v2 v2.6.1-0.20260113085822-8c04e29995cf
 	github.com/danielgtaylor/huma/v2 v2.34.1
 	github.com/dsnet/compress v0.0.1
 	github.com/glebarez/sqlite v1.11.0
@@ -77,8 +77,3 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.43.0 // indirect
 )
-
-// Fork with E-AC3 support, channel_config=0 support with ResolveChannelCount helper,
-// ADTS all profiles fix, and WriteTables() for late-joining MPEG-TS clients
-// Branch: tvarr (github.com/jmylchreest/mediacommon)
-replace github.com/bluenviron/mediacommon/v2 => github.com/jmylchreest/mediacommon/v2 v2.5.4-0.20260106213607-513eb933953c

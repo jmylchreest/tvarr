@@ -10,6 +10,7 @@ import (
 
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/fmp4"
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/mp4"
+	mp4codecs "github.com/bluenviron/mediacommon/v2/pkg/formats/mp4/codecs"
 	"github.com/jmylchreest/tvarr/internal/observability"
 )
 
@@ -237,7 +238,7 @@ func (d *FMP4Demuxer) parseInit(moovData []byte) error {
 				slog.Uint64("timescale", uint64(track.TimeScale)),
 				slog.String("codec_type", d.config.TargetVideoCodec),
 			)
-		case *mp4.CodecMPEG4Audio, *mp4.CodecOpus, *mp4.CodecAC3, *mp4.CodecEAC3, *mp4.CodecMPEG1Audio:
+		case *mp4.CodecMPEG4Audio, *mp4.CodecOpus, *mp4.CodecAC3, *mp4codecs.EAC3, *mp4.CodecMPEG1Audio:
 			d.audioTrackID = track.ID
 			d.audioTimescale = track.TimeScale
 			d.logger.Info("fMP4 demuxer: found audio track",

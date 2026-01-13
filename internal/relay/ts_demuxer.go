@@ -13,6 +13,7 @@ import (
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h265"
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts"
+	mpegtscodecs "github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts/codecs"
 	"github.com/jmylchreest/tvarr/internal/observability"
 )
 
@@ -269,7 +270,7 @@ func (d *TSDemuxer) setupTrackCallback(track *mpegts.Track) {
 			slog.Int("sample_rate", codec.SampleRate),
 			slog.Int("channels", codec.ChannelCount))
 
-	case *mpegts.CodecEAC3:
+	case *mpegtscodecs.EAC3:
 		d.audioTrack = track
 		d.audioCodec = "eac3"
 		// E-AC3 frames are 256-1536 samples per syncframe at 32/44.1/48kHz
@@ -445,8 +446,17 @@ func (d *TSDemuxer) resolveAACChannelCount(au []byte) {
 		return
 	}
 
-	// Use the helper to resolve channel count (defaults to stereo if unresolvable)
-	channelCount := mpeg4audio.ResolveChannelCount(d.aacConfig, au, 2)
+	// Only try to resolve if config doesn't have valid channel count
+	if d.aacConfig.ChannelCount > 0 {
+		return
+	}
+
+	// Try to count channels from the raw_data_block
+	channelCount, err := mpeg4audio.CountChannelsFromRawDataBlock(au)
+	if err != nil {
+		// Default to stereo if we can't parse the AU
+		channelCount = 2
+	}
 
 	if channelCount > 0 && channelCount != d.aacConfig.ChannelCount {
 		d.config.Logger.Debug("Resolved AAC channel count from AU",

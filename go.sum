@@ -11,6 +11,8 @@ github.com/asticode/go-astits v1.14.0 h1:zkgnZzipx2XX5mWycqsSBeEyDH58+i4HtyF4j2R
 github.com/asticode/go-astits v1.14.0/go.mod h1:QSHmknZ51pf6KJdHKZHJTLlMegIrhega3LPWz3ND/iI=
 github.com/bluenviron/gohlslib/v2 v2.2.4 h1:5F/Ud2VuJrrLYCDV0Ham947UIIrd801/GyoCsPYMqiw=
 github.com/bluenviron/gohlslib/v2 v2.2.4/go.mod h1:5J8Ry4xraLs6W0B2gVS0IqhCzcq+CDDJIisfkpoHyxM=
+github.com/bluenviron/mediacommon/v2 v2.6.1-0.20260113085822-8c04e29995cf h1:2cTS/BFbtpxXpLzHScPGYmKaTteQsZUPGluYznTDOCw=
+github.com/bluenviron/mediacommon/v2 v2.6.1-0.20260113085822-8c04e29995cf/go.mod h1:5V15TiOfeaNVmZPVuOqAwqQSWyvMV86/dijDKu5q9Zs=
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
 github.com/creack/pty v1.1.7/go.mod h1:lj5s0c3V2DBrqTV7llrYr5NG6My20zk30Fl46Y7DoTY=
 github.com/danielgtaylor/huma/v2 v2.34.1 h1:EmOJAbzEGfy0wAq/QMQ1YKfEMBEfE94xdBRLPBP0gwQ=
@@ -71,8 +73,6 @@ github.com/jinzhu/inflection v1.0.0 h1:K317FqzuhWc8YvSVlFMCCUb36O/S9MCKRDI7QkRKD
 github.com/jinzhu/inflection v1.0.0/go.mod h1:h+uFLlag+Qp1Va5pdKtLDYj+kHp5pxUVkryuEj+Srlc=
 github.com/jinzhu/now v1.1.5 h1:/o9tlHleP7gOFmsnYNz3RGnqzefHA47wQpKrrdTIwXQ=
 github.com/jinzhu/now v1.1.5/go.mod h1:d3SSVoowX0Lcu0IBviAWJpolVfI5UJVZZ7cO71lE/z8=
-github.com/jmylchreest/mediacommon/v2 v2.5.4-0.20260106213607-513eb933953c h1:Iu+1EuoZiX1aeDCNItqFN7MSIh/9Pe6ma11Bp9Jd/x4=
-github.com/jmylchreest/mediacommon/v2 v2.5.4-0.20260106213607-513eb933953c/go.mod h1:5V15TiOfeaNVmZPVuOqAwqQSWyvMV86/dijDKu5q9Zs=
 github.com/klauspost/compress v1.4.1/go.mod h1:RyIbtBH6LamlWaDj8nUwkbUhJ87Yi3uG0guNDohfE1A=
 github.com/klauspost/cpuid v1.2.0/go.mod h1:Pj4uuM528wm8OyEC2QMXAi2YiTZ96dNQPGgoMS4s3ek=
 github.com/kr/pretty v0.1.0/go.mod h1:dAy3ld7l9f0ibDNOQOHHMYYIIbhfbHSm3C4ZsoJORNo=

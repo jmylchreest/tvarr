@@ -5,6 +5,7 @@ package codec
 
 import (
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts"
+	"github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts/codecs"
 )
 
 // mediacommonSupportedCodecs tracks which codec types exist in mediacommon.
@@ -51,10 +52,9 @@ func init() {
 	var ac3 mpegts.Codec = &mpegts.CodecAC3{}
 	mediacommonSupportedCodecs.AC3 = !isUnsupportedCodec(ac3)
 
-	// EAC3 - check if CodecEAC3 type exists
-	// This will compile-time error if CodecEAC3 doesn't exist in mediacommon
-	// When it does exist, we verify it's not the unsupported sentinel
-	var eac3 mpegts.Codec = &mpegts.CodecEAC3{}
+	// EAC3 - check if codecs.EAC3 type exists
+	// The EAC3 type is in the codecs subpackage (not aliased in mpegts package yet)
+	var eac3 mpegts.Codec = &codecs.EAC3{}
 	mediacommonSupportedCodecs.EAC3 = !isUnsupportedCodec(eac3)
 
 	// MP3 - check if CodecMPEG1Audio type exists

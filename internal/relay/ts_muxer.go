@@ -11,6 +11,7 @@ import (
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h264"
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts"
+	mpegtscodecs "github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts/codecs"
 
 	"github.com/jmylchreest/tvarr/internal/codec"
 )
@@ -84,7 +85,7 @@ func createAudioCodec(codecName string, aacConfig *mpeg4audio.AudioSpecificConfi
 	case "ac3":
 		return &mpegts.CodecAC3{SampleRate: 48000, ChannelCount: 2}, "ac3"
 	case "eac3", "ec-3", "ec3":
-		return &mpegts.CodecEAC3{SampleRate: 48000, ChannelCount: 6}, "eac3"
+		return &mpegtscodecs.EAC3{SampleRate: 48000, ChannelCount: 6}, "eac3"
 	case "mp3":
 		return &mpegts.CodecMPEG1Audio{}, "mp3"
 	case "opus":
@@ -353,7 +354,7 @@ func (m *TSMuxer) writeAudioByCodecType(pts int64, data []byte) error {
 		return m.muxer.WriteMPEG4Audio(m.audioTrack, pts, aus)
 	case *mpegts.CodecAC3:
 		return m.muxer.WriteAC3(m.audioTrack, pts, data)
-	case *mpegts.CodecEAC3:
+	case *mpegtscodecs.EAC3:
 		return m.muxer.WriteEAC3(m.audioTrack, pts, data)
 	case *mpegts.CodecMPEG1Audio:
 		frames := [][]byte{data}
