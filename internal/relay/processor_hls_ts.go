@@ -370,7 +370,7 @@ func (p *HLSTSProcessor) initNewSegment() {
 	// This maintains continuity counters across segments
 	if p.muxer == nil {
 		p.swappableWriter = NewSwappableWriter(&p.currentSegment.buf)
-		// Use resolved codecs (handles VariantCopy → source codecs like "h265/eac3")
+		// Use resolved codecs (handles VariantSource → source codecs like "h265/eac3")
 		p.muxer = NewTSMuxer(p.swappableWriter, TSMuxerConfig{
 			Logger:      p.config.Logger,
 			VideoCodec:  p.ResolvedVideoCodec(),

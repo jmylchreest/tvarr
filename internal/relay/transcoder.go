@@ -226,7 +226,7 @@ type CreateTranscoderOptions struct {
 
 // CreateTranscoderFromProfile creates a transcoder from an encoding profile.
 // The targetVariant parameter can override the profile's target codecs (e.g., from client detection).
-// If targetVariant is VariantCopy, the profile's target codecs are used.
+// If targetVariant is VariantSource, the profile's target codecs are used.
 // Priority order:
 // 1. Remote daemon (if PreferRemote and suitable daemon available)
 // 2. Local ffmpegd subprocess (fallback)
@@ -249,12 +249,12 @@ func (f *TranscoderFactory) CreateTranscoderFromProfile(
 		slog.String("profile_video_codec", string(profile.TargetVideoCodec)),
 		slog.String("profile_audio_codec", string(profile.TargetAudioCodec)))
 
-	// If targetVariant is VariantCopy or empty, use profile's target codecs
+	// If targetVariant is VariantSource or empty, use profile's target codecs
 	profileVariant := NewCodecVariant(
 		string(profile.TargetVideoCodec),
 		string(profile.TargetAudioCodec),
 	)
-	if targetVariant == VariantCopy || (targetVariant.VideoCodec() == "" && targetVariant.AudioCodec() == "") || targetVariant == "" {
+	if targetVariant == VariantSource || (targetVariant.VideoCodec() == "" && targetVariant.AudioCodec() == "") || targetVariant == "" {
 		f.Logger.Log(context.Background(), observability.LevelTrace, "Target variant was copy/empty, using profile variant",
 			slog.String("old_target", targetVariant.String()),
 			slog.String("new_target", profileVariant.String()))

@@ -14,7 +14,7 @@ func TestPlaceholderSegmentGenerator_New(t *testing.T) {
 		{VariantVP9Opus, false},
 		// AV1 parsing not fully supported
 		{NewCodecVariant("h264", "opus"), true}, // Unsupported combination
-		{VariantCopy, true},
+		{VariantSource, true},
 	}
 
 	for _, tt := range tests {

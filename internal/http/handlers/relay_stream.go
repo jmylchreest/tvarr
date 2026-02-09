@@ -385,14 +385,14 @@ func (h *RelayStreamHandler) handleChannelPreview(w http.ResponseWriter, r *http
 		setStreamHeaders(w, "smart", "join-existing")
 
 		// Use the existing session's SharedESBuffer
-		// Preview mode doesn't use transcoding - pass VariantCopy for passthrough
+		// Preview mode doesn't use transcoding - pass VariantSource for passthrough
 		// Preview mode doesn't use client detection, so preferredFormat is empty
 		switch clientFormat {
 		case relay.FormatValueHLS, relay.FormatValueDASH:
-			h.handleMultiFormatOutput(w, r, existingSession, previewInfo, clientFormat, relay.VariantCopy, "")
+			h.handleMultiFormatOutput(w, r, existingSession, previewInfo, clientFormat, relay.VariantSource, "")
 		default:
 			// For MPEG-TS and auto format, use the MPEG-TS processor
-			h.streamMPEGTSFromRelay(w, r, existingSession, previewInfo, relay.VariantCopy)
+			h.streamMPEGTSFromRelay(w, r, existingSession, previewInfo, relay.VariantSource)
 		}
 		return
 	}
@@ -414,7 +414,7 @@ func (h *RelayStreamHandler) handleChannelPreview(w http.ResponseWriter, r *http
 	// Dispatch based on routing decision
 	// For preview mode, we allow HLS/DASH/MPEGTS format requests to use the ES pipeline
 	// to ensure consistent behavior with proxy routes and enable session sharing.
-	// Preview mode doesn't use transcoding - pass VariantCopy for passthrough
+	// Preview mode doesn't use transcoding - pass VariantSource for passthrough
 	// Preview mode doesn't use client detection, so preferredFormat is empty
 	switch routingDecision {
 	case relay.RoutePassthrough:
@@ -423,13 +423,13 @@ func (h *RelayStreamHandler) handleChannelPreview(w http.ResponseWriter, r *http
 			h.logger.Info("Channel preview: using ES pipeline for explicit MPEG-TS request",
 				"channel_id", channel.ID,
 			)
-			h.handleSmartTranscode(w, r, previewInfo, clientFormat, relay.VariantCopy, "")
+			h.handleSmartTranscode(w, r, previewInfo, clientFormat, relay.VariantSource, "")
 		} else {
 			h.handleSmartPassthrough(w, r, previewInfo, &classification)
 		}
 
 	case relay.RouteRepackage:
-		h.handleSmartRepackage(w, r, previewInfo, &classification, clientFormat, relay.VariantCopy, "")
+		h.handleSmartRepackage(w, r, previewInfo, &classification, clientFormat, relay.VariantSource, "")
 
 	case relay.RouteTranscode:
 		// For HLS/DASH/MPEGTS format requests, use the ES pipeline
@@ -438,7 +438,7 @@ func (h *RelayStreamHandler) handleChannelPreview(w http.ResponseWriter, r *http
 				"channel_id", channel.ID,
 				"client_format", clientFormat,
 			)
-			h.handleSmartTranscode(w, r, previewInfo, clientFormat, relay.VariantCopy, "")
+			h.handleSmartTranscode(w, r, previewInfo, clientFormat, relay.VariantSource, "")
 		} else {
 			// For auto/unknown formats, fall back to passthrough to avoid FFmpeg overhead
 			h.logger.Info("Channel preview: transcoding requested but falling back to passthrough",
@@ -787,9 +787,9 @@ func (h *RelayStreamHandler) computeTargetVariant(
 		}
 	}
 
-	// If both codecs match source (or are empty), return VariantCopy for passthrough
+	// If both codecs match source (or are empty), return VariantSource for passthrough
 	if videoCodec == sourceVideoCodec && audioCodec == sourceAudioCodec {
-		return relay.VariantCopy
+		return relay.VariantSource
 	}
 
 	variant := relay.NewCodecVariant(videoCodec, audioCodec)
@@ -835,7 +835,7 @@ func (h *RelayStreamHandler) handleSmartPassthrough(w http.ResponseWriter, r *ht
 	infoNoTranscode.EncodingProfile = nil
 
 	// Route through ES pipeline with copy mode for connection sharing
-	h.handleSmartTranscode(w, r, &infoNoTranscode, clientFormat, relay.VariantCopy, "")
+	h.handleSmartTranscode(w, r, &infoNoTranscode, clientFormat, relay.VariantSource, "")
 }
 
 // handleSmartRepackage repackages the source stream to a different manifest format.

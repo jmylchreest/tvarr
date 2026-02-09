@@ -555,7 +555,7 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 
 	// No need to initialize processor maps - sync.Map is zero-value safe
 
-	// Start processors for the default variant (VariantCopy for passthrough)
+	// Start processors for the default variant (VariantSource for passthrough)
 	hlsTSConfig := DefaultHLSTSProcessorConfig()
 	hlsTSConfig.Logger = slog.Default()
 	hlsTSConfig.TargetSegmentDuration = targetSegmentDuration
@@ -563,9 +563,9 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 	hlsTSConfig.PlaylistSegments = playlistSegments
 
 	hlsTSProcessor := NewHLSTSProcessor(
-		fmt.Sprintf("hls-ts-%s-%s", s.ID.String(), VariantCopy.String()),
+		fmt.Sprintf("hls-ts-%s-%s", s.ID.String(), VariantSource.String()),
 		s.esBuffer,
-		VariantCopy,
+		VariantSource,
 		hlsTSConfig,
 	)
 	if err := hlsTSProcessor.Start(s.ctx); err != nil {
@@ -573,15 +573,15 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 	}
 	s.configureProcessorStreamContext(hlsTSProcessor.BaseProcessor)
 	hlsTSProcessor.SetBandwidthTracker(s.edgeBandwidth.GetOrCreateProcessorTracker("hls"))
-	s.hlsTSProcessors.Store(VariantCopy, hlsTSProcessor)
+	s.hlsTSProcessors.Store(VariantSource, hlsTSProcessor)
 
 	// Start MPEG-TS processor for raw streaming
 	mpegtsConfig := DefaultMPEGTSProcessorConfig()
 	mpegtsConfig.Logger = slog.Default()
 	mpegtsProcessor := NewMPEGTSProcessor(
-		fmt.Sprintf("mpegts-%s-%s", s.ID.String(), VariantCopy.String()),
+		fmt.Sprintf("mpegts-%s-%s", s.ID.String(), VariantSource.String()),
 		s.esBuffer,
-		VariantCopy,
+		VariantSource,
 		mpegtsConfig,
 	)
 	if err := mpegtsProcessor.Start(s.ctx); err != nil {
@@ -589,7 +589,7 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 	} else {
 		s.configureProcessorStreamContext(mpegtsProcessor.BaseProcessor)
 		mpegtsProcessor.SetBandwidthTracker(s.edgeBandwidth.GetOrCreateProcessorTracker("mpegts"))
-		s.mpegtsProcessors.Store(VariantCopy, mpegtsProcessor)
+		s.mpegtsProcessors.Store(VariantSource, mpegtsProcessor)
 	}
 
 	// Set up format router
@@ -641,7 +641,7 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 
 // getTargetVariant returns the target codec variant based on the profile settings.
 // If the profile specifies transcoding, this returns the target variant (e.g., "h264/aac").
-// If no transcoding is needed, this returns VariantCopy which means use source codecs.
+// If no transcoding is needed, this returns VariantSource which means use source codecs.
 // When processors request a variant that differs from the source, the on-demand
 // transcoding callback (handleVariantRequest) will spawn a transcoder.
 //
@@ -650,7 +650,7 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 // codec being used (e.g., "h265/aac" instead of "h265/copy").
 func (s *RelaySession) getTargetVariant() CodecVariant {
 	if s.EncodingProfile == nil || !s.EncodingProfile.NeedsTranscode() {
-		return VariantCopy
+		return VariantSource
 	}
 
 	// Build target variant from profile codecs
@@ -674,9 +674,9 @@ func (s *RelaySession) getTargetVariant() CodecVariant {
 		audioCodec = "copy"
 	}
 
-	// If both are copy, return VariantCopy to avoid triggering transcoder
+	// If both are copy, return VariantSource to avoid triggering transcoder
 	if videoCodec == "copy" && audioCodec == "copy" {
-		return VariantCopy
+		return VariantSource
 	}
 
 	// Resolve "copy" to actual source codec from CachedCodecInfo
@@ -704,7 +704,7 @@ func (s *RelaySession) getTargetVariant() CodecVariant {
 // - Efficient ES-level buffering with MPEG-TS/fMP4 muxing at output
 //
 // Pipeline flow:
-// 1. Source stream → TSDemuxer → SharedESBuffer (source variant, "copy/copy")
+// 1. Source stream → TSDemuxer → SharedESBuffer (source variant, "source/source")
 // 2. Processors request target variant from profile (e.g., "h264/aac")
 // 3. If target != source, handleVariantRequest spawns a transcoder
 // 4. Transcoder reads from source variant, writes to target variant
@@ -737,10 +737,10 @@ func (s *RelaySession) runESPipeline() error {
 	s.esBuffer.SetVariantRequestCallback(s.handleVariantRequest)
 
 	// Create TS demuxer to parse incoming MPEG-TS and populate ES buffer
-	// The demuxer writes to the source variant (VariantCopy)
+	// The demuxer writes to the source variant (VariantSource)
 	demuxerConfig := TSDemuxerConfig{
 		Logger: slog.Default(),
-		// No TargetVariant - writes to source variant ("copy/copy")
+		// No TargetVariant - writes to source variant ("source/source")
 	}
 	// Use probed audio codec as fallback for codecs not natively supported by demuxer (e.g., E-AC3)
 	if s.CachedCodecInfo != nil && s.CachedCodecInfo.AudioCodec != "" {
@@ -1356,7 +1356,7 @@ func (s *RelaySession) configureProcessorStreamContext(p *BaseProcessor) {
 // Returns nil if the processor hasn't been created yet.
 func (s *RelaySession) GetHLSTSProcessor() *HLSTSProcessor {
 	// Return the processor for the session's default variant
-	variant := VariantCopy
+	variant := VariantSource
 	if s.processorConfig != nil {
 		variant = s.processorConfig.TargetVariant
 	}
@@ -1367,7 +1367,7 @@ func (s *RelaySession) GetHLSTSProcessor() *HLSTSProcessor {
 // GetOrCreateHLSTSProcessor returns the HLS-TS processor for the session's default variant.
 // For per-client codec variants, use GetOrCreateHLSTSProcessorForVariant instead.
 func (s *RelaySession) GetOrCreateHLSTSProcessor() (*HLSTSProcessor, error) {
-	variant := VariantCopy
+	variant := VariantSource
 	if s.processorConfig != nil {
 		variant = s.processorConfig.TargetVariant
 	}
@@ -1430,7 +1430,7 @@ func (s *RelaySession) GetOrCreateHLSTSProcessorForVariant(variant CodecVariant)
 // GetOrCreateHLSfMP4Processor returns the HLS-fMP4 processor for the session's default variant.
 // For per-client codec variants, use GetOrCreateHLSfMP4ProcessorForVariant instead.
 func (s *RelaySession) GetOrCreateHLSfMP4Processor() (*HLSfMP4Processor, error) {
-	variant := VariantCopy
+	variant := VariantSource
 	if s.processorConfig != nil {
 		variant = s.processorConfig.TargetVariant
 	}
@@ -1491,7 +1491,7 @@ func (s *RelaySession) GetOrCreateHLSfMP4ProcessorForVariant(variant CodecVarian
 // GetOrCreateDASHProcessor returns the DASH processor for the session's default variant.
 // For per-client codec variants, use GetOrCreateDASHProcessorForVariant instead.
 func (s *RelaySession) GetOrCreateDASHProcessor() (*DASHProcessor, error) {
-	variant := VariantCopy
+	variant := VariantSource
 	if s.processorConfig != nil {
 		variant = s.processorConfig.TargetVariant
 	}
@@ -1552,7 +1552,7 @@ func (s *RelaySession) GetOrCreateDASHProcessorForVariant(variant CodecVariant) 
 // GetOrCreateMPEGTSProcessor returns the MPEG-TS processor for the session's default variant.
 // For per-client codec variants, use GetOrCreateMPEGTSProcessorForVariant instead.
 func (s *RelaySession) GetOrCreateMPEGTSProcessor() (*MPEGTSProcessor, error) {
-	variant := VariantCopy
+	variant := VariantSource
 	if s.processorConfig != nil {
 		variant = s.processorConfig.TargetVariant
 	}

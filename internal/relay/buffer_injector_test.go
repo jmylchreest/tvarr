@@ -17,7 +17,7 @@ func TestBufferInjector_HasPlaceholder(t *testing.T) {
 		{VariantVP9Opus, true},
 		{VariantAV1Opus, true},
 		{NewCodecVariant("h264", "opus"), false}, // Unsupported combination
-		{VariantCopy, false},
+		{VariantSource, false},
 	}
 
 	for _, tt := range tests {

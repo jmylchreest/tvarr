@@ -387,7 +387,7 @@ const (
 	VariantH265AC3 CodecVariant = "hevc/ac3"
 	VariantVP9Opus CodecVariant = "vp9/opus"
 	VariantAV1Opus CodecVariant = "av1/opus"
-	VariantCopy    CodecVariant = "copy/copy" // Passthrough - use source codecs
+	VariantSource  CodecVariant = "source/source" // Passthrough - use source codecs
 )
 
 // NewCodecVariant creates a CodecVariant from video and audio codec names.
@@ -1141,14 +1141,14 @@ func (b *SharedESBuffer) GetVariant(variant CodecVariant) *ESVariant {
 
 // GetOrCreateVariant returns an existing variant or creates a new one.
 // If the variant doesn't exist and isn't the source, it triggers transcoding.
-// For VariantCopy requests, this will wait for the source variant to be created.
+// For VariantSource requests, this will wait for the source variant to be created.
 func (b *SharedESBuffer) GetOrCreateVariant(variant CodecVariant) (*ESVariant, error) {
 	return b.GetOrCreateVariantWithContext(context.Background(), variant)
 }
 
 // GetOrCreateVariantWithContext returns an existing variant or creates a new one.
 // If the variant doesn't exist and isn't the source, it triggers transcoding.
-// For VariantCopy requests, this will wait for the source variant to be created.
+// For VariantSource requests, this will wait for the source variant to be created.
 func (b *SharedESBuffer) GetOrCreateVariantWithContext(ctx context.Context, variant CodecVariant) (*ESVariant, error) {
 	if b.closed.Load() {
 		return nil, ErrBufferClosed
@@ -1166,8 +1166,8 @@ func (b *SharedESBuffer) GetOrCreateVariantWithContext(ctx context.Context, vari
 		return v, nil
 	}
 
-	// If requesting copy/copy variant, wait for source to be ready
-	if variant == VariantCopy {
+	// If requesting source/source variant, wait for source to be ready
+	if variant == VariantSource {
 		if source == "" {
 			// Source not ready yet, wait for it
 			b.config.Logger.Debug("Waiting for source variant to be ready",

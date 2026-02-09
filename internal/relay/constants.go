@@ -53,7 +53,7 @@ const (
 	QueryParamInit = "init"
 
 	// QueryParamVariant is the query parameter for codec variant selection.
-	// Format: "video/audio" (e.g., "h264/aac", "copy/copy")
+	// Format: "video/audio" (e.g., "h264/aac", "source/source")
 	// This ensures segment requests are routed to the correct processor.
 	QueryParamVariant = "variant"
 )

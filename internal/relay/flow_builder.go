@@ -280,7 +280,7 @@ type ProcessorKey struct {
 
 // String returns a unique string representation for IDs.
 func (p ProcessorKey) String() string {
-	if p.Variant == "" || p.Variant == "copy/copy" {
+	if p.Variant == "" || p.Variant == "source/source" {
 		return p.Format
 	}
 	return fmt.Sprintf("%s-%s", p.Format, p.Variant)
@@ -304,7 +304,7 @@ func (b *FlowBuilder) groupClientsByFormatVariant(clients []RelayClientInfo) map
 }
 
 // resolveVariantCodecs parses a variant string (e.g., "h265/aac") into video and audio codecs.
-// Falls back to session source codecs if variant is empty or "copy/copy".
+// Falls back to session source codecs if variant is empty or "source/source".
 // All returned codec names are normalized for consistent display.
 func (b *FlowBuilder) resolveVariantCodecs(session RelaySessionInfo, variant string) (videoCodec, audioCodec string) {
 	// Default to source codecs (already normalized in ToSessionInfo)
@@ -312,7 +312,7 @@ func (b *FlowBuilder) resolveVariantCodecs(session RelaySessionInfo, variant str
 	audioCodec = session.AudioCodec
 
 	// If no variant or it's the copy variant, use source codecs
-	if variant == "" || variant == "copy/copy" {
+	if variant == "" || variant == "source/source" {
 		return videoCodec, audioCodec
 	}
 
