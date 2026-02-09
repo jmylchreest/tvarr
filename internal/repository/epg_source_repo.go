@@ -64,9 +64,11 @@ func (r *epgSourceRepo) Update(ctx context.Context, source *models.EpgSource) er
 	return nil
 }
 
-// Delete deletes an EPG source by ID.
+// Delete hard-deletes an EPG source by ID.
+// Uses Unscoped to permanently remove the record so the unique name
+// constraint doesn't conflict when re-creating a source with the same name.
 func (r *epgSourceRepo) Delete(ctx context.Context, id models.ULID) error {
-	if err := r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.EpgSource{}).Error; err != nil {
+	if err := r.db.WithContext(ctx).Unscoped().Where("id = ?", id).Delete(&models.EpgSource{}).Error; err != nil {
 		return fmt.Errorf("deleting EPG source: %w", err)
 	}
 	return nil

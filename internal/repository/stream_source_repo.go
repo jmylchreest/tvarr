@@ -64,9 +64,11 @@ func (r *streamSourceRepo) Update(ctx context.Context, source *models.StreamSour
 	return nil
 }
 
-// Delete deletes a stream source by ID.
+// Delete hard-deletes a stream source by ID.
+// Uses Unscoped to permanently remove the record so the unique name
+// constraint doesn't conflict when re-creating a source with the same name.
 func (r *streamSourceRepo) Delete(ctx context.Context, id models.ULID) error {
-	if err := r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.StreamSource{}).Error; err != nil {
+	if err := r.db.WithContext(ctx).Unscoped().Where("id = ?", id).Delete(&models.StreamSource{}).Error; err != nil {
 		return fmt.Errorf("deleting stream source: %w", err)
 	}
 	return nil

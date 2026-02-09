@@ -91,18 +91,20 @@ func (r *streamProxyRepo) Update(ctx context.Context, proxy *models.StreamProxy)
 	return nil
 }
 
-// Delete deletes a stream proxy by ID.
+// Delete hard-deletes a stream proxy by ID.
+// Uses Unscoped to permanently remove records so the unique name
+// constraint doesn't conflict when re-creating a proxy with the same name.
 func (r *streamProxyRepo) Delete(ctx context.Context, id models.ULID) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Delete association records first
-		if err := tx.Where("proxy_id = ?", id).Delete(&models.ProxySource{}).Error; err != nil {
+		if err := tx.Unscoped().Where("proxy_id = ?", id).Delete(&models.ProxySource{}).Error; err != nil {
 			return fmt.Errorf("deleting proxy sources: %w", err)
 		}
-		if err := tx.Where("proxy_id = ?", id).Delete(&models.ProxyEpgSource{}).Error; err != nil {
+		if err := tx.Unscoped().Where("proxy_id = ?", id).Delete(&models.ProxyEpgSource{}).Error; err != nil {
 			return fmt.Errorf("deleting proxy epg sources: %w", err)
 		}
 		// Delete the proxy itself
-		if err := tx.Where("id = ?", id).Delete(&models.StreamProxy{}).Error; err != nil {
+		if err := tx.Unscoped().Where("id = ?", id).Delete(&models.StreamProxy{}).Error; err != nil {
 			return fmt.Errorf("deleting stream proxy: %w", err)
 		}
 		return nil

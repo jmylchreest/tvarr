@@ -97,32 +97,34 @@ func (r *lastKnownCodecRepository) Update(ctx context.Context, codec *models.Las
 	return r.db.WithContext(ctx).Save(codec).Error
 }
 
-// Delete deletes a codec entry by ID.
+// Delete hard-deletes a codec entry by ID.
+// Uses Unscoped to permanently remove the record so the unique stream_url
+// constraint doesn't conflict when re-creating a codec entry.
 func (r *lastKnownCodecRepository) Delete(ctx context.Context, id models.ULID) error {
-	return r.db.WithContext(ctx).Delete(&models.LastKnownCodec{}, "id = ?", id).Error
+	return r.db.WithContext(ctx).Unscoped().Delete(&models.LastKnownCodec{}, "id = ?", id).Error
 }
 
-// DeleteByStreamURL deletes a codec entry by stream URL.
+// DeleteByStreamURL hard-deletes a codec entry by stream URL.
 func (r *lastKnownCodecRepository) DeleteByStreamURL(ctx context.Context, streamURL string) error {
-	return r.db.WithContext(ctx).Delete(&models.LastKnownCodec{}, "stream_url = ?", streamURL).Error
+	return r.db.WithContext(ctx).Unscoped().Delete(&models.LastKnownCodec{}, "stream_url = ?", streamURL).Error
 }
 
-// DeleteBySourceID deletes all codec entries for a source.
+// DeleteBySourceID hard-deletes all codec entries for a source.
 func (r *lastKnownCodecRepository) DeleteBySourceID(ctx context.Context, sourceID models.ULID) (int64, error) {
-	result := r.db.WithContext(ctx).Delete(&models.LastKnownCodec{}, "source_id = ?", sourceID)
+	result := r.db.WithContext(ctx).Unscoped().Delete(&models.LastKnownCodec{}, "source_id = ?", sourceID)
 	return result.RowsAffected, result.Error
 }
 
-// DeleteExpired deletes expired codec entries.
+// DeleteExpired hard-deletes expired codec entries.
 func (r *lastKnownCodecRepository) DeleteExpired(ctx context.Context) (int64, error) {
 	now := time.Now()
-	result := r.db.WithContext(ctx).Delete(&models.LastKnownCodec{}, "expires_at IS NOT NULL AND expires_at < ?", now)
+	result := r.db.WithContext(ctx).Unscoped().Delete(&models.LastKnownCodec{}, "expires_at IS NOT NULL AND expires_at < ?", now)
 	return result.RowsAffected, result.Error
 }
 
-// DeleteAll deletes all codec cache entries.
+// DeleteAll hard-deletes all codec cache entries.
 func (r *lastKnownCodecRepository) DeleteAll(ctx context.Context) (int64, error) {
-	result := r.db.WithContext(ctx).Where("1 = 1").Delete(&models.LastKnownCodec{})
+	result := r.db.WithContext(ctx).Unscoped().Where("1 = 1").Delete(&models.LastKnownCodec{})
 	return result.RowsAffected, result.Error
 }
 

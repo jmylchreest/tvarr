@@ -79,17 +79,17 @@ func (r *manualChannelRepo) Update(ctx context.Context, channel *models.ManualSt
 	return nil
 }
 
-// Delete deletes a manual channel by ID.
+// Delete hard-deletes a manual channel by ID.
 func (r *manualChannelRepo) Delete(ctx context.Context, id models.ULID) error {
-	if err := r.db.WithContext(ctx).Delete(&models.ManualStreamChannel{}, "id = ?", id).Error; err != nil {
+	if err := r.db.WithContext(ctx).Unscoped().Delete(&models.ManualStreamChannel{}, "id = ?", id).Error; err != nil {
 		return fmt.Errorf("deleting manual channel: %w", err)
 	}
 	return nil
 }
 
-// DeleteBySourceID deletes all manual channels for a source.
+// DeleteBySourceID hard-deletes all manual channels for a source.
 func (r *manualChannelRepo) DeleteBySourceID(ctx context.Context, sourceID models.ULID) error {
-	if err := r.db.WithContext(ctx).Delete(&models.ManualStreamChannel{}, "source_id = ?", sourceID).Error; err != nil {
+	if err := r.db.WithContext(ctx).Unscoped().Delete(&models.ManualStreamChannel{}, "source_id = ?", sourceID).Error; err != nil {
 		return fmt.Errorf("deleting manual channels by source ID: %w", err)
 	}
 	return nil
