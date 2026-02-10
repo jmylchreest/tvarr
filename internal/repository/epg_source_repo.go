@@ -108,7 +108,10 @@ func (r *epgSourceRepo) UpdateLastIngestion(ctx context.Context, id models.ULID,
 		"last_error":        "",
 	}
 
-	if err := r.db.WithContext(ctx).Model(&models.EpgSource{}).Where("id = ?", id).Updates(updates).Error; err != nil {
+	// SkipHooks: targeted column update on a bare Model() would trigger BeforeUpdate
+	// validation on an empty struct (Name=""), which fails. We're only updating
+	// specific columns by ID, so hook validation is not applicable.
+	if err := r.db.WithContext(ctx).Session(&gorm.Session{SkipHooks: true}).Model(&models.EpgSource{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 		return fmt.Errorf("updating last ingestion: %w", err)
 	}
 	return nil
