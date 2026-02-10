@@ -186,12 +186,6 @@ func (c *DynamicContext) ToMap() map[string]any {
 	return c.data
 }
 
-// DynamicContextResolver implements DynamicFieldResolver for @dynamic(path):key syntax.
-// It resolves field references using the DynamicContext.
-type DynamicContextResolver struct {
-	ctx *DynamicContext
-}
-
 // --- Helper Functions ---
 
 // ParseDynamicSyntax parses the @dynamic(path):key syntax.

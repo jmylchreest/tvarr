@@ -349,14 +349,3 @@ func (cw *CountingWriter) Write(p []byte) (n int, err error) {
 	}
 	return n, err
 }
-
-// CountingReader wraps an io.Reader and counts bytes read.
-type CountingReader struct {
-	r       Reader
-	monitor *ProcessMonitor
-}
-
-// Reader interface for flexible reader types.
-type Reader interface {
-	Read(p []byte) (n int, err error)
-}

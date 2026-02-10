@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jmylchreest/tvarr/internal/assets"
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,7 +18,17 @@ func setupThemeService(t *testing.T) *ThemeService {
 	return NewThemeService(dataDir)
 }
 
+// requireBuiltinThemes skips the test if embedded theme assets are not available.
+// This happens in CI when `go test` runs without a prior frontend build.
+func requireBuiltinThemes(t *testing.T) {
+	t.Helper()
+	if _, err := assets.GetThemesFS(); err != nil {
+		t.Skip("embedded theme assets not available (frontend not built)")
+	}
+}
+
 func TestThemeService_ListThemes_BuiltinThemesReturned(t *testing.T) {
+	requireBuiltinThemes(t)
 	svc := setupThemeService(t)
 	ctx := context.Background()
 
@@ -49,6 +60,7 @@ func TestThemeService_ListThemes_DefaultIsGraphite(t *testing.T) {
 }
 
 func TestThemeService_GetThemeCSS_BuiltinTheme(t *testing.T) {
+	requireBuiltinThemes(t)
 	svc := setupThemeService(t)
 	ctx := context.Background()
 
@@ -167,6 +179,7 @@ func TestThemeService_ListThemes_SkipsInvalidCustomThemes(t *testing.T) {
 }
 
 func TestThemeService_ListThemes_NoCustomThemesDirectory(t *testing.T) {
+	requireBuiltinThemes(t)
 	dataDir := t.TempDir()
 	svc := NewThemeService(dataDir)
 	ctx := context.Background()
@@ -341,6 +354,7 @@ func TestThemeService_EnsureThemesDirectory_AlreadyExists(t *testing.T) {
 }
 
 func TestThemeService_GetThemeCSS_AllBuiltinThemes(t *testing.T) {
+	requireBuiltinThemes(t)
 	svc := setupThemeService(t)
 	ctx := context.Background()
 
@@ -361,6 +375,7 @@ func TestThemeService_GetThemeCSS_AllBuiltinThemes(t *testing.T) {
 }
 
 func TestThemeService_ListThemes_BuiltinThemesHaveColors(t *testing.T) {
+	requireBuiltinThemes(t)
 	svc := setupThemeService(t)
 	ctx := context.Background()
 
