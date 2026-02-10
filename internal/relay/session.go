@@ -228,10 +228,9 @@ type RelaySession struct {
 
 	// Legacy fields - set once during pipeline init, read-only afterward
 	// Protected by readyCh synchronization (readers wait for ready before accessing)
-	ffmpegCmd     *ffmpeg.Command // Running FFmpeg command for stats access
-	hlsCollapser  *HLSCollapser
-	hlsRepackager *HLSRepackager // HLS-to-HLS repackaging (container format change)
-	inputReader   io.ReadCloser
+	ffmpegCmd    *ffmpeg.Command // Running FFmpeg command for stats access
+	hlsCollapser *HLSCollapser
+	inputReader  io.ReadCloser
 
 	// Pipeline readiness signaling
 	readyCh   chan struct{} // Closed when pipeline is ready for clients
@@ -1909,10 +1908,6 @@ func (s *RelaySession) Close() {
 
 	if s.hlsCollapser != nil {
 		s.hlsCollapser.Stop()
-	}
-
-	if s.hlsRepackager != nil {
-		_ = s.hlsRepackager.Close()
 	}
 
 	if s.inputReader != nil {

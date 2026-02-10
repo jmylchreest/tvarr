@@ -52,12 +52,6 @@ type (
 	// Dependencies bundles stage dependencies.
 	Dependencies = core.Dependencies
 
-	// Config holds pipeline configuration.
-	Config = core.Config
-
-	// Builder provides fluent factory construction.
-	Builder = core.Builder
-
 	// Artifact represents stage output.
 	Artifact = core.Artifact
 
@@ -99,11 +93,6 @@ var (
 	ErrStageNotFound          = core.ErrStageNotFound
 	ErrInvalidConfiguration   = core.ErrInvalidConfiguration
 )
-
-// NewBuilder creates a new pipeline builder.
-func NewBuilder() *Builder {
-	return core.NewBuilder()
-}
 
 // NewState creates a new pipeline state.
 var NewState = core.NewState

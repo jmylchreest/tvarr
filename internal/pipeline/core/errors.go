@@ -48,22 +48,3 @@ func NewStageError(stageID, stageName string, err error) *StageError {
 		Err:       err,
 	}
 }
-
-// ConfigurationError represents a configuration problem.
-type ConfigurationError struct {
-	Field   string
-	Message string
-}
-
-// Error implements the error interface.
-func (e *ConfigurationError) Error() string {
-	return fmt.Sprintf("configuration error for %s: %s", e.Field, e.Message)
-}
-
-// NewConfigurationError creates a new ConfigurationError.
-func NewConfigurationError(field, message string) *ConfigurationError {
-	return &ConfigurationError{
-		Field:   field,
-		Message: message,
-	}
-}
