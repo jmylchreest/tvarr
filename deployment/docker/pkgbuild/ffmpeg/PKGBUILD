@@ -32,7 +32,7 @@ depends=(
 makedepends=(
   clang
   ffnvcodec-headers
-  git
+  #git
   nasm
   vulkan-headers
 )
@@ -50,13 +50,15 @@ provides=(
 
 conflicts=(ffmpeg)
 
-source=("git+https://git.ffmpeg.org/ffmpeg.git#tag=n${pkgver}")
-sha256sums=('SKIP')
+#source=("git+https://git.ffmpeg.org/ffmpeg.git#tag=n${pkgver}")
+#sha256sums=('SKIP')
+source=("https://ffmpeg.org/releases/ffmpeg-${pkgver}.tar.xz")
+sha256sums=('05ee0b03119b45c0bdb4df654b96802e909e0a752f72e4fe3794f487229e5a41')
 
 options=(!lto)
 
 build() {
-  cd ffmpeg
+  cd ffmpeg-${pkgver}
 
   ./configure \
     --prefix=/usr \
@@ -94,7 +96,7 @@ build() {
 }
 
 package() {
-  cd ffmpeg
+  cd ffmpeg-${pkgver}
   make DESTDIR="${pkgdir}" install
 
   rm -rf "${pkgdir}/usr/include"

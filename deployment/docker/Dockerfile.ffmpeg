@@ -6,7 +6,7 @@
 FROM archlinux:base AS ffmpeg-builder
 
 RUN pacman-key --init && pacman -Syu --noconfirm && \
-    pacman -S --noconfirm base-devel git sudo
+    pacman -S --noconfirm base-devel sudo
 
 RUN useradd -m builder && \
     echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
