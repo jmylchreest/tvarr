@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,9 +21,15 @@ func setupThemeService(t *testing.T) *ThemeService {
 
 // requireBuiltinThemes skips the test if embedded theme assets are not available.
 // This happens in CI when `go test` runs without a prior frontend build.
+// We must actually try to read the directory since fs.Sub can succeed on
+// a non-existent path in an embedded FS — the error only surfaces on ReadDir.
 func requireBuiltinThemes(t *testing.T) {
 	t.Helper()
-	if _, err := assets.GetThemesFS(); err != nil {
+	themesFS, err := assets.GetThemesFS()
+	if err != nil {
+		t.Skip("embedded theme assets not available (frontend not built)")
+	}
+	if _, err := fs.ReadDir(themesFS, "."); err != nil {
 		t.Skip("embedded theme assets not available (frontend not built)")
 	}
 }
