@@ -74,6 +74,8 @@ jobs:
             STATUS=$(echo "$RESULT" | jq -r '.status // "not_found"')
             CONCLUSION=$(echo "$RESULT" | jq -r '.conclusion // "pending"')
 
+            echo "Test workflow status: $STATUS, conclusion: $CONCLUSION (attempt $i/60)"
+
             if [[ "$STATUS" == "completed" ]]; then
               if [[ "$CONCLUSION" == "success" ]]; then
                 echo "Tests passed"
@@ -84,14 +86,15 @@ jobs:
               fi
             fi
 
-            if [[ "$STATUS" == "not_found" ]] && [[ $i -gt 5 ]]; then
-              echo "No Test workflow found for this commit after 5 attempts"
+            # Treat empty/null status same as not_found (GitHub API may return
+            # incomplete data while the workflow run is still being queued)
+            if { [[ "$STATUS" == "not_found" ]] || [[ -z "$STATUS" ]] || [[ "$STATUS" == "null" ]]; } && [[ $i -gt 10 ]]; then
+              echo "No Test workflow found for this commit after $i attempts"
               echo "This may indicate the Test workflow was not triggered"
               exit 1
             fi
 
-            echo "Test workflow status: $STATUS (attempt $i/60), waiting..."
-            sleep 30
+            sleep 15
           done
 
           echo "Timeout waiting for Test workflow after 30 minutes"
