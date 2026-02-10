@@ -4,27 +4,27 @@ go 1.25.4
 
 require (
 	github.com/andybalholm/brotli v1.2.0
-	github.com/asticode/go-astits v1.14.0
-	github.com/bluenviron/gohlslib/v2 v2.2.4
-	github.com/bluenviron/mediacommon/v2 v2.6.1-0.20260113085822-8c04e29995cf
-	github.com/danielgtaylor/huma/v2 v2.34.1
+	github.com/asticode/go-astits v1.15.0
+	github.com/bluenviron/gohlslib/v2 v2.2.5
+	github.com/bluenviron/mediacommon/v2 v2.7.2
+	github.com/danielgtaylor/huma/v2 v2.35.0
 	github.com/dsnet/compress v0.0.1
 	github.com/glebarez/sqlite v1.11.0
-	github.com/go-chi/chi/v5 v5.2.3
+	github.com/go-chi/chi/v5 v5.2.5
 	github.com/google/uuid v1.6.0
 	github.com/m-mizutani/masq v0.2.1
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/shirou/gopsutil/v3 v3.24.5
-	github.com/shirou/gopsutil/v4 v4.25.12
+	github.com/shirou/gopsutil/v4 v4.26.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	github.com/ulikunitz/xz v0.5.15
-	golang.org/x/image v0.34.0
-	golang.org/x/net v0.48.0
-	golang.org/x/text v0.33.0
+	golang.org/x/image v0.36.0
+	golang.org/x/net v0.50.0
+	golang.org/x/text v0.34.0
 	google.golang.org/grpc v1.78.0
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
@@ -70,7 +70,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/exp v0.0.0-20251219203646-944ab1f22d93 // indirect
 	golang.org/x/sync v0.19.0 // indirect
-	golang.org/x/sys v0.40.0 // indirect
+	golang.org/x/sys v0.41.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251222181119-0a764e51fe1b // indirect
 	modernc.org/libc v1.67.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
