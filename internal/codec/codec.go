@@ -3,8 +3,6 @@
 // used throughout tvarr for transcoding, muxing, and stream handling.
 package codec
 
-import "maps"
-
 import "strings"
 
 // Video represents a video codec.
@@ -676,38 +674,6 @@ func AudioMatch(a, b string) bool {
 	return codecA == codecB
 }
 
-// ValidVideoCodecs returns a map of all valid video codec names to their Video type.
-// Includes canonical names and common aliases.
-func ValidVideoCodecs() map[string]Video {
-	result := make(map[string]Video)
-	// Only include canonical names and common aliases (not encoder names)
-	commonAliases := map[string]Video{
-		"h264": VideoH264,
-		"h265": VideoH265,
-		"hevc": VideoH265, // Alias
-		"vp8":  VideoVP8,
-		"vp9":  VideoVP9,
-		"av1":  VideoAV1,
-	}
-	maps.Copy(result, commonAliases)
-	return result
-}
-
-// ValidAudioCodecs returns a map of all valid audio codec names to their Audio type.
-// Includes canonical names.
-func ValidAudioCodecs() map[string]Audio {
-	result := make(map[string]Audio)
-	commonAliases := map[string]Audio{
-		"aac":  AudioAAC,
-		"mp3":  AudioMP3,
-		"ac3":  AudioAC3,
-		"eac3": AudioEAC3,
-		"opus": AudioOpus,
-	}
-	maps.Copy(result, commonAliases)
-	return result
-}
-
 // ValidHWAccels returns a map of valid hardware acceleration types.
 func ValidHWAccels() map[string]HWAccel {
 	return map[string]HWAccel{
@@ -757,14 +723,4 @@ func (o OutputFormat) RequiresAnnexB() bool {
 	default:
 		return false
 	}
-}
-
-// SupportedEncodingVideoCodecs returns the list of video codecs supported as encoding targets.
-func SupportedEncodingVideoCodecs() []Video {
-	return []Video{VideoH264, VideoH265, VideoVP9, VideoAV1}
-}
-
-// SupportedEncodingAudioCodecs returns the list of audio codecs supported as encoding targets.
-func SupportedEncodingAudioCodecs() []Audio {
-	return []Audio{AudioAAC, AudioMP3, AudioAC3, AudioEAC3, AudioOpus}
 }

@@ -230,12 +230,6 @@ func (h *ProgressHandler) RegisterSSE(router interface {
 	router.Get("/api/v1/progress/events", h.handleSSEEvents)
 }
 
-// HandleSSEEvents is the raw HTTP handler for SSE streaming.
-// Exported for direct use with custom routers.
-func (h *ProgressHandler) HandleSSEEvents(w http.ResponseWriter, r *http.Request) {
-	h.handleSSEEvents(w, r)
-}
-
 // ListOperations returns a list of current progress operations.
 func (h *ProgressHandler) ListOperations(ctx context.Context, input *ListOperationsInput) (*ListOperationsOutput, error) {
 	filter := &progress.OperationFilter{

@@ -338,16 +338,6 @@ func (p *EncodingProfile) Clone() *EncodingProfile {
 	return &clone
 }
 
-// ValidTargetVideoCodecs returns all valid target video codec values for encoding profiles.
-func ValidTargetVideoCodecs() []VideoCodec {
-	return []VideoCodec{VideoCodecH264, VideoCodecH265, VideoCodecVP9, VideoCodecAV1}
-}
-
-// ValidTargetAudioCodecs returns all valid target audio codec values for encoding profiles.
-func ValidTargetAudioCodecs() []AudioCodec {
-	return []AudioCodec{AudioCodecAAC, AudioCodecOpus, AudioCodecAC3, AudioCodecEAC3, AudioCodecMP3}
-}
-
 // DefaultFlags holds the auto-generated FFmpeg flags for an encoding profile.
 // These are shown as placeholder text in the UI when no custom flags are set.
 type DefaultFlags struct {

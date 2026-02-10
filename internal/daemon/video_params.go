@@ -430,23 +430,6 @@ func ParseAnnexBNALUs(data []byte) [][]byte {
 	return nalus
 }
 
-// BuildAnnexB builds Annex B formatted data from NAL units.
-func BuildAnnexB(nalus [][]byte) []byte {
-	// Calculate total size
-	size := 0
-	for _, nalu := range nalus {
-		size += 4 + len(nalu) // 4-byte start code + NAL unit
-	}
-
-	data := make([]byte, 0, size)
-	for _, nalu := range nalus {
-		data = append(data, 0x00, 0x00, 0x00, 0x01)
-		data = append(data, nalu...)
-	}
-
-	return data
-}
-
 // copyBytes creates a copy of a byte slice.
 func copyBytes(data []byte) []byte {
 	if data == nil {

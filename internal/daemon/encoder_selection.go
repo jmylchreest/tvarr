@@ -29,13 +29,6 @@ func NewEncoderSelector(binInfo *ffmpeg.BinaryInfo) *EncoderSelector {
 	return &EncoderSelector{binInfo: binInfo}
 }
 
-// SelectVideoEncoder returns the best video encoder for the target codec.
-// It prefers hardware encoders in this order: VAAPI > CUDA/NVENC > QSV > VideoToolbox > Software.
-// Returns the encoder name, hwaccel type, and device path (empty for software encoding).
-func (s *EncoderSelector) SelectVideoEncoder(targetCodec string) (encoder string, hwAccel string, hwDevice string) {
-	return s.SelectVideoEncoderWithPreference(targetCodec, "")
-}
-
 // SelectVideoEncoderWithPreference returns the best video encoder for the target codec,
 // optionally preferring a specific hardware accelerator if specified.
 // If preferredHWAccel is empty, it auto-selects based on availability.

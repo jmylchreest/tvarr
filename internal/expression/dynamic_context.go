@@ -192,42 +192,6 @@ type DynamicContextResolver struct {
 	ctx *DynamicContext
 }
 
-// NewDynamicContextResolver creates a resolver for a given context.
-func NewDynamicContextResolver(ctx *DynamicContext) *DynamicContextResolver {
-	return &DynamicContextResolver{ctx: ctx}
-}
-
-// Prefix returns "dynamic" as the resolver prefix.
-// Note: The actual syntax is @dynamic(path):key, which is handled specially by the parser.
-func (r *DynamicContextResolver) Prefix() string {
-	return "dynamic"
-}
-
-// Resolve resolves a dynamic field reference.
-// The parameter format is "path):key" (path already stripped of opening paren by caller).
-func (r *DynamicContextResolver) Resolve(parameter string) (string, bool) {
-	if r.ctx == nil {
-		return "", false
-	}
-
-	// Parse "path):key" format
-	before, after, ok := strings.Cut(parameter, ")")
-	if !ok {
-		return "", false
-	}
-
-	path := before
-	rest := after
-
-	// Expect ":key" after the closing paren
-	if !strings.HasPrefix(rest, ":") || len(rest) < 2 {
-		return "", false
-	}
-
-	key := rest[1:]
-	return r.ctx.Resolve(path, key)
-}
-
 // --- Helper Functions ---
 
 // ParseDynamicSyntax parses the @dynamic(path):key syntax.
@@ -263,9 +227,4 @@ func ParseDynamicSyntax(s string) (path, key string, ok bool) {
 // IsDynamicSyntax checks if a string uses the @dynamic(path):key syntax.
 func IsDynamicSyntax(s string) bool {
 	return strings.HasPrefix(s, "@dynamic(")
-}
-
-// FormatDynamicSyntax formats a dynamic field reference.
-func FormatDynamicSyntax(path, key string) string {
-	return "@dynamic(" + path + "):" + key
 }

@@ -120,34 +120,9 @@ func (b *CommandBuilder) Stats() *CommandBuilder {
 	return b
 }
 
-// Progress enables progress output to a file/pipe.
-func (b *CommandBuilder) Progress(target string) *CommandBuilder {
-	b.globalArgs = append(b.globalArgs, "-progress", target)
-	return b
-}
-
-// GlobalArgs adds custom global arguments (placed before input args).
-func (b *CommandBuilder) GlobalArgs(args ...string) *CommandBuilder {
-	b.globalArgs = append(b.globalArgs, args...)
-	return b
-}
-
-// VaapiDevice sets the VAAPI device for hardware encoding.
-// This is the simplest approach for VAAPI software decode + hardware encode.
-// Example: VaapiDevice("/dev/dri/renderD128")
-// The resulting command will be: ffmpeg -vaapi_device /dev/dri/renderD128 ...
-func (b *CommandBuilder) VaapiDevice(device string) *CommandBuilder {
-	if device != "" {
-		b.globalArgs = append(b.globalArgs, "-vaapi_device", device)
-	}
-	return b
-}
-
 // InitHWDevice initializes a hardware device for acceleration.
 // This should be called before HWAccel for proper device setup.
-// Note: When using InitHWDevice, you should also call FilterHWDevice("hw")
-// to connect the hwupload filter to the initialized device.
-// Example: InitHWDevice("cuda", "0") followed by FilterHWDevice("hw")
+// Example: InitHWDevice("cuda", "0")
 func (b *CommandBuilder) InitHWDevice(hwType string, device string) *CommandBuilder {
 	// Skip if empty, "none", or "auto" - FFmpeg doesn't understand "auto",
 	// it needs specific types like vaapi, cuda, qsv, etc.
@@ -158,16 +133,6 @@ func (b *CommandBuilder) InitHWDevice(hwType string, device string) *CommandBuil
 		b.globalArgs = append(b.globalArgs, "-init_hw_device", fmt.Sprintf("%s=hw:%s", hwType, device))
 	} else {
 		b.globalArgs = append(b.globalArgs, "-init_hw_device", fmt.Sprintf("%s=hw", hwType))
-	}
-	return b
-}
-
-// FilterHWDevice specifies the device to use for hardware filters like hwupload.
-// This is required when using InitHWDevice to connect filters to the device.
-// Example: FilterHWDevice("hw") after InitHWDevice("cuda", "0")
-func (b *CommandBuilder) FilterHWDevice(deviceName string) *CommandBuilder {
-	if deviceName != "" {
-		b.globalArgs = append(b.globalArgs, "-filter_hw_device", deviceName)
 	}
 	return b
 }
@@ -229,12 +194,6 @@ func (b *CommandBuilder) Input(input string) *CommandBuilder {
 	return b
 }
 
-// InputFormat sets the input format.
-func (b *CommandBuilder) InputFormat(format string) *CommandBuilder {
-	b.inputArgs = append(b.inputArgs, "-f", format)
-	return b
-}
-
 // InputArgs adds arbitrary input arguments.
 func (b *CommandBuilder) InputArgs(args ...string) *CommandBuilder {
 	b.inputArgs = append(b.inputArgs, args...)
@@ -247,19 +206,6 @@ func (b *CommandBuilder) Reconnect() *CommandBuilder {
 		"-reconnect", "1",
 		"-reconnect_streamed", "1",
 		"-reconnect_delay_max", "5")
-	return b
-}
-
-// BufferSize sets the input buffer size.
-func (b *CommandBuilder) BufferSize(size int) *CommandBuilder {
-	b.inputArgs = append(b.inputArgs, "-buffer_size", strconv.Itoa(size))
-	return b
-}
-
-// Timeout sets the connection timeout.
-func (b *CommandBuilder) Timeout(timeout time.Duration) *CommandBuilder {
-	microseconds := int(timeout.Microseconds())
-	b.inputArgs = append(b.inputArgs, "-timeout", strconv.Itoa(microseconds))
 	return b
 }
 
@@ -287,22 +233,9 @@ func (b *CommandBuilder) AudioBitrate(bitrate string) *CommandBuilder {
 	return b
 }
 
-// VideoProfile sets the video profile.
-func (b *CommandBuilder) VideoProfile(profile string) *CommandBuilder {
-	b.outputArgs = append(b.outputArgs, "-profile:v", profile)
-	return b
-}
-
 // VideoPreset sets the encoding preset.
 func (b *CommandBuilder) VideoPreset(preset string) *CommandBuilder {
 	b.outputArgs = append(b.outputArgs, "-preset", preset)
-	return b
-}
-
-// VideoScale sets the video scale.
-func (b *CommandBuilder) VideoScale(width, height int) *CommandBuilder {
-	scale := fmt.Sprintf("scale=%d:%d", width, height)
-	b.filterArgs = append(b.filterArgs, scale)
 	return b
 }
 
@@ -315,42 +248,6 @@ func (b *CommandBuilder) VideoFilter(filter string) *CommandBuilder {
 // AudioChannels sets the number of audio channels.
 func (b *CommandBuilder) AudioChannels(channels int) *CommandBuilder {
 	b.outputArgs = append(b.outputArgs, "-ac", strconv.Itoa(channels))
-	return b
-}
-
-// AudioSampleRate sets the audio sample rate.
-func (b *CommandBuilder) AudioSampleRate(rate int) *CommandBuilder {
-	b.outputArgs = append(b.outputArgs, "-ar", strconv.Itoa(rate))
-	return b
-}
-
-// CopyTimestamps copies input timestamps.
-func (b *CommandBuilder) CopyTimestamps() *CommandBuilder {
-	b.outputArgs = append(b.outputArgs, "-copyts")
-	return b
-}
-
-// StartAtZero starts timestamps at zero.
-func (b *CommandBuilder) StartAtZero() *CommandBuilder {
-	b.outputArgs = append(b.outputArgs, "-start_at_zero")
-	return b
-}
-
-// MapAll maps all streams from input.
-func (b *CommandBuilder) MapAll() *CommandBuilder {
-	b.outputArgs = append(b.outputArgs, "-map", "0")
-	return b
-}
-
-// MapStream maps a specific stream.
-func (b *CommandBuilder) MapStream(spec string) *CommandBuilder {
-	b.outputArgs = append(b.outputArgs, "-map", spec)
-	return b
-}
-
-// OutputFormat sets the output format.
-func (b *CommandBuilder) OutputFormat(format string) *CommandBuilder {
-	b.outputArgs = append(b.outputArgs, "-f", format)
 	return b
 }
 
@@ -401,33 +298,6 @@ func (b *CommandBuilder) ApplyCustomOutputOptions(opts string) *CommandBuilder {
 	return b
 }
 
-// ApplyFilterComplex applies a custom filter complex string.
-func (b *CommandBuilder) ApplyFilterComplex(filterComplex string) *CommandBuilder {
-	if filterComplex == "" {
-		return b
-	}
-	// Filter complex replaces any existing -vf filters
-	b.filterArgs = nil
-	b.outputArgs = append(b.outputArgs, "-filter_complex", filterComplex)
-	return b
-}
-
-// VideoBitstreamFilter sets the video bitstream filter.
-func (b *CommandBuilder) VideoBitstreamFilter(bsf string) *CommandBuilder {
-	if bsf != "" {
-		b.outputArgs = append(b.outputArgs, "-bsf:v", bsf)
-	}
-	return b
-}
-
-// AudioBitstreamFilter sets the audio bitstream filter.
-func (b *CommandBuilder) AudioBitstreamFilter(bsf string) *CommandBuilder {
-	if bsf != "" {
-		b.outputArgs = append(b.outputArgs, "-bsf:a", bsf)
-	}
-	return b
-}
-
 // FlushPackets enables immediate packet flushing for low latency.
 func (b *CommandBuilder) FlushPackets() *CommandBuilder {
 	b.outputArgs = append(b.outputArgs, "-flush_packets", "1")
@@ -437,24 +307,6 @@ func (b *CommandBuilder) FlushPackets() *CommandBuilder {
 // MuxDelay sets the muxer delay for live streaming.
 func (b *CommandBuilder) MuxDelay(delay string) *CommandBuilder {
 	b.outputArgs = append(b.outputArgs, "-muxdelay", delay)
-	return b
-}
-
-// AvoidNegativeTS sets the avoid_negative_ts mode.
-func (b *CommandBuilder) AvoidNegativeTS(mode string) *CommandBuilder {
-	b.outputArgs = append(b.outputArgs, "-avoid_negative_ts", mode)
-	return b
-}
-
-// PatPeriod sets the PAT/PMT insertion period for MPEG-TS.
-func (b *CommandBuilder) PatPeriod(period string) *CommandBuilder {
-	b.outputArgs = append(b.outputArgs, "-pat_period", period)
-	return b
-}
-
-// FFlags sets FFmpeg format flags (typically on input).
-func (b *CommandBuilder) FFlags(flags string) *CommandBuilder {
-	b.inputArgs = append(b.inputArgs, "-fflags", flags)
 	return b
 }
 
@@ -505,27 +357,6 @@ func parseOptionsString(s string) []string {
 		result = append(result, current.String())
 	}
 
-	return result
-}
-
-// GetArgs returns a copy of all arguments that will be passed to FFmpeg.
-// Useful for preview/debugging.
-func (b *CommandBuilder) GetArgs() []string {
-	cmd := b.Build()
-	return cmd.Args
-}
-
-// GetInputArgs returns a copy of the input arguments.
-func (b *CommandBuilder) GetInputArgs() []string {
-	result := make([]string, len(b.inputArgs))
-	copy(result, b.inputArgs)
-	return result
-}
-
-// GetOutputArgs returns a copy of the output arguments.
-func (b *CommandBuilder) GetOutputArgs() []string {
-	result := make([]string, len(b.outputArgs))
-	copy(result, b.outputArgs)
 	return result
 }
 

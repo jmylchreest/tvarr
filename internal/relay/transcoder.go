@@ -704,50 +704,6 @@ func HasHWEncoder(targetCodec string, daemon *types.Daemon) bool {
 	return daemonHasHWEncoderForCodec(daemon.Capabilities.VideoEncoders, targetCodec)
 }
 
-// HasHWDecoder returns true if the daemon has a hardware decoder for the source codec.
-func HasHWDecoder(sourceCodec string, daemon *types.Daemon) bool {
-	if daemon == nil || daemon.Capabilities == nil {
-		return false
-	}
-	return daemonHasHWDecoderForCodec(daemon.Capabilities.VideoDecoders, sourceCodec)
-}
-
-// PredictJobType predicts the job type based on video encoder and daemon capabilities.
-// Video encoding determines the job type since GPU acceleration is video-focused.
-// Audio is almost always CPU and doesn't affect the decision.
-//
-// Rules:
-// 1. If video encoder is explicitly HW (e.g., h264_nvenc), returns GPU
-// 2. If video encoder is bare codec (e.g., "h264") and daemon has HW encoder for it, returns GPU
-// 3. Otherwise returns CPU
-func PredictJobType(videoEncoder string, daemon *types.Daemon) JobType {
-	// If encoder is explicitly hardware, it's GPU
-	if isHardwareEncoder(videoEncoder) {
-		return JobTypeGPU
-	}
-
-	// For bare codec names or unknown encoders, check daemon capabilities
-	// If daemon has GPU capacity and HW encoder for this codec, predict GPU
-	if daemon != nil && daemon.Capabilities != nil && len(daemon.Capabilities.GPUs) > 0 {
-		// Check if daemon has any GPU with encode capacity
-		hasGPUWithCapacity := false
-		for _, gpu := range daemon.Capabilities.GPUs {
-			if gpu.MaxEncodeSessions > 0 {
-				hasGPUWithCapacity = true
-				break
-			}
-		}
-
-		// Check if daemon has a HW encoder for this codec
-		if hasGPUWithCapacity && daemonHasHWEncoderForCodec(daemon.Capabilities.VideoEncoders, videoEncoder) {
-			return JobTypeGPU
-		}
-	}
-
-	// Default to CPU
-	return JobTypeCPU
-}
-
 // daemonHasHWEncoderForCodec checks if the daemon's encoder list contains
 // a hardware encoder that can encode the given codec.
 // It works by checking if any encoder starts with "codec_" and is a HW encoder.

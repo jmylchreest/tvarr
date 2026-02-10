@@ -65,14 +65,6 @@ func (s *EncoderOverrideService) RefreshCache(ctx context.Context) error {
 	return nil
 }
 
-// GetCachedEnabled returns the cached enabled overrides.
-// This is used by the relay service when spawning transcode jobs.
-func (s *EncoderOverrideService) GetCachedEnabled() []*models.EncoderOverride {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.cachedOverrides
-}
-
 // GetEnabledProto returns the cached enabled overrides converted to proto format.
 // This is used as the EncoderOverridesProvider for the TranscoderFactory.
 func (s *EncoderOverrideService) GetEnabledProto() []*proto.EncoderOverride {
@@ -152,18 +144,6 @@ func (s *EncoderOverrideService) GetByCodecType(ctx context.Context, codecType m
 	return s.repo.GetByCodecType(ctx, codecType)
 }
 
-// GetByName retrieves an override by name.
-func (s *EncoderOverrideService) GetByName(ctx context.Context, name string) (*models.EncoderOverride, error) {
-	override, err := s.repo.GetByName(ctx, name)
-	if err != nil {
-		return nil, err
-	}
-	if override == nil {
-		return nil, ErrEncoderOverrideNotFound
-	}
-	return override, nil
-}
-
 // GetSystem retrieves all system overrides.
 func (s *EncoderOverrideService) GetSystem(ctx context.Context) ([]*models.EncoderOverride, error) {
 	return s.repo.GetSystem(ctx)
@@ -225,16 +205,6 @@ func (s *EncoderOverrideService) Delete(ctx context.Context, id models.ULID) err
 	// Refresh cache after delete
 	_ = s.RefreshCache(ctx)
 	return nil
-}
-
-// Count returns the total number of overrides.
-func (s *EncoderOverrideService) Count(ctx context.Context) (int64, error) {
-	return s.repo.Count(ctx)
-}
-
-// CountEnabled returns the number of enabled overrides.
-func (s *EncoderOverrideService) CountEnabled(ctx context.Context) (int64, error) {
-	return s.repo.CountEnabled(ctx)
 }
 
 // Reorder updates priorities for multiple overrides.

@@ -41,13 +41,3 @@ const (
 func (s SelectionStrategy) String() string {
 	return string(s)
 }
-
-// IsValid returns true if the strategy is a valid value.
-func (s SelectionStrategy) IsValid() bool {
-	switch s {
-	case StrategyLeastLoaded, StrategyRoundRobin, StrategyCapabilityMatch, StrategyGPUAware:
-		return true
-	default:
-		return false
-	}
-}

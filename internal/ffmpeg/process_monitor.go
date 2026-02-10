@@ -360,20 +360,3 @@ type CountingReader struct {
 type Reader interface {
 	Read(p []byte) (n int, err error)
 }
-
-// NewCountingReader creates a reader that counts bytes and reports to monitor.
-func NewCountingReader(r Reader, monitor *ProcessMonitor) *CountingReader {
-	return &CountingReader{
-		r:       r,
-		monitor: monitor,
-	}
-}
-
-// Read implements io.Reader and tracks bytes read.
-func (cr *CountingReader) Read(p []byte) (n int, err error) {
-	n, err = cr.r.Read(p)
-	if n > 0 && cr.monitor != nil {
-		cr.monitor.AddBytesRead(uint64(n))
-	}
-	return n, err
-}

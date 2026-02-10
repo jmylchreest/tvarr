@@ -191,31 +191,6 @@ func extensionFromContentType(contentType string) string {
 	}
 }
 
-// ContentTypeFromPath guesses the content type from a file path extension.
-func ContentTypeFromPath(path string) string {
-	ext := strings.ToLower(filepath.Ext(path))
-	switch ext {
-	case ".png":
-		return "image/png"
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".gif":
-		return "image/gif"
-	case ".webp":
-		return "image/webp"
-	case ".svg":
-		return "image/svg+xml"
-	case ".ico":
-		return "image/x-icon"
-	case ".bmp":
-		return "image/bmp"
-	case ".tiff", ".tif":
-		return "image/tiff"
-	default:
-		return "application/octet-stream"
-	}
-}
-
 // StoreWithMetadata stores a logo with its metadata.
 // The image is stored at logos/{source}/{id}.{ext} and
 // metadata at logos/{source}/{id}.json.

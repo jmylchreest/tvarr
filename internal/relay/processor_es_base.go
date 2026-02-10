@@ -25,15 +25,6 @@ type ESProcessorConfig struct {
 	AudioDetectPollInterval time.Duration
 }
 
-// DefaultESProcessorConfig returns default ES processor configuration.
-func DefaultESProcessorConfig() ESProcessorConfig {
-	return ESProcessorConfig{
-		Logger:                  slog.Default(),
-		AudioDetectTimeout:      2 * time.Second,
-		AudioDetectPollInterval: 50 * time.Millisecond,
-	}
-}
-
 // ESProcessorBase provides common functionality for processors that read from SharedESBuffer.
 // It extracts duplicated code from HLS-TS, HLS-fMP4, DASH, and MPEG-TS processors.
 type ESProcessorBase struct {

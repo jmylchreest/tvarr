@@ -29,11 +29,6 @@ const (
 	StreamProxyModeSmart StreamProxyMode = "smart"
 )
 
-// ValidProxyModes returns the list of valid proxy modes.
-func ValidProxyModes() []StreamProxyMode {
-	return []StreamProxyMode{StreamProxyModeDirect, StreamProxyModeSmart}
-}
-
 // IsValidProxyMode returns true if the mode is a valid proxy mode.
 func IsValidProxyMode(mode StreamProxyMode) bool {
 	switch mode {

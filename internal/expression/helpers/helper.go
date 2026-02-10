@@ -46,36 +46,6 @@ type HelperContext struct {
 	Extra map[string]any
 }
 
-// NewHelperContext creates a new empty helper context.
-func NewHelperContext() *HelperContext {
-	return &HelperContext{
-		Headers: make(map[string]map[string]string),
-		Query:   make(map[string]string),
-		Extra:   make(map[string]any),
-	}
-}
-
-// SetRequestHeaders sets request headers in the context.
-func (c *HelperContext) SetRequestHeaders(headers map[string]string) *HelperContext {
-	c.Headers["request"] = headers
-	return c
-}
-
-// GetRequestHeader retrieves a request header value (case-insensitive).
-func (c *HelperContext) GetRequestHeader(name string) (string, bool) {
-	if c.Headers == nil || c.Headers["request"] == nil {
-		return "", false
-	}
-	// HTTP headers are case-insensitive, so normalize
-	nameLower := strings.ToLower(name)
-	for k, v := range c.Headers["request"] {
-		if strings.ToLower(k) == nameLower {
-			return v, true
-		}
-	}
-	return "", false
-}
-
 // ToMap converts the context to a generic map for ContextAwareHelper.
 func (c *HelperContext) ToMap() map[string]any {
 	return map[string]any{
@@ -139,21 +109,6 @@ func (r *HelperRegistry) ProcessWithContext(value string, ctx *HelperContext) (s
 	}
 
 	return helper.Process(args, "")
-}
-
-// ProcessWithArgs processes a value with additional arguments.
-func (r *HelperRegistry) ProcessWithArgs(value, extraArgs string) (string, error) {
-	isHelper, name, args := ParseHelperSyntax(value)
-	if !isHelper {
-		return value, nil
-	}
-
-	helper, ok := r.Get(name)
-	if !ok {
-		return value, nil
-	}
-
-	return helper.Process(args, extraArgs)
 }
 
 // ParseHelperSyntax parses a helper syntax string (@name:args).
@@ -473,25 +428,6 @@ func HasAnyHelper(value string) bool {
 
 // --- Time Helper Convenience Functions ---
 // These functions provide direct access to time helper detection and processing.
-
-// HasTimeHelper checks if a value contains a @time: helper reference.
-func HasTimeHelper(value string) bool {
-	isHelper, name, _ := ParseHelperSyntax(value)
-	return isHelper && name == "time"
-}
-
-// ProcessTimeHelper resolves a @time:operation reference to its result.
-// Returns the processed value if it's a time helper, empty string otherwise.
-// Example: @time:now -> "2024-01-15T10:30:00Z"
-func ProcessTimeHelper(value string) (string, error) {
-	isHelper, name, args := ParseHelperSyntax(value)
-	if !isHelper || name != "time" {
-		return "", nil
-	}
-
-	helper := NewTimeHelper()
-	return helper.Process(args, "")
-}
 
 // --- General Helper Processing ---
 // ProcessImmediateHelpers processes helpers that can be resolved immediately

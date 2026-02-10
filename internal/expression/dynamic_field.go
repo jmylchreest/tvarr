@@ -29,13 +29,6 @@ type DynamicFieldRegistry struct {
 	context *DynamicContext
 }
 
-// NewDynamicFieldRegistry creates a new dynamic field registry.
-func NewDynamicFieldRegistry() *DynamicFieldRegistry {
-	return &DynamicFieldRegistry{
-		resolvers: make(map[string]DynamicFieldResolver),
-	}
-}
-
 // NewDynamicFieldRegistryWithContext creates a registry with a DynamicContext.
 // This enables the unified @dynamic(path):key syntax.
 func NewDynamicFieldRegistryWithContext(ctx *DynamicContext) *DynamicFieldRegistry {

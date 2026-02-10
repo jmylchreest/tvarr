@@ -1514,13 +1514,6 @@ type StreamChannelByProxyOptionsOutput struct {
 	Body struct{} `json:"-"`
 }
 
-// StreamChannelByProxyOptions handles CORS preflight requests for the stream endpoint.
-func (h *RelayStreamHandler) StreamChannelByProxyOptions(ctx context.Context, input *StreamChannelByProxyOptionsInput) (*StreamChannelByProxyOptionsOutput, error) {
-	// CORS preflight response is handled by setting headers
-	// The actual CORS headers are set in the StreamChannelByProxy handler
-	return &StreamChannelByProxyOptionsOutput{}, nil
-}
-
 // ListRelaySessionsInput is the input for listing relay sessions.
 type ListRelaySessionsInput struct{}
 

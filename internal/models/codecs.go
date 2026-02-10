@@ -99,16 +99,6 @@ const (
 	HWAccelVT    HWAccelType = HWAccelType(codec.HWAccelVT)    // macOS
 )
 
-// IsFMP4OnlyVideoCodec returns true if the codec requires fMP4 container (not compatible with MPEG-TS).
-func IsFMP4OnlyVideoCodec(c VideoCodec) bool {
-	return c.IsFMP4Only()
-}
-
-// IsFMP4OnlyAudioCodec returns true if the codec requires fMP4 container (not compatible with MPEG-TS).
-func IsFMP4OnlyAudioCodec(c AudioCodec) bool {
-	return c.IsFMP4Only()
-}
-
 // ValidVideoCodecs is the set of all valid video codec values.
 var ValidVideoCodecs = map[string]VideoCodec{
 	"h264": VideoCodecH264,
@@ -164,25 +154,4 @@ var ValidPreferredFormats = map[string]string{
 func ParsePreferredFormat(s string) (string, bool) {
 	format, ok := ValidPreferredFormats[strings.ToLower(strings.TrimSpace(s))]
 	return format, ok
-}
-
-// NormalizeCodecName converts encoder names and aliases to canonical codec names.
-// This wraps the codec package's Normalize function for convenience.
-func NormalizeCodecName(name string) string {
-	return codec.Normalize(name)
-}
-
-// IsVideoDemuxable returns true if the video codec can be demuxed by mediacommon.
-func IsVideoDemuxable(codecName string) bool {
-	return codec.IsVideoDemuxable(codecName)
-}
-
-// IsAudioDemuxable returns true if the audio codec can be demuxed by mediacommon.
-func IsAudioDemuxable(codecName string) bool {
-	return codec.IsAudioDemuxable(codecName)
-}
-
-// CodecsMatch returns true if two codec strings represent the same codec.
-func CodecsMatch(a, b string) bool {
-	return codec.Match(a, b)
 }

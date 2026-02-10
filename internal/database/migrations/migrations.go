@@ -52,11 +52,6 @@ func NewMigrator(db *gorm.DB, logger *slog.Logger) *Migrator {
 	}
 }
 
-// Register adds a migration to the registry.
-func (m *Migrator) Register(migration Migration) {
-	m.migrations = append(m.migrations, migration)
-}
-
 // RegisterAll adds multiple migrations to the registry.
 func (m *Migrator) RegisterAll(migrations []Migration) {
 	m.migrations = append(m.migrations, migrations...)
@@ -274,10 +269,4 @@ func (m *Migrator) appliedRecords(ctx context.Context) (map[string]MigrationReco
 		applied[record.Version] = record
 	}
 	return applied, nil
-}
-
-// AutoMigrateModels performs GORM AutoMigrate on the given models.
-// This is a convenience function for simple schema updates.
-func (m *Migrator) AutoMigrateModels(ctx context.Context, models ...any) error {
-	return m.db.WithContext(ctx).AutoMigrate(models...)
 }

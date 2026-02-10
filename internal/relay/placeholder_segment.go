@@ -312,8 +312,3 @@ func (g *PlaceholderSegmentGenerator) GenerateSegment(sequence uint64) (*Segment
 		IsFragmented: true,
 	}, nil
 }
-
-// TargetDuration returns the target segment duration.
-func (g *PlaceholderSegmentGenerator) TargetDuration() float64 {
-	return g.targetDuration
-}

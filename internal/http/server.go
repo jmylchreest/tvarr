@@ -33,18 +33,6 @@ type ServerConfig struct {
 	ShutdownTimeout time.Duration
 }
 
-// DefaultServerConfig returns a ServerConfig with sensible defaults.
-func DefaultServerConfig() ServerConfig {
-	return ServerConfig{
-		Host:            "0.0.0.0",
-		Port:            8080,
-		ReadTimeout:     30 * time.Second,
-		WriteTimeout:    30 * time.Second,
-		IdleTimeout:     120 * time.Second,
-		ShutdownTimeout: 30 * time.Second,
-	}
-}
-
 // Server represents the HTTP server.
 type Server struct {
 	config     ServerConfig

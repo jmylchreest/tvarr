@@ -77,8 +77,3 @@ func (e *DataMappingEngine) Process(ctx ModifiableContext) (*MappingResult, erro
 
 	return result, nil
 }
-
-// RuleCount returns the number of rules in the engine.
-func (e *DataMappingEngine) RuleCount() int {
-	return len(e.rules)
-}

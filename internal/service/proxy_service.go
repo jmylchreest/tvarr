@@ -291,39 +291,6 @@ func (s *ProxyService) Generate(ctx context.Context, proxyID models.ULID) (*pipe
 	return result, nil
 }
 
-// GenerateAll runs the generation pipeline for all active proxies.
-func (s *ProxyService) GenerateAll(ctx context.Context) (map[models.ULID]*pipeline.Result, error) {
-	proxies, err := s.proxyRepo.GetActive(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("getting active proxies: %w", err)
-	}
-
-	results := make(map[models.ULID]*pipeline.Result)
-
-	for _, proxy := range proxies {
-		select {
-		case <-ctx.Done():
-			return results, ctx.Err()
-		default:
-		}
-
-		result, err := s.Generate(ctx, proxy.ID)
-		if err != nil {
-			s.logger.ErrorContext(ctx, "failed to generate proxy",
-				slog.String("proxy_id", proxy.ID.String()),
-				slog.String("proxy_name", proxy.Name),
-				slog.String("error", err.Error()),
-			)
-			// Continue with other proxies
-			continue
-		}
-
-		results[proxy.ID] = result
-	}
-
-	return results, nil
-}
-
 // createErrorDetail converts an error into a structured ErrorDetail for UI display.
 // T041: Maps stage errors to user-friendly messages with suggestions.
 func (s *ProxyService) createErrorDetail(err error) progress.ErrorDetail {
@@ -385,22 +352,4 @@ func (s *ProxyService) getSuggestionForStage(stageID string, err error) string {
 	default:
 		return "Check server logs for more details"
 	}
-}
-
-// GetByEncodingProfileID returns proxies using a given encoding profile.
-func (s *ProxyService) GetByEncodingProfileID(ctx context.Context, profileID models.ULID) ([]*models.StreamProxy, error) {
-	proxies, err := s.proxyRepo.GetByEncodingProfileID(ctx, profileID)
-	if err != nil {
-		return nil, fmt.Errorf("getting proxies by encoding profile ID: %w", err)
-	}
-	return proxies, nil
-}
-
-// CountByEncodingProfileID returns the count of proxies using a given encoding profile.
-func (s *ProxyService) CountByEncodingProfileID(ctx context.Context, profileID models.ULID) (int64, error) {
-	count, err := s.proxyRepo.CountByEncodingProfileID(ctx, profileID)
-	if err != nil {
-		return 0, fmt.Errorf("counting proxies by encoding profile ID: %w", err)
-	}
-	return count, nil
 }

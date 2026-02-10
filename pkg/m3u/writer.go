@@ -103,18 +103,3 @@ type ChannelData interface {
 	GetChannelNumber() int
 	GetStreamURL() string
 }
-
-// NewEntryFromData creates an Entry from channel data.
-func NewEntryFromData(ch ChannelData) *Entry {
-	return &Entry{
-		Duration:      -1,
-		TvgID:         ch.GetTvgID(),
-		TvgName:       ch.GetTvgName(),
-		TvgLogo:       ch.GetTvgLogo(),
-		GroupTitle:    ch.GetGroupTitle(),
-		Title:         ch.GetChannelName(),
-		ChannelNumber: ch.GetChannelNumber(),
-		URL:           ch.GetStreamURL(),
-		Extra:         make(map[string]string),
-	}
-}

@@ -134,17 +134,6 @@ func (s *FFmpegDService) GetDaemonActiveJobs(id types.DaemonID) ([]ActiveJobInfo
 	return result, nil
 }
 
-// GetDaemonJobs returns active jobs on a daemon.
-// T089: Implement GetDaemonJobs() - returns active jobs on daemon
-// Note: This returns the job count since full job details are tracked elsewhere
-func (s *FFmpegDService) GetDaemonJobs(id types.DaemonID) (int, error) {
-	daemon, ok := s.registry.Get(id)
-	if !ok {
-		return 0, fmt.Errorf("daemon not found: %s", id)
-	}
-	return daemon.ActiveJobs, nil
-}
-
 // DrainDaemon puts a daemon into draining state (no new jobs, finish existing).
 // T090: Implement DrainDaemon() - stop new jobs, wait for existing to complete
 func (s *FFmpegDService) DrainDaemon(id types.DaemonID) error {
@@ -286,34 +275,4 @@ func (s *FFmpegDService) GetDaemonsByState(state types.DaemonState) []*types.Dae
 		}
 	}
 	return result
-}
-
-// GetActiveDaemons returns only active daemons.
-func (s *FFmpegDService) GetActiveDaemons() []*types.Daemon {
-	return s.registry.GetActive()
-}
-
-// GetAvailableDaemons returns daemons that can accept new jobs.
-func (s *FFmpegDService) GetAvailableDaemons() []*types.Daemon {
-	return s.registry.GetAvailable()
-}
-
-// GetDaemonsWithAvailableGPU returns daemons with available GPU encode sessions.
-func (s *FFmpegDService) GetDaemonsWithAvailableGPU() []*types.Daemon {
-	return s.registry.GetWithAvailableGPU()
-}
-
-// UnregisterDaemon removes a daemon from the registry.
-func (s *FFmpegDService) UnregisterDaemon(id types.DaemonID, reason string) {
-	s.registry.Unregister(id, reason)
-}
-
-// DaemonCount returns the total number of registered daemons.
-func (s *FFmpegDService) DaemonCount() int {
-	return s.registry.Count()
-}
-
-// ActiveDaemonCount returns the number of active daemons.
-func (s *FFmpegDService) ActiveDaemonCount() int {
-	return s.registry.CountActive()
 }

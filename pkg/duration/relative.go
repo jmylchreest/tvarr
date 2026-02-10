@@ -294,11 +294,6 @@ func parseDate(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("could not parse %q as a date", s)
 }
 
-// FormatRelative formats a time relative to now in a human-readable way.
-func FormatRelative(t time.Time) string {
-	return FormatRelativeFrom(t, time.Now())
-}
-
 // FormatRelativeFrom formats a time relative to the given anchor.
 func FormatRelativeFrom(t time.Time, anchor time.Time) string {
 	diff := t.Sub(anchor)

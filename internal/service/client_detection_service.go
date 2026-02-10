@@ -112,18 +112,6 @@ func (s *ClientDetectionService) GetEnabled(ctx context.Context) ([]*models.Clie
 	return s.repo.GetEnabled(ctx)
 }
 
-// GetByName retrieves a rule by name.
-func (s *ClientDetectionService) GetByName(ctx context.Context, name string) (*models.ClientDetectionRule, error) {
-	rule, err := s.repo.GetByName(ctx, name)
-	if err != nil {
-		return nil, err
-	}
-	if rule == nil {
-		return nil, ErrClientDetectionRuleNotFound
-	}
-	return rule, nil
-}
-
 // GetSystem retrieves all system rules.
 func (s *ClientDetectionService) GetSystem(ctx context.Context) ([]*models.ClientDetectionRule, error) {
 	return s.repo.GetSystem(ctx)
@@ -190,16 +178,6 @@ func (s *ClientDetectionService) Delete(ctx context.Context, id models.ULID) err
 	// Refresh cache after delete
 	_ = s.RefreshCache(ctx)
 	return nil
-}
-
-// Count returns the total number of rules.
-func (s *ClientDetectionService) Count(ctx context.Context) (int64, error) {
-	return s.repo.Count(ctx)
-}
-
-// CountEnabled returns the number of enabled rules.
-func (s *ClientDetectionService) CountEnabled(ctx context.Context) (int64, error) {
-	return s.repo.CountEnabled(ctx)
 }
 
 // Reorder updates priorities for multiple rules.

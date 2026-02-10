@@ -32,12 +32,6 @@ func NewHealthHandler(version string) *HealthHandler {
 	}
 }
 
-// WithCircuitBreakerManager sets a custom circuit breaker manager.
-func (h *HealthHandler) WithCircuitBreakerManager(manager *httpclient.CircuitBreakerManager) *HealthHandler {
-	h.cbManager = manager
-	return h
-}
-
 // WithDB sets the database connection for health checks.
 func (h *HealthHandler) WithDB(db *gorm.DB) *HealthHandler {
 	h.db = db

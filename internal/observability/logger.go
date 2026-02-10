@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -44,12 +43,6 @@ var GlobalLogLevel = &slog.LevelVar{}
 
 // enableRequestLogging controls whether HTTP requests are logged.
 var enableRequestLogging atomic.Bool
-
-// NewLogger creates a new slog.Logger based on the provided configuration.
-// The logger supports JSON and text formats with configurable log levels.
-func NewLogger(cfg config.LoggingConfig) *slog.Logger {
-	return NewLoggerWithWriter(cfg, os.Stdout)
-}
 
 // sensitiveFieldRedactor creates a masq redactor for sensitive field names.
 // This redacts passwords, secrets, tokens, API keys, and credentials from logs.

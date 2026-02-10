@@ -364,16 +364,6 @@ func GetRecommendedHWAccel(accels []HWAccelInfo) *HWAccelInfo {
 	return nil
 }
 
-// SelectBestHWAccel returns the hwaccel type string for the best available accelerator.
-// Returns empty string if no hardware acceleration is available.
-func SelectBestHWAccel(accels []HWAccelInfo) string {
-	recommended := GetRecommendedHWAccel(accels)
-	if recommended != nil {
-		return string(recommended.Type)
-	}
-	return ""
-}
-
 // HasHWAccel returns true if any hardware acceleration is available.
 func (info *BinaryInfo) HasHWAccel(accelType HWAccelType) bool {
 	for _, accel := range info.HWAccels {

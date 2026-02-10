@@ -29,13 +29,6 @@ func NewHandlerFactory() *HandlerFactory {
 	return f
 }
 
-// NewHandlerFactoryWithManual creates a handler factory with all handlers including Manual.
-func NewHandlerFactoryWithManual(manualRepo repository.ManualStreamChannelRepository) *HandlerFactory {
-	f := NewHandlerFactory()
-	f.RegisterManualHandler(manualRepo)
-	return f
-}
-
 // RegisterManualHandler registers the manual source handler with the required repository.
 func (f *HandlerFactory) RegisterManualHandler(repo repository.ManualStreamChannelRepository) {
 	f.Register(NewManualHandler(repo))

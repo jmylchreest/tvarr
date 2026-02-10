@@ -42,11 +42,3 @@ func NewResult() *core.StageResult {
 		Artifacts: make([]core.Artifact, 0),
 	}
 }
-
-// NewResultWithRecords creates a StageResult with record count.
-func NewResultWithRecords(processed int) *core.StageResult {
-	return &core.StageResult{
-		Artifacts:        make([]core.Artifact, 0),
-		RecordsProcessed: processed,
-	}
-}

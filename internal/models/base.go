@@ -23,14 +23,6 @@ func BoolVal(b *bool) bool {
 	return b == nil || *b
 }
 
-// BoolValDefault returns the value of a bool pointer with a custom default.
-func BoolValDefault(b *bool, defaultVal bool) bool {
-	if b == nil {
-		return defaultVal
-	}
-	return *b
-}
-
 // ULID is a wrapper around ulid.ULID for database storage as primary key.
 type ULID ulid.ULID
 
@@ -46,15 +38,6 @@ func ParseULID(s string) (ULID, error) {
 		return ULID{}, fmt.Errorf("invalid ULID: %w", err)
 	}
 	return ULID(id), nil
-}
-
-// MustParseULID parses a ULID string and panics on error.
-func MustParseULID(s string) ULID {
-	id, err := ParseULID(s)
-	if err != nil {
-		panic(err)
-	}
-	return id
 }
 
 // String returns the string representation of the ULID.

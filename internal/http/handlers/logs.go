@@ -29,11 +29,6 @@ func NewLogsHandler(service *logs.Service) *LogsHandler {
 	}
 }
 
-// SetHeartbeatInterval sets the SSE heartbeat interval (for testing).
-func (h *LogsHandler) SetHeartbeatInterval(interval time.Duration) {
-	h.heartbeatInterval = interval
-}
-
 // LogEntryResponse represents a log entry in API responses.
 // Matches frontend LogEntry type.
 type LogEntryResponse struct {
@@ -190,12 +185,6 @@ func (h *LogsHandler) RegisterSSE(router interface {
 	Get(pattern string, handlerFn http.HandlerFunc)
 }) {
 	router.Get("/api/v1/logs/stream", h.handleSSEStream)
-}
-
-// HandleSSEStream is the raw HTTP handler for SSE streaming.
-// Exported for direct use with custom routers.
-func (h *LogsHandler) HandleSSEStream(w http.ResponseWriter, r *http.Request) {
-	h.handleSSEStream(w, r)
 }
 
 // GetStats returns current log statistics.

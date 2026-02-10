@@ -47,14 +47,3 @@ func RequiresFMP4Input(sourceVideoCodec string) bool {
 		return false
 	}
 }
-
-// SupportsMPEGTS returns true if the source video codec can be muxed to MPEG-TS.
-func SupportsMPEGTS(sourceVideoCodec string) bool {
-	normalized := codec.Normalize(sourceVideoCodec)
-	switch normalized {
-	case "h264", "h265":
-		return true
-	default:
-		return false
-	}
-}

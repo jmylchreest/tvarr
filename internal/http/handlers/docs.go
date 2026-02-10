@@ -16,14 +16,6 @@ type DocsHandler struct {
 // DocsOption is a functional option for configuring DocsHandler.
 type DocsOption func(*DocsHandler)
 
-// WithTheme sets a fixed theme ("dark" or "light").
-func WithTheme(theme string) DocsOption {
-	return func(h *DocsHandler) {
-		h.theme = theme
-		h.systemTheme = false
-	}
-}
-
 // WithSystemTheme enables automatic theme based on system preference.
 func WithSystemTheme() DocsOption {
 	return func(h *DocsHandler) {

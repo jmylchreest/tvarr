@@ -362,14 +362,3 @@ func (s *ThemeService) EnsureThemesDirectory() error {
 	themesDir := filepath.Join(s.dataDir, "themes")
 	return os.MkdirAll(themesDir, 0750)
 }
-
-// IsBuiltinTheme returns true if the theme ID is a built-in theme.
-func (s *ThemeService) IsBuiltinTheme(themeID string) bool {
-	themesFS, err := assets.GetThemesFS()
-	if err != nil {
-		return false
-	}
-
-	_, err = fs.ReadFile(themesFS, themeID+".css")
-	return err == nil
-}

@@ -2,7 +2,6 @@
 package handlers
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/danielgtaylor/huma/v2"
 	"github.com/go-chi/chi/v5"
 	"github.com/jmylchreest/tvarr/internal/models"
 	"github.com/jmylchreest/tvarr/internal/storage"
@@ -48,29 +46,6 @@ func (h *OutputHandler) RegisterFileServer(router *chi.Mux) {
 	router.Get("/proxy/{proxyID}.xmltv", h.serveXMLTV)
 }
 
-// Register registers the output endpoints with the API for OpenAPI documentation.
-func (h *OutputHandler) Register(api huma.API) {
-	// Register M3U endpoint for OpenAPI documentation
-	huma.Register(api, huma.Operation{
-		OperationID: "getProxyM3U",
-		Method:      "GET",
-		Path:        "/proxy/{proxyID}.m3u",
-		Summary:     "Get proxy M3U playlist",
-		Description: "Returns the generated M3U playlist for a stream proxy",
-		Tags:        []string{"Proxy Output"},
-	}, h.GetM3U)
-
-	// Register XMLTV endpoint for OpenAPI documentation
-	huma.Register(api, huma.Operation{
-		OperationID: "getProxyXMLTV",
-		Method:      "GET",
-		Path:        "/proxy/{proxyID}.xmltv",
-		Summary:     "Get proxy XMLTV guide",
-		Description: "Returns the generated XMLTV program guide for a stream proxy",
-		Tags:        []string{"Proxy Output"},
-	}, h.GetXMLTV)
-}
-
 // GetM3UInput is the input for getting the M3U file.
 type GetM3UInput struct {
 	ProxyID string `path:"proxyID" doc:"Stream proxy ID (ULID)"`
@@ -82,29 +57,6 @@ type GetM3UOutput struct {
 	Body        []byte
 }
 
-// GetM3U returns the M3U file for a proxy (Huma handler for OpenAPI).
-func (h *OutputHandler) GetM3U(ctx context.Context, input *GetM3UInput) (*GetM3UOutput, error) {
-	// Validate ULID format
-	if _, err := models.ParseULID(input.ProxyID); err != nil {
-		return nil, huma.Error400BadRequest("invalid proxy ID format", err)
-	}
-
-	// Read the M3U file
-	data, err := h.readOutputFile(input.ProxyID, ".m3u")
-	if err != nil {
-		// Use errors.Is to properly detect wrapped os.ErrNotExist
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, huma.Error404NotFound(fmt.Sprintf("M3U not found for proxy %s. Generate the proxy first.", input.ProxyID))
-		}
-		return nil, huma.Error500InternalServerError("failed to read M3U file", err)
-	}
-
-	return &GetM3UOutput{
-		ContentType: "audio/x-mpegurl",
-		Body:        data,
-	}, nil
-}
-
 // GetXMLTVInput is the input for getting the XMLTV file.
 type GetXMLTVInput struct {
 	ProxyID string `path:"proxyID" doc:"Stream proxy ID (ULID)"`
@@ -114,29 +66,6 @@ type GetXMLTVInput struct {
 type GetXMLTVOutput struct {
 	ContentType string `header:"Content-Type"`
 	Body        []byte
-}
-
-// GetXMLTV returns the XMLTV file for a proxy (Huma handler for OpenAPI).
-func (h *OutputHandler) GetXMLTV(ctx context.Context, input *GetXMLTVInput) (*GetXMLTVOutput, error) {
-	// Validate ULID format
-	if _, err := models.ParseULID(input.ProxyID); err != nil {
-		return nil, huma.Error400BadRequest("invalid proxy ID format", err)
-	}
-
-	// Read the XMLTV file
-	data, err := h.readOutputFile(input.ProxyID, ".xml")
-	if err != nil {
-		// Use errors.Is to properly detect wrapped os.ErrNotExist
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, huma.Error404NotFound(fmt.Sprintf("XMLTV not found for proxy %s. Generate the proxy first.", input.ProxyID))
-		}
-		return nil, huma.Error500InternalServerError("failed to read XMLTV file", err)
-	}
-
-	return &GetXMLTVOutput{
-		ContentType: "application/xml",
-		Body:        data,
-	}, nil
 }
 
 // serveM3U handles direct HTTP requests for M3U files.
