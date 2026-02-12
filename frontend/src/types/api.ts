@@ -19,6 +19,20 @@ export interface PaginatedResponse<T> {
   has_previous: boolean;
 }
 
+// Version Info
+export interface VersionInfo {
+  version: string;
+  commit: string;
+  commit_sha?: string;
+  date: string;
+  branch: string;
+  tree_state: string;
+  go_version: string;
+  platform: string;
+  os: string;
+  arch: string;
+}
+
 // Stream Source Types
 // Added 'manual' to align with backend enum (m3u | xtream | manual)
 export type StreamSourceType = 'm3u' | 'xtream' | 'manual';

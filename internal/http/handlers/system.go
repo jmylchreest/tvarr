@@ -6,6 +6,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/jmylchreest/tvarr/internal/ffmpeg"
+	"github.com/jmylchreest/tvarr/internal/version"
 )
 
 // FFmpegInfoProvider provides FFmpeg binary information.
@@ -89,6 +90,14 @@ type FFmpegRecommendedConfig struct {
 	AudioEncoder string `json:"audio_encoder,omitempty" doc:"Recommended audio encoder"`
 }
 
+// VersionInfoInput is the input for the version info endpoint.
+type VersionInfoInput struct{}
+
+// VersionInfoOutput is the output for the version info endpoint.
+type VersionInfoOutput struct {
+	Body version.Info
+}
+
 // Register registers the system routes with the API.
 func (h *SystemHandler) Register(api huma.API) {
 	huma.Register(api, huma.Operation{
@@ -99,6 +108,15 @@ func (h *SystemHandler) Register(api huma.API) {
 		Description: "Returns detailed information about the FFmpeg installation including version, codecs, hardware acceleration, and recommended configuration",
 		Tags:        []string{"System"},
 	}, h.GetFFmpegInfo)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "getVersionInfo",
+		Method:      "GET",
+		Path:        "/api/v1/system/version",
+		Summary:     "Get version information",
+		Description: "Returns tvarr version information including build details",
+		Tags:        []string{"System"},
+	}, h.GetVersionInfo)
 }
 
 // GetFFmpegInfo returns FFmpeg capabilities and configuration.
@@ -197,6 +215,13 @@ func (h *SystemHandler) GetFFmpegInfo(ctx context.Context, input *FFmpegInfoInpu
 
 	return &FFmpegInfoOutput{
 		Body: response,
+	}, nil
+}
+
+// GetVersionInfo returns tvarr version information.
+func (h *SystemHandler) GetVersionInfo(ctx context.Context, input *VersionInfoInput) (*VersionInfoOutput, error) {
+	return &VersionInfoOutput{
+		Body: version.GetInfo(),
 	}, nil
 }
 

@@ -60,6 +60,7 @@ import {
   EncoderOverrideCreateRequest,
   EncoderOverrideUpdateRequest,
   EncoderOverrideReorderRequest,
+  VersionInfo,
 } from '@/types/api';
 
 class ApiError extends Error {
@@ -1193,6 +1194,11 @@ class ApiClient {
   // Health check
   async healthCheck(): Promise<any> {
     return this.request<any>(API_CONFIG.endpoints.health);
+  }
+
+  // Version info
+  async getVersion(): Promise<VersionInfo> {
+    return this.request<VersionInfo>('/api/v1/system/version');
   }
 
   // Feature flags API
