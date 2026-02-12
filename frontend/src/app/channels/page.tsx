@@ -177,7 +177,7 @@ export default function ChannelsPage() {
         const resp = await fetch('/api/v1/sources/stream');
         if (!resp.ok) return;
         const json = await resp.json();
-        const items = json?.data?.items ?? json?.data ?? [];
+        const items = json?.sources ?? json?.data?.items ?? json?.data ?? [];
         const mapped: StreamSourceOption[] = items
           .filter((s: any) => s && s.id && s.name)
           .map((s: any) => ({ id: s.id, name: s.name }));
