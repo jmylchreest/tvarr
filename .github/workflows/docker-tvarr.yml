@@ -256,6 +256,7 @@ jobs:
 
       - name: Create and push manifest (latest)
         run: |
+          docker manifest rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest 2>/dev/null || true
           docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64
           docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
@@ -263,6 +264,7 @@ jobs:
       - name: Create and push preview manifest (main branch)
         if: github.ref == 'refs/heads/main'
         run: |
+          docker manifest rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:preview 2>/dev/null || true
           docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:preview \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64
           docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:preview
@@ -270,6 +272,7 @@ jobs:
       - name: Create and push version manifest
         run: |
           VERSION="${{ steps.version.outputs.version }}"
+          docker manifest rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION} 2>/dev/null || true
           docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION} \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64
           docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}
@@ -277,6 +280,7 @@ jobs:
       - name: Create and push release manifest (releases only)
         if: steps.version.outputs.is_release == 'true'
         run: |
+          docker manifest rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:release 2>/dev/null || true
           docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:release \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64
           docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:release
@@ -289,11 +293,13 @@ jobs:
           MINOR=$(echo "$VERSION" | cut -d. -f1-2)
 
           # Major version tag (e.g., 1)
+          docker manifest rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MAJOR} 2>/dev/null || true
           docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MAJOR} \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64
           docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MAJOR}
 
           # Minor version tag (e.g., 1.2)
+          docker manifest rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MINOR} 2>/dev/null || true
           docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MINOR} \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64
           docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MINOR}
