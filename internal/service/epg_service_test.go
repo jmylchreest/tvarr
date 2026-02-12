@@ -526,3 +526,98 @@ func TestEpgService_DeleteOldPrograms(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
 }
+
+func TestEpgService_CreateXtreamWithAutoStreamSource(t *testing.T) {
+	sourceRepo := newMockEpgSourceRepo()
+	programRepo := newMockEpgProgramRepo()
+	streamSourceRepo := newMockStreamSourceRepo()
+	factory := ingestor.NewEpgHandlerFactory()
+	stateManager := ingestor.NewStateManager()
+
+	svc := NewEpgService(sourceRepo, programRepo, factory, stateManager).
+		WithStreamSourceRepo(streamSourceRepo)
+
+	epgSource := &models.EpgSource{
+		Name:     "Xtream EPG",
+		Type:     models.EpgSourceTypeXtream,
+		URL:      "http://xtream.example.com",
+		Username: "testuser",
+		Password: "testpass",
+	}
+
+	err := svc.Create(context.Background(), epgSource)
+	require.NoError(t, err)
+
+	// Check stream source was auto-created
+	streamSources, _ := streamSourceRepo.GetAll(context.Background())
+	assert.Len(t, streamSources, 1)
+
+	ss := streamSources[0]
+	assert.Equal(t, "Xtream EPG (Streams)", ss.Name)
+	assert.Equal(t, models.SourceTypeXtream, ss.Type)
+	assert.Equal(t, "http://xtream.example.com", ss.URL)
+	assert.Equal(t, "testuser", ss.Username)
+	assert.Equal(t, "testpass", ss.Password)
+}
+
+func TestEpgService_CreateXtreamNoAutoStreamSource_WhenAlreadyExists(t *testing.T) {
+	sourceRepo := newMockEpgSourceRepo()
+	programRepo := newMockEpgProgramRepo()
+	streamSourceRepo := newMockStreamSourceRepo()
+	factory := ingestor.NewEpgHandlerFactory()
+	stateManager := ingestor.NewStateManager()
+
+	svc := NewEpgService(sourceRepo, programRepo, factory, stateManager).
+		WithStreamSourceRepo(streamSourceRepo)
+
+	// Pre-create a stream source with the same URL
+	existingStream := &models.StreamSource{
+		Name:     "Existing Stream",
+		Type:     models.SourceTypeXtream,
+		URL:      "http://xtream.example.com",
+		Username: "testuser",
+		Password: "testpass",
+	}
+	_ = streamSourceRepo.Create(context.Background(), existingStream)
+
+	epgSource := &models.EpgSource{
+		Name:     "Xtream EPG",
+		Type:     models.EpgSourceTypeXtream,
+		URL:      "http://xtream.example.com",
+		Username: "testuser",
+		Password: "testpass",
+	}
+
+	err := svc.Create(context.Background(), epgSource)
+	require.NoError(t, err)
+
+	// Should not create a duplicate stream source
+	streamSources, _ := streamSourceRepo.GetAll(context.Background())
+	assert.Len(t, streamSources, 1)
+	assert.Equal(t, "Existing Stream", streamSources[0].Name)
+}
+
+func TestEpgService_CreateXMLTV_NoAutoStreamSource(t *testing.T) {
+	sourceRepo := newMockEpgSourceRepo()
+	programRepo := newMockEpgProgramRepo()
+	streamSourceRepo := newMockStreamSourceRepo()
+	factory := ingestor.NewEpgHandlerFactory()
+	stateManager := ingestor.NewStateManager()
+
+	svc := NewEpgService(sourceRepo, programRepo, factory, stateManager).
+		WithStreamSourceRepo(streamSourceRepo)
+
+	// XMLTV EPG sources should not trigger auto-stream-source creation
+	epgSource := &models.EpgSource{
+		Name: "XMLTV EPG",
+		Type: models.EpgSourceTypeXMLTV,
+		URL:  "http://example.com/epg.xml",
+	}
+
+	err := svc.Create(context.Background(), epgSource)
+	require.NoError(t, err)
+
+	// No stream source should be created
+	streamSources, _ := streamSourceRepo.GetAll(context.Background())
+	assert.Len(t, streamSources, 0)
+}

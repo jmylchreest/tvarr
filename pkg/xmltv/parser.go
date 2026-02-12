@@ -104,10 +104,19 @@ func parseXMLTVTime(s string) (ParsedTime, error) {
 
 // Parse parses an XMLTV file from a reader.
 func (p *Parser) Parse(r io.Reader) error {
-	decoder := xml.NewDecoder(r)
+	// Strip UTF-8 BOM if present
+	br := bufio.NewReader(r)
+	if bom, err := br.Peek(3); err == nil && len(bom) == 3 &&
+		bom[0] == 0xEF && bom[1] == 0xBB && bom[2] == 0xBF {
+		_, _ = br.Discard(3)
+	}
+
+	decoder := xml.NewDecoder(br)
 	decoder.Strict = false
 	decoder.AutoClose = xml.HTMLAutoClose
 	decoder.Entity = xml.HTMLEntity
+
+	var parsed int // track successfully parsed elements
 
 	for {
 		token, err := decoder.Token()
@@ -115,6 +124,15 @@ func (p *Parser) Parse(r io.Reader) error {
 			break
 		}
 		if err != nil {
+			// If we've already parsed some data successfully, treat XML syntax
+			// errors as non-fatal. This handles cases where XMLTV feeds from
+			// providers have occasional malformed elements or truncated content.
+			if parsed > 0 {
+				if _, isSyntax := err.(*xml.SyntaxError); isSyntax {
+					p.handleError(fmt.Errorf("reading XML token: %w", err))
+					break
+				}
+			}
 			return fmt.Errorf("reading XML token: %w", err)
 		}
 
@@ -128,6 +146,7 @@ func (p *Parser) Parse(r io.Reader) error {
 						p.handleError(err)
 						continue
 					}
+					parsed++
 					if err := p.OnChannel(channel); err != nil {
 						return fmt.Errorf("channel callback: %w", err)
 					}
@@ -142,6 +161,7 @@ func (p *Parser) Parse(r io.Reader) error {
 						p.handleError(err)
 						continue
 					}
+					parsed++
 					if err := p.OnProgramme(programme); err != nil {
 						return fmt.Errorf("programme callback: %w", err)
 					}

@@ -86,6 +86,18 @@ func (r *streamSourceRepo) GetByName(ctx context.Context, name string) (*models.
 	return &source, nil
 }
 
+// GetByURL retrieves a stream source by URL.
+func (r *streamSourceRepo) GetByURL(ctx context.Context, url string) (*models.StreamSource, error) {
+	var source models.StreamSource
+	if err := r.db.WithContext(ctx).Where("url = ?", url).First(&source).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("getting stream source by URL: %w", err)
+	}
+	return &source, nil
+}
+
 // UpdateLastIngestion updates the last ingestion timestamp and status.
 func (r *streamSourceRepo) UpdateLastIngestion(ctx context.Context, id models.ULID, status string, channelCount int) error {
 	now := models.Now()

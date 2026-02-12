@@ -3,6 +3,7 @@ package ingestor
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"time"
 
@@ -26,6 +27,9 @@ const (
 type XtreamHandler struct {
 	// httpClient is the resilient HTTP client used for API requests.
 	httpClient *httpclient.Client
+
+	// logger is the structured logger.
+	logger *slog.Logger
 }
 
 // NewXtreamHandler creates a new Xtream handler with default settings.
@@ -41,6 +45,12 @@ func NewXtreamHandler() *XtreamHandler {
 // WithHTTPClientConfig sets a custom HTTP client configuration.
 func (h *XtreamHandler) WithHTTPClientConfig(cfg httpclient.Config) *XtreamHandler {
 	h.httpClient = httpclient.New(cfg)
+	return h
+}
+
+// WithLogger sets a structured logger for the handler.
+func (h *XtreamHandler) WithLogger(logger *slog.Logger) *XtreamHandler {
+	h.logger = logger
 	return h
 }
 
@@ -101,6 +111,7 @@ func (h *XtreamHandler) Ingest(ctx context.Context, source *models.StreamSource,
 	}
 
 	// Process each stream
+	var skipped int
 	for _, stream := range streams {
 		// Check for context cancellation
 		select {
@@ -110,9 +121,25 @@ func (h *XtreamHandler) Ingest(ctx context.Context, source *models.StreamSource,
 		}
 
 		channel := h.streamToChannel(stream, source.ID, client, categoryMap)
+
+		// Skip channels that fail validation (e.g., empty name from XC API)
+		// rather than aborting the entire ingestion
+		if err := channel.Validate(); err != nil {
+			skipped++
+			continue
+		}
+
 		if err := callback(channel); err != nil {
 			return fmt.Errorf("callback error: %w", err)
 		}
+	}
+
+	if skipped > 0 && h.logger != nil {
+		h.logger.Warn("skipped invalid channels during ingestion",
+			slog.Int("skipped", skipped),
+			slog.Int("total_streams", len(streams)),
+			slog.String("source_id", source.ID.String()),
+		)
 	}
 
 	return nil

@@ -158,6 +158,15 @@ func (r *mockSourceRepoForManual) GetEnabled(ctx context.Context) ([]*models.Str
 	return sources, nil
 }
 
+func (r *mockSourceRepoForManual) GetByURL(ctx context.Context, url string) (*models.StreamSource, error) {
+	for _, s := range r.sources {
+		if s.URL == url {
+			return s, nil
+		}
+	}
+	return nil, nil
+}
+
 func (r *mockSourceRepoForManual) UpdateLastIngestion(ctx context.Context, id models.ULID, status string, channelCount int) error {
 	return nil
 }

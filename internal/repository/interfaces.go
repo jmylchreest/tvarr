@@ -32,6 +32,8 @@ type StreamSourceRepository interface {
 	Delete(ctx context.Context, id models.ULID) error
 	// GetByName retrieves a stream source by name.
 	GetByName(ctx context.Context, name string) (*models.StreamSource, error)
+	// GetByURL retrieves a stream source by URL.
+	GetByURL(ctx context.Context, url string) (*models.StreamSource, error)
 	// UpdateLastIngestion updates the last ingestion timestamp and status.
 	UpdateLastIngestion(ctx context.Context, id models.ULID, status string, channelCount int) error
 }

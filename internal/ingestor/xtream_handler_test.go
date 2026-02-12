@@ -303,6 +303,61 @@ func TestXtreamHandler_Ingest_ContextCancellation(t *testing.T) {
 	}
 }
 
+func TestXtreamHandler_Ingest_SkipsInvalidChannels(t *testing.T) {
+	// Streams with empty names should be skipped, not cause ingestion failure
+	liveCategories := []xtream.Category{
+		{CategoryID: xtream.FlexString("1"), CategoryName: "News"},
+	}
+	liveStreams := []xtream.Stream{
+		{StreamID: xtream.FlexInt(1), Name: "Valid Channel", CategoryID: xtream.FlexString("1")},
+		{StreamID: xtream.FlexInt(2), Name: "", CategoryID: xtream.FlexString("1")}, // empty name
+		{StreamID: xtream.FlexInt(3), Name: "Another Valid", CategoryID: xtream.FlexString("1")},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		action := r.URL.Query().Get("action")
+		switch action {
+		case "get_live_categories":
+			json.NewEncoder(w).Encode(liveCategories)
+		case "get_live_streams":
+			json.NewEncoder(w).Encode(liveStreams)
+		}
+	}))
+	defer server.Close()
+
+	h := NewXtreamHandler()
+	sourceID := models.NewULID()
+	source := &models.StreamSource{
+		BaseModel: models.BaseModel{ID: sourceID},
+		Name:      "Test",
+		Type:      models.SourceTypeXtream,
+		URL:       server.URL,
+		Username:  "user",
+		Password:  "pass",
+	}
+
+	var channels []*models.Channel
+	err := h.Ingest(context.Background(), source, func(ch *models.Channel) error {
+		channels = append(channels, ch)
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	// Should only get 2 valid channels; the one with empty name should be skipped
+	if len(channels) != 2 {
+		t.Errorf("expected 2 channels (1 skipped), got %d", len(channels))
+	}
+
+	for _, ch := range channels {
+		if ch.ChannelName == "" {
+			t.Error("received channel with empty name - should have been skipped")
+		}
+	}
+}
+
 func TestXtreamHandler_Ingest_HTTPError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

@@ -36,23 +36,43 @@ func NewDefaultEPGChecker() *DefaultEPGChecker {
 	}
 }
 
-// CheckEPGAvailability checks if an Xtream server provides EPG data via HEAD request to xmltv.php.
+// CheckEPGAvailability checks if an Xtream server provides EPG data.
+// Tries HEAD first (lightweight), falls back to GET if the server doesn't support HEAD.
 func (c *DefaultEPGChecker) CheckEPGAvailability(ctx context.Context, baseURL, username, password string) (bool, error) {
 	client := xtream.NewClient(baseURL, username, password, xtream.WithHTTPClient(c.httpClient))
 	xmltvURL := client.GetXMLTVURL()
 
+	// Try HEAD first (many XC servers behind Cloudflare reject HEAD with 520)
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, xmltvURL, nil)
 	if err != nil {
 		return false, fmt.Errorf("creating request: %w", err)
 	}
 
 	resp, err := c.httpClient.Do(req)
+	if err == nil {
+		_ = resp.Body.Close()
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return true, nil
+		}
+	} else if resp != nil {
+		_ = resp.Body.Close()
+	}
+
+	// HEAD failed or returned non-2xx — fall back to GET with range header
+	// to avoid downloading the entire (potentially 100MB+) XMLTV file
+	req, err = http.NewRequestWithContext(ctx, http.MethodGet, xmltvURL, nil)
+	if err != nil {
+		return false, fmt.Errorf("creating fallback request: %w", err)
+	}
+	req.Header.Set("Range", "bytes=0-0")
+
+	resp, err = c.httpClient.Do(req)
 	if err != nil {
 		return false, fmt.Errorf("checking EPG availability: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// EPG is available if we get a 2xx response
+	// 200 or 206 both indicate the resource exists
 	return resp.StatusCode >= 200 && resp.StatusCode < 300, nil
 }
 

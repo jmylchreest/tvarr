@@ -283,6 +283,15 @@ func (m *jobMockStreamSourceRepo) GetByName(ctx context.Context, name string) (*
 	return nil, nil
 }
 
+func (m *jobMockStreamSourceRepo) GetByURL(ctx context.Context, url string) (*models.StreamSource, error) {
+	for _, s := range m.sources {
+		if s.URL == url {
+			return s, nil
+		}
+	}
+	return nil, nil
+}
+
 func (m *jobMockStreamSourceRepo) UpdateLastIngestion(ctx context.Context, id models.ULID, status string, channelCount int) error {
 	return nil
 }

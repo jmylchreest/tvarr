@@ -16,6 +16,7 @@ import (
 type EpgService struct {
 	epgSourceRepo   repository.EpgSourceRepository
 	epgProgramRepo  repository.EpgProgramRepository
+	sourceRepo      repository.StreamSourceRepository
 	factory         *ingestor.EpgHandlerFactory
 	stateManager    *ingestor.StateManager
 	progressService *progress.Service
@@ -50,6 +51,12 @@ func (s *EpgService) WithProgressService(svc *progress.Service) *EpgService {
 	return s
 }
 
+// WithStreamSourceRepo sets the stream source repository for auto-stream-source linking.
+func (s *EpgService) WithStreamSourceRepo(repo repository.StreamSourceRepository) *EpgService {
+	s.sourceRepo = repo
+	return s
+}
+
 // getEpgIngestionStages returns the standard stages for EPG source ingestion.
 // EPG ingestion uses 3 stages:
 // - connect: Delete existing programs and prepare for ingestion
@@ -64,6 +71,8 @@ func getEpgIngestionStages() []progress.StageInfo {
 }
 
 // Create creates a new EPG source.
+// For Xtream sources, it automatically creates a linked stream source if one
+// doesn't already exist for the same URL.
 func (s *EpgService) Create(ctx context.Context, source *models.EpgSource) error {
 	if err := source.Validate(); err != nil {
 		return fmt.Errorf("validation failed: %w", err)
@@ -79,7 +88,63 @@ func (s *EpgService) Create(ctx context.Context, source *models.EpgSource) error
 		"type", source.Type,
 	)
 
+	// Auto-create linked stream source for Xtream EPG sources
+	if source.Type == models.EpgSourceTypeXtream {
+		s.tryAutoCreateStreamSource(ctx, source)
+	}
+
 	return nil
+}
+
+// tryAutoCreateStreamSource attempts to auto-create a stream source for an Xtream EPG source.
+// This is a best-effort operation — failures are logged but don't fail the EPG source creation.
+func (s *EpgService) tryAutoCreateStreamSource(ctx context.Context, epgSource *models.EpgSource) {
+	// Skip if no stream source repo configured
+	if s.sourceRepo == nil {
+		return
+	}
+
+	// Check if a stream source already exists for this URL
+	existing, err := s.sourceRepo.GetByURL(ctx, epgSource.URL)
+	if err != nil {
+		s.logger.Warn("failed to check existing stream source",
+			"epg_source_id", epgSource.ID.String(),
+			"error", err.Error(),
+		)
+		return
+	}
+	if existing != nil {
+		s.logger.Debug("stream source already exists for URL",
+			"epg_source_id", epgSource.ID.String(),
+			"stream_source_id", existing.ID.String(),
+		)
+		return
+	}
+
+	// Create linked stream source
+	streamSource := &models.StreamSource{
+		Name:     fmt.Sprintf("%s (Streams)", epgSource.Name),
+		Type:     models.SourceTypeXtream,
+		URL:      epgSource.URL,
+		Username: epgSource.Username,
+		Password: epgSource.Password,
+		Enabled:  epgSource.Enabled,
+		Priority: epgSource.Priority,
+	}
+
+	if err := s.sourceRepo.Create(ctx, streamSource); err != nil {
+		s.logger.Warn("failed to auto-create stream source",
+			"epg_source_id", epgSource.ID.String(),
+			"error", err.Error(),
+		)
+		return
+	}
+
+	s.logger.Info("auto-created linked stream source",
+		"epg_source_id", epgSource.ID.String(),
+		"stream_source_id", streamSource.ID.String(),
+		"stream_source_name", streamSource.Name,
+	)
 }
 
 // Update updates an existing EPG source.

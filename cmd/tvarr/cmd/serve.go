@@ -373,7 +373,8 @@ func runServe(_ *cobra.Command, _ []string) error {
 		epgProgramRepo,
 		epgHandlerFactory,
 		stateManager,
-	).WithLogger(logger).WithProgressService(progressService)
+	).WithLogger(logger).WithProgressService(progressService).
+		WithStreamSourceRepo(streamSourceRepo)
 
 	proxyService := service.NewProxyService(
 		proxyRepo,

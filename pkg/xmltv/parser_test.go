@@ -409,6 +409,89 @@ func TestParser_Credits(t *testing.T) {
 	}
 }
 
+func TestParser_BOM(t *testing.T) {
+	// UTF-8 BOM followed by valid XMLTV — should parse without error
+	bomXML := "\xef\xbb\xbf" + `<?xml version="1.0" encoding="utf-8" ?>
+<tv>
+  <channel id="ch1"><display-name>Channel 1</display-name></channel>
+  <programme start="20240115180000 +0000" stop="20240115190000 +0000" channel="ch1">
+    <title>Test Programme</title>
+  </programme>
+</tv>`
+
+	chanCount := 0
+	progCount := 0
+	p := &Parser{
+		OnChannel: func(ch *Channel) error {
+			chanCount++
+			return nil
+		},
+		OnProgramme: func(prog *Programme) error {
+			progCount++
+			return nil
+		},
+	}
+
+	err := p.Parse(strings.NewReader(bomXML))
+	if err != nil {
+		t.Fatalf("unexpected error parsing XML with BOM: %v", err)
+	}
+	if chanCount != 1 {
+		t.Errorf("expected 1 channel, got %d", chanCount)
+	}
+	if progCount != 1 {
+		t.Errorf("expected 1 programme, got %d", progCount)
+	}
+}
+
+func TestParser_SyntaxErrorRecovery(t *testing.T) {
+	// XML with valid content followed by a syntax error — should parse the valid
+	// content and report the syntax error via OnError, not fail fatally
+	malformedXML := `<?xml version="1.0" encoding="UTF-8"?>
+<tv>
+  <channel id="ch1"><display-name>Channel 1</display-name></channel>
+  <programme start="20240115180000 +0000" stop="20240115190000 +0000" channel="ch1">
+    <title>Good Programme</title>
+  </programme>
+  <programme start="20240115190000 +0000" stop="20240115200000 +0000" channel="ch1">
+    <title>Another Good Programme</title>
+  </programme>
+</tv>
+<broken attr_without_value_or_equals>`
+
+	chanCount := 0
+	progCount := 0
+	var errCount int
+	p := &Parser{
+		OnChannel: func(ch *Channel) error {
+			chanCount++
+			return nil
+		},
+		OnProgramme: func(prog *Programme) error {
+			progCount++
+			return nil
+		},
+		OnError: func(err error) {
+			errCount++
+		},
+	}
+
+	err := p.Parse(strings.NewReader(malformedXML))
+	// Should NOT return an error — the syntax error after valid content is recovered
+	if err != nil {
+		t.Fatalf("expected nil error (graceful recovery), got: %v", err)
+	}
+	if chanCount != 1 {
+		t.Errorf("expected 1 channel, got %d", chanCount)
+	}
+	if progCount != 2 {
+		t.Errorf("expected 2 programmes, got %d", progCount)
+	}
+	if errCount != 1 {
+		t.Errorf("expected 1 error reported via OnError, got %d", errCount)
+	}
+}
+
 func BenchmarkParser_Parse(b *testing.B) {
 	// Build sample content
 	var builder strings.Builder
