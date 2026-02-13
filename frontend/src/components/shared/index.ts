@@ -15,8 +15,6 @@ export { InlineEditTable } from './inline-edit-table/InlineEditTable';
 export type { InlineEditTableProps, ColumnDef } from './inline-edit-table/InlineEditTable';
 
 // Selection components
-export { SelectableListItem } from './SelectableListItem';
-export type { SelectableListItemProps, SelectableListItemBadge } from './SelectableListItem';
 export { SortableSelectionList } from './SortableSelectionList';
 export type { SortableSelectionListProps, SelectionItem, SelectedItem, SelectionBadge } from './SortableSelectionList';
 

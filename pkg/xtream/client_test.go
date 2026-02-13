@@ -163,46 +163,6 @@ func TestClient_GetLiveStreams_WithCategory(t *testing.T) {
 	}
 }
 
-func TestClient_GetShortEPG(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("action") != "get_short_epg" {
-			t.Errorf("unexpected action: %s", r.URL.Query().Get("action"))
-		}
-		if r.URL.Query().Get("stream_id") != "123" {
-			t.Errorf("unexpected stream_id: %s", r.URL.Query().Get("stream_id"))
-		}
-		if r.URL.Query().Get("limit") != "10" {
-			t.Errorf("unexpected limit: %s", r.URL.Query().Get("limit"))
-		}
-
-		response := EPGResponse{
-			EPGListings: []EPGListing{
-				{
-					Title:          "Morning News",
-					Description:    "The latest news",
-					StartTimestamp: FlexInt(time.Now().Unix()),
-					StopTimestamp:  FlexInt(time.Now().Add(time.Hour).Unix()),
-				},
-			},
-		}
-		json.NewEncoder(w).Encode(response)
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL, "user", "pass")
-	epg, err := client.GetShortEPG(context.Background(), 123, 10)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(epg) != 1 {
-		t.Errorf("expected 1 EPG entry, got %d", len(epg))
-	}
-	if epg[0].Title != "Morning News" {
-		t.Errorf("expected title 'Morning News', got %q", epg[0].Title)
-	}
-}
-
 func TestClient_StreamURLs(t *testing.T) {
 	client := NewClient("http://example.com:8080", "user", "pass")
 
@@ -227,24 +187,9 @@ func TestClient_StreamURLs(t *testing.T) {
 			expected: "http://example.com:8080/live/user/pass/123.ts",
 		},
 		{
-			name:     "VOD stream",
-			method:   func() string { return client.GetVODStreamURL(456, "mp4") },
-			expected: "http://example.com:8080/movie/user/pass/456.mp4",
-		},
-		{
-			name:     "series stream",
-			method:   func() string { return client.GetSeriesStreamURL(789, "mkv") },
-			expected: "http://example.com:8080/series/user/pass/789.mkv",
-		},
-		{
 			name:     "XMLTV URL",
 			method:   client.GetXMLTVURL,
 			expected: "http://example.com:8080/xmltv.php?username=user&password=pass",
-		},
-		{
-			name:     "M3U playlist",
-			method:   func() string { return client.GetM3UPlaylistURL("m3u_plus") },
-			expected: "http://example.com:8080/get.php?username=user&password=pass&type=m3u_plus&output=ts",
 		},
 	}
 

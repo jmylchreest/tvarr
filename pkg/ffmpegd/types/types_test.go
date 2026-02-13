@@ -193,40 +193,6 @@ func TestTranscodeStats_CompressionRatio(t *testing.T) {
 	assert.Equal(t, float64(0), stats.CompressionRatio())
 }
 
-func TestESSampleBatch_TotalSamples(t *testing.T) {
-	batch := &ESSampleBatch{
-		VideoSamples: []ESSample{{}, {}, {}},
-		AudioSamples: []ESSample{{}, {}},
-	}
-	assert.Equal(t, 5, batch.TotalSamples())
-}
-
-func TestESSampleBatch_TotalBytes(t *testing.T) {
-	batch := &ESSampleBatch{
-		VideoSamples: []ESSample{
-			{Data: make([]byte, 100)},
-			{Data: make([]byte, 200)},
-		},
-		AudioSamples: []ESSample{
-			{Data: make([]byte, 50)},
-		},
-	}
-	assert.Equal(t, 350, batch.TotalBytes())
-}
-
-func TestESSampleBatch_HasKeyframe(t *testing.T) {
-	batch := &ESSampleBatch{
-		VideoSamples: []ESSample{
-			{IsKeyframe: false},
-			{IsKeyframe: true},
-		},
-	}
-	assert.True(t, batch.HasKeyframe())
-
-	batch.VideoSamples = []ESSample{{IsKeyframe: false}}
-	assert.False(t, batch.HasKeyframe())
-}
-
 func TestDaemon_JSONRoundTrip(t *testing.T) {
 	daemon := &Daemon{
 		ID:      DaemonID("test-daemon-1"),
