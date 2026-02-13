@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"log/slog"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/jmylchreest/tvarr/internal/models"
@@ -113,9 +114,20 @@ func (h *ChannelHandler) ListChannels(ctx context.Context, input *ListChannelsIn
 
 	query := h.db.WithContext(ctx).Model(&models.Channel{})
 
-	// Apply filters
+	// Apply filters — source_id supports comma-separated values for multi-source filtering
 	if input.SourceID != "" {
-		query = query.Where("source_id = ?", input.SourceID)
+		ids := strings.Split(input.SourceID, ",")
+		trimmed := make([]string, 0, len(ids))
+		for _, id := range ids {
+			if s := strings.TrimSpace(id); s != "" {
+				trimmed = append(trimmed, s)
+			}
+		}
+		if len(trimmed) == 1 {
+			query = query.Where("source_id = ?", trimmed[0])
+		} else if len(trimmed) > 1 {
+			query = query.Where("source_id IN ?", trimmed)
+		}
 	}
 	if input.Group != "" {
 		query = query.Where("group_title = ?", input.Group)
