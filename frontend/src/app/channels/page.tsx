@@ -175,12 +175,21 @@ export default function ChannelsPage() {
     (async () => {
       try {
         const resp = await fetch('/api/v1/sources/stream');
-        if (!resp.ok) return;
+        if (!resp.ok) {
+          Debug.warn('Failed to fetch stream sources:', resp.status, resp.statusText);
+          return;
+        }
         const json = await resp.json();
-        const items = json?.sources ?? json?.data?.items ?? json?.data ?? [];
+        Debug.log('[Channels] Stream sources response:', json);
+        
+        // Backend returns { sources: [...] }
+        const items = json?.sources ?? [];
+        Debug.log('[Channels] Extracted sources:', items);
+        
         const mapped: StreamSourceOption[] = items
           .filter((s: any) => s && s.id && s.name)
           .map((s: any) => ({ id: s.id, name: s.name }));
+        Debug.log('[Channels] Mapped sources for dropdown:', mapped);
         setSources(mapped);
       } catch (e) {
         Debug.warn('Failed to fetch stream sources', e);
