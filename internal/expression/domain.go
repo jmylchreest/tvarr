@@ -40,31 +40,6 @@ func ParseExpressionDomain(s string) (ExpressionDomain, bool) {
 	}
 }
 
-// IsFilterDomain returns true if the domain is a filtering domain.
-func (d ExpressionDomain) IsFilterDomain() bool {
-	return d == DomainStreamFilter || d == DomainEPGFilter
-}
-
-// IsMappingDomain returns true if the domain is a data mapping domain.
-func (d ExpressionDomain) IsMappingDomain() bool {
-	return d == DomainStreamMapping || d == DomainEPGMapping
-}
-
-// IsStreamDomain returns true if the domain is for stream data.
-func (d ExpressionDomain) IsStreamDomain() bool {
-	return d == DomainStreamFilter || d == DomainStreamMapping
-}
-
-// IsEPGDomain returns true if the domain is for EPG data.
-func (d ExpressionDomain) IsEPGDomain() bool {
-	return d == DomainEPGFilter || d == DomainEPGMapping
-}
-
-// IsClientDetectionDomain returns true if the domain is for client detection.
-func (d ExpressionDomain) IsClientDetectionDomain() bool {
-	return d == DomainClientDetection
-}
-
 // String returns the string representation of the domain.
 func (d ExpressionDomain) String() string {
 	return string(d)

@@ -211,7 +211,6 @@ func TestNode_Interfaces(t *testing.T) {
 	t.Run("ExtendedExpression implementations", func(t *testing.T) {
 		var _ ExtendedExpression = &ConditionOnly{}
 		var _ ExtendedExpression = &ConditionWithActions{}
-		var _ ExtendedExpression = &ConditionalActionGroup{}
 	})
 
 	t.Run("Node implementations", func(t *testing.T) {
@@ -225,6 +224,5 @@ func TestNode_Interfaces(t *testing.T) {
 		var _ Node = &CaptureReference{}
 		var _ Node = &ConditionOnly{}
 		var _ Node = &ConditionWithActions{}
-		var _ Node = &ConditionalActionGroup{}
 	})
 }

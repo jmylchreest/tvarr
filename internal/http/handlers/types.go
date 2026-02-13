@@ -11,18 +11,6 @@ import (
 
 // Common response types
 
-// ErrorResponse represents an error response.
-type ErrorResponse struct {
-	Error   string `json:"error"`
-	Details string `json:"details,omitempty"`
-}
-
-// Pagination contains pagination parameters for list requests.
-type Pagination struct {
-	Page  int `query:"page" default:"1" minimum:"1" doc:"Page number (1-indexed)"`
-	Limit int `query:"limit" default:"50" minimum:"1" maximum:"1000" doc:"Items per page"`
-}
-
 // PaginationMeta contains pagination metadata in responses.
 type PaginationMeta struct {
 	CurrentPage int   `json:"current_page"`

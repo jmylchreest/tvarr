@@ -152,17 +152,6 @@ func (s *State) GetArtifactsByType(artifactType ArtifactType) []Artifact {
 	return result
 }
 
-// ClearChannels releases channel data to free memory.
-func (s *State) ClearChannels() {
-	s.Channels = nil
-	s.ChannelMap = nil
-}
-
-// ClearPrograms releases program data to free memory.
-func (s *State) ClearPrograms() {
-	s.Programs = nil
-}
-
 // StageResult contains the outcome of a stage execution.
 type StageResult struct {
 	// Artifacts produced by this stage.
@@ -206,14 +195,4 @@ type Result struct {
 
 	// XMLTVPath is the path to the generated XMLTV file.
 	XMLTVPath string
-}
-
-// GetChannelCount returns the number of channels in the result.
-func (r *Result) GetChannelCount() int {
-	return r.ChannelCount
-}
-
-// GetProgramCount returns the number of programs in the result.
-func (r *Result) GetProgramCount() int {
-	return r.ProgramCount
 }

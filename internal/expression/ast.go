@@ -144,15 +144,6 @@ type ConditionWithActions struct {
 func (e *ConditionWithActions) node()               {}
 func (e *ConditionWithActions) extendedExpression() {}
 
-// ConditionalActionGroup represents a group of condition+action pairs.
-// Format: (cond1 SET action1) AND (cond2 SET action2)
-type ConditionalActionGroup struct {
-	Groups []ConditionWithActions
-}
-
-func (e *ConditionalActionGroup) node()               {}
-func (e *ConditionalActionGroup) extendedExpression() {}
-
 // ParsedExpression wraps a parsed expression with metadata.
 type ParsedExpression struct {
 	// Original is the original expression text.
