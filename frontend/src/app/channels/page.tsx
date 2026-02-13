@@ -21,13 +21,6 @@ import { apiClient } from '@/lib/api-client';
 import type { VideoTrackInfo, AudioTrackInfo, SubtitleTrackInfo, FilterTestChannel } from '@/types/api';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { FilterExpressionEditor } from '@/components/filter-expression-editor';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   DropdownMenu,
@@ -95,14 +88,6 @@ interface Channel {
   subtitle_tracks?: SubtitleTrackInfo[];
   selected_video_track?: number;
   selected_audio_track?: number;
-}
-
-interface ChannelsResponse {
-  channels: Channel[];
-  total: number;
-  page: number;
-  limit: number;
-  has_more: boolean;
 }
 
 interface StreamSourceOption {

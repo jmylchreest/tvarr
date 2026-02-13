@@ -15,7 +15,6 @@ import {
   Grid,
   List,
   Table as TableIcon,
-  Play,
   Sparkles,
 } from 'lucide-react';
 import {
@@ -40,22 +39,18 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Command,
   CommandInput,
   CommandList,
-  CommandEmpty,
   CommandGroup,
   CommandItem,
   CommandSeparator,
 } from '@/components/ui/command';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Check, ChevronsUpDown } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { ChevronsUpDown } from 'lucide-react';
 import { VideoPlayerModal } from '@/components/video-player-modal';
 import { getBackendUrl } from '@/lib/config';
 import { Debug } from '@/utils/debug';

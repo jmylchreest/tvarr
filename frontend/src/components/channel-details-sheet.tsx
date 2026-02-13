@@ -6,12 +6,11 @@ import {
   SheetContent,
   SheetHeader,
   SheetTitle,
-  SheetDescription,
 } from '@/components/ui/sheet';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
-import { Copy, Check, Info } from 'lucide-react';
+import { Copy, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 type Primitive = string | number | boolean | null | undefined;
