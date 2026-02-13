@@ -30,8 +30,8 @@ type StatusCodeSet struct {
 	ranges []StatusCodeRange // Ranges for efficient storage
 }
 
-// NewStatusCodeSet creates an empty StatusCodeSet.
-func NewStatusCodeSet() *StatusCodeSet {
+// newStatusCodeSet creates an empty StatusCodeSet.
+func newStatusCodeSet() *StatusCodeSet {
 	return &StatusCodeSet{
 		codes:  make(map[int]struct{}),
 		ranges: nil,
@@ -46,7 +46,7 @@ func ParseStatusCodes(s string) (*StatusCodeSet, error) {
 		return nil, nil
 	}
 
-	set := NewStatusCodeSet()
+	set := newStatusCodeSet()
 
 	parts := strings.SplitSeq(s, ",")
 	for part := range parts {
@@ -113,14 +113,13 @@ func MustParseStatusCodes(s string) *StatusCodeSet {
 	return set
 }
 
-// StatusCodesFromSlice creates a StatusCodeSet from a slice of individual codes.
-// This is useful for programmatic construction.
-func StatusCodesFromSlice(codes []int) *StatusCodeSet {
+// statusCodesFromSlice creates a StatusCodeSet from a slice of individual codes.
+func statusCodesFromSlice(codes []int) *StatusCodeSet {
 	if len(codes) == 0 {
 		return nil
 	}
 
-	set := NewStatusCodeSet()
+	set := newStatusCodeSet()
 	for _, code := range codes {
 		set.codes[code] = struct{}{}
 	}
@@ -194,27 +193,18 @@ func (s *StatusCodeSet) String() string {
 	return strings.Join(parts, ",")
 }
 
-// Default2xxStatusCodes returns a StatusCodeSet containing all 2xx status codes.
-func Default2xxStatusCodes() *StatusCodeSet {
-	set := NewStatusCodeSet()
-	set.AddRange(200, 299)
-	return set
-}
-
 // Clone returns a deep copy of the StatusCodeSet.
 func (s *StatusCodeSet) Clone() *StatusCodeSet {
 	if s == nil {
 		return nil
 	}
 
-	clone := NewStatusCodeSet()
+	clone := newStatusCodeSet()
 
-	// Copy individual codes
 	for code := range s.codes {
 		clone.codes[code] = struct{}{}
 	}
 
-	// Copy ranges
 	if len(s.ranges) > 0 {
 		clone.ranges = make([]StatusCodeRange, len(s.ranges))
 		copy(clone.ranges, s.ranges)

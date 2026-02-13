@@ -30,14 +30,10 @@ import (
 )
 
 const (
-	// Day represents 24 hours.
-	Day = 24 * time.Hour
-	// Week represents 7 days.
-	Week = 7 * Day
-	// Month represents 30 days (approximate).
-	Month = 30 * Day
-	// Year represents 365 days (approximate).
-	Year = 365 * Day
+	day   = 24 * time.Hour
+	week  = 7 * day
+	month = 30 * day
+	year  = 365 * day
 )
 
 // unitMultipliers maps unit names to their hour multiplier.
@@ -205,16 +201,6 @@ func Parse(s string) (time.Duration, error) {
 	return d, nil
 }
 
-// MustParse is like Parse but panics if the string cannot be parsed.
-// Use only for compile-time constants.
-func MustParse(s string) time.Duration {
-	d, err := Parse(s)
-	if err != nil {
-		panic(err)
-	}
-	return d
-}
-
 // Format converts a duration to a human-readable string.
 // Uses the largest appropriate units (years, months, weeks, days, hours, etc.).
 // Zero components are omitted: 1h0m0s becomes 1h, 1h0m10s becomes 1h10s.
@@ -231,20 +217,20 @@ func Format(d time.Duration) string {
 	var result strings.Builder
 
 	// Extract years
-	years := d / Year
-	d -= years * Year
+	years := d / year
+	d -= years * year
 
 	// Extract months (from remaining after years)
-	months := d / Month
-	d -= months * Month
+	months := d / month
+	d -= months * month
 
 	// Extract weeks
-	weeks := d / Week
-	d -= weeks * Week
+	weeks := d / week
+	d -= weeks * week
 
 	// Extract days
-	days := d / Day
-	d -= days * Day
+	days := d / day
+	d -= days * day
 
 	// Extract hours
 	hours := d / time.Hour

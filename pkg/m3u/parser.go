@@ -272,25 +272,3 @@ func (p *Parser) handleError(lineNum int, err error) {
 		p.OnError(lineNum, err)
 	}
 }
-
-// ParseString is a convenience function to parse an M3U string.
-func ParseString(content string, onEntry func(*Entry) error) error {
-	p := &Parser{OnEntry: onEntry}
-	return p.Parse(strings.NewReader(content))
-}
-
-// ParseAll parses an entire M3U file and returns all entries.
-// Note: This loads all entries into memory - use Parse with callbacks for large files.
-func ParseAll(r io.Reader) ([]*Entry, error) {
-	var entries []*Entry
-	p := &Parser{
-		OnEntry: func(entry *Entry) error {
-			entries = append(entries, entry)
-			return nil
-		},
-	}
-	if err := p.Parse(r); err != nil {
-		return nil, err
-	}
-	return entries, nil
-}

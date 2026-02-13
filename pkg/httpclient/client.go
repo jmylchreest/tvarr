@@ -168,8 +168,8 @@ func New(cfg Config) *Client {
 	}
 }
 
-// NewWithDefaults creates a new client with default configuration.
-func NewWithDefaults() *Client {
+// newWithDefaults creates a new client with default configuration.
+func newWithDefaults() *Client {
 	return New(DefaultConfig())
 }
 

@@ -294,33 +294,6 @@ func TestParseXMLTVTime(t *testing.T) {
 	}
 }
 
-func TestParseAll(t *testing.T) {
-	programmes, err := ParseAll(strings.NewReader(sampleXMLTV))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(programmes) != 2 {
-		t.Errorf("expected 2 programmes, got %d", len(programmes))
-	}
-}
-
-func TestParseString(t *testing.T) {
-	count := 0
-	err := ParseString(sampleXMLTV, func(prog *Programme) error {
-		count++
-		return nil
-	})
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if count != 2 {
-		t.Errorf("expected 2 programmes, got %d", count)
-	}
-}
-
 func TestParser_LargeFile(t *testing.T) {
 	// Build a larger XMLTV file
 	var builder strings.Builder

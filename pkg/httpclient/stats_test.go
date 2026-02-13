@@ -89,9 +89,9 @@ func TestCategorizeHTTPStatus(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		got := CategorizeHTTPStatus(tc.status)
+		got := categorizeHTTPStatus(tc.status)
 		if got != tc.expected {
-			t.Errorf("CategorizeHTTPStatus(%d) = %v, want %v", tc.status, got, tc.expected)
+			t.Errorf("categorizeHTTPStatus(%d) = %v, want %v", tc.status, got, tc.expected)
 		}
 	}
 }
@@ -139,14 +139,14 @@ func TestStateTracker(t *testing.T) {
 	t.Run("circular buffer overflow", func(t *testing.T) {
 		tracker := NewStateTracker()
 
-		// Record more than MaxTransitionHistory transitions
-		for i := range MaxTransitionHistory + 10 {
+		// Record more than maxTransitionHistory transitions
+		for i := range maxTransitionHistory + 10 {
 			tracker.RecordTransition(CircuitClosed, CircuitOpen, TransitionReasonThresholdExceeded, i)
 		}
 
 		transitions := tracker.GetTransitions()
-		if len(transitions) != MaxTransitionHistory {
-			t.Errorf("expected %d transitions (max), got %d", MaxTransitionHistory, len(transitions))
+		if len(transitions) != maxTransitionHistory {
+			t.Errorf("expected %d transitions (max), got %d", maxTransitionHistory, len(transitions))
 		}
 
 		// Verify oldest transitions were discarded

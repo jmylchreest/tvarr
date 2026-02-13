@@ -112,19 +112,6 @@ func TestParse(t *testing.T) {
 	}
 }
 
-func TestMustParse(t *testing.T) {
-	// Valid input should not panic
-	assert.NotPanics(t, func() {
-		d := MustParse("30d")
-		assert.Equal(t, 30*24*time.Hour, d)
-	})
-
-	// Invalid input should panic
-	assert.Panics(t, func() {
-		MustParse("invalid")
-	})
-}
-
 func TestFormat(t *testing.T) {
 	tests := []struct {
 		name     string

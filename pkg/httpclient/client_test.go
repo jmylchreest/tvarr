@@ -17,7 +17,7 @@ import (
 
 func TestNew(t *testing.T) {
 	t.Run("with default config", func(t *testing.T) {
-		client := NewWithDefaults()
+		client := newWithDefaults()
 		assert.NotNil(t, client)
 		assert.NotNil(t, client.client)
 		assert.NotNil(t, client.breaker)
@@ -54,7 +54,7 @@ func TestClient_Get(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewWithDefaults()
+		client := newWithDefaults()
 		resp, err := client.Get(context.Background(), server.URL)
 		require.NoError(t, err)
 		defer resp.Body.Close()
@@ -90,7 +90,7 @@ func TestClient_Get(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewWithDefaults()
+		client := newWithDefaults()
 		resp, err := client.Get(context.Background(), server.URL)
 		require.NoError(t, err)
 		resp.Body.Close()
@@ -192,7 +192,7 @@ func TestClient_GzipDecompression(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewWithDefaults()
+		client := newWithDefaults()
 		resp, err := client.Get(context.Background(), server.URL)
 		require.NoError(t, err)
 		defer resp.Body.Close()
@@ -208,7 +208,7 @@ func TestClient_GzipDecompression(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client := NewWithDefaults()
+		client := newWithDefaults()
 		resp, err := client.Get(context.Background(), server.URL)
 		require.NoError(t, err)
 		defer resp.Body.Close()
@@ -397,7 +397,7 @@ func TestIsRetryableStatus(t *testing.T) {
 
 func TestClient_IsAcceptableStatus(t *testing.T) {
 	t.Run("2xx codes are acceptable by default when no config", func(t *testing.T) {
-		client := NewWithDefaults()
+		client := newWithDefaults()
 
 		for code := 200; code < 300; code++ {
 			assert.True(t, client.isAcceptableStatus(code), "status %d should be acceptable by default", code)
@@ -405,7 +405,7 @@ func TestClient_IsAcceptableStatus(t *testing.T) {
 	})
 
 	t.Run("4xx and 5xx codes are not acceptable by default", func(t *testing.T) {
-		client := NewWithDefaults()
+		client := newWithDefaults()
 
 		nonAcceptable := []int{
 			http.StatusBadRequest,
@@ -423,7 +423,7 @@ func TestClient_IsAcceptableStatus(t *testing.T) {
 	t.Run("configured codes are the ONLY acceptable codes", func(t *testing.T) {
 		cfg := DefaultConfig()
 		// Only 404 and 410 - notably NOT 200
-		cfg.AcceptableStatusCodes = StatusCodesFromSlice([]int{http.StatusNotFound, http.StatusGone})
+		cfg.AcceptableStatusCodes = statusCodesFromSlice([]int{http.StatusNotFound, http.StatusGone})
 		client := New(cfg)
 
 		// 200 is NOT acceptable because it's not in the configured list
@@ -437,7 +437,7 @@ func TestClient_IsAcceptableStatus(t *testing.T) {
 	t.Run("configured codes with 2xx gives full control", func(t *testing.T) {
 		cfg := DefaultConfig()
 		// Include 200, 201, and 404
-		cfg.AcceptableStatusCodes = StatusCodesFromSlice([]int{http.StatusOK, http.StatusCreated, http.StatusNotFound})
+		cfg.AcceptableStatusCodes = statusCodesFromSlice([]int{http.StatusOK, http.StatusCreated, http.StatusNotFound})
 		client := New(cfg)
 
 		assert.True(t, client.isAcceptableStatus(http.StatusOK))
@@ -498,7 +498,7 @@ func TestClient_AcceptableStatusCodes_CircuitBreaker(t *testing.T) {
 		cfg.RetryAttempts = 0
 		cfg.CircuitThreshold = 3
 		// When configuring, we must include ALL acceptable codes
-		cfg.AcceptableStatusCodes = StatusCodesFromSlice([]int{http.StatusOK, http.StatusNotFound})
+		cfg.AcceptableStatusCodes = statusCodesFromSlice([]int{http.StatusOK, http.StatusNotFound})
 		client := New(cfg)
 
 		// Make 5 requests that return 404
@@ -528,7 +528,7 @@ func TestClient_AcceptableStatusCodes_CircuitBreaker(t *testing.T) {
 		cfg.RetryAttempts = 0
 		cfg.CircuitThreshold = 3
 		// Include both 200 and 404 as acceptable
-		cfg.AcceptableStatusCodes = StatusCodesFromSlice([]int{http.StatusOK, http.StatusNotFound})
+		cfg.AcceptableStatusCodes = statusCodesFromSlice([]int{http.StatusOK, http.StatusNotFound})
 		client := New(cfg)
 
 		// Make requests: 2x404 (acceptable) + 3x500 (failure)
@@ -561,7 +561,7 @@ func TestClient_AcceptableStatusCodes_CircuitBreaker(t *testing.T) {
 		cfg.RetryAttempts = 0
 		cfg.CircuitThreshold = 3
 		// Must include ALL codes we want to be acceptable
-		cfg.AcceptableStatusCodes = StatusCodesFromSlice([]int{http.StatusOK, http.StatusNotFound, http.StatusGone})
+		cfg.AcceptableStatusCodes = statusCodesFromSlice([]int{http.StatusOK, http.StatusNotFound, http.StatusGone})
 		client := New(cfg)
 
 		// Make 9 requests alternating 404, 410, 200
@@ -585,7 +585,7 @@ func TestClient_AcceptableStatusCodes_CircuitBreaker(t *testing.T) {
 		cfg.RetryAttempts = 0
 		cfg.CircuitThreshold = 3
 		// Only 201 and 202 are acceptable - NOT 200
-		cfg.AcceptableStatusCodes = StatusCodesFromSlice([]int{http.StatusCreated, http.StatusAccepted})
+		cfg.AcceptableStatusCodes = statusCodesFromSlice([]int{http.StatusCreated, http.StatusAccepted})
 		client := New(cfg)
 
 		// Make 3 requests that return 200 (not in acceptable list)
@@ -671,7 +671,7 @@ func TestClient_DoWithCustomRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewWithDefaults()
+	client := newWithDefaults()
 
 	req, err := http.NewRequest(http.MethodPost, server.URL, strings.NewReader("body"))
 	require.NoError(t, err)

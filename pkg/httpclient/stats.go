@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// MaxTransitionHistory is the maximum number of state transitions to retain.
-const MaxTransitionHistory = 50
+// maxTransitionHistory is the maximum number of state transitions to retain.
+const maxTransitionHistory = 50
 
 // ErrorCategory represents the category of an error for tracking purposes.
 type ErrorCategory int
@@ -153,7 +153,7 @@ func NewStateTracker() *StateTracker {
 	return &StateTracker{
 		stateEnteredAt: time.Now(),
 		currentState:   CircuitClosed,
-		transitions:    make([]StateTransition, MaxTransitionHistory),
+		transitions:    make([]StateTransition, maxTransitionHistory),
 	}
 }
 
@@ -180,11 +180,11 @@ func (t *StateTracker) RecordTransition(fromState, toState CircuitState, reason 
 	}
 
 	// Add to circular buffer
-	idx := (t.startIndex + t.count) % MaxTransitionHistory
-	if t.count < MaxTransitionHistory {
+	idx := (t.startIndex + t.count) % maxTransitionHistory
+	if t.count < maxTransitionHistory {
 		t.count++
 	} else {
-		t.startIndex = (t.startIndex + 1) % MaxTransitionHistory
+		t.startIndex = (t.startIndex + 1) % maxTransitionHistory
 	}
 	t.transitions[idx] = transition
 
@@ -275,7 +275,7 @@ func (t *StateTracker) GetTransitions() []StateTransition {
 
 	result := make([]StateTransition, t.count)
 	for i := 0; i < t.count; i++ {
-		idx := (t.startIndex + i) % MaxTransitionHistory
+		idx := (t.startIndex + i) % maxTransitionHistory
 		result[i] = t.transitions[idx]
 	}
 	return result
@@ -291,7 +291,7 @@ func (t *StateTracker) Reset() {
 	t.closedDuration = 0
 	t.openDuration = 0
 	t.halfOpenDuration = 0
-	t.transitions = make([]StateTransition, MaxTransitionHistory)
+	t.transitions = make([]StateTransition, maxTransitionHistory)
 	t.startIndex = 0
 	t.count = 0
 }
@@ -334,8 +334,8 @@ type EnhancedCircuitBreakerStats struct {
 	Config CircuitBreakerProfileConfig `json:"config"`
 }
 
-// CategorizeHTTPStatus returns the error category for an HTTP status code.
-func CategorizeHTTPStatus(statusCode int) ErrorCategory {
+// categorizeHTTPStatus returns the error category for an HTTP status code.
+func categorizeHTTPStatus(statusCode int) ErrorCategory {
 	switch {
 	case statusCode >= 200 && statusCode < 300:
 		return ErrorCategorySuccess2xx

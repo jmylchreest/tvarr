@@ -423,25 +423,3 @@ func (p *Parser) handleError(err error) {
 		p.OnError(err)
 	}
 }
-
-// ParseAll parses an entire XMLTV file and returns all programmes.
-// Note: This loads all programmes into memory - use Parse with callbacks for large files.
-func ParseAll(r io.Reader) ([]*Programme, error) {
-	var programmes []*Programme
-	p := &Parser{
-		OnProgramme: func(prog *Programme) error {
-			programmes = append(programmes, prog)
-			return nil
-		},
-	}
-	if err := p.Parse(r); err != nil {
-		return nil, err
-	}
-	return programmes, nil
-}
-
-// ParseString parses an XMLTV string and calls the callback for each programme.
-func ParseString(content string, onProgramme func(*Programme) error) error {
-	p := &Parser{OnProgramme: onProgramme}
-	return p.Parse(strings.NewReader(content))
-}

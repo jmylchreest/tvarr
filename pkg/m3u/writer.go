@@ -91,15 +91,3 @@ func (w *Writer) WriteEntry(entry *Entry) error {
 func escapeQuotes(s string) string {
 	return strings.ReplaceAll(s, `"`, `\"`)
 }
-
-// EntryFromChannel creates an M3U Entry from channel data.
-// This is a convenience function for converting internal channel models.
-type ChannelData interface {
-	GetTvgID() string
-	GetTvgName() string
-	GetTvgLogo() string
-	GetGroupTitle() string
-	GetChannelName() string
-	GetChannelNumber() int
-	GetStreamURL() string
-}

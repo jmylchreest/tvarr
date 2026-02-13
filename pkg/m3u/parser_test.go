@@ -394,45 +394,6 @@ func TestParser_LargeFile(t *testing.T) {
 	}
 }
 
-func TestParser_ParseString(t *testing.T) {
-	content := `#EXTM3U
-#EXTINF:-1 tvg-id="ch1",Channel 1
-http://example.com/stream.m3u8
-`
-
-	var entries []*Entry
-	err := ParseString(content, func(entry *Entry) error {
-		entries = append(entries, entry)
-		return nil
-	})
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(entries) != 1 {
-		t.Fatalf("expected 1 entry, got %d", len(entries))
-	}
-}
-
-func TestParser_ParseAll(t *testing.T) {
-	content := `#EXTM3U
-#EXTINF:-1 tvg-id="ch1",Channel 1
-http://example.com/stream1.m3u8
-#EXTINF:-1 tvg-id="ch2",Channel 2
-http://example.com/stream2.m3u8
-`
-
-	entries, err := ParseAll(strings.NewReader(content))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(entries) != 2 {
-		t.Fatalf("expected 2 entries, got %d", len(entries))
-	}
-}
-
 func TestParser_ParseCompressed_Gzip(t *testing.T) {
 	content := `#EXTM3U
 #EXTINF:-1 tvg-id="ch1",Channel 1

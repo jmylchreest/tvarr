@@ -176,13 +176,13 @@ func TestStatusCodeSet_IsEmpty(t *testing.T) {
 		},
 		{
 			name:     "empty set",
-			set:      NewStatusCodeSet(),
+			set:      newStatusCodeSet(),
 			expected: true,
 		},
 		{
 			name: "set with code",
 			set: func() *StatusCodeSet {
-				s := NewStatusCodeSet()
+				s := newStatusCodeSet()
 				s.Add(200)
 				return s
 			}(),
@@ -191,7 +191,7 @@ func TestStatusCodeSet_IsEmpty(t *testing.T) {
 		{
 			name: "set with range",
 			set: func() *StatusCodeSet {
-				s := NewStatusCodeSet()
+				s := newStatusCodeSet()
 				s.AddRange(200, 299)
 				return s
 			}(),
@@ -240,7 +240,7 @@ func TestStatusCodesFromSlice(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			set := StatusCodesFromSlice(tt.codes)
+			set := statusCodesFromSlice(tt.codes)
 
 			if tt.expectNil {
 				assert.Nil(t, set)
@@ -288,13 +288,13 @@ func TestStatusCodeSet_String(t *testing.T) {
 		},
 		{
 			name:     "empty set",
-			set:      NewStatusCodeSet(),
+			set:      newStatusCodeSet(),
 			contains: nil,
 		},
 		{
 			name: "single code",
 			set: func() *StatusCodeSet {
-				s := NewStatusCodeSet()
+				s := newStatusCodeSet()
 				s.Add(200)
 				return s
 			}(),
@@ -303,7 +303,7 @@ func TestStatusCodeSet_String(t *testing.T) {
 		{
 			name: "range",
 			set: func() *StatusCodeSet {
-				s := NewStatusCodeSet()
+				s := newStatusCodeSet()
 				s.AddRange(200, 299)
 				return s
 			}(),
@@ -312,7 +312,7 @@ func TestStatusCodeSet_String(t *testing.T) {
 		{
 			name: "single-value range",
 			set: func() *StatusCodeSet {
-				s := NewStatusCodeSet()
+				s := newStatusCodeSet()
 				s.AddRange(200, 200)
 				return s
 			}(),
@@ -334,20 +334,4 @@ func TestStatusCodeSet_String(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestDefault2xxStatusCodes(t *testing.T) {
-	set := Default2xxStatusCodes()
-	require.NotNil(t, set)
-
-	// Should contain all 2xx codes
-	for code := 200; code <= 299; code++ {
-		assert.True(t, set.Contains(code), "expected set to contain %d", code)
-	}
-
-	// Should not contain non-2xx codes
-	assert.False(t, set.Contains(199))
-	assert.False(t, set.Contains(300))
-	assert.False(t, set.Contains(404))
-	assert.False(t, set.Contains(500))
 }
