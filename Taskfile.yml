@@ -268,6 +268,7 @@ tasks:
         {{.CONTAINER_RUNTIME}} build \
           -f deployment/docker/Dockerfile \
           --platform {{.PLATFORM}} \
+          $([ "{{.CONTAINER_RUNTIME}}" = "docker" ] && echo "--provenance=false") \
           $([ "{{.LOCAL}}" = "true" ] && echo "--pull=never") \
           --build-arg FFMPEG_IMAGE={{.FFMPEG_IMAGE}} \
           --build-arg VERSION={{.VERSION}} \
@@ -305,6 +306,7 @@ tasks:
         {{.CONTAINER_RUNTIME}} build \
           -f deployment/docker/Dockerfile.ffmpegd \
           --platform {{.PLATFORM}} \
+          $([ "{{.CONTAINER_RUNTIME}}" = "docker" ] && echo "--provenance=false") \
           $([ "{{.LOCAL}}" = "true" ] && echo "--pull=never") \
           --build-arg FFMPEG_IMAGE={{.FFMPEG_IMAGE}} \
           --build-arg VERSION={{.VERSION}} \
@@ -340,6 +342,7 @@ tasks:
         {{.CONTAINER_RUNTIME}} build \
           -f deployment/docker/Dockerfile.coordinator \
           --platform {{.PLATFORM}} \
+          $([ "{{.CONTAINER_RUNTIME}}" = "docker" ] && echo "--provenance=false") \
           --build-arg VERSION={{.VERSION}} \
           --build-arg COMMIT={{.COMMIT}} \
           --build-arg BUILD_DATE={{.BUILD_DATE}} \
@@ -388,6 +391,7 @@ tasks:
           -f deployment/docker/Dockerfile.ffmpeg \
           --target runtime \
           --platform {{.PLATFORM}} \
+          $([ "{{.CONTAINER_RUNTIME}}" = "docker" ] && echo "--provenance=false") \
           $([ "{{.NO_CACHE}}" = "true" ] && echo "--no-cache") \
           -t "$IMAGE" \
           $([ "{{.TAG}}" = "{{.FFMPEG_DOCKERFILE_HASH}}" ] && echo "-t ghcr.io/jmylchreest/tvarr-ffmpeg:latest") \
