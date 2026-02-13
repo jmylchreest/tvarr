@@ -370,8 +370,8 @@ export function createFuzzyFilter<T>(
   const { keys, threshold = 0.4, accessor } = config;
 
   // We'll create the Fuse instance lazily and cache it
-  let fuseInstance: Fuse<Record<string, unknown>> | null = null;
-  let cachedItems: T[] = [];
+  const fuseInstance: Fuse<Record<string, unknown>> | null = null;
+  const cachedItems: T[] = [];
 
   return (item: T, searchTerm: string): boolean => {
     // For very short queries, fall back to simple includes matching

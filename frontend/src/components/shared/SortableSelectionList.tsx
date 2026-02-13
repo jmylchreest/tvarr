@@ -24,7 +24,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
-export interface SelectionBadge extends BadgeItem {}
+export type SelectionBadge = BadgeItem;
 
 export interface SelectionItem {
   id: string;

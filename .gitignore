@@ -87,3 +87,7 @@ docs/node_modules/
 docs/build/
 docs/.docusaurus/
 docs/.cache-loader/
+
+# AI assistant tooling
+.aide/
+Auto Run Docs/
