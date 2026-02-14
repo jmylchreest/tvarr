@@ -99,8 +99,3 @@ func TestByteSize_Bytes(t *testing.T) {
 	b := ByteSize(5 * 1024 * 1024)
 	assert.Equal(t, int64(5242880), b.Bytes())
 }
-
-func TestByteSize_Int64(t *testing.T) {
-	b := ByteSize(5 * 1024 * 1024)
-	assert.Equal(t, int64(5242880), b.Int64())
-}

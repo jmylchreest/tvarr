@@ -145,11 +145,6 @@ func TestSize_Bytes(t *testing.T) {
 	assert.Equal(t, int64(5242880), size.Bytes())
 }
 
-func TestSize_Int64(t *testing.T) {
-	size := 5 * MB
-	assert.Equal(t, int64(5242880), size.Int64())
-}
-
 func TestConstants(t *testing.T) {
 	assert.Equal(t, Size(1), B)
 	assert.Equal(t, Size(1024), KB)

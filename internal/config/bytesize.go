@@ -78,11 +78,6 @@ func (b ByteSize) Bytes() int64 {
 	return int64(b)
 }
 
-// Int64 returns the size as int64 (alias for Bytes).
-func (b ByteSize) Int64() int64 {
-	return int64(b)
-}
-
 // String returns a human-readable string representation.
 func (b ByteSize) String() string {
 	return bytesize.Format(bytesize.Size(b))

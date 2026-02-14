@@ -186,8 +186,3 @@ func (s Size) Bytes() int64 {
 func (s Size) String() string {
 	return Format(s)
 }
-
-// Int64 returns the size as int64 (alias for Bytes).
-func (s Size) Int64() int64 {
-	return int64(s)
-}

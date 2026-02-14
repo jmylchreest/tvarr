@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -82,7 +83,7 @@ func CORSWithConfig(config CORSConfig) func(http.Handler) http.Handler {
 				w.Header().Set("Access-Control-Allow-Methods", allowedMethods)
 				w.Header().Set("Access-Control-Allow-Headers", allowedHeaders)
 				if config.MaxAge > 0 {
-					w.Header().Set("Access-Control-Max-Age", string(rune(config.MaxAge)))
+					w.Header().Set("Access-Control-Max-Age", strconv.Itoa(config.MaxAge))
 				}
 				w.WriteHeader(http.StatusNoContent)
 				return

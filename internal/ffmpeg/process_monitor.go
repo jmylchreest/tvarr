@@ -3,6 +3,7 @@ package ffmpeg
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"strconv"
@@ -324,17 +325,12 @@ func getTotalMemory() uint64 {
 
 // CountingWriter wraps an io.Writer and counts bytes written.
 type CountingWriter struct {
-	w       Writer
+	w       io.Writer
 	monitor *ProcessMonitor
 }
 
-// Writer interface for flexible writer types.
-type Writer interface {
-	Write(p []byte) (n int, err error)
-}
-
 // NewCountingWriter creates a writer that counts bytes and reports to monitor.
-func NewCountingWriter(w Writer, monitor *ProcessMonitor) *CountingWriter {
+func NewCountingWriter(w io.Writer, monitor *ProcessMonitor) *CountingWriter {
 	return &CountingWriter{
 		w:       w,
 		monitor: monitor,

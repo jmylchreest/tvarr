@@ -5,6 +5,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -311,6 +312,16 @@ func (c *Config) Validate() error {
 	if c.Database.DSN == "" {
 		return fmt.Errorf("database.dsn is required")
 	}
+	validDBLogLevels := map[string]bool{"silent": true, "error": true, "warn": true, "info": true}
+	if !validDBLogLevels[c.Database.LogLevel] {
+		return fmt.Errorf("database.log_level must be one of: silent, error, warn, info")
+	}
+	if c.Database.MaxOpenConns < 1 {
+		return fmt.Errorf("database.max_open_conns must be at least 1")
+	}
+	if c.Database.MaxIdleConns < 0 {
+		return fmt.Errorf("database.max_idle_conns cannot be negative")
+	}
 
 	// Storage validation
 	if c.Storage.BaseDir == "" {
@@ -334,6 +345,45 @@ func (c *Config) Validate() error {
 	if c.Ingestion.EPGBatchSize < 1 {
 		return fmt.Errorf("ingestion.epg_batch_size must be at least 1")
 	}
+	if c.Ingestion.MaxConcurrent < 1 {
+		return fmt.Errorf("ingestion.max_concurrent must be at least 1")
+	}
+	if c.Ingestion.MaxConcurrent > 100 {
+		return fmt.Errorf("ingestion.max_concurrent seems unreasonably high (max 100)")
+	}
+
+	// Pipeline validation
+	if c.Pipeline.LogoConcurrency < 1 {
+		return fmt.Errorf("pipeline.logo_concurrency must be at least 1")
+	}
+	if c.Pipeline.LogoConcurrency > 100 {
+		return fmt.Errorf("pipeline.logo_concurrency seems unreasonably high (max 100)")
+	}
+
+	// Relay validation
+	if c.Relay.MaxConcurrentStreams < 1 {
+		return fmt.Errorf("relay.max_concurrent_streams must be at least 1")
+	}
+	if c.Relay.MaxConcurrentStreams > 1000 {
+		return fmt.Errorf("relay.max_concurrent_streams seems unreasonably high (max 1000)")
+	}
+	if c.Relay.CircuitBreakerThreshold < 1 {
+		return fmt.Errorf("relay.circuit_breaker_threshold must be at least 1")
+	}
+	if c.Relay.ConnectionPoolSize < 1 {
+		return fmt.Errorf("relay.connection_pool_size must be at least 1")
+	}
+	if c.Relay.ConnectionPoolSize > 10000 {
+		return fmt.Errorf("relay.connection_pool_size seems unreasonably high (max 10000)")
+	}
+
+	// Backup validation
+	if c.Backup.Schedule.Retention < 1 {
+		return fmt.Errorf("backup.schedule.retention must be at least 1")
+	}
+	if c.Backup.Schedule.Retention > 365 {
+		return fmt.Errorf("backup.schedule.retention seems unreasonably high (max 365)")
+	}
 
 	return nil
 }
@@ -345,17 +395,17 @@ func (c *ServerConfig) Address() string {
 
 // LogoPath returns the full path to the logo directory.
 func (c *StorageConfig) LogoPath() string {
-	return fmt.Sprintf("%s/%s", c.BaseDir, c.LogoDir)
+	return filepath.Join(c.BaseDir, c.LogoDir)
 }
 
 // OutputPath returns the full path to the output directory.
 func (c *StorageConfig) OutputPath() string {
-	return fmt.Sprintf("%s/%s", c.BaseDir, c.OutputDir)
+	return filepath.Join(c.BaseDir, c.OutputDir)
 }
 
 // TempPath returns the full path to the temp directory.
 func (c *StorageConfig) TempPath() string {
-	return fmt.Sprintf("%s/%s", c.BaseDir, c.TempDir)
+	return filepath.Join(c.BaseDir, c.TempDir)
 }
 
 // BackupPath returns the backup directory path.
@@ -364,5 +414,5 @@ func (c *BackupConfig) BackupPath(storageBaseDir string) string {
 	if c.Directory != "" {
 		return c.Directory
 	}
-	return fmt.Sprintf("%s/backups", storageBaseDir)
+	return filepath.Join(storageBaseDir, "backups")
 }

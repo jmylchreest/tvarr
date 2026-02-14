@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+var whitespaceRegex = regexp.MustCompile(`\s+`)
+
 // Preprocess applies preprocessing transformations to an expression string
 // before parsing. This includes:
 // - Normalizing symbolic operators to canonical forms
@@ -162,9 +164,7 @@ func relocatePreFieldModifiers(input string) string {
 // collapseWhitespace reduces multiple consecutive whitespace characters to single spaces
 // while trimming leading and trailing whitespace.
 func collapseWhitespace(input string) string {
-	// Use regex to collapse all whitespace sequences
-	re := regexp.MustCompile(`\s+`)
-	return strings.TrimSpace(re.ReplaceAllString(input, " "))
+	return strings.TrimSpace(whitespaceRegex.ReplaceAllString(input, " "))
 }
 
 // PreprocessAndParse preprocesses an expression string and then parses it.

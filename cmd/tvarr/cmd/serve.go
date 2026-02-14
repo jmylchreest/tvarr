@@ -313,6 +313,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 
 	// Initialize ingestor components
 	stateManager := ingestor.NewStateManager()
+	defer stateManager.Stop()
 	streamHandlerFactory := ingestor.NewHandlerFactory()
 	streamHandlerFactory.RegisterManualHandler(manualChannelRepo) // Add manual source support
 	epgHandlerFactory := ingestor.NewEpgHandlerFactory()

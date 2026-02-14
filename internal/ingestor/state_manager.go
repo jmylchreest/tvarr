@@ -9,6 +9,8 @@ import (
 	"github.com/jmylchreest/tvarr/internal/models"
 )
 
+const cleanupDelay = 5 * time.Second
+
 // IngestionState represents the state of an ongoing ingestion.
 type IngestionState struct {
 	SourceID    models.ULID
@@ -25,13 +27,59 @@ type IngestionState struct {
 type StateManager struct {
 	mu     sync.RWMutex
 	states map[models.ULID]*IngestionState
+
+	// Cleanup management
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	cleanupCh chan models.ULID
 }
 
 // NewStateManager creates a new state manager.
 func NewStateManager() *StateManager {
-	return &StateManager{
-		states: make(map[models.ULID]*IngestionState),
+	ctx, cancel := context.WithCancel(context.Background())
+	sm := &StateManager{
+		states:    make(map[models.ULID]*IngestionState),
+		ctx:       ctx,
+		cancel:    cancel,
+		cleanupCh: make(chan models.ULID, 100),
 	}
+	sm.startCleanupWorker()
+	return sm
+}
+
+// startCleanupWorker starts a background goroutine that handles delayed cleanup.
+func (m *StateManager) startCleanupWorker() {
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		timers := make(map[models.ULID]*time.Timer)
+		for {
+			select {
+			case <-m.ctx.Done():
+				for _, timer := range timers {
+					timer.Stop()
+				}
+				return
+			case id := <-m.cleanupCh:
+				if _, exists := timers[id]; exists {
+					continue
+				}
+				cleanupID := id
+				timers[id] = time.AfterFunc(cleanupDelay, func() {
+					m.mu.Lock()
+					delete(m.states, cleanupID)
+					m.mu.Unlock()
+				})
+			}
+		}
+	}()
+}
+
+// Stop gracefully shuts down the state manager.
+func (m *StateManager) Stop() {
+	m.cancel()
+	m.wg.Wait()
 }
 
 // Start marks an ingestion as started for a stream source.
@@ -85,13 +133,10 @@ func (m *StateManager) Complete(sourceID models.ULID, processed int) {
 		state.LastUpdated = time.Now()
 	}
 
-	// Remove from active states after a short delay to allow status checks
-	go func() {
-		time.Sleep(5 * time.Second)
-		m.mu.Lock()
-		delete(m.states, sourceID)
-		m.mu.Unlock()
-	}()
+	select {
+	case m.cleanupCh <- sourceID:
+	default:
+	}
 }
 
 // Fail marks an ingestion as failed.
@@ -105,13 +150,10 @@ func (m *StateManager) Fail(sourceID models.ULID, err error) {
 		state.LastUpdated = time.Now()
 	}
 
-	// Remove from active states after a short delay
-	go func() {
-		time.Sleep(5 * time.Second)
-		m.mu.Lock()
-		delete(m.states, sourceID)
-		m.mu.Unlock()
-	}()
+	select {
+	case m.cleanupCh <- sourceID:
+	default:
+	}
 }
 
 // Cancel marks an ingestion as cancelled.

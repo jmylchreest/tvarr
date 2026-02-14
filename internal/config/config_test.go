@@ -10,6 +10,37 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func validTestConfig() *Config {
+	return &Config{
+		Server: ServerConfig{Port: 8080},
+		Database: DatabaseConfig{
+			Driver:       "sqlite",
+			DSN:          "test.db",
+			MaxOpenConns: 25,
+			MaxIdleConns: 10,
+			LogLevel:     "warn",
+		},
+		Storage: StorageConfig{BaseDir: "./data"},
+		Logging: LoggingConfig{Level: "info", Format: "json"},
+		Ingestion: IngestionConfig{
+			ChannelBatchSize: 1000,
+			EPGBatchSize:     5000,
+			MaxConcurrent:    3,
+		},
+		Pipeline: PipelineConfig{
+			LogoConcurrency: 10,
+		},
+		Relay: RelayConfig{
+			MaxConcurrentStreams:    10,
+			CircuitBreakerThreshold: 3,
+			ConnectionPoolSize:      100,
+		},
+		Backup: BackupConfig{
+			Schedule: BackupScheduleConfig{Retention: 7},
+		},
+	}
+}
+
 func TestLoad_Defaults(t *testing.T) {
 	// Load without config file should use defaults
 	cfg, err := Load("")
@@ -148,28 +179,7 @@ database:
 }
 
 func TestValidate_ValidConfig(t *testing.T) {
-	cfg := &Config{
-		Server: ServerConfig{
-			Host: "0.0.0.0",
-			Port: 8080,
-		},
-		Database: DatabaseConfig{
-			Driver: "sqlite",
-			DSN:    "test.db",
-		},
-		Storage: StorageConfig{
-			BaseDir: "./data",
-		},
-		Logging: LoggingConfig{
-			Level:  "info",
-			Format: "json",
-		},
-		Ingestion: IngestionConfig{
-			ChannelBatchSize: 1000,
-			EPGBatchSize:     5000,
-		},
-	}
-
+	cfg := validTestConfig()
 	err := cfg.Validate()
 	assert.NoError(t, err)
 }
@@ -186,19 +196,8 @@ func TestValidate_InvalidPort(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &Config{
-				Server: ServerConfig{Port: tt.port},
-				Database: DatabaseConfig{
-					Driver: "sqlite",
-					DSN:    "test.db",
-				},
-				Storage: StorageConfig{BaseDir: "./data"},
-				Logging: LoggingConfig{Level: "info", Format: "json"},
-				Ingestion: IngestionConfig{
-					ChannelBatchSize: 1000,
-					EPGBatchSize:     5000,
-				},
-			}
+			cfg := validTestConfig()
+			cfg.Server.Port = tt.port
 			err := cfg.Validate()
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), "server.port")
@@ -207,68 +206,32 @@ func TestValidate_InvalidPort(t *testing.T) {
 }
 
 func TestValidate_InvalidDriver(t *testing.T) {
-	cfg := &Config{
-		Server: ServerConfig{Port: 8080},
-		Database: DatabaseConfig{
-			Driver: "invalid",
-			DSN:    "test.db",
-		},
-		Storage:   StorageConfig{BaseDir: "./data"},
-		Logging:   LoggingConfig{Level: "info", Format: "json"},
-		Ingestion: IngestionConfig{ChannelBatchSize: 1000, EPGBatchSize: 5000},
-	}
-
+	cfg := validTestConfig()
+	cfg.Database.Driver = "invalid"
 	err := cfg.Validate()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "database.driver")
 }
 
 func TestValidate_EmptyDSN(t *testing.T) {
-	cfg := &Config{
-		Server: ServerConfig{Port: 8080},
-		Database: DatabaseConfig{
-			Driver: "sqlite",
-			DSN:    "",
-		},
-		Storage:   StorageConfig{BaseDir: "./data"},
-		Logging:   LoggingConfig{Level: "info", Format: "json"},
-		Ingestion: IngestionConfig{ChannelBatchSize: 1000, EPGBatchSize: 5000},
-	}
-
+	cfg := validTestConfig()
+	cfg.Database.DSN = ""
 	err := cfg.Validate()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "database.dsn")
 }
 
 func TestValidate_InvalidLogLevel(t *testing.T) {
-	cfg := &Config{
-		Server:   ServerConfig{Port: 8080},
-		Database: DatabaseConfig{Driver: "sqlite", DSN: "test.db"},
-		Storage:  StorageConfig{BaseDir: "./data"},
-		Logging: LoggingConfig{
-			Level:  "invalid",
-			Format: "json",
-		},
-		Ingestion: IngestionConfig{ChannelBatchSize: 1000, EPGBatchSize: 5000},
-	}
-
+	cfg := validTestConfig()
+	cfg.Logging.Level = "invalid"
 	err := cfg.Validate()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "logging.level")
 }
 
 func TestValidate_InvalidLogFormat(t *testing.T) {
-	cfg := &Config{
-		Server:   ServerConfig{Port: 8080},
-		Database: DatabaseConfig{Driver: "sqlite", DSN: "test.db"},
-		Storage:  StorageConfig{BaseDir: "./data"},
-		Logging: LoggingConfig{
-			Level:  "info",
-			Format: "xml",
-		},
-		Ingestion: IngestionConfig{ChannelBatchSize: 1000, EPGBatchSize: 5000},
-	}
-
+	cfg := validTestConfig()
+	cfg.Logging.Format = "xml"
 	err := cfg.Validate()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "logging.format")
@@ -277,28 +240,129 @@ func TestValidate_InvalidLogFormat(t *testing.T) {
 func TestValidate_InvalidBatchSize(t *testing.T) {
 	tests := []struct {
 		name        string
-		channelBS   int
-		epgBS       int
+		modify      func(*Config)
 		errContains string
 	}{
-		{"zero channel batch", 0, 5000, "channel_batch_size"},
-		{"negative channel batch", -1, 5000, "channel_batch_size"},
-		{"zero epg batch", 1000, 0, "epg_batch_size"},
-		{"negative epg batch", 1000, -1, "epg_batch_size"},
+		{"zero channel batch", func(c *Config) { c.Ingestion.ChannelBatchSize = 0 }, "channel_batch_size"},
+		{"negative channel batch", func(c *Config) { c.Ingestion.ChannelBatchSize = -1 }, "channel_batch_size"},
+		{"zero epg batch", func(c *Config) { c.Ingestion.EPGBatchSize = 0 }, "epg_batch_size"},
+		{"negative epg batch", func(c *Config) { c.Ingestion.EPGBatchSize = -1 }, "epg_batch_size"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &Config{
-				Server:   ServerConfig{Port: 8080},
-				Database: DatabaseConfig{Driver: "sqlite", DSN: "test.db"},
-				Storage:  StorageConfig{BaseDir: "./data"},
-				Logging:  LoggingConfig{Level: "info", Format: "json"},
-				Ingestion: IngestionConfig{
-					ChannelBatchSize: tt.channelBS,
-					EPGBatchSize:     tt.epgBS,
-				},
-			}
+			cfg := validTestConfig()
+			tt.modify(cfg)
+			err := cfg.Validate()
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errContains)
+		})
+	}
+}
+
+func TestValidate_RelayConfig(t *testing.T) {
+	tests := []struct {
+		name        string
+		modify      func(*Config)
+		errContains string
+	}{
+		{"zero max concurrent streams", func(c *Config) { c.Relay.MaxConcurrentStreams = 0 }, "max_concurrent_streams"},
+		{"negative max concurrent streams", func(c *Config) { c.Relay.MaxConcurrentStreams = -1 }, "max_concurrent_streams"},
+		{"too high max concurrent streams", func(c *Config) { c.Relay.MaxConcurrentStreams = 1001 }, "max_concurrent_streams"},
+		{"zero circuit breaker threshold", func(c *Config) { c.Relay.CircuitBreakerThreshold = 0 }, "circuit_breaker_threshold"},
+		{"zero connection pool size", func(c *Config) { c.Relay.ConnectionPoolSize = 0 }, "connection_pool_size"},
+		{"too high connection pool size", func(c *Config) { c.Relay.ConnectionPoolSize = 10001 }, "connection_pool_size"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validTestConfig()
+			tt.modify(cfg)
+			err := cfg.Validate()
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errContains)
+		})
+	}
+}
+
+func TestValidate_PipelineConfig(t *testing.T) {
+	tests := []struct {
+		name        string
+		modify      func(*Config)
+		errContains string
+	}{
+		{"zero logo concurrency", func(c *Config) { c.Pipeline.LogoConcurrency = 0 }, "logo_concurrency"},
+		{"too high logo concurrency", func(c *Config) { c.Pipeline.LogoConcurrency = 101 }, "logo_concurrency"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validTestConfig()
+			tt.modify(cfg)
+			err := cfg.Validate()
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errContains)
+		})
+	}
+}
+
+func TestValidate_BackupConfig(t *testing.T) {
+	tests := []struct {
+		name        string
+		modify      func(*Config)
+		errContains string
+	}{
+		{"zero retention", func(c *Config) { c.Backup.Schedule.Retention = 0 }, "retention"},
+		{"too high retention", func(c *Config) { c.Backup.Schedule.Retention = 366 }, "retention"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validTestConfig()
+			tt.modify(cfg)
+			err := cfg.Validate()
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errContains)
+		})
+	}
+}
+
+func TestValidate_DatabaseConfig(t *testing.T) {
+	tests := []struct {
+		name        string
+		modify      func(*Config)
+		errContains string
+	}{
+		{"invalid db log level", func(c *Config) { c.Database.LogLevel = "debug" }, "log_level"},
+		{"zero max open conns", func(c *Config) { c.Database.MaxOpenConns = 0 }, "max_open_conns"},
+		{"negative max idle conns", func(c *Config) { c.Database.MaxIdleConns = -1 }, "max_idle_conns"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validTestConfig()
+			tt.modify(cfg)
+			err := cfg.Validate()
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errContains)
+		})
+	}
+}
+
+func TestValidate_IngestionConfig(t *testing.T) {
+	tests := []struct {
+		name        string
+		modify      func(*Config)
+		errContains string
+	}{
+		{"zero max concurrent", func(c *Config) { c.Ingestion.MaxConcurrent = 0 }, "max_concurrent"},
+		{"too high max concurrent", func(c *Config) { c.Ingestion.MaxConcurrent = 101 }, "max_concurrent"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validTestConfig()
+			tt.modify(cfg)
 			err := cfg.Validate()
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), tt.errContains)
@@ -367,16 +431,8 @@ func TestConfig_AllDrivers(t *testing.T) {
 
 	for _, driver := range drivers {
 		t.Run(driver, func(t *testing.T) {
-			cfg := &Config{
-				Server: ServerConfig{Port: 8080},
-				Database: DatabaseConfig{
-					Driver: driver,
-					DSN:    "test-dsn",
-				},
-				Storage:   StorageConfig{BaseDir: "./data"},
-				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Ingestion: IngestionConfig{ChannelBatchSize: 1000, EPGBatchSize: 5000},
-			}
+			cfg := validTestConfig()
+			cfg.Database.Driver = driver
 			err := cfg.Validate()
 			assert.NoError(t, err)
 		})
