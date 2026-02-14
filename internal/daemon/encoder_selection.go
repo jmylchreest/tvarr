@@ -76,11 +76,11 @@ func (s *EncoderSelector) SelectVideoEncoderWithPreference(targetCodec, preferre
 						slog.String("encoder", enc),
 						slog.Bool("encoder_supported", encoderSupported),
 						slog.Any("gpu_encoders", accel.Encoders),
-						slog.String("device", accel.DeviceName),
+						slog.String("device", accel.Device),
 					)
 
 					if encoderSupported {
-						return enc, preferredHWAccel, accel.DeviceName
+						return enc, preferredHWAccel, accel.Device
 					}
 				}
 			}
@@ -124,11 +124,11 @@ func (s *EncoderSelector) SelectVideoEncoderWithPreference(targetCodec, preferre
 						slog.String("encoder", enc),
 						slog.Bool("encoder_supported", encoderSupported),
 						slog.Any("gpu_encoders", accel.Encoders),
-						slog.String("device", accel.DeviceName),
+						slog.String("device", accel.Device),
 					)
 
 					if encoderSupported {
-						return enc, hwType, accel.DeviceName
+						return enc, hwType, accel.Device
 					}
 				}
 			}

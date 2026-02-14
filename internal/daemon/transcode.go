@@ -528,7 +528,7 @@ func (t *TranscodeJob) startFFmpeg() error {
 			slog.String("job_id", t.id),
 			slog.String("type", string(accel.Type)),
 			slog.Bool("available", accel.Available),
-			slog.String("device", accel.DeviceName),
+			slog.String("device", accel.Device),
 			slog.Any("encoders", accel.Encoders),
 			slog.Any("decoders", accel.Decoders),
 		)

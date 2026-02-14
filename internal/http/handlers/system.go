@@ -66,12 +66,12 @@ type FFmpegCodecResponse struct {
 
 // FFmpegHWAccelResponse represents a hardware accelerator in the API response.
 type FFmpegHWAccelResponse struct {
-	Type       string   `json:"type" doc:"Hardware acceleration type"`
-	Name       string   `json:"name" doc:"Hardware acceleration name"`
-	Available  bool     `json:"available" doc:"Whether the accelerator is available and functional"`
-	DeviceName string   `json:"device_name,omitempty" doc:"Device name or path"`
-	Encoders   []string `json:"encoders,omitempty" doc:"Available hardware encoders"`
-	Decoders   []string `json:"decoders,omitempty" doc:"Available hardware decoders"`
+	Type      string   `json:"type" doc:"Hardware acceleration type"`
+	Name      string   `json:"name" doc:"Hardware acceleration name"`
+	Available bool     `json:"available" doc:"Whether the accelerator is available and functional"`
+	Device    string   `json:"device,omitempty" doc:"Device path: /dev/dri/renderD128, cuda:0, etc."`
+	Encoders  []string `json:"encoders,omitempty" doc:"Available hardware encoders"`
+	Decoders  []string `json:"decoders,omitempty" doc:"Available hardware decoders"`
 }
 
 // FFmpegFormatResponse represents a format in the API response.
@@ -163,12 +163,12 @@ func (h *SystemHandler) GetFFmpegInfo(ctx context.Context, input *FFmpegInfoInpu
 	response.HWAccels = make([]FFmpegHWAccelResponse, 0, len(info.HWAccels))
 	for _, accel := range info.HWAccels {
 		response.HWAccels = append(response.HWAccels, FFmpegHWAccelResponse{
-			Type:       string(accel.Type),
-			Name:       accel.Name,
-			Available:  accel.Available,
-			DeviceName: accel.DeviceName,
-			Encoders:   accel.Encoders,
-			Decoders:   accel.Decoders,
+			Type:      string(accel.Type),
+			Name:      accel.Name,
+			Available: accel.Available,
+			Device:    accel.Device,
+			Encoders:  accel.Encoders,
+			Decoders:  accel.Decoders,
 		})
 	}
 

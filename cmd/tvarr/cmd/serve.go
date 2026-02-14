@@ -193,8 +193,8 @@ func runServe(_ *cobra.Command, _ []string) error {
 		var hwAccelNames []string
 		for _, accel := range ffmpegInfo.HWAccels {
 			if accel.Available {
-				if accel.DeviceName != "" {
-					hwAccelNames = append(hwAccelNames, fmt.Sprintf("%s (%s)", accel.Name, accel.DeviceName))
+				if accel.Device != "" {
+					hwAccelNames = append(hwAccelNames, fmt.Sprintf("%s (%s)", accel.Name, accel.Device))
 				} else {
 					hwAccelNames = append(hwAccelNames, accel.Name)
 				}

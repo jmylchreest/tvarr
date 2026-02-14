@@ -38,7 +38,7 @@ type HWAccelInfo struct {
 	Type             HWAccelType       `json:"type"`
 	Name             string            `json:"name"`
 	Available        bool              `json:"available"`
-	DeviceName       string            `json:"device_name,omitempty"`
+	Device           string            `json:"device,omitempty"`            // Device path: /dev/dri/renderD128, cuda:0, etc.
 	Encoders         []string          `json:"encoders,omitempty"`          // Validated HW encoders
 	Decoders         []string          `json:"decoders,omitempty"`          // HW decoders
 	FilteredEncoders []FilteredEncoder `json:"filtered_encoders,omitempty"` // Encoders filtered out with reasons
@@ -97,7 +97,7 @@ func (d *HWAccelDetector) Detect(ctx context.Context) ([]HWAccelInfo, error) {
 		// Test if the accelerator actually works
 		available, deviceName := d.testAccel(ctx, accel)
 		info.Available = available
-		info.DeviceName = deviceName
+		info.Device = deviceName
 
 		if available {
 			// Get encoders for this accelerator (with filtering info)

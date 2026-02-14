@@ -184,7 +184,7 @@ func convertHWAccels(accels []ffmpeg.HWAccelInfo) []*proto.HWAccelInfo {
 
 		result = append(result, &proto.HWAccelInfo{
 			Type:             string(accel.Type),
-			Device:           accel.DeviceName,
+			Device:           accel.Device,
 			Available:        accel.Available,
 			HwEncoders:       accel.Encoders,
 			HwDecoders:       accel.Decoders,
@@ -209,7 +209,7 @@ func convertHWAccelsToTypes(accels []ffmpeg.HWAccelInfo) []types.HWAccelInfo {
 
 		result = append(result, types.HWAccelInfo{
 			Type:             types.HWAccelType(accel.Type),
-			Device:           accel.DeviceName,
+			Device:           accel.Device,
 			Available:        accel.Available,
 			Encoders:         accel.Encoders,
 			Decoders:         accel.Decoders,
@@ -234,9 +234,9 @@ func detectGPUs(accels []ffmpeg.HWAccelInfo) []*proto.GPUInfo {
 		case ffmpeg.HWAccelNVENC, ffmpeg.HWAccelNVDEC:
 			gpu := &proto.GPUInfo{
 				Index:             int32(gpuIndex),
-				Name:              accel.DeviceName,
-				GpuClass:          detectGPUClass(accel.DeviceName),
-				MaxEncodeSessions: int32(getMaxEncodeSessions(detectGPUClass(accel.DeviceName))),
+				Name:              accel.Device,
+				GpuClass:          detectGPUClass(accel.Device),
+				MaxEncodeSessions: int32(getMaxEncodeSessions(detectGPUClass(accel.Device))),
 			}
 			gpus = append(gpus, gpu)
 			gpuIndex++
@@ -248,8 +248,8 @@ func detectGPUs(accels []ffmpeg.HWAccelInfo) []*proto.GPUInfo {
 				GpuClass:          proto.GPUClass_GPU_CLASS_INTEGRATED,
 				MaxEncodeSessions: 2, // Conservative for integrated
 			}
-			if accel.DeviceName != "" {
-				gpu.Name = "VA-API (" + accel.DeviceName + ")"
+			if accel.Device != "" {
+				gpu.Name = "VA-API (" + accel.Device + ")"
 			}
 			gpus = append(gpus, gpu)
 			gpuIndex++
@@ -291,10 +291,10 @@ func detectGPUsToTypes(accels []ffmpeg.HWAccelInfo) []types.GPUInfo {
 
 		switch accel.Type {
 		case ffmpeg.HWAccelNVENC, ffmpeg.HWAccelNVDEC:
-			gpuClass := detectGPUClassTypes(accel.DeviceName)
+			gpuClass := detectGPUClassTypes(accel.Device)
 			gpu := types.GPUInfo{
 				Index:             gpuIndex,
-				Name:              accel.DeviceName,
+				Name:              accel.Device,
 				Class:             gpuClass,
 				MaxEncodeSessions: gpuClass.DefaultMaxEncodeSessions(),
 			}
@@ -308,8 +308,8 @@ func detectGPUsToTypes(accels []ffmpeg.HWAccelInfo) []types.GPUInfo {
 				Class:             types.GPUClassIntegrated,
 				MaxEncodeSessions: 2,
 			}
-			if accel.DeviceName != "" {
-				gpu.Name = "VA-API (" + accel.DeviceName + ")"
+			if accel.Device != "" {
+				gpu.Name = "VA-API (" + accel.Device + ")"
 			}
 			gpus = append(gpus, gpu)
 			gpuIndex++

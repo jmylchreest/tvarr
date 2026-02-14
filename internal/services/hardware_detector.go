@@ -31,7 +31,7 @@ type HardwareCapability struct {
 	Type              HWAccelType `json:"type"`
 	Name              string      `json:"name"`
 	Available         bool        `json:"available"`
-	DeviceName        string      `json:"device_name,omitempty"`
+	Device            string      `json:"device,omitempty"` // Device path: /dev/dri/renderD128, cuda:0, etc.
 	DevicePath        string      `json:"device_path,omitempty"`
 	GpuIndex          int         `json:"gpu_index,omitempty"`
 	SupportedEncoders []string    `json:"supported_encoders,omitempty"`
@@ -110,7 +110,7 @@ func (d *HardwareDetector) Detect(ctx context.Context) (*HardwareCapabilities, e
 		// Detect NVIDIA GPU info
 		if accel == "cuda" || accel == "nvdec" {
 			if gpuInfo := d.detectNVIDIAGPU(ctx); gpuInfo != "" {
-				cap.DeviceName = gpuInfo
+				cap.Device = gpuInfo
 			}
 		}
 
