@@ -184,11 +184,15 @@ type slogGormLogger struct {
 }
 
 func (l *slogGormLogger) LogMode(level logger.LogLevel) logger.Interface {
+	l.statsLogMutex.Lock()
+	lastLog := l.lastStatsLog
+	l.statsLogMutex.Unlock()
+
 	return &slogGormLogger{
 		logger:       l.logger,
 		level:        level,
 		sqlDB:        l.sqlDB,
-		lastStatsLog: l.lastStatsLog,
+		lastStatsLog: lastLog,
 	}
 }
 

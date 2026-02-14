@@ -163,49 +163,24 @@ func (r *lastKnownCodecRepository) GetValidCount(ctx context.Context) (int64, er
 
 // GetStats returns cache statistics.
 func (r *lastKnownCodecRepository) GetStats(ctx context.Context) (*CodecCacheStats, error) {
-	stats := &CodecCacheStats{}
 	now := time.Now()
 
-	// Total entries
-	if err := r.db.WithContext(ctx).Model(&models.LastKnownCodec{}).Count(&stats.TotalEntries).Error; err != nil {
-		return nil, err
+	var stats CodecCacheStats
+
+	err := r.db.WithContext(ctx).Model(&models.LastKnownCodec{}).
+		Select(`
+			COUNT(*) as total_entries,
+			COALESCE(SUM(CASE WHEN (probe_error = '' OR probe_error IS NULL) AND (video_codec != '' OR audio_codec != '') AND (expires_at IS NULL OR expires_at > ?) THEN 1 ELSE 0 END), 0) as valid_entries,
+			COALESCE(SUM(CASE WHEN expires_at IS NOT NULL AND expires_at < ? THEN 1 ELSE 0 END), 0) as expired_entries,
+			COALESCE(SUM(CASE WHEN probe_error != '' AND probe_error IS NOT NULL THEN 1 ELSE 0 END), 0) as error_entries,
+			COALESCE(SUM(hit_count), 0) as total_hits
+		`, now, now).
+		Scan(&stats).Error
+	if err != nil {
+		return nil, fmt.Errorf("getting codec cache stats: %w", err)
 	}
 
-	// Valid entries (has codec, no error, not expired)
-	if err := r.db.WithContext(ctx).Model(&models.LastKnownCodec{}).
-		Where("(probe_error = '' OR probe_error IS NULL)").
-		Where("(video_codec != '' OR audio_codec != '')").
-		Where("(expires_at IS NULL OR expires_at > ?)", now).
-		Count(&stats.ValidEntries).Error; err != nil {
-		return nil, err
-	}
-
-	// Expired entries
-	if err := r.db.WithContext(ctx).Model(&models.LastKnownCodec{}).
-		Where("expires_at IS NOT NULL AND expires_at < ?", now).
-		Count(&stats.ExpiredEntries).Error; err != nil {
-		return nil, err
-	}
-
-	// Error entries
-	if err := r.db.WithContext(ctx).Model(&models.LastKnownCodec{}).
-		Where("probe_error != '' AND probe_error IS NOT NULL").
-		Count(&stats.ErrorEntries).Error; err != nil {
-		return nil, err
-	}
-
-	// Total hits
-	var totalHits struct {
-		Sum int64
-	}
-	if err := r.db.WithContext(ctx).Model(&models.LastKnownCodec{}).
-		Select("COALESCE(SUM(hit_count), 0) as sum").
-		Scan(&totalHits).Error; err != nil {
-		return nil, err
-	}
-	stats.TotalHits = totalHits.Sum
-
-	return stats, nil
+	return &stats, nil
 }
 
 // Ensure lastKnownCodecRepository implements LastKnownCodecRepository.
