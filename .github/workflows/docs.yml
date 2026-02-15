@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'docs/**'
+      - 'deployment/kubernetes/helm/**'
   workflow_dispatch:
   workflow_call:
 
@@ -44,6 +45,17 @@ jobs:
       - name: Build
         run: npm run build
         working-directory: docs
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4.3.0
+        with:
+          version: v3.14.0
+
+      - name: Package Helm chart
+        run: |
+          mkdir -p docs/build/charts
+          helm package deployment/kubernetes/helm/tvarr -d docs/build/charts
+          helm repo index docs/build/charts --url https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/charts
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4
