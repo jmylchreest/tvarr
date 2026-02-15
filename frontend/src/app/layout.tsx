@@ -11,6 +11,10 @@ import { enhancedThemeScript } from '@/lib/enhanced-theme-script';
 export const metadata: Metadata = {
   title: 'tvarr',
   description: 'Modern web interface for tvarr IPTV management',
+  icons: {
+    icon: '/favicon.svg',
+    apple: '/apple-touch-icon.svg',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
