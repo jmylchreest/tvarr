@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"time"
 
 	"github.com/jmylchreest/tvarr/internal/models"
@@ -21,20 +22,11 @@ const (
 
 // XMLTVHandler handles XMLTV EPG source ingestion.
 type XMLTVHandler struct {
-	// fetcher handles both HTTP/HTTPS and file:// URLs.
-	fetcher *urlutil.ResourceFetcher
-
-	// channelMap stores channel ID to external ID mapping during ingestion.
-	// This maps XMLTV channel IDs to be used when processing programmes.
-	channelMap map[string]string
-
-	// detectedTimezone stores the first detected timezone offset during ingestion.
+	fetcher          *urlutil.ResourceFetcher
+	channelMap       map[string]string
 	detectedTimezone string
-	// timezoneDetected tracks whether we've already detected the timezone.
 	timezoneDetected bool
-
-	// logger is the structured logger for timezone detection and normalization events.
-	logger *slog.Logger
+	logger           *slog.Logger
 }
 
 // NewXMLTVHandler creates a new XMLTV handler with default settings.
@@ -82,49 +74,57 @@ func (h *XMLTVHandler) Validate(source *models.EpgSource) error {
 	return nil
 }
 
+// xmltvBreakerNameFromURL extracts a circuit breaker name from the source URL.
+func xmltvBreakerNameFromURL(sourceURL string) string {
+	parsed, err := url.Parse(sourceURL)
+	if err != nil || parsed.Host == "" {
+		return "xmltv-ingestion"
+	}
+	return "ingestion-" + parsed.Host
+}
+
 // Ingest processes an XMLTV EPG source and yields programs via the callback.
 func (h *XMLTVHandler) Ingest(ctx context.Context, source *models.EpgSource, callback ProgramCallback) error {
 	if err := h.Validate(source); err != nil {
 		return fmt.Errorf("validation failed: %w", err)
 	}
 
-	// Fetch the XMLTV file (supports http://, https://, and file://)
-	reader, err := h.fetcher.Fetch(ctx, source.URL)
+	breakerName := xmltvBreakerNameFromURL(source.URL)
+	breaker := httpclient.DefaultManager.GetOrCreate(breakerName)
+
+	cfg := httpclient.DefaultConfig()
+	cfg.Timeout = defaultXMLTVTimeout
+	fetcher := urlutil.NewResourceFetcherWithBreaker(cfg, breaker)
+
+	reader, err := fetcher.Fetch(ctx, source.URL)
 	if err != nil {
 		return fmt.Errorf("failed to fetch XMLTV: %w", err)
 	}
 	defer reader.Close()
 
-	// Reset state for this ingestion
 	h.channelMap = make(map[string]string)
 	h.detectedTimezone = ""
 	h.timezoneDetected = false
 
-	// Create XMLTV parser with callbacks
 	parser := &xmltv.Parser{
 		OnChannel: func(channel *xmltv.Channel) error {
-			// Store channel ID mapping for programme processing
 			h.channelMap[channel.ID] = channel.ID
 			return nil
 		},
 		OnProgramme: func(programme *xmltv.Programme) error {
-			// Check for context cancellation
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			default:
 			}
 
-			// Capture timezone from the first programme that has one
 			if !h.timezoneDetected && programme.TimezoneOffset != "" {
 				h.detectedTimezone = programme.TimezoneOffset
 				h.timezoneDetected = true
 			}
 
-			// Convert XMLTV programme to EpgProgram model
 			program := h.convertProgramme(programme, source)
 
-			// Skip programs that fail validation (e.g., invalid time ranges)
 			if err := program.Validate(); err != nil {
 				return nil
 			}
@@ -132,25 +132,17 @@ func (h *XMLTVHandler) Ingest(ctx context.Context, source *models.EpgSource, cal
 			return callback(program)
 		},
 		OnError: func(err error) {
-			// Log parsing errors but continue processing
-			// In production, this could be wired to a logger
 		},
 	}
 
-	// Parse with auto-decompression support
 	if err := parser.ParseCompressed(reader); err != nil {
 		return fmt.Errorf("failed to parse XMLTV: %w", err)
 	}
 
-	// Update source's detected timezone (will be saved by the caller)
 	if h.timezoneDetected {
 		detectedTz := h.detectedTimezone
 		source.DetectedTimezone = formatTimezoneOffset(detectedTz)
 
-		// Auto-set EpgShift based on detected timezone (auto-shift feature)
-		// Only update if the detected timezone differs from what we last auto-configured for.
-		// This allows user overrides to persist until the source timezone actually changes.
-		// Note: For XMLTV, times typically have timezone embedded, so auto-shift may be 0.
 		if source.AutoShiftTimezone != detectedTz {
 			newShift := CalculateAutoShift(detectedTz)
 			if h.logger != nil {
@@ -166,11 +158,9 @@ func (h *XMLTVHandler) Ingest(ctx context.Context, source *models.EpgSource, cal
 			source.AutoShiftTimezone = detectedTz
 		}
 
-		// Log timezone detection using structured logging
 		LogTimezoneDetection(h.logger, source.Name, source.ID.String(), source.DetectedTimezone, source.ProgramCount)
 	}
 
-	// Log normalization settings if timeshift is configured
 	if source.EpgShift != 0 {
 		LogTimezoneNormalization(h.logger, source.Name, source.DetectedTimezone, source.EpgShift)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -25,26 +26,25 @@ const (
 
 // XtreamHandler handles ingestion of Xtream Codes API sources.
 type XtreamHandler struct {
-	// httpClient is the resilient HTTP client used for API requests.
 	httpClient *httpclient.Client
-
-	// logger is the structured logger.
-	logger *slog.Logger
+	logger     *slog.Logger
 }
 
 // NewXtreamHandler creates a new Xtream handler with default settings.
 func NewXtreamHandler() *XtreamHandler {
 	cfg := httpclient.DefaultConfig()
 	cfg.Timeout = defaultXtreamTimeout
+	breaker := httpclient.DefaultManager.GetOrCreate("xtream-ingestion")
 
 	return &XtreamHandler{
-		httpClient: httpclient.New(cfg),
+		httpClient: httpclient.NewWithBreaker(cfg, breaker),
 	}
 }
 
 // WithHTTPClientConfig sets a custom HTTP client configuration.
 func (h *XtreamHandler) WithHTTPClientConfig(cfg httpclient.Config) *XtreamHandler {
-	h.httpClient = httpclient.New(cfg)
+	breaker := httpclient.DefaultManager.GetOrCreate("xtream-ingestion")
+	h.httpClient = httpclient.NewWithBreaker(cfg, breaker)
 	return h
 }
 
@@ -79,21 +79,35 @@ func (h *XtreamHandler) Validate(source *models.StreamSource) error {
 	return nil
 }
 
+// circuitBreakerName extracts a circuit breaker name from the source URL.
+func circuitBreakerNameFromURL(sourceURL, defaultName string) string {
+	parsed, err := url.Parse(sourceURL)
+	if err != nil || parsed.Host == "" {
+		return defaultName
+	}
+	return "ingestion-" + parsed.Host
+}
+
 // Ingest fetches channels from the Xtream API, calling the callback for each channel.
 func (h *XtreamHandler) Ingest(ctx context.Context, source *models.StreamSource, callback ChannelCallback) error {
 	if err := h.Validate(source); err != nil {
 		return fmt.Errorf("validation failed: %w", err)
 	}
 
-	// Create Xtream client with the resilient HTTP client (as standard *http.Client)
+	breakerName := circuitBreakerNameFromURL(source.URL, "xtream-ingestion")
+	breaker := httpclient.DefaultManager.GetOrCreate(breakerName)
+
+	cfg := httpclient.DefaultConfig()
+	cfg.Timeout = defaultXtreamTimeout
+	httpClient := httpclient.NewWithBreaker(cfg, breaker)
+
 	client := xtream.NewClient(
 		source.URL,
 		source.Username,
 		source.Password,
-		xtream.WithHTTPClient(h.httpClient.StandardClient()),
+		xtream.WithHTTPClient(httpClient.StandardClient()),
 	)
 
-	// Fetch categories first to build category name lookup
 	categories, err := client.GetLiveCategories(ctx)
 	if err != nil {
 		return fmt.Errorf("fetching categories: %w", err)
@@ -104,16 +118,13 @@ func (h *XtreamHandler) Ingest(ctx context.Context, source *models.StreamSource,
 		categoryMap[cat.CategoryID.String()] = cat.CategoryName
 	}
 
-	// Fetch live streams
 	streams, err := client.GetLiveStreams(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("fetching live streams: %w", err)
 	}
 
-	// Process each stream
 	var skipped int
 	for _, stream := range streams {
-		// Check for context cancellation
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -122,8 +133,6 @@ func (h *XtreamHandler) Ingest(ctx context.Context, source *models.StreamSource,
 
 		channel := h.streamToChannel(stream, source.ID, client, categoryMap)
 
-		// Skip channels that fail validation (e.g., empty name from XC API)
-		// rather than aborting the entire ingestion
 		if err := channel.Validate(); err != nil {
 			skipped++
 			continue
