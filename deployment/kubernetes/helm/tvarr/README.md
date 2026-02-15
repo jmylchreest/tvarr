@@ -5,27 +5,51 @@ Deploy tvarr to Kubernetes with optional hardware acceleration support.
 ## Prerequisites
 
 - Kubernetes 1.19+
-- Helm 3.0+
+- Helm 3.7+ (for OCI support)
 - PV provisioner (for persistence)
 - (Optional) NVIDIA device plugin for GPU support
 - (Optional) Intel device plugin for Intel GPU support
 
 ## Installation
 
+### From OCI Registry (Recommended)
+
 ```bash
-# Add the Helm repository (if published)
-helm repo add tvarr https://jmylchreest.github.io/tvarr
-helm repo update
-
-# Install with default values
-helm install tvarr tvarr/tvarr
-
-# Install from local chart
-helm install tvarr ./deployment/kubernetes/helm/tvarr
+# Install latest stable release
+helm install tvarr oci://ghcr.io/jmylchreest/charts/tvarr
 
 # Install with custom values
-helm install tvarr tvarr/tvarr -f my-values.yaml
+helm install tvarr oci://ghcr.io/jmylchreest/charts/tvarr -f my-values.yaml
+
+# Install with custom base URL
+helm install tvarr oci://ghcr.io/jmylchreest/charts/tvarr \
+  --set env.TVARR_SERVER_BASE_URL=https://tvarr.example.com
 ```
+
+### From Source
+
+```bash
+git clone https://github.com/jmylchreest/tvarr.git
+cd tvarr
+helm install tvarr ./deployment/kubernetes/helm/tvarr
+```
+
+### Using a Snapshot Build
+
+To use a development snapshot instead of the stable release:
+
+```bash
+helm install tvarr oci://ghcr.io/jmylchreest/charts/tvarr \
+  --set image.tag=0.0.21-dev.10-bc64e8e
+```
+
+See [GitHub Releases](https://github.com/jmylchreest/tvarr/releases) for available snapshot versions.
+
+## Versioning
+
+The chart uses two versions:
+- **Chart version**: Tracks Helm chart changes (incremented on chart updates)
+- **appVersion**: Matches the latest stable tvarr release (used as default image tag)
 
 ## Configuration
 
@@ -36,13 +60,12 @@ helm install tvarr tvarr/tvarr -f my-values.yaml
 | `PUID` | `1000` | User ID for file permissions |
 | `PGID` | `1000` | Group ID for file permissions |
 | `TZ` | `UTC` | Timezone (e.g., `America/New_York`) |
-| `TVARR_PORT` | `8080` | HTTP server port |
+| `TVARR_SERVER_PORT` | `8080` | HTTP server port |
+| `TVARR_SERVER_BASE_URL` | `` | External base URL for M3U proxy URLs (required behind ingress) |
 | `TVARR_DATABASE_DSN` | `/data/tvarr.db` | Database connection string |
-| `TVARR_LOG_LEVEL` | `info` | Logging level (debug, info, warn, error) |
-| `TVARR_CONFIG_DIR` | `/data/config` | Configuration directory |
-| `TVARR_FFMPEG_PATH` | `/usr/bin/ffmpeg` | FFmpeg binary path |
-| `TVARR_FFPROBE_PATH` | `/usr/bin/ffprobe` | FFprobe binary path |
-| `TVARR_PREFLIGHT` | `false` | Run pre-flight diagnostics and exit |
+| `TVARR_LOGGING_LEVEL` | `info` | Logging level (debug, info, warn, error) |
+| `TVARR_FFMPEG_BINARY_PATH` | `/usr/bin/ffmpeg` | FFmpeg binary path |
+| `TVARR_FFMPEG_PROBE_PATH` | `/usr/bin/ffprobe` | FFprobe binary path |
 
 ### Values
 
@@ -51,10 +74,9 @@ See [values.yaml](values.yaml) for all configurable options.
 #### Basic Configuration
 
 ```yaml
-image:
-  repository: ghcr.io/jmylchreest/tvarr
-  tag: latest
-  pullPolicy: IfNotPresent
+# Override image tag for snapshots
+# image:
+#   tag: "0.0.21-dev.10-bc64e8e"
 
 service:
   type: ClusterIP
@@ -64,6 +86,9 @@ persistence:
   enabled: true
   size: 10Gi
   storageClass: ""
+
+env:
+  TVARR_SERVER_BASE_URL: "https://tvarr.example.com"
 ```
 
 #### GPU Support
@@ -126,14 +151,6 @@ helm uninstall tvarr
 ```
 
 ## Troubleshooting
-
-### Pre-flight Check
-
-Run the pre-flight check to verify hardware acceleration:
-
-```bash
-kubectl exec -it deployment/tvarr -- /bin/sh -c "TVARR_PREFLIGHT=true /entrypoint.sh"
-```
 
 ### View Logs
 
