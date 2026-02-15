@@ -298,7 +298,7 @@ func (m *Manager) EncoderOverridesProvider() EncoderOverridesProvider {
 // This function is carefully designed to avoid holding the manager lock during slow
 // operations (stream classification, codec probing) to prevent blocking API requests
 // like /api/v1/relay/sessions while a new session is being created.
-func (m *Manager) GetOrCreateSession(ctx context.Context, channelID models.ULID, channelName string, sourceID models.ULID, streamSourceName string, streamURL string, sourceMaxConcurrentStreams int, profile *models.EncodingProfile) (*RelaySession, error) {
+func (m *Manager) GetOrCreateSession(ctx context.Context, channelID models.ULID, channelName string, sourceID models.ULID, streamSourceName string, streamURL string, sourceMaxConcurrentStreams int, sourceUserAgent string, profile *models.EncodingProfile) (*RelaySession, error) {
 	// First, check if session already exists (fast path with read lock)
 	m.mu.RLock()
 	// TRACE level: frequent session lookups (one per playlist request)
@@ -353,7 +353,7 @@ func (m *Manager) GetOrCreateSession(ctx context.Context, channelID models.ULID,
 
 	// Perform slow operations (classify, probe) WITHOUT holding the manager lock
 	// This prevents blocking Stats() and other operations during session creation
-	session, err := m.createSession(ctx, channelID, channelName, sourceID, streamSourceName, streamURL, sourceMaxConcurrentStreams, profile)
+	session, err := m.createSession(ctx, channelID, channelName, sourceID, streamSourceName, streamURL, sourceMaxConcurrentStreams, sourceUserAgent, profile)
 	if err != nil {
 		return nil, err
 	}
@@ -815,7 +815,7 @@ func (m *Manager) getCachedCodecInfo(ctx context.Context, streamURL string) *mod
 }
 
 // createSession creates a new relay session.
-func (m *Manager) createSession(ctx context.Context, channelID models.ULID, channelName string, sourceID models.ULID, streamSourceName string, streamURL string, sourceMaxConcurrentStreams int, profile *models.EncodingProfile) (*RelaySession, error) {
+func (m *Manager) createSession(ctx context.Context, channelID models.ULID, channelName string, sourceID models.ULID, streamSourceName string, streamURL string, sourceMaxConcurrentStreams int, sourceUserAgent string, profile *models.EncodingProfile) (*RelaySession, error) {
 	// Check circuit breaker
 	cb := m.circuitBreakers.Get(streamURL)
 	if !cb.Allow() {
@@ -875,6 +875,7 @@ func (m *Manager) createSession(ctx context.Context, channelID models.ULID, chan
 		StreamSourceName:           streamSourceName,
 		StreamURL:                  streamURL,
 		SourceMaxConcurrentStreams: sourceMaxConcurrentStreams,
+		SourceUserAgent:            sourceUserAgent,
 		EncodingProfile:            profile,
 		Classification:             classification,
 		CachedCodecInfo:            codecInfo,

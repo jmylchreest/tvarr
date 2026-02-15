@@ -16,13 +16,19 @@ Deploy tvarr using the official Helm chart.
 
 ## Quick Install
 
-```bash
-# Add the tvarr Helm repository
-helm repo add tvarr https://jmylchreest.github.io/tvarr/charts
-helm repo update
+### Option 1: OCI Registry (Recommended)
 
-# Install with default values
-helm install tvarr tvarr/tvarr
+```bash
+# Install directly from GitHub Container Registry
+helm install tvarr oci://ghcr.io/jmylchreest/charts/tvarr
+```
+
+### Option 2: From Source
+
+```bash
+git clone https://github.com/jmylchreest/tvarr.git
+cd tvarr
+helm install tvarr ./deployment/kubernetes/helm/tvarr
 ```
 
 ## Example Values
@@ -31,9 +37,11 @@ helm install tvarr tvarr/tvarr
 # Basic configuration
 replicaCount: 1
 
-image:
-  repository: ghcr.io/jmylchreest/tvarr
-  tag: latest
+# Image - defaults to appVersion from chart
+# Override tag for snapshots or specific versions:
+# image:
+#   tag: "0.0.21-dev.9-b37ba0a"  # Snapshot
+#   tag: "0.0.20"                 # Specific stable
 
 # Persistence (required for SQLite)
 persistence:
@@ -76,7 +84,22 @@ ffmpegd:
 ```
 
 ```bash
-helm install tvarr tvarr/tvarr -f values.yaml
+helm install tvarr oci://ghcr.io/jmylchreest/charts/tvarr -f values.yaml
+```
+
+## Versioning
+
+The chart uses two versions:
+- **Chart version**: Tracks Helm chart changes (incremented on chart updates)
+- **appVersion**: Matches the latest stable tvarr release (used as default image tag)
+
+### Using Snapshot Builds
+
+To use a development snapshot instead of the stable release:
+
+```yaml
+image:
+  tag: "0.0.21-dev.9-b37ba0a"  # Check GitHub Releases for available snapshots
 ```
 
 ## Distributed Transcoding

@@ -72,12 +72,21 @@ volumes:
 
 ## Helm Chart (Kubernetes)
 
+### From OCI Registry (Recommended)
+
+```bash
+helm install tvarr oci://ghcr.io/jmylchreest/charts/tvarr \
+  --set env.TVARR_SERVER_BASE_URL=http://tvarr.example.com
+```
+
+### From Source
+
 ```bash
 helm install tvarr ./deployment/kubernetes/helm/tvarr \
   --set env.TVARR_SERVER_BASE_URL=http://tvarr.example.com
 ```
 
-See [deployment/kubernetes/helm/tvarr/values.yaml](deployment/kubernetes/helm/tvarr/values.yaml) for configuration options.
+See [deployment/kubernetes/helm/tvarr/values.yaml](deployment/kubernetes/helm/tvarr/values.yaml) for configuration options, or the [Kubernetes documentation](https://jmylchreest.github.io/tvarr/docs/quickstart/kubernetes) for detailed setup.
 
 ## Documentation
 

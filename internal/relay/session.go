@@ -171,7 +171,8 @@ type RelaySession struct {
 	SourceID                   models.ULID // ID of the stream source (for connection tracking)
 	StreamSourceName           string      // Name of the stream source (e.g., "s8k")
 	StreamURL                  string
-	SourceMaxConcurrentStreams int // Max concurrent streams for the source (0 = unlimited)
+	SourceMaxConcurrentStreams int    // Max concurrent streams for the source (0 = unlimited)
+	SourceUserAgent            string // User-Agent to use for upstream requests (empty = tvarr default)
 	EncodingProfile            *models.EncodingProfile
 	Classification             ClassificationResult
 	CachedCodecInfo            *models.LastKnownCodec // Pre-probed codec info for faster startup
@@ -882,6 +883,13 @@ func (s *RelaySession) runIngestLoop(inputURL string, demuxer *TSDemuxer) error 
 			slog.String("session_id", s.ID.String()),
 			slog.String("error", err.Error()))
 		return err
+	}
+
+	// Set User-Agent header - use source-specific UA if configured, otherwise tvarr default
+	if s.SourceUserAgent != "" {
+		req.Header.Set("User-Agent", s.SourceUserAgent)
+	} else {
+		req.Header.Set("User-Agent", version.UserAgent())
 	}
 
 	resp, err := s.manager.config.HTTPClient.Do(req)
