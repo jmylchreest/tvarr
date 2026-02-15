@@ -7,8 +7,9 @@ on:
     paths:
       - 'deployment/kubernetes/helm/**'
       - '.github/workflows/helm-release.yml'
+    # Only trigger on stable release tags (vX.Y.Z, not vX.Y.Z-dev.N)
     tags:
-      - 'v*'
+      - 'v[0-9]+.[0-9]+.[0-9]+'
   pull_request:
     paths:
       - 'deployment/kubernetes/helm/**'
@@ -56,6 +57,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure Git
         run: |
@@ -71,6 +73,41 @@ jobs:
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
 
+      - name: Extract release version
+        id: release
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            # Strip 'v' prefix: v0.0.20 -> 0.0.20
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "is_release=true" >> $GITHUB_OUTPUT
+          else
+            echo "version=" >> $GITHUB_OUTPUT
+            echo "is_release=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update Chart.yaml appVersion
+        if: steps.release.outputs.is_release == 'true'
+        run: |
+          # Update appVersion to match release tag
+          sed -i "s/^appVersion:.*/appVersion: \"${{ steps.release.outputs.version }}\"/" deployment/kubernetes/helm/tvarr/Chart.yaml
+          
+          # Bump chart patch version
+          CURRENT_VERSION=$(grep '^version:' deployment/kubernetes/helm/tvarr/Chart.yaml | awk '{print $2}')
+          PATCH=$(echo $CURRENT_VERSION | cut -d. -f3)
+          NEW_PATCH=$((PATCH + 1))
+          NEW_VERSION=$(echo $CURRENT_VERSION | sed "s/\.[0-9]*$/.$NEW_PATCH/")
+          sed -i "s/^version:.*/version: $NEW_VERSION/" deployment/kubernetes/helm/tvarr/Chart.yaml
+          
+          cat deployment/kubernetes/helm/tvarr/Chart.yaml
+
+      - name: Commit Chart.yaml update
+        if: steps.release.outputs.is_release == 'true'
+        run: |
+          git add deployment/kubernetes/helm/tvarr/Chart.yaml
+          git commit -m "chore: bump chart for release v${{ steps.release.outputs.version }}" || echo "No changes"
+          git push
+
       - name: Get chart version
         id: chart_version
         run: |
@@ -84,23 +121,3 @@ jobs:
       - name: Push to OCI Registry
         run: |
           helm push .helm-packages/tvarr-${{ steps.chart_version.outputs.version }}.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
-
-      # Optional: Also publish to GitHub Pages for helm repo add
-      - name: Checkout gh-pages branch
-        uses: actions/checkout@v6
-        with:
-          ref: gh-pages
-          path: gh-pages
-        continue-on-error: true
-
-      - name: Update Helm repo index
-        if: success()
-        run: |
-          mkdir -p gh-pages/charts
-          cp .helm-packages/*.tgz gh-pages/charts/
-          helm repo index gh-pages/charts --url https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/charts
-          cd gh-pages
-          git add .
-          git commit -m "Update Helm chart to ${{ steps.chart_version.outputs.version }}" || echo "No changes to commit"
-          git push || echo "gh-pages branch does not exist or push failed"
-        continue-on-error: true

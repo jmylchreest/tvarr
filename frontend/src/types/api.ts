@@ -126,6 +126,7 @@ export interface StreamSource {
   last_error?: string;
   username?: string;
   password?: string;
+  user_agent?: string;
   // (Optional future extension) manual_channels?: ManualChannelInput[];  // not included in current backend list response
 }
 
@@ -709,6 +710,7 @@ export interface CreateStreamSourceRequest {
   ignore_channel_numbers?: boolean;
   username?: string;
   password?: string;
+  user_agent?: string;
   // Only include when source_type === 'manual' and length >= 1
   manual_channels?: ManualChannelInput[];
 }
@@ -724,6 +726,7 @@ export interface UpdateStreamSourceRequest {
   ignore_channel_numbers?: boolean;
   username?: string;
   password?: string;
+  user_agent?: string;
   // When provided for a manual source triggers replace+materialize
   manual_channels?: ManualChannelInput[];
 }

@@ -315,14 +315,16 @@ func (s *RelayService) StartRelay(ctx context.Context, channelID models.ULID, pr
 	var sourceID models.ULID
 	var streamSourceName string
 	var sourceMaxConcurrentStreams int
+	var sourceUserAgent string
 	if channel.Source != nil {
 		sourceID = channel.Source.ID
 		streamSourceName = channel.Source.Name
 		sourceMaxConcurrentStreams = channel.Source.MaxConcurrentStreams
+		sourceUserAgent = channel.Source.UserAgent
 	}
 
 	// Start the relay session
-	session, err := s.relayManager.GetOrCreateSession(ctx, channelID, channel.ChannelName, sourceID, streamSourceName, channel.StreamURL, sourceMaxConcurrentStreams, profile)
+	session, err := s.relayManager.GetOrCreateSession(ctx, channelID, channel.ChannelName, sourceID, streamSourceName, channel.StreamURL, sourceMaxConcurrentStreams, sourceUserAgent, profile)
 	if err != nil {
 		return nil, fmt.Errorf("starting relay session: %w", err)
 	}
@@ -348,14 +350,16 @@ func (s *RelayService) StartRelayWithProfile(ctx context.Context, channelID mode
 	var sourceID models.ULID
 	var streamSourceName string
 	var sourceMaxConcurrentStreams int
+	var sourceUserAgent string
 	if channel.Source != nil {
 		sourceID = channel.Source.ID
 		streamSourceName = channel.Source.Name
 		sourceMaxConcurrentStreams = channel.Source.MaxConcurrentStreams
+		sourceUserAgent = channel.Source.UserAgent
 	}
 
 	// Start the relay session
-	session, err := s.relayManager.GetOrCreateSession(ctx, channelID, channel.ChannelName, sourceID, streamSourceName, channel.StreamURL, sourceMaxConcurrentStreams, profile)
+	session, err := s.relayManager.GetOrCreateSession(ctx, channelID, channel.ChannelName, sourceID, streamSourceName, channel.StreamURL, sourceMaxConcurrentStreams, sourceUserAgent, profile)
 	if err != nil {
 		return nil, fmt.Errorf("starting relay session: %w", err)
 	}

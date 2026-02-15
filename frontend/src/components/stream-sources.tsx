@@ -61,6 +61,18 @@ import {
 } from '@/components/shared';
 import { StatCard } from '@/components/shared/feedback/StatCard';
 
+const USER_AGENT_PRESETS = [
+  { value: '', label: 'tvarr (Default)' },
+  { value: 'VLC/3.0.21', label: 'VLC 3.0.21' },
+  { value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36', label: 'Chrome 133 (Windows)' },
+  { value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36', label: 'Chrome 133 (macOS)' },
+  { value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:135.0) Gecko/20100101 Firefox/135.0', label: 'Firefox 135 (Windows)' },
+  { value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Safari/605.1.15', label: 'Safari 18.3 (macOS)' },
+  { value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0', label: 'Edge 133 (Windows)' },
+  { value: 'Lavf/60.16.100', label: 'FFmpeg (Lavf)' },
+  { value: 'custom', label: 'Custom...' },
+] as const;
+
 interface LoadingState {
   sources: boolean;
   create: boolean;
@@ -176,10 +188,13 @@ function SourceCreatePanel({
     update_cron: '0 0 */6 * * *',
     username: '',
     password: '',
+    user_agent: '',
   });
   const [manualChannels, setManualChannels] = useState<ManualChannelInput[]>([]);
   const [manualValid, setManualValid] = useState(false);
   const [cronValidation, setCronValidation] = useState(validateCronExpression('0 0 */6 * * *'));
+  const [customUserAgent, setCustomUserAgent] = useState('');
+  const [showCustomUserAgent, setShowCustomUserAgent] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -314,6 +329,61 @@ function SourceCreatePanel({
                 autoComplete="off"
               />
             </div>
+          </div>
+        )}
+
+        {/* User-Agent (not for manual) */}
+        {formData.source_type !== 'manual' && (
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="create-user-agent">User-Agent</Label>
+              <Select
+                value={showCustomUserAgent ? 'custom' : (formData.user_agent || 'default')}
+                onValueChange={(value) => {
+                  if (value === 'custom') {
+                    setShowCustomUserAgent(true);
+                    setFormData({ ...formData, user_agent: customUserAgent });
+                  } else if (value === 'default') {
+                    setShowCustomUserAgent(false);
+                    setFormData({ ...formData, user_agent: '' });
+                    setCustomUserAgent('');
+                  } else {
+                    setShowCustomUserAgent(false);
+                    setFormData({ ...formData, user_agent: value });
+                    setCustomUserAgent('');
+                  }
+                }}
+                disabled={loading}
+              >
+                <SelectTrigger id="create-user-agent">
+                  <SelectValue placeholder="Select User-Agent" />
+                </SelectTrigger>
+                <SelectContent>
+                  {USER_AGENT_PRESETS.map((preset) => (
+                    <SelectItem key={preset.value || 'default'} value={preset.value || 'default'}>
+                      {preset.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">Some providers block unknown User-Agents</p>
+            </div>
+            {showCustomUserAgent && (
+              <div className="space-y-2">
+                <Label htmlFor="create-custom-user-agent">Custom User-Agent</Label>
+                <Input
+                  id="create-custom-user-agent"
+                  value={customUserAgent}
+                  onChange={(e) => {
+                    setCustomUserAgent(e.target.value);
+                    setFormData({ ...formData, user_agent: e.target.value });
+                  }}
+                  placeholder="Mozilla/5.0 ..."
+                  disabled={loading}
+                  autoComplete="off"
+                />
+              </div>
+            )}
           </div>
         )}
 
@@ -455,15 +525,20 @@ function SourceDetailPanel({
     update_cron: '0 0 */6 * * *',
     username: '',
     password: '',
+    user_agent: '',
   });
   const [manualChannels, setManualChannels] = useState<ManualChannelInput[]>([]);
   const [manualValid, setManualValid] = useState(false);
   const [cronValidation, setCronValidation] = useState(validateCronExpression('0 0 */6 * * *'));
   const [isDirty, setIsDirty] = useState(false);
+  const [customUserAgent, setCustomUserAgent] = useState('');
+  const [showCustomUserAgent, setShowCustomUserAgent] = useState(false);
 
   // Update form data when source changes
   useEffect(() => {
     const defaultCron = '0 0 */6 * * *';
+    const sourceUserAgent = source.user_agent || '';
+    const isPreset = USER_AGENT_PRESETS.some(p => p.value === sourceUserAgent);
     const newFormData = {
       name: source.name,
       source_type: source.source_type,
@@ -472,10 +547,19 @@ function SourceDetailPanel({
       update_cron: source.update_cron || defaultCron,
       username: source.username || '',
       password: '',
+      user_agent: sourceUserAgent,
     };
     setFormData(newFormData);
     setCronValidation(validateCronExpression(newFormData.update_cron));
     setIsDirty(false);
+    // Handle custom user-agent
+    if (sourceUserAgent && !isPreset) {
+      setShowCustomUserAgent(true);
+      setCustomUserAgent(sourceUserAgent);
+    } else {
+      setShowCustomUserAgent(false);
+      setCustomUserAgent('');
+    }
   }, [source]);
 
   // Load existing manual channels when editing a manual source
@@ -685,6 +769,61 @@ function SourceDetailPanel({
                 autoComplete="off"
               />
             </div>
+          </div>
+        )}
+
+        {/* User-Agent (not for manual) */}
+        {formData.source_type !== 'manual' && (
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="user-agent">User-Agent</Label>
+              <Select
+                value={showCustomUserAgent ? 'custom' : (formData.user_agent || 'default')}
+                onValueChange={(value) => {
+                  if (value === 'custom') {
+                    setShowCustomUserAgent(true);
+                    updateFormData({ user_agent: customUserAgent });
+                  } else if (value === 'default') {
+                    setShowCustomUserAgent(false);
+                    updateFormData({ user_agent: '' });
+                    setCustomUserAgent('');
+                  } else {
+                    setShowCustomUserAgent(false);
+                    updateFormData({ user_agent: value });
+                    setCustomUserAgent('');
+                  }
+                }}
+                disabled={loading.edit}
+              >
+                <SelectTrigger id="user-agent">
+                  <SelectValue placeholder="Select User-Agent" />
+                </SelectTrigger>
+                <SelectContent>
+                  {USER_AGENT_PRESETS.map((preset) => (
+                    <SelectItem key={preset.value || 'default'} value={preset.value || 'default'}>
+                      {preset.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">Some providers block unknown User-Agents</p>
+            </div>
+            {showCustomUserAgent && (
+              <div className="space-y-2">
+                <Label htmlFor="custom-user-agent">Custom User-Agent</Label>
+                <Input
+                  id="custom-user-agent"
+                  value={customUserAgent}
+                  onChange={(e) => {
+                    setCustomUserAgent(e.target.value);
+                    updateFormData({ user_agent: e.target.value });
+                  }}
+                  placeholder="Mozilla/5.0 ..."
+                  disabled={loading.edit}
+                  autoComplete="off"
+                />
+              </div>
+            )}
           </div>
         )}
 
