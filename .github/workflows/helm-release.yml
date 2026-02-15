@@ -7,9 +7,6 @@ on:
     paths:
       - 'deployment/kubernetes/helm/**'
       - '.github/workflows/helm-release.yml'
-    # Only trigger on stable release tags (vX.Y.Z, not vX.Y.Z-dev.N)
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
   pull_request:
     paths:
       - 'deployment/kubernetes/helm/**'
@@ -21,7 +18,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
   packages: write
 
 jobs:
@@ -49,20 +46,12 @@ jobs:
     if: github.event_name != 'pull_request'
     needs: lint
     permissions:
-      contents: write
+      contents: read
       packages: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Configure Git
-        run: |
-          git config user.name "$GITHUB_ACTOR"
-          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
 
       - name: Set up Helm
         uses: azure/setup-helm@v4
@@ -72,41 +61,6 @@ jobs:
       - name: Log in to OCI Registry
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
-
-      - name: Extract release version
-        id: release
-        run: |
-          if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            # Strip 'v' prefix: v0.0.20 -> 0.0.20
-            VERSION="${GITHUB_REF#refs/tags/v}"
-            echo "version=$VERSION" >> $GITHUB_OUTPUT
-            echo "is_release=true" >> $GITHUB_OUTPUT
-          else
-            echo "version=" >> $GITHUB_OUTPUT
-            echo "is_release=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Update Chart.yaml appVersion
-        if: steps.release.outputs.is_release == 'true'
-        run: |
-          # Update appVersion to match release tag
-          sed -i "s/^appVersion:.*/appVersion: \"${{ steps.release.outputs.version }}\"/" deployment/kubernetes/helm/tvarr/Chart.yaml
-          
-          # Bump chart patch version
-          CURRENT_VERSION=$(grep '^version:' deployment/kubernetes/helm/tvarr/Chart.yaml | awk '{print $2}')
-          PATCH=$(echo $CURRENT_VERSION | cut -d. -f3)
-          NEW_PATCH=$((PATCH + 1))
-          NEW_VERSION=$(echo $CURRENT_VERSION | sed "s/\.[0-9]*$/.$NEW_PATCH/")
-          sed -i "s/^version:.*/version: $NEW_VERSION/" deployment/kubernetes/helm/tvarr/Chart.yaml
-          
-          cat deployment/kubernetes/helm/tvarr/Chart.yaml
-
-      - name: Commit Chart.yaml update
-        if: steps.release.outputs.is_release == 'true'
-        run: |
-          git add deployment/kubernetes/helm/tvarr/Chart.yaml
-          git commit -m "chore: bump chart for release v${{ steps.release.outputs.version }}" || echo "No changes"
-          git push
 
       - name: Get chart version
         id: chart_version
