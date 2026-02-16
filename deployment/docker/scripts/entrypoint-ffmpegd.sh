@@ -2,14 +2,15 @@
 # tvarr-ffmpegd Docker Container Entrypoint
 #
 # Features:
-# - PUID/PGID user mapping for GPU device permissions
-# - TZ timezone configuration
+# - PUID/PGID user mapping for GPU device permissions (when running as root)
+# - TZ timezone configuration (env var for Go, /etc/localtime when root)
 # - Pre-flight diagnostics mode (TVARR_PREFLIGHT=true)
 # - Graceful shutdown with coordinator unregistration
+# - Supports runAsNonRoot in Kubernetes security contexts
 #
 # Environment Variables:
-# - PUID: User ID (default: 1000)
-# - PGID: Group ID (default: 1000)
+# - PUID: User ID (default: 1000, ignored when non-root)
+# - PGID: Group ID (default: 1000, ignored when non-root)
 # - TZ: Timezone (default: UTC)
 # - TVARR_COORDINATOR_URL: Coordinator gRPC address (required)
 # - TVARR_AUTH_TOKEN: Authentication token (optional)
@@ -55,19 +56,35 @@ log_section() {
     echo -e "${BLUE}=== $1 ===${NC}"
 }
 
+# Run a command only when the container is running as root.
+# Silently skips when non-root (e.g. Kubernetes runAsNonRoot).
+run_as_root() {
+    if [ "$(id -u)" = "0" ]; then
+        "$@"
+    fi
+}
+
 # Default values
 PUID=${PUID:-1000}
 PGID=${PGID:-1000}
 TZ=${TZ:-UTC}
+export TZ
 
 # Configure timezone
+# Go reads the TZ env var directly, so the symlink is only needed for
+# non-Go tools (e.g. date). Safe to skip when non-root.
 if [ -n "$TZ" ] && [ -f "/usr/share/zoneinfo/$TZ" ]; then
-    ln -sf "/usr/share/zoneinfo/$TZ" /etc/localtime
-    echo "$TZ" > /etc/timezone
+    run_as_root ln -sf "/usr/share/zoneinfo/$TZ" /etc/localtime
+    run_as_root sh -c "echo '$TZ' > /etc/timezone"
 fi
 
 # Configure user/group for GPU access
 setup_user() {
+    if [ "$(id -u)" != "0" ]; then
+        log_info "Running as non-root (uid=$(id -u)), skipping user setup"
+        return
+    fi
+
     log_info "Setting up user/group: PUID=$PUID PGID=$PGID"
 
     # Modify tvarr group if PGID is different
@@ -172,7 +189,7 @@ run_preflight() {
 # Main execution
 main() {
     log_info "tvarr-ffmpegd container starting..."
-    log_info "PUID: $PUID, PGID: $PGID, TZ: $TZ"
+    log_info "uid=$(id -u), gid=$(id -g), TZ=$TZ"
 
     # Set up user permissions
     setup_user
@@ -205,13 +222,15 @@ main() {
 
     log_info "Connecting to coordinator: $TVARR_COORDINATOR_URL"
     log_info "Daemon name: ${TVARR_DAEMON_NAME:-$(hostname)} (container hostname)"
-    log_info "Starting tvarr-ffmpegd as user tvarr (uid=$PUID, gid=$PGID)"
     log_info "Command: $DAEMON_CMD"
 
-    # Execute daemon as the configured user using gosu
-    # gosu is designed for containers - simpler than su/sudo, proper signal handling
-    # Use exec to replace shell process for proper signal handling
-    exec gosu tvarr $DAEMON_CMD
+    # When root, drop privileges via gosu; otherwise run directly
+    if [ "$(id -u)" = "0" ]; then
+        log_info "Dropping privileges to tvarr (uid=$PUID, gid=$PGID)"
+        exec gosu tvarr $DAEMON_CMD
+    else
+        exec $DAEMON_CMD
+    fi
 }
 
 # Run main function

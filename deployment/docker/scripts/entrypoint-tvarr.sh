@@ -2,14 +2,15 @@
 # tvarr Docker Container Entrypoint
 #
 # Features:
-# - PUID/PGID user mapping for volume permissions
-# - TZ timezone configuration
+# - PUID/PGID user mapping for volume permissions (when running as root)
+# - TZ timezone configuration (env var for Go, /etc/localtime when root)
 # - Pre-flight diagnostics mode (TVARR_PREFLIGHT=true)
 # - Graceful shutdown signal handling
+# - Supports runAsNonRoot in Kubernetes security contexts
 #
 # Environment Variables:
-# - PUID: User ID (default: 1000)
-# - PGID: Group ID (default: 1000)
+# - PUID: User ID (default: 1000, ignored when non-root)
+# - PGID: Group ID (default: 1000, ignored when non-root)
 # - TZ: Timezone (default: UTC)
 # - TVARR_PREFLIGHT: Run diagnostics and exit (default: false)
 # - TVARR_*: Application-specific variables passed to tvarr
@@ -52,22 +53,38 @@ log_section() {
     echo -e "${BLUE}=== $1 ===${NC}"
 }
 
+# Run a command only when the container is running as root.
+# Silently skips when non-root (e.g. Kubernetes runAsNonRoot).
+run_as_root() {
+    if [ "$(id -u)" = "0" ]; then
+        "$@"
+    fi
+}
+
 # Default values
 PUID=${PUID:-1000}
 PGID=${PGID:-1000}
 TZ=${TZ:-UTC}
+export TZ
 
 # Ensure data directory exists
-mkdir -p /data
+run_as_root mkdir -p /data
 
 # Configure timezone
+# Go reads the TZ env var directly, so the symlink is only needed for
+# non-Go tools (e.g. date). Safe to skip when non-root.
 if [ -n "$TZ" ] && [ -f "/usr/share/zoneinfo/$TZ" ]; then
-    ln -sf "/usr/share/zoneinfo/$TZ" /etc/localtime
-    echo "$TZ" > /etc/timezone
+    run_as_root ln -sf "/usr/share/zoneinfo/$TZ" /etc/localtime
+    run_as_root sh -c "echo '$TZ' > /etc/timezone"
 fi
 
 # Configure user/group
 setup_user() {
+    if [ "$(id -u)" != "0" ]; then
+        log_info "Running as non-root (uid=$(id -u)), skipping user setup"
+        return
+    fi
+
     log_info "Setting up user/group: PUID=$PUID PGID=$PGID"
 
     # Create tvarr group if it doesn't exist
@@ -133,7 +150,7 @@ run_preflight() {
 # Main execution
 main() {
     log_info "tvarr container starting..."
-    log_info "PUID: $PUID, PGID: $PGID, TZ: $TZ"
+    log_info "uid=$(id -u), gid=$(id -g), TZ=$TZ"
 
     # Set up user permissions
     setup_user
@@ -143,8 +160,6 @@ main() {
         run_preflight
         exit 0
     fi
-
-    log_info "Starting tvarr as user tvarr (uid=$PUID, gid=$PGID)"
 
     # Build command
     local cmd="/app/tvarr serve"
@@ -159,8 +174,13 @@ main() {
         cmd="$cmd --log-level $TVARR_LOG_LEVEL"
     fi
 
-    # Execute tvarr as the tvarr user (exec replaces shell, forwards signals)
-    exec gosu tvarr $cmd
+    # When root, drop privileges via gosu; otherwise run directly
+    if [ "$(id -u)" = "0" ]; then
+        log_info "Dropping privileges to tvarr (uid=$PUID, gid=$PGID)"
+        exec gosu tvarr $cmd
+    else
+        exec $cmd
+    fi
 }
 
 # Run main function
