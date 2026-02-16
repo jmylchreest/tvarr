@@ -1380,9 +1380,10 @@ tasks:
         fi
 
   version:sync:
-    desc: Sync frontend package.json version with git version
+    desc: Sync frontend package.json and Helm Chart.yaml with git version
     summary: |
-      Updates frontend/package.json to match the current git-derived version.
+      Updates frontend/package.json and deployment/kubernetes/helm/tvarr/Chart.yaml
+      to match the current git-derived version.
       Use FORCE=true to allow setting a lower version than current.
 
       Examples:
@@ -1394,6 +1395,7 @@ tasks:
         TARGET="{{.VERSION}}"
         FORCE="{{.FORCE}}"
         PKG_JSON="{{.FRONTEND_DIR}}/package.json"
+        CHART_YAML="deployment/kubernetes/helm/tvarr/Chart.yaml"
 
         # Get current package.json version
         CURRENT=$(grep -o '"version": "[^"]*"' "$PKG_JSON" | cut -d'"' -f4)
@@ -1403,47 +1405,71 @@ tasks:
 
         # Skip if already at target
         if [ "$CURRENT" = "$TARGET" ]; then
-          echo "Already at target version. Nothing to do."
-          exit 0
+          echo "package.json already at target version."
+        else
+          # Version comparison function (returns 0 if $1 >= $2)
+          version_gte() {
+            [ "$(printf '%s\n' "$1" "$2" | sort -V | head -n1)" = "$2" ]
+          }
+
+          # Check if downgrading without force
+          if [ "$FORCE" != "true" ] && version_gte "$CURRENT" "$TARGET" && [ "$CURRENT" != "$TARGET" ]; then
+            echo ""
+            echo "Error: Target version ($TARGET) is lower than current ($CURRENT)"
+            echo "Use FORCE=true to override: task version:sync VERSION=$TARGET FORCE=true"
+            exit 1
+          fi
+
+          # Update package.json using sed (portable)
+          sed -i "s/\"version\": \"${CURRENT}\"/\"version\": \"${TARGET}\"/" "$PKG_JSON"
+          echo "Updated $PKG_JSON to version ${TARGET}"
         fi
 
-        # Version comparison function (returns 0 if $1 >= $2)
-        version_gte() {
-          [ "$(printf '%s\n' "$1" "$2" | sort -V | head -n1)" = "$2" ]
-        }
-
-        # Check if downgrading without force
-        if [ "$FORCE" != "true" ] && version_gte "$CURRENT" "$TARGET" && [ "$CURRENT" != "$TARGET" ]; then
-          echo ""
-          echo "Error: Target version ($TARGET) is lower than current ($CURRENT)"
-          echo "Use FORCE=true to override: task version:sync VERSION=$TARGET FORCE=true"
-          exit 1
-        fi
-
-        # Update package.json using sed (portable)
-        sed -i "s/\"version\": \"${CURRENT}\"/\"version\": \"${TARGET}\"/" "$PKG_JSON"
-
+        # Sync Helm chart appVersion
+        CURRENT_APP=$(grep '^appVersion:' "$CHART_YAML" | sed 's/appVersion: *"\?\([^"]*\)"\?/\1/')
         echo ""
-        echo "Updated $PKG_JSON to version ${TARGET}"
+        echo "Current Chart.yaml appVersion: ${CURRENT_APP}"
+        if [ "$CURRENT_APP" = "$TARGET" ]; then
+          echo "Chart.yaml appVersion already at target version."
+        else
+          sed -i "s/^appVersion:.*/appVersion: \"${TARGET}\"/" "$CHART_YAML"
+          echo "Updated $CHART_YAML appVersion to ${TARGET}"
+        fi
 
   version:check:
-    desc: Check if frontend version matches git version
+    desc: Check if frontend and Helm chart versions match git version
     cmds:
       - |
         PKG_JSON="{{.FRONTEND_DIR}}/package.json"
-        CURRENT=$(grep -o '"version": "[^"]*"' "$PKG_JSON" | cut -d'"' -f4)
+        CHART_YAML="deployment/kubernetes/helm/tvarr/Chart.yaml"
         GIT_VERSION="{{.VERSION}}"
+        OK=true
 
-        echo "Frontend package.json: ${CURRENT}"
+        CURRENT_PKG=$(grep -o '"version": "[^"]*"' "$PKG_JSON" | cut -d'"' -f4)
+        CURRENT_APP=$(grep '^appVersion:' "$CHART_YAML" | sed 's/appVersion: *"\?\([^"]*\)"\?/\1/')
+
+        echo "Frontend package.json: ${CURRENT_PKG}"
+        echo "Chart.yaml appVersion: ${CURRENT_APP}"
         echo "Git-derived version:   ${GIT_VERSION}"
 
-        if [ "$CURRENT" = "$GIT_VERSION" ]; then
+        if [ "$CURRENT_PKG" != "$GIT_VERSION" ]; then
           echo ""
-          echo "Versions are in sync."
+          echo "Warning: package.json version is out of sync!"
+          OK=false
+        fi
+
+        if [ "$CURRENT_APP" != "$GIT_VERSION" ]; then
+          echo ""
+          echo "Warning: Chart.yaml appVersion is out of sync!"
+          OK=false
+        fi
+
+        if [ "$OK" = true ]; then
+          echo ""
+          echo "All versions are in sync."
         else
           echo ""
-          echo "Warning: Versions are out of sync!"
-          echo "Run 'task version:sync' to update package.json"
+          echo "Run 'task version:sync' to update versioned files"
           exit 1
         fi
 
@@ -1481,7 +1507,9 @@ tasks:
     internal: true
     cmds:
       - |
-        LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+        # Find latest release tag (only vX.Y.Z, no prerelease suffixes)
+        LAST_TAG=$(git tag --list 'v*' 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+        LAST_TAG=${LAST_TAG:-v0.0.0}
         CURRENT_VERSION="${LAST_TAG#v}"
         IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
         MAJOR=${MAJOR:-0}; MINOR=${MINOR:-0}; PATCH=${PATCH:-0}
@@ -1517,16 +1545,42 @@ tasks:
           exit 1
         fi
 
+        # Sync version across all versioned files
+        CHART_YAML="deployment/kubernetes/helm/tvarr/Chart.yaml"
+        CHANGED=false
+
         # Sync frontend package.json version if needed
         CURRENT_PKG_VERSION=$(grep -o '"version": "[^"]*"' "$PKG_JSON" | cut -d'"' -f4)
         if [ "$CURRENT_PKG_VERSION" != "$VERSION" ]; then
           sed -i "s/\"version\": \"${CURRENT_PKG_VERSION}\"/\"version\": \"${VERSION}\"/" "$PKG_JSON"
           git add "$PKG_JSON"
+          CHANGED=true
+        fi
+
+        # Sync Helm chart appVersion if needed
+        CURRENT_APP_VERSION=$(grep '^appVersion:' "$CHART_YAML" | sed 's/appVersion: *"\?\([^"]*\)"\?/\1/')
+        if [ "$CURRENT_APP_VERSION" != "$VERSION" ]; then
+          sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" "$CHART_YAML"
+          git add "$CHART_YAML"
+          CHANGED=true
+        fi
+
+        # Bump Helm chart version (patch increment)
+        CURRENT_CHART_VERSION=$(grep '^version:' "$CHART_YAML" | awk '{print $2}')
+        CHART_MAJOR=$(echo "$CURRENT_CHART_VERSION" | cut -d. -f1)
+        CHART_MINOR=$(echo "$CURRENT_CHART_VERSION" | cut -d. -f2)
+        CHART_PATCH=$(echo "$CURRENT_CHART_VERSION" | cut -d. -f3)
+        NEW_CHART_VERSION="${CHART_MAJOR}.${CHART_MINOR}.$((CHART_PATCH + 1))"
+        sed -i "s/^version:.*/version: ${NEW_CHART_VERSION}/" "$CHART_YAML"
+        git add "$CHART_YAML"
+        CHANGED=true
+
+        if [ "$CHANGED" = true ]; then
           git commit -m "chore: bump version to ${VERSION}"
         fi
 
-        # Get previous tag for changelog
-        PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+        # Get previous release tag for changelog (only vX.Y.Z, no prerelease)
+        PREV_TAG=$(git tag --list 'v*' 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
 
         # Create annotated tag with changelog
         CHANGELOG=$(
@@ -1541,7 +1595,9 @@ tasks:
         )
 
         git tag -a "${TAG}" -m "${CHANGELOG}"
-        git push origin "${TAG}"
+        # Push the version bump commit and the tag together
+        BRANCH=$(git rev-parse --abbrev-ref HEAD)
+        git push origin "${BRANCH}" "${TAG}"
         echo "Released ${TAG}"
 
   # ============================================

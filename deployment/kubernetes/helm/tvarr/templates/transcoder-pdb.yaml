@@ -1,0 +1,19 @@
+{{- if and (eq (include "tvarr.transcoderEnabled" .) "true") .Values.transcoder.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "tvarr.fullname" . }}-transcoder
+  labels:
+    {{- include "tvarr.labels" . | nindent 4 }}
+    app.kubernetes.io/component: transcoder
+spec:
+  {{- if .Values.transcoder.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.transcoder.podDisruptionBudget.minAvailable }}
+  {{- else if .Values.transcoder.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.transcoder.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "tvarr.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: transcoder
+{{- end }}

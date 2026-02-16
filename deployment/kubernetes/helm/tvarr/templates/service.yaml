@@ -11,7 +11,7 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
-    {{- if .Values.ffmpegd.enabled }}
+    {{- if eq (include "tvarr.grpcEnabled" .) "true" }}
     - port: {{ .Values.service.grpcPort | default 9090 }}
       targetPort: grpc
       protocol: TCP
@@ -19,3 +19,4 @@ spec:
     {{- end }}
   selector:
     {{- include "tvarr.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: coordinator

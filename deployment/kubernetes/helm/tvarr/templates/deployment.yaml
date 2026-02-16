@@ -4,11 +4,13 @@ metadata:
   name: {{ include "tvarr.fullname" . }}
   labels:
     {{- include "tvarr.labels" . | nindent 4 }}
+    app.kubernetes.io/component: coordinator
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
       {{- include "tvarr.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: coordinator
   strategy:
     type: Recreate
   template:
@@ -19,7 +21,9 @@ spec:
       {{- end }}
       labels:
         {{- include "tvarr.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: coordinator
     spec:
+      enableServiceLinks: {{ .Values.enableServiceLinks | default false }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -34,13 +38,13 @@ spec:
         - name: {{ .Chart.Name }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: "{{ include "tvarr.coordinatorImage" . }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
               containerPort: {{ .Values.env.TVARR_SERVER_PORT | default 8080 }}
               protocol: TCP
-            {{- if .Values.ffmpegd.enabled }}
+            {{- if eq (include "tvarr.grpcEnabled" .) "true" }}
             - name: grpc
               containerPort: {{ .Values.env.TVARR_GRPC_PORT | default 9090 }}
               protocol: TCP
@@ -48,8 +52,12 @@ spec:
           env:
             {{- range $key, $value := .Values.env }}
             {{- if $value }}
+            {{- /* Skip FFmpeg vars in distributed mode - coordinator has no FFmpeg */}}
+            {{- if and (eq (default "aio" $.Values.mode) "distributed") (or (eq $key "TVARR_FFMPEG_BINARY_PATH") (eq $key "TVARR_FFMPEG_PROBE_PATH")) }}
+            {{- else }}
             - name: {{ $key }}
               value: {{ $value | quote }}
+            {{- end }}
             {{- end }}
             {{- end }}
             {{- with .Values.extraEnv }}

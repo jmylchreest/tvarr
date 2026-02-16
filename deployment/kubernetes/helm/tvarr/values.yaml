@@ -1,60 +1,83 @@
 # Default values for tvarr
 # This is a YAML-formatted file.
 
+# -- Deployment mode: "aio" or "distributed"
+# aio: Single all-in-one image with coordinator + local FFmpeg transcoding.
+#      Can optionally add remote transcoder workers (ffmpegd).
+# distributed: Lightweight coordinator-only image (no FFmpeg) + separate
+#              transcoder worker pods. Requires ffmpegd.enabled=true.
+mode: aio
+
 # -- Number of replicas (only 1 supported due to SQLite)
 replicaCount: 1
 
 image:
-  # -- Container image repository
-  repository: ghcr.io/jmylchreest/tvarr
+  # -- Container image repository for the coordinator.
+  # In "aio" mode, defaults to the all-in-one image (ghcr.io/jmylchreest/tvarr).
+  # In "distributed" mode, defaults to the coordinator-only image
+  # (ghcr.io/jmylchreest/tvarr-coordinator).
+  # Override this to use a custom image.
+  repository: ""
   # -- Image pull policy
   pullPolicy: IfNotPresent
   # -- Overrides the image tag (default: chart appVersion)
   tag: ""
 
 # =============================================================================
-# ffmpegd - Distributed Transcoding Daemon
+# Transcoder - Distributed Transcoding Daemon (ffmpegd)
 # =============================================================================
-ffmpegd:
-  # -- Enable ffmpegd deployment
+transcoder:
+  # -- Enable transcoder deployment.
+  # In "distributed" mode this is always true regardless of this setting.
+  # In "aio" mode this enables optional remote transcoder workers.
   enabled: false
 
-  # -- Number of ffmpegd replicas (can scale for more transcoding capacity)
+  # -- Number of transcoder replicas (can scale for more transcoding capacity)
   replicaCount: 1
 
   image:
-    # -- ffmpegd container image repository
-    repository: ghcr.io/jmylchreest/tvarr-ffmpegd
+    # -- Transcoder container image repository
+    repository: ghcr.io/jmylchreest/tvarr-transcoder
     # -- Image pull policy
     pullPolicy: IfNotPresent
     # -- Overrides the image tag (default: chart appVersion)
     tag: ""
 
-  # -- Pod annotations for ffmpegd
+  # -- Pod annotations for transcoder
   podAnnotations: {}
 
-  # -- Pod security context for ffmpegd
+  # -- Pod security context for transcoder
   podSecurityContext:
     fsGroup: 1000
 
-  # -- Container security context for ffmpegd
+  # -- Container security context for transcoder
   securityContext:
     runAsNonRoot: true
     runAsUser: 1000
     runAsGroup: 1000
 
-  # -- Resource limits and requests for ffmpegd
+  # -- Resource limits and requests for transcoder
   resources: {}
     # limits:
     #   cpu: 4000m
     #   memory: 4Gi
+    #   gpu.intel.com/i915: "1"
     # requests:
-    #   cpu: 1000m
-    #   memory: 1Gi
+    #   cpu: 500m
+    #   memory: 512Mi
+    #   gpu.intel.com/i915: "1"
 
-  # GPU configuration for ffmpegd
+  # -- Update strategy for transcoder deployment
+  # RollingUpdate with maxUnavailable=0 prevents capacity drops during updates
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  # GPU configuration for transcoder
   gpu:
-    # -- Enable GPU support for ffmpegd
+    # -- Enable GPU support for transcoder
     enabled: false
     # -- GPU type: nvidia, intel, amd
     type: ""
@@ -67,17 +90,27 @@ ffmpegd:
       # -- Device path for Intel GPU
       devicePath: /dev/dri
 
-  # -- Node selector for ffmpegd
+  # -- Node selector for transcoder
   nodeSelector: {}
 
-  # -- Tolerations for ffmpegd
+  # -- Tolerations for transcoder
   tolerations: []
 
-  # -- Affinity rules for ffmpegd
-  # Recommended: Use pod anti-affinity to spread ffmpegd across nodes
+  # -- Affinity rules for transcoder
+  # Recommended: Use pod anti-affinity to spread transcoders across nodes
   affinity: {}
 
-  # -- Pod Disruption Budget for ffmpegd
+  # -- Topology spread constraints for transcoder
+  # Useful for spreading GPU workloads across nodes
+  topologySpreadConstraints: []
+    # - maxSkew: 1
+    #   topologyKey: "kubernetes.io/hostname"
+    #   whenUnsatisfiable: ScheduleAnyway
+    #   labelSelector:
+    #     matchLabels:
+    #       app.kubernetes.io/component: transcoder
+
+  # -- Pod Disruption Budget for transcoder
   # Helps prevent disruption during voluntary disruptions (upgrades, node drain)
   podDisruptionBudget:
     # -- Enable PDB
@@ -87,17 +120,22 @@ ffmpegd:
     # -- Maximum unavailable pods
     # maxUnavailable: 0
 
-  # ffmpegd environment variables
+  # Transcoder environment variables
   env:
     # -- Human-readable daemon name (defaults to pod name)
     TVARR_DAEMON_NAME: ""
     # -- Maximum concurrent transcoding jobs per daemon
     TVARR_MAX_JOBS: "4"
-    # -- Authentication token (optional)
+    # -- Authentication token (optional, must match coordinator TVARR_GRPC_AUTH_TOKEN)
     TVARR_AUTH_TOKEN: ""
 
-  # -- Extra environment variables for ffmpegd
+  # -- Extra environment variables for transcoder
   extraEnv: []
+
+# Legacy alias: "ffmpegd" maps to "transcoder" for backwards compatibility
+# If both are set, "transcoder" takes precedence.
+ffmpegd:
+  enabled: false
 
 # -- Image pull secrets for private registries
 imagePullSecrets: []
@@ -132,12 +170,15 @@ securityContext:
   runAsUser: 1000
   runAsGroup: 1000
 
+# -- Disable automatic service links environment variables in pods
+enableServiceLinks: false
+
 service:
   # -- Service type
   type: ClusterIP
   # -- HTTP service port
   port: 8080
-  # -- gRPC service port (for ffmpegd connections)
+  # -- gRPC service port (for transcoder connections)
   grpcPort: 9090
 
 ingress:
@@ -207,7 +248,7 @@ tolerations: []
 # -- Affinity rules
 affinity: {}
 
-# Environment variables
+# Environment variables for the coordinator
 # NOTE: TVARR_ env vars map to viper config using TVARR_<SECTION>_<KEY> format
 # Example: TVARR_SERVER_PORT maps to config server.port
 env:
@@ -220,11 +261,11 @@ env:
   # -- Server port (internal container port)
   TVARR_SERVER_PORT: "8080"
   # -- External base URL for M3U proxy URLs (set to your ingress URL, e.g., https://tvarr.example.com)
-  # -- IMPORTANT: Required when behind Traefik/nginx ingress for correct M3U playlist URLs
+  # -- IMPORTANT: Required when behind ingress for correct M3U playlist URLs
   TVARR_SERVER_BASE_URL: ""
-  # -- gRPC server port (for ffmpegd daemon connections)
+  # -- gRPC server port (for transcoder daemon connections)
   TVARR_GRPC_PORT: "9090"
-  # -- Enable gRPC server (required for ffmpegd)
+  # -- Enable gRPC server (required for transcoder workers)
   TVARR_GRPC_ENABLED: "true"
   # -- Database DSN
   TVARR_DATABASE_DSN: "/data/tvarr.db"
@@ -232,9 +273,9 @@ env:
   TVARR_LOGGING_LEVEL: "info"
   # -- Storage base directory
   TVARR_STORAGE_BASE_DIR: "/data"
-  # -- FFmpeg binary path
+  # -- FFmpeg binary path (only used in "aio" mode)
   TVARR_FFMPEG_BINARY_PATH: "/usr/bin/ffmpeg"
-  # -- FFprobe binary path
+  # -- FFprobe binary path (only used in "aio" mode)
   TVARR_FFMPEG_PROBE_PATH: "/usr/bin/ffprobe"
 
 # -- Extra environment variables (for secrets, etc.)

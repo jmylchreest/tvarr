@@ -1,27 +1,14 @@
 # Build tvarr-coordinator Docker Image
-# NOTE: This workflow waits for the Test workflow to pass before building (on push events)
-# PRs skip the test gate.
+# Triggered after Test workflow succeeds (via workflow_run) or directly on PRs.
+# Uses workflow_run instead of polling for reliable cross-workflow dependency.
 
 name: Build tvarr-coordinator Docker Image
 
 on:
-  push:
-    branches:
-      - main
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'  # Only release tags (v1.2.3), not dev tags (v1.2.3-dev.N)
-    paths-ignore:
-      - 'deployment/docker/Dockerfile.ffmpeg'
-      - 'deployment/docker/Dockerfile.ffmpegd'
-      - 'deployment/docker/Dockerfile'
-      - '.github/workflows/docker-ffmpeg.yml'
-      - '.github/workflows/docker-transcoder.yml'
-      - '.github/workflows/docker-tvarr.yml'
-      - '.github/workflows/docker-coordinator.yml'
-      - '.github/workflows/dependency-updates.yml'
-      - '**.md'
-      - 'docs/**'
-      - 'specs/**'
+  # Trigger after Test workflow completes (for push to main or tags)
+  workflow_run:
+    workflows: ["Test"]
+    types: [completed]
   pull_request:
     paths-ignore:
       - 'deployment/docker/Dockerfile.ffmpeg'
@@ -39,7 +26,7 @@ on:
 
 # Cancel in-progress runs for the same branch/tag
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_branch || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -51,62 +38,38 @@ env:
   IMAGE_NAME: ${{ github.repository_owner }}/tvarr-coordinator
 
 jobs:
-  # Wait for Test workflow to pass before building (only on push events)
-  verify-test:
+  # Gate: only proceed if tests passed
+  gate:
     name: Verify Tests Passed
     runs-on: ubuntu-latest
-    # Skip for PRs and manual triggers
-    if: github.event_name == 'push'
+    if: |
+      github.event_name == 'pull_request' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      ref: ${{ steps.resolve.outputs.ref }}
     steps:
-      - name: Wait for Test workflow to pass
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve commit and ref
+        id: resolve
         run: |
-          COMMIT="${{ github.sha }}"
-          REPO="${{ github.repository }}"
-          echo "Waiting for Test workflow to pass for commit $COMMIT"
-
-          for i in {1..60}; do
-            RESULT=$(gh run list --repo "$REPO" --workflow=test.yml --commit="$COMMIT" --json status,conclusion -q '.[0]' 2>/dev/null || echo '{}')
-            STATUS=$(echo "$RESULT" | jq -r '.status // "not_found"')
-            CONCLUSION=$(echo "$RESULT" | jq -r '.conclusion // "pending"')
-
-            echo "Test workflow status: $STATUS, conclusion: $CONCLUSION (attempt $i/60)"
-
-            if [[ "$STATUS" == "completed" ]]; then
-              if [[ "$CONCLUSION" == "success" ]]; then
-                echo "Tests passed"
-                exit 0
-              else
-                echo "Tests failed with conclusion: $CONCLUSION"
-                exit 1
-              fi
-            fi
-
-            # Treat empty/null status same as not_found (GitHub API may return
-            # incomplete data while the workflow run is still being queued)
-            if { [[ "$STATUS" == "not_found" ]] || [[ -z "$STATUS" ]] || [[ "$STATUS" == "null" ]]; } && [[ $i -gt 10 ]]; then
-              echo "No Test workflow found for this commit after $i attempts"
-              echo "This may indicate the Test workflow was not triggered"
-              exit 1
-            fi
-
-            sleep 15
-          done
-
-          echo "Timeout waiting for Test workflow after 30 minutes"
-          exit 1
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> $GITHUB_OUTPUT
+            echo "ref=${{ github.event.workflow_run.head_branch }}" >> $GITHUB_OUTPUT
+            echo "Triggered by Test workflow on ${{ github.event.workflow_run.head_branch }} (${{ github.event.workflow_run.head_sha }})"
+          else
+            echo "sha=${{ github.sha }}" >> $GITHUB_OUTPUT
+            echo "ref=${{ github.ref }}" >> $GITHUB_OUTPUT
+          fi
 
   build:
     # Note: ARM64 not supported - Arch Linux base is amd64 only
-    needs: verify-test
-    # Run if gate passed/skipped, or on PRs (which skip gate)
+    needs: gate
     if: |
       always() && (
         github.event_name == 'pull_request' ||
         github.event_name == 'workflow_dispatch' ||
-        needs.verify-test.result == 'success' ||
-        needs.verify-test.result == 'skipped'
+        needs.gate.result == 'success'
       )
     strategy:
       fail-fast: false
@@ -124,6 +87,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
+          ref: ${{ needs.gate.outputs.sha || github.sha }}
           fetch-depth: 0  # Full history for version detection
           fetch-tags: true  # Explicitly fetch tags for version detection
 
@@ -160,8 +124,8 @@ jobs:
 
   manifest:
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
-    needs: build
+    if: always() && github.event_name != 'pull_request' && needs.build.result == 'success'
+    needs: [gate, build]
     permissions:
       contents: read
       packages: write
@@ -170,6 +134,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
+          ref: ${{ needs.gate.outputs.sha || github.sha }}
           fetch-depth: 0
           fetch-tags: true
 
@@ -183,8 +148,8 @@ jobs:
       - name: Get version info
         id: version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+          if git describe --tags --exact-match 2>/dev/null | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            VERSION=$(git describe --tags --exact-match | sed 's/^v//')
             echo "version=${VERSION}" >> $GITHUB_OUTPUT
             echo "is_release=true" >> $GITHUB_OUTPUT
           else
@@ -201,7 +166,7 @@ jobs:
           docker manifest push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
       - name: Create and push preview manifest (main branch)
-        if: github.ref == 'refs/heads/main'
+        if: needs.gate.outputs.ref == 'main' || needs.gate.outputs.ref == 'refs/heads/main'
         run: |
           docker manifest create ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:preview \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:amd64

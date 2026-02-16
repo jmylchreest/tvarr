@@ -2,7 +2,7 @@ apiVersion: v2
 name: tvarr
 description: IPTV stream management with hardware-accelerated transcoding
 type: application
-version: 0.3.1
+version: 0.4.0
 appVersion: "0.0.22"
 home: https://github.com/jmylchreest/tvarr
 sources:
@@ -15,7 +15,6 @@ keywords:
   - streaming
   - transcoding
   - ffmpeg
-  - ffmpegd
   - distributed
   - m3u
   - epg
@@ -23,6 +22,12 @@ annotations:
   artifacthub.io/license: MIT
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/changes: |
-    - Added ffmpegd distributed transcoding daemon support
-    - Added gRPC service for daemon coordination
-    - Added PodDisruptionBudget for ffmpegd stability
+    - Added deployment mode support: "aio" (all-in-one) and "distributed" (coordinator + transcoder)
+    - Fixed transcoder image: tvarr-ffmpegd -> tvarr-transcoder (correct published image name)
+    - Renamed ffmpegd values to transcoder (backwards compatible via ffmpegd.enabled)
+    - Added app.kubernetes.io/component labels to coordinator and transcoder deployments
+    - gRPC port now exposed when TVARR_GRPC_ENABLED=true (not just when transcoder enabled)
+    - Added topologySpreadConstraints support for transcoder pods
+    - Added configurable update strategy for transcoder (default: RollingUpdate with zero downtime)
+    - Added enableServiceLinks: false to pod specs
+    - Service selector now targets coordinator component specifically

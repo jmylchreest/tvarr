@@ -1,45 +1,50 @@
-{{- if .Values.ffmpegd.enabled }}
+{{- if eq (include "tvarr.transcoderEnabled" .) "true" }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "tvarr.fullname" . }}-ffmpegd
+  name: {{ include "tvarr.fullname" . }}-transcoder
   labels:
     {{- include "tvarr.labels" . | nindent 4 }}
-    app.kubernetes.io/component: ffmpegd
+    app.kubernetes.io/component: transcoder
 spec:
-  replicas: {{ .Values.ffmpegd.replicaCount }}
+  replicas: {{ .Values.transcoder.replicaCount }}
   selector:
     matchLabels:
       {{- include "tvarr.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: ffmpegd
+      app.kubernetes.io/component: transcoder
+  {{- with .Values.transcoder.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   template:
     metadata:
-      {{- with .Values.ffmpegd.podAnnotations }}
+      {{- with .Values.transcoder.podAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       labels:
         {{- include "tvarr.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: ffmpegd
+        app.kubernetes.io/component: transcoder
     spec:
+      enableServiceLinks: {{ .Values.enableServiceLinks | default false }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "tvarr.serviceAccountName" . }}
-      {{- if and .Values.ffmpegd.gpu.enabled (eq .Values.ffmpegd.gpu.type "nvidia") }}
-      runtimeClassName: {{ .Values.ffmpegd.gpu.nvidia.runtimeClassName }}
+      {{- if and .Values.transcoder.gpu.enabled (eq .Values.transcoder.gpu.type "nvidia") }}
+      runtimeClassName: {{ .Values.transcoder.gpu.nvidia.runtimeClassName }}
       {{- end }}
       securityContext:
-        {{- toYaml .Values.ffmpegd.podSecurityContext | nindent 8 }}
+        {{- toYaml .Values.transcoder.podSecurityContext | nindent 8 }}
       containers:
-        - name: ffmpegd
+        - name: transcoder
           securityContext:
-            {{- toYaml .Values.ffmpegd.securityContext | nindent 12 }}
-          image: "{{ .Values.ffmpegd.image.repository }}:{{ .Values.ffmpegd.image.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ .Values.ffmpegd.image.pullPolicy }}
+            {{- toYaml .Values.transcoder.securityContext | nindent 12 }}
+          image: "{{ .Values.transcoder.image.repository }}:{{ .Values.transcoder.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.transcoder.image.pullPolicy }}
           env:
-            # Required: Coordinator URL
+            # Required: Coordinator gRPC URL
             - name: TVARR_COORDINATOR_URL
               value: "{{ include "tvarr.fullname" . }}:{{ .Values.service.grpcPort | default 9090 }}"
             # User/Group for permissions
@@ -52,30 +57,30 @@ spec:
             # Logging level
             - name: TVARR_LOGGING_LEVEL
               value: {{ .Values.env.TVARR_LOGGING_LEVEL | default "info" | quote }}
-            # ffmpegd-specific env vars
-            {{- range $key, $value := .Values.ffmpegd.env }}
+            # Transcoder-specific env vars
+            {{- range $key, $value := .Values.transcoder.env }}
             {{- if $value }}
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
             {{- end }}
             # Use pod name as daemon name if not explicitly set
-            {{- if not .Values.ffmpegd.env.TVARR_DAEMON_NAME }}
+            {{- if not .Values.transcoder.env.TVARR_DAEMON_NAME }}
             - name: TVARR_DAEMON_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
             {{- end }}
-            {{- with .Values.ffmpegd.extraEnv }}
+            {{- with .Values.transcoder.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
           resources:
-            {{- if or .Values.ffmpegd.resources (and .Values.ffmpegd.gpu.enabled (or (eq .Values.ffmpegd.gpu.type "nvidia") (eq .Values.ffmpegd.gpu.type "intel"))) }}
-            {{- $resources := .Values.ffmpegd.resources | default dict }}
+            {{- if or .Values.transcoder.resources (and .Values.transcoder.gpu.enabled (or (eq .Values.transcoder.gpu.type "nvidia") (eq .Values.transcoder.gpu.type "intel"))) }}
+            {{- $resources := .Values.transcoder.resources | default dict }}
             {{- $limits := $resources.limits | default dict }}
-            {{- if and .Values.ffmpegd.gpu.enabled (eq .Values.ffmpegd.gpu.type "nvidia") }}
+            {{- if and .Values.transcoder.gpu.enabled (eq .Values.transcoder.gpu.type "nvidia") }}
             {{- $limits = merge $limits (dict "nvidia.com/gpu" 1) }}
-            {{- else if and .Values.ffmpegd.gpu.enabled (eq .Values.ffmpegd.gpu.type "intel") }}
+            {{- else if and .Values.transcoder.gpu.enabled (eq .Values.transcoder.gpu.type "intel") }}
             {{- $limits = merge $limits (dict "gpu.intel.com/i915" 1) }}
             {{- end }}
             {{- if $limits }}
@@ -89,12 +94,12 @@ spec:
             {{- else }}
             {}
             {{- end }}
-          {{- if and .Values.ffmpegd.gpu.enabled (or (eq .Values.ffmpegd.gpu.type "intel") (eq .Values.ffmpegd.gpu.type "amd")) }}
+          {{- if and .Values.transcoder.gpu.enabled (or (eq .Values.transcoder.gpu.type "intel") (eq .Values.transcoder.gpu.type "amd")) }}
           volumeMounts:
             - name: dri
               mountPath: /dev/dri
           {{- end }}
-          # ffmpegd doesn't expose HTTP, just check process is running
+          # Transcoder doesn't expose HTTP, just check process is running
           livenessProbe:
             exec:
               command:
@@ -115,21 +120,25 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 3
-      {{- if and .Values.ffmpegd.gpu.enabled (or (eq .Values.ffmpegd.gpu.type "intel") (eq .Values.ffmpegd.gpu.type "amd")) }}
+      {{- if and .Values.transcoder.gpu.enabled (or (eq .Values.transcoder.gpu.type "intel") (eq .Values.transcoder.gpu.type "amd")) }}
       volumes:
         - name: dri
           hostPath:
-            path: {{ .Values.ffmpegd.gpu.intel.devicePath | default "/dev/dri" }}
+            path: {{ .Values.transcoder.gpu.intel.devicePath | default "/dev/dri" }}
       {{- end }}
-      {{- with .Values.ffmpegd.nodeSelector }}
+      {{- with .Values.transcoder.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.transcoder.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.ffmpegd.affinity }}
+      {{- with .Values.transcoder.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.ffmpegd.tolerations }}
+      {{- with .Values.transcoder.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}

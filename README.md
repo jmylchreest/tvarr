@@ -76,15 +76,17 @@ volumes:
 
 ```bash
 helm install tvarr oci://ghcr.io/jmylchreest/charts/tvarr \
-  --set env.TVARR_SERVER_BASE_URL=http://tvarr.example.com
+  --set env.TVARR_SERVER_BASE_URL=https://tvarr.example.com
 ```
 
 ### From Source
 
 ```bash
 helm install tvarr ./deployment/kubernetes/helm/tvarr \
-  --set env.TVARR_SERVER_BASE_URL=http://tvarr.example.com
+  --set env.TVARR_SERVER_BASE_URL=https://tvarr.example.com
 ```
+
+Setting `TVARR_SERVER_BASE_URL` is **required** when deploying behind an ingress controller so that generated M3U playlist URLs are correct for external clients.
 
 See [deployment/kubernetes/helm/tvarr/values.yaml](deployment/kubernetes/helm/tvarr/values.yaml) for configuration options, or the [Kubernetes documentation](https://jmylchreest.github.io/tvarr/docs/quickstart/kubernetes) for detailed setup.
 

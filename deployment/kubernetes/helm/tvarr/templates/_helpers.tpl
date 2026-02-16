@@ -71,3 +71,49 @@ Return the PVC name
 {{- include "tvarr.fullname" . }}-data
 {{- end }}
 {{- end }}
+
+{{/*
+Return the coordinator image repository based on mode.
+In "distributed" mode, uses the lightweight coordinator-only image.
+In "aio" mode (default), uses the all-in-one image with local FFmpeg.
+User can override with image.repository.
+*/}}
+{{- define "tvarr.coordinatorImage" -}}
+{{- if .Values.image.repository }}
+{{- .Values.image.repository }}
+{{- else if eq (default "aio" .Values.mode) "distributed" }}
+{{- "ghcr.io/jmylchreest/tvarr-coordinator" }}
+{{- else }}
+{{- "ghcr.io/jmylchreest/tvarr" }}
+{{- end }}
+{{- end }}
+
+{{/*
+Return whether transcoder workers should be deployed.
+In "distributed" mode, always true. Otherwise, check transcoder.enabled or legacy ffmpegd.enabled.
+*/}}
+{{- define "tvarr.transcoderEnabled" -}}
+{{- if eq (default "aio" .Values.mode) "distributed" }}
+{{- true }}
+{{- else if .Values.transcoder.enabled }}
+{{- true }}
+{{- else if .Values.ffmpegd.enabled }}
+{{- true }}
+{{- else }}
+{{- false }}
+{{- end }}
+{{- end }}
+
+{{/*
+Return whether gRPC should be enabled.
+True if TVARR_GRPC_ENABLED is "true" or transcoders are enabled.
+*/}}
+{{- define "tvarr.grpcEnabled" -}}
+{{- if eq (default "true" .Values.env.TVARR_GRPC_ENABLED) "true" }}
+{{- true }}
+{{- else if eq (include "tvarr.transcoderEnabled" .) "true" }}
+{{- true }}
+{{- else }}
+{{- false }}
+{{- end }}
+{{- end }}
