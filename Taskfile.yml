@@ -842,6 +842,52 @@ tasks:
       - go tool cover -html={{.COVERAGE_FILE}} -o coverage.html
       - echo "Coverage report generated at coverage.html"
 
+  test:e2e:
+    desc: Run Playwright end-to-end tests (all projects)
+    summary: |
+      Runs Playwright tests against the Next.js frontend with mocked API.
+      No backend is needed — API calls are intercepted at the browser level.
+
+      The Next.js dev server is started automatically by Playwright.
+
+      Options:
+        - PROJECT: Run specific project (desktop, mobile, mobile-large, mobile-android, tablet)
+        - HEADED: Set to "true" for headed mode (default: headless)
+        - UI: Set to "true" to open Playwright UI mode
+
+      Examples:
+        task test:e2e                           # All projects, headless
+        task test:e2e PROJECT=mobile            # Mobile only
+        task test:e2e HEADED=true               # Headed mode (see browser)
+        task test:e2e UI=true                   # Interactive UI mode
+    dir: "{{.FRONTEND_DIR}}"
+    deps: [frontend:install]
+    vars:
+      PROJECT: '{{.PROJECT | default ""}}'
+      HEADED: '{{.HEADED | default "false"}}'
+      UI: '{{.UI | default "false"}}'
+    cmds:
+      - |
+        ARGS=""
+        if [ -n "{{.PROJECT}}" ]; then
+          ARGS="$ARGS --project={{.PROJECT}}"
+        fi
+        if [ "{{.HEADED}}" = "true" ]; then
+          ARGS="$ARGS --headed"
+        fi
+        if [ "{{.UI}}" = "true" ]; then
+          pnpm exec playwright test --ui
+        else
+          pnpm exec playwright test $ARGS
+        fi
+
+  test:e2e:mobile:
+    desc: Run Playwright mobile tests only
+    dir: "{{.FRONTEND_DIR}}"
+    deps: [frontend:install]
+    cmds:
+      - pnpm exec playwright test --project=mobile --project=mobile-large --project=mobile-android
+
   bench:
     desc: Run benchmarks
     cmds:

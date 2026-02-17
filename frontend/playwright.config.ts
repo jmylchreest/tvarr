@@ -1,52 +1,103 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
+ * Playwright configuration for tvarr frontend tests.
+ *
+ * Tests use page.route() to mock API responses, so no running backend is needed.
+ * The Next.js dev server is started automatically via webServer config.
+ *
+ * Run tests:
+ *   pnpm exec playwright test                    # all projects
+ *   pnpm exec playwright test --project=mobile   # mobile only
+ *   pnpm exec playwright test --project=desktop  # desktop only
+ *
  * @see https://playwright.dev/docs/test-configuration
  */
 export default defineConfig({
   testDir: './tests',
-  /* Run tests in files in parallel */
   fullyParallel: true,
-  /* Fail the build on CI if you accidentally left test.only in the source code. */
   forbidOnly: !!process.env.CI,
-  /* Retry on CI only */
   retries: process.env.CI ? 2 : 0,
-  /* Opt out of parallel tests on CI. */
   workers: process.env.CI ? 1 : undefined,
-  /* Reporter to use. See https://playwright.dev/docs/test-reporters */
-  reporter: 'html',
-  /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
+
+  reporter: process.env.CI
+    ? [['github'], ['html', { open: 'never' }]]
+    : [['list'], ['html', { open: 'on-failure' }]],
+
+  /* Shared settings for all projects */
   use: {
-    /* Base URL to use in actions like `await page.goto('/')`. */
-    baseURL: 'http://localhost:8111',
-
-    /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
+    baseURL: 'http://localhost:3000',
     trace: 'on-first-retry',
-
-    /* Capture screenshots on failure */
     screenshot: 'only-on-failure',
-
-    /* Capture video on failure */
     video: 'retain-on-failure',
+    /* Timeout for each action (click, fill, etc.) */
+    actionTimeout: 10_000,
   },
 
-  /* Configure projects for major browsers */
+  /* Global test timeout */
+  timeout: 30_000,
+
+  /* Expect timeout */
+  expect: {
+    timeout: 5_000,
+  },
+
   projects: [
+    // ─── Desktop ───────────────────────────────────────
     {
-      name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      name: 'desktop',
+      use: {
+        ...devices['Desktop Chrome'],
+      },
     },
 
+    // ─── Mobile devices ────────────────────────────────
+    // All mobile profiles use Chromium for cross-platform compatibility.
+    // We override defaultBrowserType to avoid WebKit dependency issues
+    // on non-Ubuntu Linux. The viewport/touch/userAgent emulation is
+    // what matters for responsive testing, not the actual browser engine.
     {
-      name: 'firefox',
-      use: { ...devices['Desktop Firefox'] },
+      name: 'mobile',
+      use: {
+        // iPhone SE - small screen (320x568), good for testing tight layouts
+        ...devices['iPhone SE'],
+        defaultBrowserType: 'chromium',
+      },
+    },
+    {
+      name: 'mobile-large',
+      use: {
+        // iPhone 14 Pro Max - large phone (430x932)
+        ...devices['iPhone 14 Pro Max'],
+        defaultBrowserType: 'chromium',
+      },
+    },
+    {
+      name: 'mobile-android',
+      use: {
+        // Pixel 7 - standard Android device (412x915)
+        ...devices['Pixel 7'],
+      },
     },
 
+    // ─── Tablet ────────────────────────────────────────
     {
-      name: 'webkit',
-      use: { ...devices['Desktop Safari'] },
+      name: 'tablet',
+      use: {
+        // iPad Mini landscape - right at the md breakpoint boundary
+        ...devices['iPad Mini landscape'],
+        defaultBrowserType: 'chromium',
+      },
     },
   ],
 
-  /* Using existing dev server running on localhost:3000 */
+  /* Start Next.js dev server before running tests */
+  webServer: {
+    command: 'pnpm run dev',
+    url: 'http://localhost:3000',
+    reuseExistingServer: !process.env.CI,
+    timeout: 60_000,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  },
 });
