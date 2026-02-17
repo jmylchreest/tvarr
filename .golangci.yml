@@ -72,12 +72,17 @@ linters:
       excludes:
         - G104  # Audit errors not checked (covered by errcheck)
         - G115  # Integer overflow in conversions (acceptable for process stats parsing)
+        - G117  # Exported field name matches secret pattern - false positive for API/config structs (Password, AuthToken fields are legitimate)
         - G204  # Subprocess launched with variable (FFmpeg wrapper intentionally uses dynamic commands)
         - G301  # Directory permissions (acceptable for data directories)
         - G302  # File permissions (acceptable for generated files)
         - G306  # WriteFile permissions (acceptable for non-sensitive files)
         - G307  # Deprecated - defer in loop
         - G404  # Use of weak random number generator (acceptable for non-crypto uses)
+        - G703  # Path traversal via taint analysis - false positive: paths are validated before use
+        - G704  # SSRF via taint analysis - false positive: URLs come from user-configured IPTV sources (by design)
+        - G705  # XSS via taint analysis - false positive: we serve binary media streams and JSON, not HTML
+        - G706  # Log injection via taint analysis - false positive: slog structured logging is not injectable
       config:
         global:
           audit: true
@@ -96,6 +101,7 @@ linters:
         - -QF1007  # Merge conditional assignment - style preference
         - -QF1001  # De Morgan's law - style preference
         - -QF1011  # Omit type from declaration - style preference
+        - -QF1012  # Use fmt.Fprintf instead of WriteString(fmt.Sprintf(...)) - style preference
         - -ST1023  # Omit type from declaration - style preference
 
     # Unused code
