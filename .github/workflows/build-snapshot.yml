@@ -76,6 +76,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       version_tag: ${{ steps.version.outputs.version_tag }}
+      skip: ${{ steps.version.outputs.skip }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -86,6 +87,22 @@ jobs:
       - name: Determine version
         id: version
         run: |
+          # Skip snapshot if HEAD is an exact release tag.
+          # This happens when `task release` pushes both the commit and tag
+          # in one operation — the main-branch push triggers Test, which
+          # triggers this workflow, but a real release is already being built
+          # by build-release.yml from the tag push.
+          if git describe --tags --exact-match HEAD 2>/dev/null | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            TAG=$(git describe --tags --exact-match HEAD)
+            echo "HEAD is release tag ${TAG} — skipping snapshot build"
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "version=" >> $GITHUB_OUTPUT
+            echo "version_tag=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "skip=false" >> $GITHUB_OUTPUT
+
           # Version format: X.Y.Z-dev.N-HASH
           # Uses "-" instead of "+" for GitHub releases compatibility
           # Finds latest release tag (vX.Y.Z only, no prereleases), increments patch,
@@ -124,6 +141,7 @@ jobs:
     name: Build Frontend
     runs-on: ubuntu-latest
     needs: prepare
+    if: needs.prepare.outputs.skip != 'true'
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -163,6 +181,7 @@ jobs:
     name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
     runs-on: ubuntu-latest
     needs: [prepare, frontend]
+    if: needs.prepare.outputs.skip != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -246,6 +265,7 @@ jobs:
     name: Snapshot Release
     runs-on: ubuntu-latest
     needs: [prepare, build]
+    if: needs.prepare.outputs.skip != 'true'
     permissions:
       contents: write
     steps:
