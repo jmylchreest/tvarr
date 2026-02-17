@@ -1075,6 +1075,7 @@ export function EpgSources() {
             <MasterDetailLayout
               items={masterItems}
               selectedId={selectedSource?.id}
+              showDetailPanel={isCreating}
               onSelect={(item) => {
                 setSelectedSource(item);
                 if (item) setIsCreating(false);

@@ -478,6 +478,7 @@ export function Proxies() {
               <MasterDetailLayout
                 items={masterItems}
                 selectedId={isCreating ? null : selectedProxy?.id}
+                showDetailPanel={isCreating}
                 onSelect={(item) => {
                   setIsCreating(false);
                   handleSelectProxy(item);

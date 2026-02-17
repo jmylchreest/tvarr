@@ -1026,6 +1026,7 @@ export function EncodingProfiles() {
             <MasterDetailLayout
               items={masterItems}
               selectedId={isCreating ? null : selectedProfile?.id}
+              showDetailPanel={isCreating}
               onSelect={(item) => {
                 setIsCreating(false);
                 setSelectedProfile(item);

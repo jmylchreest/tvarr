@@ -815,6 +815,7 @@ export function EncoderOverrides() {
             <MasterDetailLayout
               items={masterItems}
               selectedId={isCreating ? null : selectedOverride?.id}
+              showDetailPanel={isCreating}
               onSelect={(item) => {
                 setIsCreating(false);
                 setSelectedOverride(item);

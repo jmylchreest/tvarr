@@ -1255,6 +1255,7 @@ export function ClientDetectionRules() {
             <MasterDetailLayout
               items={masterItems}
               selectedId={isCreating ? null : selectedRule?.id}
+              showDetailPanel={isCreating}
               onSelect={(item) => {
                 setIsCreating(false);
                 setSelectedRule(item);
