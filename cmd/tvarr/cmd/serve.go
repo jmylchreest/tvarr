@@ -247,6 +247,15 @@ func runServe(_ *cobra.Command, _ []string) error {
 		}
 	}
 
+	// Recover proxies stuck in "generating" status from a previous crash/restart
+	recovered, err := startup.RecoverStaleProxyStatuses(context.Background(), logger, proxyRepo)
+	if err != nil {
+		logger.Warn("failed to recover stale proxy statuses", slog.Any("error", err))
+	} else if recovered > 0 {
+		logger.Info("recovered stale proxy statuses on startup",
+			slog.Int("recovered_count", recovered))
+	}
+
 	// Initialize storage sandbox
 	sandbox, err := storage.NewSandbox(viper.GetString("storage.base_dir"))
 	if err != nil {
@@ -284,32 +293,16 @@ func runServe(_ *cobra.Command, _ []string) error {
 	logoService := service.NewLogoServiceWithConfig(logoCache, logoServiceConfig).
 		WithLogger(logger)
 
-	// Load logo index with pruning of stale cached logos
+	// Configure logo retention threshold (lightweight, just sets a field).
+	// The actual index load + prune is deferred to a background goroutine
+	// after the HTTP server starts, so startup is not blocked by large logo caches.
 	logoRetention := viper.GetDuration("storage.logo_retention")
 	if logoRetention > 0 {
 		logoService = logoService.WithStalenessThreshold(logoRetention)
-		result, err := logoService.LoadIndexWithOptions(context.Background(), service.LogoIndexerOptions{
-			PruneStaleLogos:    true,
-			StalenessThreshold: logoRetention,
-		})
-		if err != nil {
-			return fmt.Errorf("loading logo index: %w", err)
-		}
-		logger.Info("logo service initialized",
-			slog.Int("logos_loaded", result.TotalLoaded),
-			slog.Int("pruned_count", result.PrunedCount),
-		)
-	} else {
-		result, err := logoService.LoadIndexWithOptions(context.Background(), service.LogoIndexerOptions{
-			PruneStaleLogos: false,
-		})
-		if err != nil {
-			return fmt.Errorf("loading logo index: %w", err)
-		}
-		logger.Info("logo service initialized",
-			slog.Int("logos_loaded", result.TotalLoaded),
-		)
 	}
+	logger.Info("logo service created (index will load in background)",
+		slog.Duration("retention", logoRetention),
+	)
 
 	// Initialize ingestor components
 	stateManager := ingestor.NewStateManager()
@@ -769,6 +762,38 @@ func runServe(_ *cobra.Command, _ []string) error {
 		viper.GetBool("grpc.enabled"),              // prefer remote if external port is enabled
 		viper.GetBool("relay.prefer_remote_probe"), // prefer remote probing
 	)
+
+	// Load logo index in background so it doesn't block server startup.
+	// With large logo caches (10k+ files), the filesystem scan + pruning can
+	// take minutes, which would delay HTTP readiness and trigger K8s liveness
+	// probe failures. The logo service is safe to use with an empty index —
+	// API calls return empty results and the pipeline re-downloads as needed.
+	go func() {
+		logger.Info("starting background logo index load")
+		opts := service.LogoIndexerOptions{
+			PruneStaleLogos:    logoRetention > 0,
+			StalenessThreshold: logoRetention,
+		}
+		result, err := logoService.LoadIndexWithOptions(ctx, opts)
+		if err != nil {
+			// Don't crash — the index will be populated by the next scheduled
+			// logo maintenance job or on the next startup.
+			if ctx.Err() != nil {
+				logger.Info("logo index load cancelled (shutdown)")
+			} else {
+				logger.Warn("failed to load logo index in background",
+					slog.Any("error", err))
+			}
+			return
+		}
+		logger.Info("logo index loaded (background)",
+			slog.Int("logos_loaded", result.TotalLoaded),
+			slog.Int("cached_logos", result.CachedLoaded),
+			slog.Int("uploaded_logos", result.UploadedLoaded),
+			slog.Int("pruned_count", result.PrunedCount),
+			slog.Int64("pruned_bytes", result.PrunedSize),
+		)
+	}()
 
 	// Start server
 	logger.Info("http server ready",

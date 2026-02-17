@@ -2,11 +2,15 @@
 package startup
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/jmylchreest/tvarr/internal/models"
+	"github.com/jmylchreest/tvarr/internal/repository"
 )
 
 // TempDirPrefix is the prefix used for tvarr proxy temp directories.
@@ -96,4 +100,47 @@ const DefaultCleanupAge = 1 * time.Hour
 // temp directory using the default cleanup age.
 func CleanupSystemTempDirs(logger *slog.Logger) (int, error) {
 	return CleanupOrphanedTempDirs(logger, os.TempDir(), DefaultCleanupAge)
+}
+
+// RecoverStaleProxyStatuses resets any proxies stuck in "generating" status back
+// to "failed". This handles the case where the server crashed or was restarted
+// while a proxy generation pipeline was in progress. Without this recovery, proxies
+// would remain permanently stuck in "generating" status in the database since the
+// in-memory pipeline state is lost on restart.
+//
+// Returns the number of proxies recovered and any error encountered.
+func RecoverStaleProxyStatuses(ctx context.Context, logger *slog.Logger, proxyRepo repository.StreamProxyRepository) (int, error) {
+	proxies, err := proxyRepo.GetAll(ctx)
+	if err != nil {
+		logger.Error("failed to get proxies for stale status recovery",
+			"error", err,
+		)
+		return 0, err
+	}
+
+	var recovered int
+	for _, proxy := range proxies {
+		if proxy.Status != models.StreamProxyStatusGenerating {
+			continue
+		}
+
+		logger.Warn("recovering stale proxy status",
+			"proxy_id", proxy.ID.String(),
+			"proxy_name", proxy.Name,
+			"status", proxy.Status,
+		)
+
+		if err := proxyRepo.UpdateStatus(ctx, proxy.ID, models.StreamProxyStatusFailed, "interrupted by server restart"); err != nil {
+			logger.Error("failed to recover stale proxy status",
+				"proxy_id", proxy.ID.String(),
+				"proxy_name", proxy.Name,
+				"error", err,
+			)
+			continue
+		}
+
+		recovered++
+	}
+
+	return recovered, nil
 }

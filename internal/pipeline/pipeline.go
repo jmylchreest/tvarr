@@ -136,9 +136,14 @@ func NewDefaultFactory(
 	}
 
 	factory.RegisterStage(loadchannels.NewConstructor())
-	factory.RegisterStage(loadprograms.NewConstructor())
 	factory.RegisterStage(datamapping.NewConstructor())
 	factory.RegisterStage(filtering.NewConstructor())
+	// Load programs AFTER filtering so only programs for surviving channels
+	// are loaded into memory. This prevents OOM when filters reduce a large
+	// channel set (e.g., 70K channels) down to a small subset. The ChannelMap
+	// is updated by the filtering stage, so loadprograms will only match
+	// programs for channels that passed all filters.
+	factory.RegisterStage(loadprograms.NewConstructor())
 	factory.RegisterStage(numbering.NewConstructor())
 
 	// Logo caching (optional - only if cacher provided)
