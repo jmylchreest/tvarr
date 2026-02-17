@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars -- mockApi fixture must be destructured to activate API mocks */
 import { test, expect } from './fixtures/mock-api';
 
 /**

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars -- mockApi fixture must be destructured to activate API mocks */
 import { test, expect } from './fixtures/mock-api';
 
 /**
@@ -45,8 +46,10 @@ for (const { name, path, listItem } of createFlowPages) {
       await clickAddButton(page);
 
       if (vp.isMobile) {
-        // On mobile, the detail panel should swap in with a Back button
-        await expect(page.getByRole('button', { name: 'Back', exact: true })).toBeVisible({ timeout: 5_000 });
+        // On mobile, the detail panel should swap in with a Back button.
+        // Use .first() because some pages (e.g., Proxies) have a wizard
+        // with its own "Back" button in addition to the layout's.
+        await expect(page.getByRole('button', { name: 'Back', exact: true }).first()).toBeVisible({ timeout: 5_000 });
       } else {
         // On desktop, the detail panel is always visible — create form
         // renders in the right pane. The master list stays visible too.
@@ -61,10 +64,12 @@ for (const { name, path, listItem } of createFlowPages) {
       await page.getByText(listItem).click();
 
       if (vp.isMobile) {
-        await expect(page.getByRole('button', { name: 'Back', exact: true })).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Back', exact: true }).first()).toBeVisible();
       } else {
-        // On desktop, both panels visible — item highlighted, detail shows
-        await expect(page.getByText(listItem)).toBeVisible();
+        // On desktop, both panels visible — the item name appears in the
+        // master list AND the detail panel heading, so use .first() to
+        // avoid strict mode violations from multiple matches.
+        await expect(page.getByText(listItem).first()).toBeVisible();
       }
     });
   });
@@ -82,7 +87,7 @@ test.describe('Proxies — Detail Interactions', () => {
     await page.getByText('UK Freeview').click();
 
     if (vp.isMobile) {
-      await expect(page.getByRole('button', { name: 'Back', exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Back', exact: true }).first()).toBeVisible();
     }
 
     // Click edit — should show wizard
@@ -109,7 +114,7 @@ test.describe('Transcoders — Select Item', () => {
     await daemonButton.click();
 
     if (vp.isMobile) {
-      await expect(page.getByRole('button', { name: 'Back', exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Back', exact: true }).first()).toBeVisible();
     }
   });
 });
@@ -148,10 +153,10 @@ test.describe('Mobile Layout', () => {
 
     // Select a proxy
     await page.getByText('UK Freeview').click();
-    await expect(page.getByRole('button', { name: 'Back', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Back', exact: true }).first()).toBeVisible();
 
-    // Click back
-    await page.getByRole('button', { name: 'Back', exact: true }).click();
+    // Click back (the layout's Back, which is always first)
+    await page.getByRole('button', { name: 'Back', exact: true }).first().click();
 
     // Master list should be visible again
     await expect(page.getByText('UK Freeview')).toBeVisible();

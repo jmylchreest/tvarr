@@ -412,10 +412,11 @@ export interface ViewportInfo {
  * Note: The viewport fixture is named `vp` (not `viewport`) to avoid
  * conflicting with Playwright's built-in `viewport` fixture.
  */
+/* eslint-disable react-hooks/rules-of-hooks -- `use` is Playwright's fixture API, not React's hook */
 export const test = base.extend<{ mockApi: MockApiFixture; vp: ViewportInfo }>({
   mockApi: async ({ page }, use) => {
-    const mockApi = await setupApiMocks(page);
-    await use(mockApi);
+    const fixture = await setupApiMocks(page);
+    await use(fixture);
   },
   vp: async ({ page }, use) => {
     const size = page.viewportSize() ?? { width: 1280, height: 720 };
@@ -428,5 +429,6 @@ export const test = base.extend<{ mockApi: MockApiFixture; vp: ViewportInfo }>({
     });
   },
 });
+/* eslint-enable react-hooks/rules-of-hooks */
 
 export { expect } from '@playwright/test';
