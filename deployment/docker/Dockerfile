@@ -108,9 +108,9 @@ VOLUME ["/data"]
 # Expose HTTP port
 EXPOSE 8080
 
-# Health check (Docker uses /health, K8s uses /livez and /readyz)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD curl -sf http://localhost:${TVARR_SERVER_PORT:-8080}/health || exit 1
+# Health check using lightweight liveness endpoint (no DB queries or system metrics)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -sf http://localhost:${TVARR_SERVER_PORT:-8080}/livez || exit 1
 
 # Entrypoint handles user setup and signal handling
 ENTRYPOINT ["/entrypoint.sh"]
