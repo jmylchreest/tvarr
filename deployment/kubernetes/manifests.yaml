@@ -119,6 +119,13 @@ spec:
           envFrom:
             - configMapRef:
                 name: tvarr-config
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
           livenessProbe:
             httpGet:
               path: /livez

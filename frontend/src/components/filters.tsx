@@ -658,6 +658,7 @@ export function Filters({
           <MasterDetailLayout
             items={masterItems}
             selectedId={selectedFilter?.id}
+            showDetailPanel={isCreating}
             onSelect={(item) => {
               setSelectedFilter(item);
               if (item) setIsCreating(false);

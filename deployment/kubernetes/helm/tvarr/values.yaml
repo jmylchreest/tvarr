@@ -286,6 +286,19 @@ extraEnv: []
   #       name: tvarr-secrets
   #       key: secret-key
 
+# Startup probe configuration
+# While the startup probe is active, liveness and readiness probes are disabled.
+# This allows the server time to initialize (database migrations, FFmpeg detection, etc.)
+# without being killed by the liveness probe.
+# failureThreshold * periodSeconds = 30 * 10 = 300s (5 minutes) max startup time.
+startupProbe:
+  httpGet:
+    path: /livez
+    port: http
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 30
+
 # Liveness probe configuration
 livenessProbe:
   httpGet:

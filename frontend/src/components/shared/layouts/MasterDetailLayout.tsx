@@ -104,6 +104,9 @@ export interface MasterDetailLayoutProps<T extends MasterItem> {
   defaultCollapsed?: boolean;
   /** localStorage key to persist collapsed state (e.g., 'transcoders-panel') */
   storageKey?: string;
+  /** Force the detail panel to be visible on mobile (e.g., during create mode
+   *  when selectedId is null but the detail panel has content to show) */
+  showDetailPanel?: boolean;
 }
 
 /**
@@ -211,6 +214,7 @@ export function MasterDetailLayout<T extends MasterItem>({
   onReorder,
   defaultCollapsed = false,
   storageKey,
+  showDetailPanel = false,
 }: MasterDetailLayoutProps<T>) {
   const [searchTerm, setSearchTerm] = useState('');
   const [isMobile, setIsMobile] = useState(false);
@@ -259,12 +263,16 @@ export function MasterDetailLayout<T extends MasterItem>({
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // On mobile, show detail panel when an item is selected
+  // On mobile, show detail panel when an item is selected OR when the
+  // consumer explicitly requests it (e.g., during create mode where
+  // selectedId is null but the detail panel has content to display).
   useEffect(() => {
-    if (isMobile && selectedId) {
+    if (isMobile && (selectedId || showDetailPanel)) {
       setShowDetailOnMobile(true);
+    } else if (isMobile && !selectedId && !showDetailPanel) {
+      setShowDetailOnMobile(false);
     }
-  }, [isMobile, selectedId]);
+  }, [isMobile, selectedId, showDetailPanel]);
 
   // Handle back navigation on mobile
   const handleMobileBack = useCallback(() => {
@@ -665,13 +673,13 @@ export function MasterDetailLayout<T extends MasterItem>({
       {showDetail && (
         <div className={cn('flex-1 overflow-hidden flex flex-col min-h-0', isMobile && 'w-full')}>
           {/* Mobile back button header */}
-          {isMobile && selectedItem && (
+          {isMobile && (selectedItem || showDetailPanel) && (
             <div className="flex items-center gap-2 px-4 py-3 border-b bg-card">
               <Button size="sm" variant="ghost" onClick={handleMobileBack}>
                 <ChevronLeft className="h-4 w-4 mr-1" />
                 Back
               </Button>
-              <span className="font-medium truncate">{selectedItem.title}</span>
+              {selectedItem && <span className="font-medium truncate">{selectedItem.title}</span>}
             </div>
           )}
           <div className="flex-1 overflow-hidden min-h-0">{children(selectedItem)}</div>

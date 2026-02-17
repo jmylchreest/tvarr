@@ -777,6 +777,7 @@ export function DataMapping() {
             <MasterDetailLayout
               items={masterItems}
               selectedId={selectedRule?.id}
+              showDetailPanel={isCreating}
               onSelect={(item) => {
                 setSelectedRule(item);
                 if (item) setIsCreating(false);

@@ -1384,6 +1384,7 @@ export function StreamSources() {
               <MasterDetailLayout
                 items={masterItems}
                 selectedId={isCreating ? null : selectedSourceId}
+                showDetailPanel={isCreating}
                 onSelect={(item) => {
                   setIsCreating(false);
                   setSelectedSourceId(item?.id ?? null);

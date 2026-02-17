@@ -15,6 +15,7 @@ import {
   SidebarMenu,
   SidebarMenuItem,
   SidebarMenuButton,
+  useSidebar,
 } from '@/components/ui/sidebar';
 import { navigation, Radio } from '@/lib/navigation';
 import { apiClient } from '@/lib/api-client';
@@ -22,7 +23,14 @@ import type { VersionInfo } from '@/types/api';
 
 export function AppSidebar() {
   const pathname = usePathname();
+  const { setOpenMobile } = useSidebar();
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
+
+  // Close mobile sidebar sheet when the route changes.
+  // Without this, the Sheet stays open after clicking a navigation link.
+  useEffect(() => {
+    setOpenMobile(false);
+  }, [pathname, setOpenMobile]);
 
   // Track collapsed groups; Debug collapsed by default
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set(['Debug']));
