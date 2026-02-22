@@ -80,7 +80,7 @@ WORKDIR /src
 RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
     apt-get install -y --no-install-recommends nodejs upx && \
     npm install -g pnpm && \
-    sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin && \
+    sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin v3.48.0 && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy go mod files first for better layer caching

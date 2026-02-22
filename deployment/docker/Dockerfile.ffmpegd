@@ -14,7 +14,7 @@ FROM golang:latest AS builder
 WORKDIR /src
 
 # Install Task and UPX
-RUN sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin && \
+RUN sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin v3.48.0 && \
     apt-get update && apt-get install -y --no-install-recommends upx && \
     rm -rf /var/lib/apt/lists/*
 

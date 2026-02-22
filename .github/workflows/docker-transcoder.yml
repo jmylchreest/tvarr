@@ -147,7 +147,9 @@ jobs:
           fetch-tags: true  # Explicitly fetch tags for version detection
 
       - name: Install Task
-        run: sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
+        uses: go-task/setup-task@v1
+        with:
+          version: 3.x
 
       - name: Debug version info
         run: |
