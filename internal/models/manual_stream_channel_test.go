@@ -115,7 +115,7 @@ func TestManualStreamChannel_FullModel(t *testing.T) {
 		Language:      "en",
 		Country:       "US",
 		IsAdult:       true,
-		Enabled:       BoolPtr(true),
+		Enabled:       new(true),
 		Priority:      10,
 		Extra:         `{"rating": "R"}`,
 	}

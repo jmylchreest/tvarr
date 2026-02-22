@@ -563,7 +563,7 @@ func TestScheduler_LoadSchedules(t *testing.T) {
 	sourceID := models.NewULID()
 	source := &models.StreamSource{
 		Name:         "Test Source",
-		Enabled:      models.BoolPtr(true),
+		Enabled:      new(true),
 		CronSchedule: "0 * * * * *", // Every minute (6-field with seconds)
 	}
 	source.ID = sourceID

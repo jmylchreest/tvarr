@@ -35,7 +35,7 @@ func TestEpgSourceRepo_Create(t *testing.T) {
 		Name:    "Test EPG",
 		Type:    models.EpgSourceTypeXMLTV,
 		URL:     "http://example.com/epg.xml",
-		Enabled: models.BoolPtr(true),
+		Enabled: new(true),
 	}
 
 	err := repo.Create(ctx, source)
@@ -52,7 +52,7 @@ func TestEpgSourceRepo_GetByID(t *testing.T) {
 		Name:    "Find Me EPG",
 		Type:    models.EpgSourceTypeXMLTV,
 		URL:     "http://example.com/find.xml",
-		Enabled: models.BoolPtr(true),
+		Enabled: new(true),
 	}
 	require.NoError(t, repo.Create(ctx, source))
 
@@ -92,7 +92,7 @@ func TestEpgSourceRepo_GetAll(t *testing.T) {
 			Type:     models.EpgSourceTypeXMLTV,
 			URL:      "http://example.com/" + s.name + ".xml",
 			Priority: s.priority,
-			Enabled:  models.BoolPtr(true),
+			Enabled:  new(true),
 		}
 		require.NoError(t, repo.Create(ctx, src))
 	}
@@ -117,7 +117,7 @@ func TestEpgSourceRepo_GetEnabled(t *testing.T) {
 		Name:    "Enabled EPG",
 		Type:    models.EpgSourceTypeXMLTV,
 		URL:     "http://example.com/enabled.xml",
-		Enabled: models.BoolPtr(true),
+		Enabled: new(true),
 	}
 	require.NoError(t, repo.Create(ctx, enabled))
 
@@ -136,7 +136,7 @@ func TestEpgSourceRepo_GetEnabled(t *testing.T) {
 		Name:    "Nil Enabled EPG",
 		Type:    models.EpgSourceTypeXMLTV,
 		URL:     "http://example.com/nil.xml",
-		Enabled: models.BoolPtr(true),
+		Enabled: new(true),
 	}
 	require.NoError(t, repo.Create(ctx, nilEnabled))
 
@@ -159,7 +159,7 @@ func TestEpgSourceRepo_Update(t *testing.T) {
 		Name:    "Original EPG",
 		Type:    models.EpgSourceTypeXMLTV,
 		URL:     "http://example.com/original.xml",
-		Enabled: models.BoolPtr(true),
+		Enabled: new(true),
 	}
 	require.NoError(t, repo.Create(ctx, source))
 
@@ -189,7 +189,7 @@ func TestEpgSourceRepo_Delete(t *testing.T) {
 		Name:    "To Delete EPG",
 		Type:    models.EpgSourceTypeXMLTV,
 		URL:     "http://example.com/delete.xml",
-		Enabled: models.BoolPtr(true),
+		Enabled: new(true),
 	}
 	require.NoError(t, repo.Create(ctx, source))
 
@@ -210,7 +210,7 @@ func TestEpgSourceRepo_Delete_AllowsRecreateSameName(t *testing.T) {
 		Name:    "Reusable Name",
 		Type:    models.EpgSourceTypeXMLTV,
 		URL:     "http://example.com/reuse.xml",
-		Enabled: models.BoolPtr(true),
+		Enabled: new(true),
 	}
 	require.NoError(t, repo.Create(ctx, source))
 
@@ -222,7 +222,7 @@ func TestEpgSourceRepo_Delete_AllowsRecreateSameName(t *testing.T) {
 		Name:    "Reusable Name",
 		Type:    models.EpgSourceTypeXMLTV,
 		URL:     "http://example.com/reuse2.xml",
-		Enabled: models.BoolPtr(true),
+		Enabled: new(true),
 	}
 	err := repo.Create(ctx, source2)
 	require.NoError(t, err)
@@ -237,7 +237,7 @@ func TestEpgSourceRepo_GetByName(t *testing.T) {
 		Name:    "Named EPG Source",
 		Type:    models.EpgSourceTypeXMLTV,
 		URL:     "http://example.com/named.xml",
-		Enabled: models.BoolPtr(true),
+		Enabled: new(true),
 	}
 	require.NoError(t, repo.Create(ctx, source))
 
@@ -264,7 +264,7 @@ func TestEpgSourceRepo_GetByURL(t *testing.T) {
 		Name:    "URL Lookup EPG",
 		Type:    models.EpgSourceTypeXMLTV,
 		URL:     "http://example.com/unique-epg.xml",
-		Enabled: models.BoolPtr(true),
+		Enabled: new(true),
 	}
 	require.NoError(t, repo.Create(ctx, source))
 
@@ -291,7 +291,7 @@ func TestEpgSourceRepo_UpdateLastIngestion(t *testing.T) {
 		Name:    "Ingest EPG",
 		Type:    models.EpgSourceTypeXMLTV,
 		URL:     "http://example.com/ingest.xml",
-		Enabled: models.BoolPtr(true),
+		Enabled: new(true),
 	}
 	require.NoError(t, repo.Create(ctx, source))
 
@@ -316,7 +316,7 @@ func TestEpgSourceRepo_DuplicateName(t *testing.T) {
 		Name:    "Duplicate",
 		Type:    models.EpgSourceTypeXMLTV,
 		URL:     "http://example.com/dup1.xml",
-		Enabled: models.BoolPtr(true),
+		Enabled: new(true),
 	}
 	require.NoError(t, repo.Create(ctx, source1))
 
@@ -324,7 +324,7 @@ func TestEpgSourceRepo_DuplicateName(t *testing.T) {
 		Name:    "Duplicate",
 		Type:    models.EpgSourceTypeXMLTV,
 		URL:     "http://example.com/dup2.xml",
-		Enabled: models.BoolPtr(true),
+		Enabled: new(true),
 	}
 	err := repo.Create(ctx, source2)
 	assert.Error(t, err)

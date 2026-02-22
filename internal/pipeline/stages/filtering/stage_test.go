@@ -106,8 +106,9 @@ func makeProxyFilter(
 	}
 }
 
+//go:fix inline
 func boolPtr(b bool) *bool {
-	return &b
+	return new(b)
 }
 
 // ---------------------------------------------------------------------------
@@ -939,9 +940,9 @@ func TestExecute_LoadFiltersFromProxy(t *testing.T) {
 	}
 
 	pf1 := makeProxyFilter(t, 1, models.FilterSourceTypeStream, models.FilterActionInclude,
-		`group_title equals "Sports"`, "Include Sports", boolPtr(true))
+		`group_title equals "Sports"`, "Include Sports", new(true))
 	pf2 := makeProxyFilter(t, 2, models.FilterSourceTypeStream, models.FilterActionExclude,
-		`channel_name contains ""`, "Exclude All", boolPtr(false)) // Inactive
+		`channel_name contains ""`, "Exclude All", new(false)) // Inactive
 	pf3 := makeProxyFilter(t, 3, models.FilterSourceTypeEPG, models.FilterActionInclude,
 		`programme_category equals "News"`, "Include News Programs", nil) // nil = active
 
@@ -1075,7 +1076,7 @@ func TestExecute_LoadFiltersFromProxy_EmptyFilters_Passthrough(t *testing.T) {
 
 func TestExecute_LoadFiltersFromProxy_InactiveAll(t *testing.T) {
 	pf := makeProxyFilter(t, 1, models.FilterSourceTypeStream, models.FilterActionInclude,
-		`channel_name contains "Test"`, "Inactive Include", boolPtr(false))
+		`channel_name contains "Test"`, "Inactive Include", new(false))
 
 	state := makeProxyState(t,
 		[]*models.Channel{makeChannel("ch1", "Test", "General")},

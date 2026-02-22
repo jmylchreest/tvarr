@@ -231,7 +231,7 @@ func (h *EncoderOverrideHandler) Create(ctx context.Context, input *CreateEncode
 		HWAccelMatch:  input.Body.HWAccelMatch,
 		CPUMatch:      input.Body.CPUMatch,
 		Priority:      input.Body.Priority,
-		IsEnabled:     models.BoolPtr(true),
+		IsEnabled:     new(true),
 	}
 
 	if input.Body.IsEnabled != nil {

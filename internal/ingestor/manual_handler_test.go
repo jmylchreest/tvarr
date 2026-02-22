@@ -149,7 +149,7 @@ func TestManualHandler_Ingest(t *testing.T) {
 					ChannelName: "Channel 1",
 					StreamURL:   "http://stream1.com/live",
 					GroupTitle:  "Movies",
-					Enabled:     models.BoolPtr(true),
+					Enabled:     new(true),
 				},
 				{
 					BaseModel:   models.BaseModel{ID: ch2ID},
@@ -157,14 +157,14 @@ func TestManualHandler_Ingest(t *testing.T) {
 					ChannelName: "Channel 2",
 					StreamURL:   "http://stream2.com/live",
 					GroupTitle:  "Sports",
-					Enabled:     models.BoolPtr(true),
+					Enabled:     new(true),
 				},
 				{
 					BaseModel:   models.BaseModel{ID: ch3ID},
 					SourceID:    sourceID,
 					ChannelName: "Disabled Channel",
 					StreamURL:   "http://stream3.com/live",
-					Enabled:     models.BoolPtr(false), // Should be filtered out
+					Enabled:     new(false), // Should be filtered out
 				},
 			},
 		}
@@ -220,7 +220,7 @@ func TestManualHandler_Ingest(t *testing.T) {
 					SourceID:    sourceID,
 					ChannelName: "Channel 1",
 					StreamURL:   "http://stream1.com/live",
-					Enabled:     models.BoolPtr(true),
+					Enabled:     new(true),
 				},
 			},
 		}
@@ -278,7 +278,7 @@ func TestManualHandler_ChannelConversion(t *testing.T) {
 				Language:      "en",
 				Country:       "US",
 				IsAdult:       false,
-				Enabled:       models.BoolPtr(true),
+				Enabled:       new(true),
 				Priority:      10,
 				Extra:         `{"custom":"value"}`,
 			},

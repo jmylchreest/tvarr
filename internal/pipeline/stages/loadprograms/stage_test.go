@@ -82,15 +82,16 @@ func (m *mockProgramRepo) DeleteOld(ctx context.Context) (int64, error) {
 
 // --- Helpers ---
 
+//go:fix inline
 func boolPtr(b bool) *bool {
-	return &b
+	return new(b)
 }
 
 func makeEpgSource(name string, enabled bool) *models.EpgSource {
 	return &models.EpgSource{
 		BaseModel: models.BaseModel{ID: models.NewULID()},
 		Name:      name,
-		Enabled:   boolPtr(enabled),
+		Enabled:   new(enabled),
 	}
 }
 

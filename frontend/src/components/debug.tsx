@@ -68,6 +68,7 @@ interface ChartDataPoint {
   swapUsed: number;
   processMemory: number;
   childProcessMemory: number;
+  numGoroutines: number;
 }
 
 interface MemoryInfo {
@@ -997,6 +998,7 @@ export function Debug() {
           swapUsed: healthData.memory.swap_used_mb || 0,
           processMemory: healthData.memory.process_memory.main_process_mb || 0,
           childProcessMemory: healthData.memory.process_memory.child_processes_mb || 0,
+          numGoroutines: healthData.num_goroutines || 0,
         };
 
         setChartData((prev) => {
@@ -1498,6 +1500,76 @@ export function Debug() {
                 <div className="text-center">
                   <HardDrive className="h-12 w-12 mx-auto mb-2 opacity-50" />
                   <p>Start monitoring to see memory usage data</p>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Goroutines Chart */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Activity className="h-5 w-5" />
+              Goroutines
+            </CardTitle>
+            <CardDescription>
+              Number of active goroutines over time ({chartData.length} data points)
+              {chartData.length > 0 && ` • Current: ${chartData[chartData.length - 1].numGoroutines}`}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {chartData.length > 0 ? (
+              <ChartContainer
+                config={
+                  {
+                    numGoroutines: {
+                      label: 'Goroutines',
+                      color: 'var(--chart-4)',
+                    },
+                  } satisfies ChartConfig
+                }
+                className="h-[300px] w-full"
+              >
+                <AreaChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="time" tickLine={false} axisLine={false} />
+                  <YAxis
+                    tickLine={false}
+                    axisLine={false}
+                    domain={[0, 'dataMax']}
+                    tickFormatter={(value) => `${Math.round(value)}`}
+                    allowDecimals={false}
+                  />
+                  <ChartTooltip
+                    content={
+                      <ChartTooltipContent
+                        labelFormatter={(label) => `Time: ${label}`}
+                        formatter={(value, name) => {
+                          const nameMap: Record<string, string> = {
+                            numGoroutines: 'Goroutines',
+                          };
+                          return [`${Math.round(Number(value))} `, nameMap[name] || name];
+                        }}
+                      />
+                    }
+                  />
+                  <ChartLegend />
+                  <Area
+                    type="monotone"
+                    dataKey="numGoroutines"
+                    stroke="var(--color-numGoroutines)"
+                    fill="var(--color-numGoroutines)"
+                    fillOpacity={0.6}
+                    strokeWidth={2}
+                  />
+                </AreaChart>
+              </ChartContainer>
+            ) : (
+              <div className="h-[300px] flex items-center justify-center text-muted-foreground">
+                <div className="text-center">
+                  <Activity className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                  <p>Start monitoring to see goroutine count data</p>
                 </div>
               </div>
             )}

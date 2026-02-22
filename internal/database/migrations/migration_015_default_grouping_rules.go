@@ -83,7 +83,7 @@ func createGroupingDataMappingRules(tx *gorm.DB) error {
 			Expression:  `group_title matches "^([A-Z]{2,4})\\|" SET country = "$1"`,
 			Priority:    1,
 			StopOnMatch: false,
-			IsEnabled:   models.BoolPtr(true),
+			IsEnabled:   new(true),
 			IsSystem:    true,
 		},
 		{
@@ -93,7 +93,7 @@ func createGroupingDataMappingRules(tx *gorm.DB) error {
 			Expression:  `group_title matches "(?i)\\b(adult|xxx|18\\+|porn)" SET group_title = "Adult", is_adult = true`,
 			Priority:    2,
 			StopOnMatch: false,
-			IsEnabled:   models.BoolPtr(true),
+			IsEnabled:   new(true),
 			IsSystem:    true,
 		},
 		// Category grouping rules - disabled by default

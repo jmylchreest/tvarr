@@ -50,7 +50,7 @@ func createDefaultEncoderOverrides(tx *gorm.DB) error {
 			HWAccelMatch:  "vaapi",
 			CPUMatch:      "",
 			Priority:      100,
-			IsEnabled:     models.BoolPtr(false),
+			IsEnabled:     new(false),
 			IsSystem:      true,
 		},
 	}

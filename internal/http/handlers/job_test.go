@@ -696,7 +696,7 @@ func TestJobHandler_TriggerStreamIngestion(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		sourceID := models.NewULID()
-		source := &models.StreamSource{Name: "Test Source", Enabled: models.BoolPtr(true)}
+		source := &models.StreamSource{Name: "Test Source", Enabled: new(true)}
 		source.ID = sourceID
 		streamRepo.sources[sourceID] = source
 
@@ -722,7 +722,7 @@ func TestJobHandler_TriggerEpgIngestion(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		sourceID := models.NewULID()
-		source := &models.EpgSource{Name: "Test EPG", Enabled: models.BoolPtr(true)}
+		source := &models.EpgSource{Name: "Test EPG", Enabled: new(true)}
 		source.ID = sourceID
 		epgRepo.sources[sourceID] = source
 
@@ -748,7 +748,7 @@ func TestJobHandler_TriggerProxyGeneration(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		proxyID := models.NewULID()
-		proxy := &models.StreamProxy{Name: "Test Proxy", IsActive: models.BoolPtr(true)}
+		proxy := &models.StreamProxy{Name: "Test Proxy", IsActive: new(true)}
 		proxy.ID = proxyID
 		proxyRepo.proxies[proxyID] = proxy
 

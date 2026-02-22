@@ -146,6 +146,7 @@ func (h *HealthHandler) GetHealth(ctx context.Context, input *HealthInput) (*Hea
 			Uptime:        uptime.Round(time.Second).String(),
 			UptimeSeconds: uptime.Seconds(),
 			SystemLoad:    cpuInfo.LoadPercentage1Min / 100, // Normalize to 0-1 for backward compat
+			NumGoroutines: runtime.NumGoroutine(),
 			CPUInfo:       cpuInfo,
 			Memory:        memInfo,
 			Components: HealthComponents{

@@ -160,7 +160,7 @@ func TestEncodingProfileService_Update_SystemProfile_OnlyEnabledToggle(t *testin
 		TargetAudioCodec: models.AudioCodecAAC,
 		QualityPreset:    models.QualityPresetMedium,
 		IsSystem:         true,
-		Enabled:          models.BoolPtr(true),
+		Enabled:          new(true),
 	}
 	require.NoError(t, db.Create(systemProfile).Error)
 
@@ -171,7 +171,7 @@ func TestEncodingProfileService_Update_SystemProfile_OnlyEnabledToggle(t *testin
 
 	// Toggle enabled - should work
 	systemProfile.Name = "System Profile" // Reset to original
-	systemProfile.Enabled = models.BoolPtr(false)
+	systemProfile.Enabled = new(false)
 	err = svc.Update(ctx, systemProfile)
 	require.NoError(t, err)
 
@@ -279,7 +279,7 @@ func TestEncodingProfileService_ToggleEnabled(t *testing.T) {
 		TargetVideoCodec: models.VideoCodecH264,
 		TargetAudioCodec: models.AudioCodecAAC,
 		QualityPreset:    models.QualityPresetMedium,
-		Enabled:          models.BoolPtr(true),
+		Enabled:          new(true),
 	}
 	require.NoError(t, svc.Create(ctx, profile))
 

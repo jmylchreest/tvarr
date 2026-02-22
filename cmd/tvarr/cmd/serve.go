@@ -134,18 +134,19 @@ func runServe(_ *cobra.Command, _ []string) error {
 		slog.String("platform", versionInfo.Platform),
 	)
 
-	// Start pprof server if enabled
+	// Start pprof server if enabled (shutdown is handled after ctx is created below)
+	var pprofServer *http.Server
 	if viper.GetBool("profiling.pprof") {
 		pprofPort := viper.GetInt("profiling.pprof_port")
 		pprofAddr := fmt.Sprintf("localhost:%d", pprofPort)
+		pprofServer = &http.Server{Addr: pprofAddr, Handler: http.DefaultServeMux} //nolint:gosec // G114: pprof server doesn't need timeouts
 		go func() {
 			logger.Info("pprof server starting",
 				slog.String("address", pprofAddr),
 				slog.String("cpu_profile", fmt.Sprintf("http://%s/debug/pprof/profile", pprofAddr)),
 				slog.String("heap_profile", fmt.Sprintf("http://%s/debug/pprof/heap", pprofAddr)),
 			)
-			// Uses http.DefaultServeMux which has pprof handlers registered via blank import
-			if err := http.ListenAndServe(pprofAddr, nil); err != nil { //nolint:gosec // G114: pprof server doesn't need timeouts
+			if err := pprofServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				logger.Error("pprof server failed", slog.String("error", err.Error()))
 			}
 		}()
@@ -655,6 +656,18 @@ func runServe(_ *cobra.Command, _ []string) error {
 		logger.Info("shutdown initiated", slog.String("signal", sig.String()))
 		cancel()
 	}()
+
+	// Shut down pprof server when context is cancelled
+	if pprofServer != nil {
+		go func() {
+			<-ctx.Done()
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer shutdownCancel()
+			if err := pprofServer.Shutdown(shutdownCtx); err != nil {
+				logger.Error("pprof server shutdown failed", slog.String("error", err.Error()))
+			}
+		}()
+	}
 
 	// Start database stats monitor (logs every 30 minutes for SQLite)
 	db.StartStatsMonitor(ctx)

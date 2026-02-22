@@ -260,7 +260,7 @@ func (g *PlaceholderSegmentGenerator) GenerateSegment(sequence uint64) (*Segment
 	videoSamples := make([]ESSample, 0, len(g.cached.VideoSamples)*loopCount)
 	audioSamples := make([]ESSample, 0, len(g.cached.AudioSamples)*loopCount)
 
-	for loop := 0; loop < loopCount; loop++ {
+	for loop := range loopCount {
 		loopOffset := int64(loop) * loopDurationPTS
 
 		for _, sample := range g.cached.VideoSamples {

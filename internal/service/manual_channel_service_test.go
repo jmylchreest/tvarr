@@ -180,7 +180,7 @@ func TestManualChannelService_ListBySourceID(t *testing.T) {
 	manualSource := &models.StreamSource{
 		Name:    "Test Manual Source",
 		Type:    models.SourceTypeManual,
-		Enabled: models.BoolPtr(true),
+		Enabled: new(true),
 	}
 	if err := sourceRepo.Create(ctx, manualSource); err != nil {
 		t.Fatalf("failed to create source: %v", err)
@@ -191,13 +191,13 @@ func TestManualChannelService_ListBySourceID(t *testing.T) {
 		SourceID:    manualSource.ID,
 		ChannelName: "Test Channel 1",
 		StreamURL:   "http://example.com/stream1",
-		Enabled:     models.BoolPtr(true),
+		Enabled:     new(true),
 	}
 	ch2 := &models.ManualStreamChannel{
 		SourceID:    manualSource.ID,
 		ChannelName: "Test Channel 2",
 		StreamURL:   "http://example.com/stream2",
-		Enabled:     models.BoolPtr(true),
+		Enabled:     new(true),
 	}
 	if err := channelRepo.Create(ctx, ch1); err != nil {
 		t.Fatalf("failed to create channel 1: %v", err)
@@ -223,7 +223,7 @@ func TestManualChannelService_ListBySourceID(t *testing.T) {
 			Name:    "M3U Source",
 			Type:    models.SourceTypeM3U,
 			URL:     "http://example.com/playlist.m3u",
-			Enabled: models.BoolPtr(true),
+			Enabled: new(true),
 		}
 		if err := sourceRepo.Create(ctx, m3uSource); err != nil {
 			t.Fatalf("failed to create m3u source: %v", err)
@@ -253,7 +253,7 @@ func TestManualChannelService_ReplaceChannels(t *testing.T) {
 	manualSource := &models.StreamSource{
 		Name:    "Test Manual Source",
 		Type:    models.SourceTypeManual,
-		Enabled: models.BoolPtr(true),
+		Enabled: new(true),
 	}
 	if err := sourceRepo.Create(ctx, manualSource); err != nil {
 		t.Fatalf("failed to create source: %v", err)
@@ -266,12 +266,12 @@ func TestManualChannelService_ReplaceChannels(t *testing.T) {
 			{
 				ChannelName: "New Channel 1",
 				StreamURL:   "http://example.com/new1",
-				Enabled:     models.BoolPtr(true),
+				Enabled:     new(true),
 			},
 			{
 				ChannelName: "New Channel 2",
 				StreamURL:   "https://example.com/new2",
-				Enabled:     models.BoolPtr(true),
+				Enabled:     new(true),
 			},
 		}
 
@@ -289,7 +289,7 @@ func TestManualChannelService_ReplaceChannels(t *testing.T) {
 			{
 				ChannelName: "",
 				StreamURL:   "http://example.com/stream",
-				Enabled:     models.BoolPtr(true),
+				Enabled:     new(true),
 			},
 		}
 
@@ -304,7 +304,7 @@ func TestManualChannelService_ReplaceChannels(t *testing.T) {
 			{
 				ChannelName: "Test Channel",
 				StreamURL:   "ftp://example.com/stream",
-				Enabled:     models.BoolPtr(true),
+				Enabled:     new(true),
 			},
 		}
 
@@ -320,7 +320,7 @@ func TestManualChannelService_ReplaceChannels(t *testing.T) {
 				ChannelName: "Test Channel",
 				StreamURL:   "http://example.com/stream",
 				TvgLogo:     "invalid-logo",
-				Enabled:     models.BoolPtr(true),
+				Enabled:     new(true),
 			},
 		}
 
@@ -335,7 +335,7 @@ func TestManualChannelService_ReplaceChannels(t *testing.T) {
 			Name:    "M3U Source",
 			Type:    models.SourceTypeM3U,
 			URL:     "http://example.com/playlist.m3u",
-			Enabled: models.BoolPtr(true),
+			Enabled: new(true),
 		}
 		if err := sourceRepo.Create(ctx, m3uSource); err != nil {
 			t.Fatalf("failed to create m3u source: %v", err)
@@ -345,7 +345,7 @@ func TestManualChannelService_ReplaceChannels(t *testing.T) {
 			{
 				ChannelName: "Test",
 				StreamURL:   "http://example.com/stream",
-				Enabled:     models.BoolPtr(true),
+				Enabled:     new(true),
 			},
 		}
 

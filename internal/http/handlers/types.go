@@ -88,7 +88,7 @@ func (r *CreateStreamSourceRequest) ToModel() *models.StreamSource {
 		Username:             r.Username,
 		Password:             r.Password,
 		UserAgent:            r.UserAgent,
-		Enabled:              models.BoolPtr(true),
+		Enabled:              new(true),
 		Priority:             0,
 		MaxConcurrentStreams: 1, // Default: 1 concurrent stream
 		CronSchedule:         r.CronSchedule,
@@ -232,7 +232,7 @@ func (r *CreateEpgSourceRequest) ToModel() *models.EpgSource {
 		ApiMethod:     r.ApiMethod,
 		UserAgent:     r.UserAgent,
 		EpgShift:      0,
-		Enabled:       models.BoolPtr(true),
+		Enabled:       new(true),
 		Priority:      0,
 		CronSchedule:  r.CronSchedule,
 		RetentionDays: 1,
@@ -500,7 +500,7 @@ func (r *CreateStreamProxyRequest) ToModel() *models.StreamProxy {
 		Name:                  r.Name,
 		Description:           r.Description,
 		ProxyMode:             models.StreamProxyModeDirect, // Default
-		IsActive:              models.BoolPtr(true),
+		IsActive:              new(true),
 		AutoRegenerate:        false,
 		StartingChannelNumber: 1,
 		NumberingMode:         models.NumberingModePreserve, // Default
@@ -645,6 +645,7 @@ type HealthResponse struct {
 	Uptime        string            `json:"uptime"`
 	UptimeSeconds float64           `json:"uptime_seconds"`
 	SystemLoad    float64           `json:"system_load"`
+	NumGoroutines int               `json:"num_goroutines"`
 	CPUInfo       CPUInfo           `json:"cpu_info"`
 	Memory        MemoryInfo        `json:"memory"`
 	Components    HealthComponents  `json:"components"`
@@ -1077,7 +1078,7 @@ type ManualChannelInput struct {
 
 // ToModel converts input to model for persistence.
 func (r *ManualChannelInput) ToModel(sourceID models.ULID) *models.ManualStreamChannel {
-	enabled := models.BoolPtr(true)
+	enabled := new(true)
 	if r.Enabled != nil {
 		enabled = r.Enabled
 	}

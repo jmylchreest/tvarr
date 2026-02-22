@@ -47,7 +47,7 @@ func TestDataMappingRule_Validate(t *testing.T) {
 				SourceType:  DataMappingRuleSourceTypeStream,
 				Priority:    10,
 				StopOnMatch: true,
-				IsEnabled:   BoolPtr(true),
+				IsEnabled:   new(true),
 			},
 			wantErr: false,
 		},
@@ -128,14 +128,14 @@ func TestDataMappingRule_IsEnabled_DefaultBehavior(t *testing.T) {
 
 	t.Run("explicitly enabled", func(t *testing.T) {
 		r := DataMappingRule{
-			IsEnabled: BoolPtr(true),
+			IsEnabled: new(true),
 		}
 		assert.True(t, BoolVal(r.IsEnabled))
 	})
 
 	t.Run("explicitly disabled", func(t *testing.T) {
 		r := DataMappingRule{
-			IsEnabled: BoolPtr(false),
+			IsEnabled: new(false),
 		}
 		assert.False(t, BoolVal(r.IsEnabled))
 	})

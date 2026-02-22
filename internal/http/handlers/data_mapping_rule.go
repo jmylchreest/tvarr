@@ -233,7 +233,7 @@ func (h *DataMappingRuleHandler) Create(ctx context.Context, input *CreateDataMa
 		Expression:  input.Body.Expression,
 		Priority:    input.Body.Priority,
 		StopOnMatch: false,
-		IsEnabled:   models.BoolPtr(true),
+		IsEnabled:   new(true),
 	}
 
 	if input.Body.StopOnMatch != nil {

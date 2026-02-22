@@ -438,8 +438,10 @@ func TestIsAppleDevice(t *testing.T) {
 }
 
 // Helper to create uint64 pointer
+//
+//go:fix inline
 func ptrUint64(v uint64) *uint64 {
-	return &v
+	return new(v)
 }
 
 // Mock segment provider for testing

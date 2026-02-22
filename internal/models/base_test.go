@@ -19,7 +19,7 @@ func TestBoolPtr(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ptr := BoolPtr(tt.input)
+			ptr := new(tt.input)
 			require.NotNil(t, ptr)
 			assert.Equal(t, tt.input, *ptr)
 		})
@@ -33,8 +33,8 @@ func TestBoolVal(t *testing.T) {
 		expected bool
 	}{
 		{"nil defaults to true", nil, true},
-		{"true pointer", BoolPtr(true), true},
-		{"false pointer", BoolPtr(false), false},
+		{"true pointer", new(true), true},
+		{"false pointer", new(false), false},
 	}
 
 	for _, tt := range tests {

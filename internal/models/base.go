@@ -13,8 +13,10 @@ import (
 
 // BoolPtr returns a pointer to a bool value.
 // Useful for setting *bool fields in structs.
+//
+//go:fix inline
 func BoolPtr(b bool) *bool {
-	return &b
+	return new(b)
 }
 
 // BoolVal returns the value of a bool pointer, defaulting to true if nil.

@@ -568,10 +568,7 @@ func (h *ExpressionHandler) TestFilterExpression(ctx context.Context, input *Tes
 	evaluator.SetCaseSensitive(false)
 
 	// Setup pagination defaults
-	page := input.Page
-	if page < 1 {
-		page = 1
-	}
+	page := max(input.Page, 1)
 	limit := input.Limit
 	if limit < 1 {
 		limit = 200

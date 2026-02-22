@@ -36,7 +36,7 @@ func TestStreamProxy_Validate(t *testing.T) {
 				Name:                  "Full Proxy",
 				Description:           "A test proxy with all fields",
 				ProxyMode:             StreamProxyModeSmart,
-				IsActive:              BoolPtr(true),
+				IsActive:              new(true),
 				AutoRegenerate:        true,
 				StartingChannelNumber: 100,
 				UpstreamTimeout:       60,

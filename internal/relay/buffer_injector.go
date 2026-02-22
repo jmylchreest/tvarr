@@ -316,7 +316,7 @@ func (b *BufferInjector) InjectStartupPlaceholder(variant *ESVariant, targetDura
 
 	// Inject video samples
 	videoTrack := variant.VideoTrack()
-	for loop := 0; loop < loopCount; loop++ {
+	for loop := range loopCount {
 		ptsOffset := int64(loop) * loopDurationPTS
 		for _, sample := range cached.VideoSamples {
 			videoTrack.Write(
@@ -330,7 +330,7 @@ func (b *BufferInjector) InjectStartupPlaceholder(variant *ESVariant, targetDura
 
 	// Inject audio samples
 	audioTrack := variant.AudioTrack()
-	for loop := 0; loop < loopCount; loop++ {
+	for loop := range loopCount {
 		ptsOffset := int64(loop) * loopDurationPTS
 		for _, sample := range cached.AudioSamples {
 			audioTrack.Write(

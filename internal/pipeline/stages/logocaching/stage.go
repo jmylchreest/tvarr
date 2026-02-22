@@ -337,7 +337,7 @@ func (s *Stage) cacheChannelLogos(ctx context.Context, state *core.State, batchS
 	var wg sync.WaitGroup
 	workerCount := min(s.concurrency, len(urlsToFetch))
 
-	for i := 0; i < workerCount; i++ {
+	for range workerCount {
 		wg.Go(func() {
 			for job := range jobs {
 				select {
@@ -361,7 +361,12 @@ func (s *Stage) cacheChannelLogos(ctx context.Context, state *core.State, batchS
 	// Send jobs to workers
 	go func() {
 		for _, url := range urlsToFetch {
-			jobs <- logoJob{url: url}
+			select {
+			case jobs <- logoJob{url: url}:
+			case <-ctx.Done():
+				close(jobs)
+				return
+			}
 		}
 		close(jobs)
 	}()
@@ -501,7 +506,7 @@ func (s *Stage) cacheProgramLogos(ctx context.Context, state *core.State, batchS
 	var wg sync.WaitGroup
 	workerCount := min(s.concurrency, len(urlsToFetch))
 
-	for i := 0; i < workerCount; i++ {
+	for range workerCount {
 		wg.Go(func() {
 			for job := range jobs {
 				select {
@@ -525,7 +530,12 @@ func (s *Stage) cacheProgramLogos(ctx context.Context, state *core.State, batchS
 	// Send jobs to workers
 	go func() {
 		for _, url := range urlsToFetch {
-			jobs <- logoJob{url: url}
+			select {
+			case jobs <- logoJob{url: url}:
+			case <-ctx.Done():
+				close(jobs)
+				return
+			}
 		}
 		close(jobs)
 	}()

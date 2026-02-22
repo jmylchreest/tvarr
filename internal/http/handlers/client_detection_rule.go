@@ -257,11 +257,11 @@ func (h *ClientDetectionRuleHandler) Create(ctx context.Context, input *CreateCl
 		Description:         input.Body.Description,
 		Expression:          input.Body.Expression,
 		Priority:            input.Body.Priority,
-		IsEnabled:           models.BoolPtr(true),
+		IsEnabled:           new(true),
 		PreferredVideoCodec: models.VideoCodec(input.Body.PreferredVideoCodec),
 		PreferredAudioCodec: models.AudioCodec(input.Body.PreferredAudioCodec),
-		SupportsFMP4:        models.BoolPtr(true),
-		SupportsMPEGTS:      models.BoolPtr(true),
+		SupportsFMP4:        new(true),
+		SupportsMPEGTS:      new(true),
 		PreferredFormat:     input.Body.PreferredFormat,
 	}
 

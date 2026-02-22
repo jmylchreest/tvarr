@@ -214,7 +214,7 @@ func createDefaultDataMappingRules(tx *gorm.DB) error {
 			Expression:  `channel_name matches ".*[ ](?:\\+([0-9]{1,2})|(-[0-9]{1,2}))([hH]?)(?:$|[ ]).*" AND channel_name not matches ".*(?:start:|stop:|24[-/]7).*" AND tvg_id matches "^.+$" SET tvg_shift = "$1$2"`,
 			Priority:    1,
 			StopOnMatch: false,
-			IsEnabled:   models.BoolPtr(true),
+			IsEnabled:   new(true),
 			IsSystem:    true,
 		},
 	}

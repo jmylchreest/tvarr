@@ -34,7 +34,7 @@ func createTestSource(t *testing.T, db *gorm.DB, name string) *models.StreamSour
 		Name:    name,
 		Type:    models.SourceTypeM3U,
 		URL:     "http://example.com/" + name + ".m3u",
-		Enabled: models.BoolPtr(true),
+		Enabled: new(true),
 	}
 	err := db.Create(source).Error
 	require.NoError(t, err)

@@ -585,6 +585,7 @@ export interface HealthData {
   version: string;
   uptime_seconds: number;
   system_load: number;
+  num_goroutines: number;
   cpu_info: {
     cores: number;
     load_1min: number;

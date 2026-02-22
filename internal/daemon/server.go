@@ -375,7 +375,7 @@ func (s *Server) Transcode(stream grpc.BidiStreamingServer[proto.TranscodeMessag
 	// Start goroutine to forward transcoded output to the stream
 	outputDone := make(chan error, 1)
 	go func() {
-		outputDone <- s.forwardTranscodedOutput(stream, transcodeJob)
+		outputDone <- s.forwardTranscodedOutput(ctx, stream, transcodeJob)
 	}()
 
 	// Start goroutine to periodically send stats
@@ -446,7 +446,7 @@ func (s *Server) Transcode(stream grpc.BidiStreamingServer[proto.TranscodeMessag
 }
 
 // forwardTranscodedOutput reads transcoded samples from FFmpeg and sends them to the stream.
-func (s *Server) forwardTranscodedOutput(stream grpc.BidiStreamingServer[proto.TranscodeMessage, proto.TranscodeMessage], job *TranscodeJob) error {
+func (s *Server) forwardTranscodedOutput(ctx context.Context, stream grpc.BidiStreamingServer[proto.TranscodeMessage, proto.TranscodeMessage], job *TranscodeJob) error {
 	var batchCount uint64
 	var bytesSent uint64
 	logTicker := time.NewTicker(5 * time.Second)
@@ -457,6 +457,11 @@ func (s *Server) forwardTranscodedOutput(stream grpc.BidiStreamingServer[proto.T
 
 	for {
 		select {
+		case <-ctx.Done():
+			s.logger.Debug("forwardTranscodedOutput exiting: context cancelled",
+				slog.Uint64("total_batches", batchCount),
+				slog.Uint64("total_bytes", bytesSent))
+			return ctx.Err()
 		case <-logTicker.C:
 			batchDelta := batchCount - lastBatchCount
 			bytesDelta := bytesSent - lastBytesSent

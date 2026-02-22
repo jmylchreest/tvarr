@@ -153,7 +153,7 @@ func TestEncoderOverrideService_Create(t *testing.T) {
 		CodecType:     models.EncoderOverrideCodecTypeVideo,
 		SourceCodec:   "h265",
 		TargetEncoder: "libx265",
-		IsEnabled:     models.BoolPtr(true),
+		IsEnabled:     new(true),
 	}
 
 	err := svc.Create(ctx, override)
@@ -174,7 +174,7 @@ func TestEncoderOverrideService_Create_AutoAssignsPriority(t *testing.T) {
 		CodecType:     models.EncoderOverrideCodecTypeVideo,
 		SourceCodec:   "h264",
 		TargetEncoder: "libx264",
-		IsEnabled:     models.BoolPtr(true),
+		IsEnabled:     new(true),
 	}
 	require.NoError(t, svc.Create(ctx, o1))
 	assert.Equal(t, 1, o1.Priority)
@@ -185,7 +185,7 @@ func TestEncoderOverrideService_Create_AutoAssignsPriority(t *testing.T) {
 		CodecType:     models.EncoderOverrideCodecTypeVideo,
 		SourceCodec:   "h265",
 		TargetEncoder: "libx265",
-		IsEnabled:     models.BoolPtr(true),
+		IsEnabled:     new(true),
 	}
 	require.NoError(t, svc.Create(ctx, o2))
 	assert.Equal(t, 2, o2.Priority)
@@ -202,7 +202,7 @@ func TestEncoderOverrideService_Create_CannotCreateSystem(t *testing.T) {
 		SourceCodec:   "h264",
 		TargetEncoder: "libx264",
 		IsSystem:      true, // Try to create as system
-		IsEnabled:     models.BoolPtr(true),
+		IsEnabled:     new(true),
 	}
 
 	err := svc.Create(ctx, override)
@@ -220,7 +220,7 @@ func TestEncoderOverrideService_GetByID(t *testing.T) {
 		CodecType:     models.EncoderOverrideCodecTypeVideo,
 		SourceCodec:   "h264",
 		TargetEncoder: "libx264",
-		IsEnabled:     models.BoolPtr(true),
+		IsEnabled:     new(true),
 	}
 	require.NoError(t, svc.Create(ctx, override))
 
@@ -250,7 +250,7 @@ func TestEncoderOverrideService_GetAll(t *testing.T) {
 			CodecType:     models.EncoderOverrideCodecTypeVideo,
 			SourceCodec:   "h264",
 			TargetEncoder: "libx264",
-			IsEnabled:     models.BoolPtr(true),
+			IsEnabled:     new(true),
 		}
 		require.NoError(t, svc.Create(ctx, o))
 	}
@@ -271,7 +271,7 @@ func TestEncoderOverrideService_GetEnabled(t *testing.T) {
 		CodecType:     models.EncoderOverrideCodecTypeVideo,
 		SourceCodec:   "h264",
 		TargetEncoder: "libx264",
-		IsEnabled:     models.BoolPtr(true),
+		IsEnabled:     new(true),
 	}
 	require.NoError(t, svc.Create(ctx, o1))
 
@@ -281,7 +281,7 @@ func TestEncoderOverrideService_GetEnabled(t *testing.T) {
 		CodecType:     models.EncoderOverrideCodecTypeVideo,
 		SourceCodec:   "h265",
 		TargetEncoder: "libx265",
-		IsEnabled:     models.BoolPtr(false),
+		IsEnabled:     new(false),
 	}
 	require.NoError(t, svc.Create(ctx, o2))
 
@@ -302,7 +302,7 @@ func TestEncoderOverrideService_GetByCodecType(t *testing.T) {
 		CodecType:     models.EncoderOverrideCodecTypeVideo,
 		SourceCodec:   "h264",
 		TargetEncoder: "libx264",
-		IsEnabled:     models.BoolPtr(true),
+		IsEnabled:     new(true),
 	}
 	require.NoError(t, svc.Create(ctx, v))
 
@@ -312,7 +312,7 @@ func TestEncoderOverrideService_GetByCodecType(t *testing.T) {
 		CodecType:     models.EncoderOverrideCodecTypeAudio,
 		SourceCodec:   "aac",
 		TargetEncoder: "libfdk_aac",
-		IsEnabled:     models.BoolPtr(true),
+		IsEnabled:     new(true),
 	}
 	require.NoError(t, svc.Create(ctx, a))
 
@@ -337,7 +337,7 @@ func TestEncoderOverrideService_Update(t *testing.T) {
 		CodecType:     models.EncoderOverrideCodecTypeVideo,
 		SourceCodec:   "h264",
 		TargetEncoder: "libx264",
-		IsEnabled:     models.BoolPtr(true),
+		IsEnabled:     new(true),
 	}
 	require.NoError(t, svc.Create(ctx, override))
 
@@ -382,7 +382,7 @@ func TestEncoderOverrideService_Update_SystemOverride_OnlyEnabledToggle(t *testi
 		TargetEncoder: "libx265",
 		HWAccelMatch:  "vaapi",
 		Priority:      100,
-		IsEnabled:     models.BoolPtr(true),
+		IsEnabled:     new(true),
 		IsSystem:      true,
 	}
 	repo.overrides = append(repo.overrides, systemOverride)
@@ -397,7 +397,7 @@ func TestEncoderOverrideService_Update_SystemOverride_OnlyEnabledToggle(t *testi
 		TargetEncoder: "libx265",
 		HWAccelMatch:  "vaapi",
 		Priority:      100,
-		IsEnabled:     models.BoolPtr(true),
+		IsEnabled:     new(true),
 		IsSystem:      true,
 	}
 	err := svc.Update(ctx, attempt)
@@ -413,7 +413,7 @@ func TestEncoderOverrideService_Update_SystemOverride_OnlyEnabledToggle(t *testi
 		TargetEncoder: "libx265",
 		HWAccelMatch:  "vaapi",
 		Priority:      100,
-		IsEnabled:     models.BoolPtr(false),
+		IsEnabled:     new(false),
 		IsSystem:      true,
 	}
 	err = svc.Update(ctx, toggleAttempt)
@@ -435,7 +435,7 @@ func TestEncoderOverrideService_Delete(t *testing.T) {
 		CodecType:     models.EncoderOverrideCodecTypeVideo,
 		SourceCodec:   "h264",
 		TargetEncoder: "libx264",
-		IsEnabled:     models.BoolPtr(true),
+		IsEnabled:     new(true),
 	}
 	require.NoError(t, svc.Create(ctx, override))
 
@@ -459,7 +459,7 @@ func TestEncoderOverrideService_Delete_SystemOverride(t *testing.T) {
 		CodecType:     models.EncoderOverrideCodecTypeVideo,
 		SourceCodec:   "h265",
 		TargetEncoder: "libx265",
-		IsEnabled:     models.BoolPtr(true),
+		IsEnabled:     new(true),
 		IsSystem:      true,
 	}
 	repo.overrides = append(repo.overrides, systemOverride)
@@ -492,7 +492,7 @@ func TestEncoderOverrideService_ToggleEnabled(t *testing.T) {
 		CodecType:     models.EncoderOverrideCodecTypeVideo,
 		SourceCodec:   "h264",
 		TargetEncoder: "libx264",
-		IsEnabled:     models.BoolPtr(true),
+		IsEnabled:     new(true),
 	}
 	require.NoError(t, svc.Create(ctx, override))
 
@@ -526,7 +526,7 @@ func TestEncoderOverrideService_Reorder(t *testing.T) {
 		CodecType:     models.EncoderOverrideCodecTypeVideo,
 		SourceCodec:   "h264",
 		TargetEncoder: "libx264",
-		IsEnabled:     models.BoolPtr(true),
+		IsEnabled:     new(true),
 	}
 	require.NoError(t, svc.Create(ctx, o1))
 
@@ -535,7 +535,7 @@ func TestEncoderOverrideService_Reorder(t *testing.T) {
 		CodecType:     models.EncoderOverrideCodecTypeVideo,
 		SourceCodec:   "h265",
 		TargetEncoder: "libx265",
-		IsEnabled:     models.BoolPtr(true),
+		IsEnabled:     new(true),
 	}
 	require.NoError(t, svc.Create(ctx, o2))
 
@@ -573,7 +573,7 @@ func TestEncoderOverrideService_RefreshCache(t *testing.T) {
 		TargetEncoder: "libx265",
 		HWAccelMatch:  "vaapi",
 		CPUMatch:      "AMD",
-		IsEnabled:     models.BoolPtr(true),
+		IsEnabled:     new(true),
 	}
 	require.NoError(t, svc.Create(ctx, o))
 
@@ -599,7 +599,7 @@ func TestEncoderOverrideService_GetEnabledProto_ExcludesDisabled(t *testing.T) {
 		CodecType:     models.EncoderOverrideCodecTypeVideo,
 		SourceCodec:   "h264",
 		TargetEncoder: "libx264",
-		IsEnabled:     models.BoolPtr(true),
+		IsEnabled:     new(true),
 	}
 	require.NoError(t, svc.Create(ctx, o1))
 
@@ -609,7 +609,7 @@ func TestEncoderOverrideService_GetEnabledProto_ExcludesDisabled(t *testing.T) {
 		CodecType:     models.EncoderOverrideCodecTypeVideo,
 		SourceCodec:   "h265",
 		TargetEncoder: "libx265",
-		IsEnabled:     models.BoolPtr(false),
+		IsEnabled:     new(false),
 	}
 	require.NoError(t, svc.Create(ctx, o2))
 
@@ -630,7 +630,7 @@ func TestEncoderOverrideService_GetSystem(t *testing.T) {
 		CodecType:     models.EncoderOverrideCodecTypeVideo,
 		SourceCodec:   "h265",
 		TargetEncoder: "libx265",
-		IsEnabled:     models.BoolPtr(true),
+		IsEnabled:     new(true),
 		IsSystem:      true,
 	}
 	repo.overrides = append(repo.overrides, system)
@@ -641,7 +641,7 @@ func TestEncoderOverrideService_GetSystem(t *testing.T) {
 		CodecType:     models.EncoderOverrideCodecTypeAudio,
 		SourceCodec:   "aac",
 		TargetEncoder: "libfdk_aac",
-		IsEnabled:     models.BoolPtr(true),
+		IsEnabled:     new(true),
 	}
 	require.NoError(t, svc.Create(ctx, user))
 

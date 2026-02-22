@@ -294,7 +294,7 @@ func (h *EncodingProfileHandler) Create(ctx context.Context, input *CreateEncodi
 		InputFlags:       input.Body.InputFlags,
 		OutputFlags:      input.Body.OutputFlags,
 		IsDefault:        input.Body.IsDefault,
-		Enabled:          models.BoolPtr(true),
+		Enabled:          new(true),
 	}
 
 	if err := h.service.Create(ctx, profile); err != nil {

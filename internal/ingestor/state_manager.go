@@ -50,9 +50,7 @@ func NewStateManager() *StateManager {
 
 // startCleanupWorker starts a background goroutine that handles delayed cleanup.
 func (m *StateManager) startCleanupWorker() {
-	m.wg.Add(1)
-	go func() {
-		defer m.wg.Done()
+	m.wg.Go(func() {
 		timers := make(map[models.ULID]*time.Timer)
 		for {
 			select {
@@ -73,7 +71,7 @@ func (m *StateManager) startCleanupWorker() {
 				})
 			}
 		}
-	}()
+	})
 }
 
 // Stop gracefully shuts down the state manager.

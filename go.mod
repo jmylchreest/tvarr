@@ -1,6 +1,6 @@
 module github.com/jmylchreest/tvarr
 
-go 1.25.4
+go 1.26.0
 
 require (
 	github.com/andybalholm/brotli v1.2.0

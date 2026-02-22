@@ -271,7 +271,7 @@ func (s *ManualChannelService) ParseM3U(ctx context.Context, sourceID models.ULI
 				ChannelName:   entry.Title,
 				ChannelNumber: entry.ChannelNumber,
 				StreamURL:     entry.URL,
-				Enabled:       models.BoolPtr(true),
+				Enabled:       new(true),
 				Priority:      0,
 			}
 

@@ -102,7 +102,7 @@ func (s *mockManualChannelService) ParseM3U(ctx context.Context, sourceID models
 				ChannelName:   entry.Title,
 				ChannelNumber: entry.ChannelNumber,
 				StreamURL:     entry.URL,
-				Enabled:       models.BoolPtr(true),
+				Enabled:       new(true),
 			}
 			result.Channels = append(result.Channels, ch)
 			result.ParsedCount++
@@ -178,7 +178,7 @@ func TestManualChannelHandler_List(t *testing.T) {
 	manualSource := &models.StreamSource{
 		Name:    "Test Manual",
 		Type:    models.SourceTypeManual,
-		Enabled: models.BoolPtr(true),
+		Enabled: new(true),
 	}
 	svc.AddSource(manualSource)
 
@@ -187,14 +187,14 @@ func TestManualChannelHandler_List(t *testing.T) {
 		SourceID:    manualSource.ID,
 		ChannelName: "Channel 1",
 		StreamURL:   "http://example.com/1",
-		Enabled:     models.BoolPtr(true),
+		Enabled:     new(true),
 	}
 	ch1.ID = models.NewULID()
 	ch2 := &models.ManualStreamChannel{
 		SourceID:    manualSource.ID,
 		ChannelName: "Channel 2",
 		StreamURL:   "http://example.com/2",
-		Enabled:     models.BoolPtr(true),
+		Enabled:     new(true),
 	}
 	ch2.ID = models.NewULID()
 	svc.channels[manualSource.ID] = []*models.ManualStreamChannel{ch1, ch2}
@@ -255,7 +255,7 @@ func TestManualChannelHandler_Replace(t *testing.T) {
 	manualSource := &models.StreamSource{
 		Name:    "Test Manual",
 		Type:    models.SourceTypeManual,
-		Enabled: models.BoolPtr(true),
+		Enabled: new(true),
 	}
 	svc.AddSource(manualSource)
 
@@ -316,7 +316,7 @@ func TestManualChannelHandler_Replace(t *testing.T) {
 			Name:    "M3U Source",
 			Type:    models.SourceTypeM3U,
 			URL:     "http://example.com/playlist.m3u",
-			Enabled: models.BoolPtr(true),
+			Enabled: new(true),
 		}
 		svc.AddSource(m3uSource)
 
@@ -347,7 +347,7 @@ func TestManualChannelHandler_ImportM3U(t *testing.T) {
 	manualSource := &models.StreamSource{
 		Name:    "Test Manual",
 		Type:    models.SourceTypeManual,
-		Enabled: models.BoolPtr(true),
+		Enabled: new(true),
 	}
 	svc.AddSource(manualSource)
 
@@ -468,7 +468,7 @@ func TestManualChannelHandler_ExportM3U(t *testing.T) {
 	manualSource := &models.StreamSource{
 		Name:    "Test Manual",
 		Type:    models.SourceTypeManual,
-		Enabled: models.BoolPtr(true),
+		Enabled: new(true),
 	}
 	svc.AddSource(manualSource)
 
@@ -480,7 +480,7 @@ func TestManualChannelHandler_ExportM3U(t *testing.T) {
 		TvgID:       "ch1",
 		TvgName:     "Channel One",
 		GroupTitle:  "Group A",
-		Enabled:     models.BoolPtr(true),
+		Enabled:     new(true),
 	}
 	ch1.ID = models.NewULID()
 	ch2 := &models.ManualStreamChannel{
@@ -490,7 +490,7 @@ func TestManualChannelHandler_ExportM3U(t *testing.T) {
 		TvgID:       "ch2",
 		TvgName:     "Channel Two",
 		GroupTitle:  "Group B",
-		Enabled:     models.BoolPtr(true),
+		Enabled:     new(true),
 	}
 	ch2.ID = models.NewULID()
 	svc.channels[manualSource.ID] = []*models.ManualStreamChannel{ch1, ch2}

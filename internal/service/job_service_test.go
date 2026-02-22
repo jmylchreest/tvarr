@@ -826,7 +826,7 @@ func TestJobService_TriggerStreamIngestion_NoScheduler(t *testing.T) {
 	ctx := context.Background()
 
 	sourceID := models.NewULID()
-	source := &models.StreamSource{Name: "Test Source", Enabled: models.BoolPtr(true)}
+	source := &models.StreamSource{Name: "Test Source", Enabled: new(true)}
 	source.ID = sourceID
 	streamRepo.sources[sourceID] = source
 
@@ -857,7 +857,7 @@ func TestJobService_TriggerEpgIngestion_NoScheduler(t *testing.T) {
 	ctx := context.Background()
 
 	sourceID := models.NewULID()
-	source := &models.EpgSource{Name: "Test EPG", Enabled: models.BoolPtr(true)}
+	source := &models.EpgSource{Name: "Test EPG", Enabled: new(true)}
 	source.ID = sourceID
 	epgRepo.sources[sourceID] = source
 
@@ -887,7 +887,7 @@ func TestJobService_TriggerProxyGeneration_NoScheduler(t *testing.T) {
 	ctx := context.Background()
 
 	proxyID := models.NewULID()
-	proxy := &models.StreamProxy{Name: "Test Proxy", IsActive: models.BoolPtr(true)}
+	proxy := &models.StreamProxy{Name: "Test Proxy", IsActive: new(true)}
 	proxy.ID = proxyID
 	proxyRepo.proxies[proxyID] = proxy
 
@@ -1049,7 +1049,7 @@ func TestJobService_TriggerWithScheduler(t *testing.T) {
 
 	t.Run("trigger stream ingestion", func(t *testing.T) {
 		sourceID := models.NewULID()
-		source := &models.StreamSource{Name: "Test Source", Enabled: models.BoolPtr(true)}
+		source := &models.StreamSource{Name: "Test Source", Enabled: new(true)}
 		source.ID = sourceID
 		streamRepo.sources[sourceID] = source
 
@@ -1063,7 +1063,7 @@ func TestJobService_TriggerWithScheduler(t *testing.T) {
 
 	t.Run("trigger EPG ingestion", func(t *testing.T) {
 		sourceID := models.NewULID()
-		source := &models.EpgSource{Name: "Test EPG", Enabled: models.BoolPtr(true)}
+		source := &models.EpgSource{Name: "Test EPG", Enabled: new(true)}
 		source.ID = sourceID
 		epgRepo.sources[sourceID] = source
 
@@ -1076,7 +1076,7 @@ func TestJobService_TriggerWithScheduler(t *testing.T) {
 
 	t.Run("trigger proxy generation", func(t *testing.T) {
 		proxyID := models.NewULID()
-		proxy := &models.StreamProxy{Name: "Test Proxy", IsActive: models.BoolPtr(true)}
+		proxy := &models.StreamProxy{Name: "Test Proxy", IsActive: new(true)}
 		proxy.ID = proxyID
 		proxyRepo.proxies[proxyID] = proxy
 

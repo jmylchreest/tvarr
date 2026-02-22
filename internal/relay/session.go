@@ -132,14 +132,14 @@ func (h *ResourceHistory) GetHistory() (cpuHistory, memHistory []float64) {
 	// Read from oldest to newest
 	if h.sampleCount >= ResourceHistorySize {
 		// Buffer is full, read from writeIndex (oldest) forward
-		for i := 0; i < count; i++ {
+		for i := range count {
 			idx := (h.writeIndex + i) % ResourceHistorySize
 			cpuHistory[i] = h.cpuHistory[idx]
 			memHistory[i] = h.memHistory[idx]
 		}
 	} else {
 		// Buffer is not full, read from start
-		for i := 0; i < count; i++ {
+		for i := range count {
 			cpuHistory[i] = h.cpuHistory[i]
 			memHistory[i] = h.memHistory[i]
 		}
@@ -1592,10 +1592,14 @@ func (s *RelaySession) GetOrCreateMPEGTSProcessorForVariant(variant CodecVariant
 			// Use a goroutine with grace period delay to avoid blocking the callback
 			// and allow clients to reconnect (e.g., player pause/seek)
 			go func() {
-				time.Sleep(mpegtsGracePeriod)
-				// TryMarkForStopping will correctly handle the case where
-				// a client reconnected during the grace period
-				s.StopProcessorIfIdle("mpegts")
+				select {
+				case <-time.After(mpegtsGracePeriod):
+					// TryMarkForStopping will correctly handle the case where
+					// a client reconnected during the grace period
+					s.StopProcessorIfIdle("mpegts")
+				case <-s.ctx.Done():
+					return
+				}
 			}()
 		}
 	}
