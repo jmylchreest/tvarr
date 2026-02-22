@@ -144,30 +144,10 @@ linters:
           - gocognit
           - unused
 
-      # Exclude magic number warnings in tests
-      - path: _test\.go
-        text: "mnd: Magic number"
-
       # Exclude some staticcheck messages
       - linters:
           - staticcheck
         text: "SA9003:"
-
-      # Exclude lll issues for long lines with go:generate
-      - linters:
-          - lll
-        source: "^//go:generate "
-
-      # Allow blank identifiers in cmd package
-      - path: cmd/
-        text: "G104:"
-        linters:
-          - gosec
-
-      # Allow error shadowing in certain contexts
-      - text: 'shadow: declaration of "err"'
-        linters:
-          - govet
 
       # E2E test runner uses relaxed linting
       - path: cmd/e2e-runner/
