@@ -143,8 +143,10 @@ type EpgProgramRepository interface {
 	GetCurrentByChannelID(ctx context.Context, channelID string) (*models.EpgProgram, error)
 	// Delete deletes an EPG program by ID.
 	Delete(ctx context.Context, id models.ULID) error
-	// DeleteBySourceID deletes all programs for a source.
+	// DeleteBySourceID deletes all programs for a source (used when deleting the source itself).
 	DeleteBySourceID(ctx context.Context, sourceID models.ULID) error
+	// DeleteStaleBySourceID deletes programs not updated since the given time (used during ingestion cleanup).
+	DeleteStaleBySourceID(ctx context.Context, sourceID models.ULID, olderThan time.Time) (int64, error)
 	// DeleteExpired deletes programs that ended before the given time.
 	DeleteExpired(ctx context.Context, before time.Time) (int64, error)
 	// DeleteOld deletes programs older than the configured retention period.

@@ -236,6 +236,18 @@ func (m *mockEpgProgramRepo) DeleteBySourceID(ctx context.Context, sourceID mode
 	return nil
 }
 
+func (m *mockEpgProgramRepo) DeleteStaleBySourceID(ctx context.Context, sourceID models.ULID, olderThan time.Time) (int64, error) {
+	var count int64
+	for id, p := range m.programs {
+		if p.SourceID == sourceID && p.UpdatedAt.Before(olderThan) {
+			delete(m.programs, id)
+			count++
+		}
+	}
+	m.countBySource[sourceID] -= count
+	return count, nil
+}
+
 func (m *mockEpgProgramRepo) DeleteExpired(ctx context.Context, before time.Time) (int64, error) {
 	var count int64
 	for id, p := range m.programs {

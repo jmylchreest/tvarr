@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jmylchreest/tvarr/internal/database"
 	"github.com/jmylchreest/tvarr/internal/models"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -39,17 +40,20 @@ func (r *epgProgramRepo) CreateBatch(ctx context.Context, programs []*models.Epg
 	// Use ON CONFLICT DO UPDATE to handle duplicates in XMLTV files.
 	// The unique constraint is on (source_id, channel_id, start).
 	// When a duplicate is found, update all non-key fields with the new values.
-	if err := r.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "source_id"}, {Name: "channel_id"}, {Name: "start"}},
-		DoUpdates: clause.AssignmentColumns([]string{
-			"stop", "title", "sub_title", "description", "category",
-			"icon", "episode_num", "rating", "language", "credits",
-			"is_new", "is_premiere", "updated_at",
-		}),
-	}).Create(programs).Error; err != nil {
-		return fmt.Errorf("creating EPG program batch: %w", err)
-	}
-	return nil
+	// Retries on transient SQLite BUSY/LOCKED errors with exponential backoff.
+	return database.WithRetry(ctx, database.DefaultRetryConfig, nil, "CreateBatch", func() error {
+		if err := r.db.WithContext(ctx).Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "source_id"}, {Name: "channel_id"}, {Name: "start"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"stop", "title", "sub_title", "description", "category",
+				"icon", "episode_num", "rating", "language", "credits",
+				"is_new", "is_premiere", "updated_at",
+			}),
+		}).Create(programs).Error; err != nil {
+			return fmt.Errorf("creating EPG program batch: %w", err)
+		}
+		return nil
+	})
 }
 
 // CreateInBatches creates multiple programs in smaller batches for memory efficiency.
@@ -179,11 +183,73 @@ func (r *epgProgramRepo) Delete(ctx context.Context, id models.ULID) error {
 
 // DeleteBySourceID hard-deletes all programs for a source.
 // Uses Unscoped() for permanent deletion since EPG programs are fully replaced on each ingestion.
+// Deletes in batches by channel to reduce lock duration and prevent SQLite BUSY errors.
 func (r *epgProgramRepo) DeleteBySourceID(ctx context.Context, sourceID models.ULID) error {
-	if err := r.db.WithContext(ctx).Unscoped().Where("source_id = ?", sourceID).Delete(&models.EpgProgram{}).Error; err != nil {
-		return fmt.Errorf("deleting EPG programs by source ID: %w", err)
+	// Get distinct channel IDs for this source to batch delete by channel
+	var channelIDs []string
+	if err := r.db.WithContext(ctx).
+		Model(&models.EpgProgram{}).
+		Where("source_id = ?", sourceID).
+		Distinct("channel_id").
+		Pluck("channel_id", &channelIDs).Error; err != nil {
+		return fmt.Errorf("fetching channel IDs for deletion: %w", err)
 	}
+
+	if len(channelIDs) == 0 {
+		// No programs to delete
+		return nil
+	}
+
+	// Delete in batches of channels (e.g., 50 channels at a time)
+	// This balances transaction size with number of transactions
+	const channelBatchSize = 50
+	totalDeleted := int64(0)
+
+	for i := 0; i < len(channelIDs); i += channelBatchSize {
+		end := i + channelBatchSize
+		if end > len(channelIDs) {
+			end = len(channelIDs)
+		}
+		channelBatch := channelIDs[i:end]
+
+		// Delete all programs for this batch of channels
+		result := r.db.WithContext(ctx).Unscoped().
+			Where("source_id = ? AND channel_id IN ?", sourceID, channelBatch).
+			Delete(&models.EpgProgram{})
+
+		if result.Error != nil {
+			return fmt.Errorf("deleting EPG programs (batch %d-%d of %d channels): %w",
+				i, end, len(channelIDs), result.Error)
+		}
+		totalDeleted += result.RowsAffected
+
+		// Check for context cancellation between batches
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+	}
+
 	return nil
+}
+
+// DeleteStaleBySourceID deletes programs for a source that haven't been updated since the given time.
+// This implements "mark and sweep" cleanup: upsert updates the updated_at timestamp, so programs
+// not present in the new ingestion data will have an older updated_at and will be deleted.
+// Returns the number of programs deleted.
+// Retries on transient SQLite BUSY/LOCKED errors with exponential backoff.
+func (r *epgProgramRepo) DeleteStaleBySourceID(ctx context.Context, sourceID models.ULID, olderThan time.Time) (int64, error) {
+	var rowsAffected int64
+	err := database.WithRetry(ctx, database.DefaultRetryConfig, nil, "DeleteStaleBySourceID", func() error {
+		result := r.db.WithContext(ctx).Unscoped().
+			Where("source_id = ? AND updated_at < ?", sourceID, olderThan).
+			Delete(&models.EpgProgram{})
+		if result.Error != nil {
+			return fmt.Errorf("deleting stale EPG programs: %w", result.Error)
+		}
+		rowsAffected = result.RowsAffected
+		return nil
+	})
+	return rowsAffected, err
 }
 
 // DeleteExpired hard-deletes programs that ended before the given time.

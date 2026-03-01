@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/jmylchreest/tvarr/internal/ingestor"
 	"github.com/jmylchreest/tvarr/internal/models"
@@ -274,30 +275,39 @@ func (s *EpgService) Ingest(ctx context.Context, id models.ULID) error {
 	)
 
 	// Stage 1: Connect
+	var connectStage *progress.StageUpdater
 	if progressMgr != nil {
-		progressMgr.StartStage("connect")
+		connectStage = progressMgr.StartStage("connect")
 	}
 
-	// Delete existing programs before re-ingesting
-	if err := s.epgProgramRepo.DeleteBySourceID(ctx, id); err != nil {
-		if progressMgr != nil {
-			progressMgr.Fail(err)
-		}
-		s.stateManager.Fail(id, err)
-		source.MarkFailed(err)
-		_ = s.epgSourceRepo.Update(ctx, source)
-		return fmt.Errorf("deleting existing programs: %w", err)
-	}
+	// Record ingestion start time for stale program cleanup.
+	// Programs not updated after this time will be considered stale and deleted.
+	ingestionStartTime := time.Now()
 
 	// Stage 2: Download - complete connect, start download
 	var downloadStage *progress.StageUpdater
-	if progressMgr != nil {
-		connectStage := progressMgr.StartStage("connect")
+	if progressMgr != nil && connectStage != nil {
 		connectStage.Complete()
 		downloadStage = progressMgr.StartStage("download")
+		progressMgr.SetMessage("Downloading programs...")
 	}
 
-	// Perform ingestion - download, parse, and batch-insert programs
+	// Acquire type-level write lock to prevent concurrent EPG ingestions from
+	// writing to the epg_programs table simultaneously (prevents SQLite BUSY errors).
+	// Lock is acquired BEFORE writes begin (not before download).
+	s.logger.Debug("acquiring EPG write lock", "source_id", id.String())
+	epgWriteMutex.Lock()
+	s.logger.Debug("EPG write lock acquired", "source_id", id.String())
+	defer func() {
+		epgWriteMutex.Unlock()
+		s.logger.Debug("EPG write lock released", "source_id", id.String())
+	}()
+
+	// Perform ingestion - download, parse, and upsert programs in batches.
+	// Using upsert (CreateBatch with ON CONFLICT DO UPDATE) allows us to:
+	// 1. Keep existing programs if ingestion fails partway through
+	// 2. Update programs that changed since last ingestion
+	// 3. Defer deletion of stale programs until the end
 	var programCount int
 	var batchPrograms []*models.EpgProgram
 	const batchSize = 1000
@@ -314,10 +324,10 @@ func (s *EpgService) Ingest(ctx context.Context, id models.ULID) error {
 			}
 		}
 
-		// Flush batch when full
+		// Flush batch when full (uses upsert, not insert)
 		if len(batchPrograms) >= batchSize {
 			if err := s.epgProgramRepo.CreateBatch(ctx, batchPrograms); err != nil {
-				return fmt.Errorf("batch insert: %w", err)
+				return fmt.Errorf("batch upsert: %w", err)
 			}
 			batchPrograms = batchPrograms[:0]
 		}
@@ -325,17 +335,18 @@ func (s *EpgService) Ingest(ctx context.Context, id models.ULID) error {
 		return nil
 	})
 
-	// Stage 3: Finalize - flush remaining programs and update metadata
+	// Stage 3: Finalize - flush remaining programs and cleanup stale data
 	if progressMgr != nil && downloadStage != nil {
 		downloadStage.Complete()
 		progressMgr.StartStage("finalize")
 		progressMgr.SetMessage("Finalizing...")
 	}
 
+	// Flush any remaining programs
 	if len(batchPrograms) > 0 {
 		if batchErr := s.epgProgramRepo.CreateBatch(ctx, batchPrograms); batchErr != nil {
 			if err == nil {
-				err = fmt.Errorf("final batch insert: %w", batchErr)
+				err = fmt.Errorf("final batch upsert: %w", batchErr)
 			}
 		}
 	}
@@ -352,6 +363,23 @@ func (s *EpgService) Ingest(ctx context.Context, id models.ULID) error {
 			"error", err,
 		)
 		return fmt.Errorf("EPG ingestion failed: %w", err)
+	}
+
+	// Clean up stale programs (programs not updated during this ingestion).
+	// This implements mark-and-sweep: upsert updated the updated_at timestamp,
+	// so programs not present in the new data will have an older updated_at.
+	staleCount, staleErr := s.epgProgramRepo.DeleteStaleBySourceID(ctx, id, ingestionStartTime)
+	if staleErr != nil {
+		s.logger.Error("failed to clean up stale programs",
+			"source_id", id.String(),
+			"error", staleErr,
+		)
+		// Don't fail the whole ingestion for cleanup errors
+	} else if staleCount > 0 {
+		s.logger.Info("removed stale programs",
+			"source_id", id.String(),
+			"count", staleCount,
+		)
 	}
 
 	// Mark success

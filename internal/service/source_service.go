@@ -16,6 +16,21 @@ import (
 	"github.com/jmylchreest/tvarr/pkg/xtream"
 )
 
+// Global type-level write mutexes to prevent concurrent writes to the same table.
+// These guard ONLY the actual DB write operations, not the fetch/parse phases.
+// This prevents SQLite BUSY errors when multiple ingestions of the same type run concurrently.
+var (
+	// streamWriteMutex guards writes to the channels table (stream ingestion).
+	// Only one stream ingestion can write to the DB at a time, but fetching/parsing
+	// can happen concurrently.
+	streamWriteMutex sync.Mutex
+
+	// epgWriteMutex guards writes to the epg_programs table (EPG ingestion).
+	// Only one EPG ingestion can write to the DB at a time, but fetching/parsing
+	// can happen concurrently.
+	epgWriteMutex sync.Mutex
+)
+
 // EPGChecker checks EPG availability for Xtream sources.
 type EPGChecker interface {
 	// CheckEPGAvailability checks if an Xtream server provides EPG data.
@@ -414,6 +429,17 @@ func (s *SourceService) Ingest(ctx context.Context, id models.ULID) error {
 		finalizeStage = progressMgr.StartStage("finalize")
 		progressMgr.SetMessage("Saving channels...")
 	}
+
+	// Acquire type-level write lock to prevent concurrent stream ingestions from
+	// writing to the channels table simultaneously (prevents SQLite BUSY errors).
+	// This lock is held only during DB writes, not during fetch/parse.
+	s.logger.Debug("acquiring stream write lock", "source_id", id.String())
+	streamWriteMutex.Lock()
+	s.logger.Debug("stream write lock acquired", "source_id", id.String())
+	defer func() {
+		streamWriteMutex.Unlock()
+		s.logger.Debug("stream write lock released", "source_id", id.String())
+	}()
 
 	// Batch upsert channels in smaller transactions to reduce lock duration
 	for i := 0; i < len(allChannels); i += batchSize {

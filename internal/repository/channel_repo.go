@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jmylchreest/tvarr/internal/database"
 	"github.com/jmylchreest/tvarr/internal/models"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -42,22 +43,25 @@ func (r *channelRepo) CreateBatch(ctx context.Context, channels []*models.Channe
 
 // UpsertBatch creates or updates multiple channels, handling duplicates gracefully.
 // Uses ON CONFLICT to update existing channels based on (source_id, ext_id).
+// Retries on transient SQLite BUSY/LOCKED errors with exponential backoff.
 func (r *channelRepo) UpsertBatch(ctx context.Context, channels []*models.Channel) error {
 	if len(channels) == 0 {
 		return nil
 	}
 
-	if err := r.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "source_id"}, {Name: "ext_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{
-			"tvg_id", "tvg_name", "tvg_logo", "group_title", "channel_name",
-			"channel_number", "stream_url", "stream_type", "language",
-			"country", "is_adult", "extra", "updated_at",
-		}),
-	}).Create(channels).Error; err != nil {
-		return fmt.Errorf("upserting channel batch: %w", err)
-	}
-	return nil
+	return database.WithRetry(ctx, database.DefaultRetryConfig, nil, "UpsertBatch", func() error {
+		if err := r.db.WithContext(ctx).Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "source_id"}, {Name: "ext_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"tvg_id", "tvg_name", "tvg_logo", "group_title", "channel_name",
+				"channel_number", "stream_url", "stream_type", "language",
+				"country", "is_adult", "extra", "updated_at",
+			}),
+		}).Create(channels).Error; err != nil {
+			return fmt.Errorf("upserting channel batch: %w", err)
+		}
+		return nil
+	})
 }
 
 // CreateInBatches creates multiple channels in batches.
