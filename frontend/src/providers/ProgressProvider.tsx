@@ -47,6 +47,31 @@ interface ProgressEventContext {
 
 const ProgressContext = createContext<ProgressEventContext | null>(null);
 
+// State priority for notification sorting: in_progress > error > complete
+const statePriority = (state: string): number => {
+  switch (state) {
+    case 'idle':
+    case 'preparing':
+    case 'connecting':
+    case 'downloading':
+    case 'processing':
+    case 'saving':
+    case 'cleanup':
+      return 0; // in_progress group
+    case 'error':
+      return 1; // error group
+    default:
+      return 2; // completed / cancelled / anything else
+  }
+};
+
+export const sortByStatusThenName = (a: ProgressEvent, b: ProgressEvent): number => {
+  const pa = statePriority(a.state);
+  const pb = statePriority(b.state);
+  if (pa !== pb) return pa - pb;
+  return (a.operation_name ?? '').localeCompare(b.operation_name ?? '');
+};
+
 // Storage key for persisting notification state
 const NOTIFICATION_STORAGE_KEY = 'tvarr-notifications';
 
@@ -384,9 +409,7 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
   // Note: NotificationBell expects unfiltered events to show cross-page notifications
   const getAllEvents = useCallback(() => {
     const allEvents = Array.from(events.values());
-    return allEvents.sort(
-      (a, b) => new Date(b.last_update).getTime() - new Date(a.last_update).getTime()
-    );
+    return allEvents.sort(sortByStatusThenName);
   }, [events]);
 
   // Mark events as seen/acknowledged

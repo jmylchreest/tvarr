@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useProgressContext, ProgressEvent } from '@/providers/ProgressProvider';
+import { useProgressContext, ProgressEvent, sortByStatusThenName } from '@/providers/ProgressProvider';
 
 /**
  * Subscribe to progress events for a specific resource ID
@@ -54,11 +54,7 @@ export function useProgressEventsByType(operationType: string): ProgressEvent[] 
 
     const unsubscribe = context.subscribeToType(operationType, (event) => {
       eventMap.set(event.id, event);
-      setEvents(
-        Array.from(eventMap.values()).sort(
-          (a, b) => new Date(b.last_update).getTime() - new Date(a.last_update).getTime()
-        )
-      );
+      setEvents(Array.from(eventMap.values()).sort(sortByStatusThenName));
     });
 
     return unsubscribe;
