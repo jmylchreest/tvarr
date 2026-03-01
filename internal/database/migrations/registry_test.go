@@ -51,7 +51,8 @@ func TestAllMigrations_ReturnsExpectedCount(t *testing.T) {
 	// 022: Add encoder_overrides table for hardware encoder workarounds
 	// 023: Remove deprecated client_detection_enabled column from stream_proxies
 	// 024: Fix dynamic codec rules to only contribute their own field
-	assert.Len(t, migrations, 24)
+	// 025: Add EPG enrichment fields (previously_shown, date, star_rating, season_number, episode_number, program_id, credits)
+	assert.Len(t, migrations, 25)
 }
 
 func TestAllMigrations_VersionsAreUnique(t *testing.T) {
@@ -121,10 +122,10 @@ func TestMigrator_Status(t *testing.T) {
 	migrator := NewMigrator(db, nil)
 	migrator.RegisterAll(AllMigrations())
 
-	// Before running migrations (24 migrations total)
+	// Before running migrations (25 migrations total)
 	statuses, err := migrator.Status(ctx)
 	require.NoError(t, err)
-	assert.Len(t, statuses, 24)
+	assert.Len(t, statuses, 25)
 
 	for _, s := range statuses {
 		assert.False(t, s.Applied)
@@ -162,6 +163,20 @@ func TestMigrator_Down_RollsBackLastMigration(t *testing.T) {
 	assert.True(t, db.Migrator().HasTable("backup_settings"))
 	assert.True(t, db.Migrator().HasTable("ffmpegd_config"))
 	assert.True(t, db.Migrator().HasTable("encoder_overrides"))
+
+	// Roll back migration 025 (EPG enrichment fields)
+	err = migrator.Down(ctx)
+	require.NoError(t, err)
+
+	// epg_programs table still exists after rolling back enrichment columns
+	assert.True(t, db.Migrator().HasTable("epg_programs"))
+	assert.False(t, db.Migrator().HasColumn("epg_programs", "previously_shown"))
+	assert.False(t, db.Migrator().HasColumn("epg_programs", "date"))
+	assert.False(t, db.Migrator().HasColumn("epg_programs", "star_rating"))
+	assert.False(t, db.Migrator().HasColumn("epg_programs", "season_number"))
+	assert.False(t, db.Migrator().HasColumn("epg_programs", "episode_number"))
+	assert.False(t, db.Migrator().HasColumn("epg_programs", "program_id"))
+	assert.False(t, db.Migrator().HasColumn("epg_programs", "credits"))
 
 	// Roll back migration 024 (fix dynamic codec rules)
 	err = migrator.Down(ctx)
@@ -369,10 +384,10 @@ func TestMigrator_Pending(t *testing.T) {
 	migrator := NewMigrator(db, nil)
 	migrator.RegisterAll(AllMigrations())
 
-	// All should be pending initially (24 migrations total)
+	// All should be pending initially (25 migrations total)
 	pending, err := migrator.Pending(ctx)
 	require.NoError(t, err)
-	assert.Len(t, pending, 24)
+	assert.Len(t, pending, 25)
 
 	// Run migrations
 	err = migrator.Up(ctx)

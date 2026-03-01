@@ -343,6 +343,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 		logger,
 		logoService, // Logo caching enabled
 		ingestionGuardStateManager,
+		jobRepo, // Pending job checking for ingestion guard
 		baseURL,
 	)
 

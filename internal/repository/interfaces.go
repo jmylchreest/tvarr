@@ -348,6 +348,10 @@ type JobRepository interface {
 	// FindDuplicatePending finds an existing pending/scheduled job for the same type and target.
 	// Used for deduplication of concurrent job requests.
 	FindDuplicatePending(ctx context.Context, jobType models.JobType, targetID models.ULID) (*models.Job, error)
+	// HasPendingIngestionJobs checks whether any pending/scheduled/running ingestion jobs
+	// exist for the given source IDs. Used by the ingestion guard to detect queued but
+	// not-yet-started ingestions that the in-memory StateManager doesn't know about.
+	HasPendingIngestionJobs(ctx context.Context, sourceIDs []models.ULID) (bool, error)
 	// CreateHistory creates a job history record.
 	CreateHistory(ctx context.Context, history *models.JobHistory) error
 	// GetHistory retrieves job history with pagination.

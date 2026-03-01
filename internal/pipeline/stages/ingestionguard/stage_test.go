@@ -15,10 +15,11 @@ import (
 
 // MockStateChecker implements StateChecker for testing.
 type MockStateChecker struct {
-	mu          sync.RWMutex
-	isIngesting bool
-	activeCount int
-	states      []*ingestor.IngestionState
+	mu               sync.RWMutex
+	isIngesting      bool
+	activeCount      int
+	states           []*ingestor.IngestionState
+	ingestingSources map[models.ULID]string // sourceID -> name for scoped checks
 }
 
 func (m *MockStateChecker) IsAnyIngesting() bool {
@@ -27,10 +28,33 @@ func (m *MockStateChecker) IsAnyIngesting() bool {
 	return m.isIngesting
 }
 
+func (m *MockStateChecker) IsAnyIngestingForSources(sourceIDs []models.ULID) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, id := range sourceIDs {
+		if _, ok := m.ingestingSources[id]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *MockStateChecker) ActiveIngestionCount() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.activeCount
+}
+
+func (m *MockStateChecker) ActiveIngestionNamesForSources(sourceIDs []models.ULID) []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var names []string
+	for _, id := range sourceIDs {
+		if name, ok := m.ingestingSources[id]; ok {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 func (m *MockStateChecker) GetAllStates() []*ingestor.IngestionState {
@@ -50,6 +74,30 @@ func (m *MockStateChecker) SetStates(states []*ingestor.IngestionState) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.states = states
+}
+
+func (m *MockStateChecker) SetIngestingSources(sources map[models.ULID]string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ingestingSources = sources
+}
+
+// MockPendingJobChecker implements PendingJobChecker for testing.
+type MockPendingJobChecker struct {
+	mu         sync.RWMutex
+	hasPending bool
+}
+
+func (m *MockPendingJobChecker) HasPendingIngestionJobs(_ context.Context, _ []models.ULID) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.hasPending, nil
+}
+
+func (m *MockPendingJobChecker) SetHasPending(hasPending bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.hasPending = hasPending
 }
 
 func TestNew(t *testing.T) {
@@ -226,13 +274,114 @@ func TestCleanup(t *testing.T) {
 
 func TestNewConstructor(t *testing.T) {
 	checker := &MockStateChecker{}
-	constructor := NewConstructor(checker)
+	constructor := NewConstructor(checker, nil)
 
 	deps := &core.Dependencies{}
 	stage := constructor(deps)
 
 	require.NotNil(t, stage)
 	assert.Equal(t, StageID, stage.ID())
+}
+
+func TestNewConstructorWithPendingJobChecker(t *testing.T) {
+	checker := &MockStateChecker{}
+	jobChecker := &MockPendingJobChecker{}
+	constructor := NewConstructor(checker, jobChecker)
+
+	deps := &core.Dependencies{}
+	stage := constructor(deps)
+
+	require.NotNil(t, stage)
+	assert.Equal(t, StageID, stage.ID())
+}
+
+func TestExecute_ProxyScoped_IgnoresUnrelatedSources(t *testing.T) {
+	// Source A is ingesting (related), Source B is ingesting (unrelated)
+	sourceA := models.NewULID()
+	sourceB := models.NewULID()
+
+	checker := &MockStateChecker{
+		isIngesting: true,
+		activeCount: 2,
+		ingestingSources: map[models.ULID]string{
+			sourceA: "Source A",
+			sourceB: "Source B",
+		},
+	}
+	stage := New(checker).
+		WithPollInterval(50 * time.Millisecond).
+		WithMaxWaitTime(5 * time.Second)
+
+	// Create a proxy state that only uses Source A
+	proxy := &models.StreamProxy{}
+	state := core.NewState(proxy)
+	state.Sources = []*models.StreamSource{{}}
+	state.Sources[0].ID = sourceA
+	// No EPG sources
+
+	// Complete Source A after a short delay, but Source B stays ingesting
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		checker.mu.Lock()
+		delete(checker.ingestingSources, sourceA)
+		checker.mu.Unlock()
+	}()
+
+	result, err := stage.Execute(context.Background(), state)
+
+	// Should succeed because the proxy only watches Source A (which completed)
+	// Even though Source B (unrelated) is still ingesting
+	require.NoError(t, err)
+	assert.Contains(t, result.Message, "Waited")
+}
+
+func TestExecute_PendingJobChecker_WaitsForQueuedJobs(t *testing.T) {
+	sourceA := models.NewULID()
+
+	checker := &MockStateChecker{
+		isIngesting:      false, // No active ingestions in StateManager
+		activeCount:      0,
+		ingestingSources: map[models.ULID]string{},
+	}
+	jobChecker := &MockPendingJobChecker{hasPending: true} // But there ARE pending jobs
+
+	stage := New(checker).
+		WithPollInterval(50 * time.Millisecond).
+		WithMaxWaitTime(5 * time.Second).
+		WithPendingJobChecker(jobChecker).
+		WithSourceIDs([]models.ULID{sourceA})
+
+	// After a short delay, pending jobs will clear
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		jobChecker.SetHasPending(false)
+	}()
+
+	state := core.NewState(&models.StreamProxy{})
+	result, err := stage.Execute(context.Background(), state)
+
+	require.NoError(t, err)
+	assert.Contains(t, result.Message, "Waited")
+}
+
+func TestExecute_PendingJobChecker_ProceedsWhenNoPending(t *testing.T) {
+	checker := &MockStateChecker{
+		isIngesting:      false,
+		activeCount:      0,
+		ingestingSources: map[models.ULID]string{},
+	}
+	jobChecker := &MockPendingJobChecker{hasPending: false}
+
+	sourceA := models.NewULID()
+	stage := New(checker).
+		WithPendingJobChecker(jobChecker).
+		WithSourceIDs([]models.ULID{sourceA})
+
+	state := core.NewState(&models.StreamProxy{})
+	result, err := stage.Execute(context.Background(), state)
+
+	require.NoError(t, err)
+	assert.Contains(t, result.Message, "No active ingestions")
 }
 
 func TestIntegrationWithRealStateManager(t *testing.T) {

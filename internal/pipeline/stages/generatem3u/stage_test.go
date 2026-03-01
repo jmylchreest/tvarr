@@ -31,20 +31,22 @@ func TestStage_Execute_ProducesValidM3U(t *testing.T) {
 		state := newTestState(t)
 		state.Channels = []*models.Channel{
 			{
-				TvgID:       "channel1",
-				TvgName:     "Channel One",
-				TvgLogo:     "http://example.com/logo1.png",
-				GroupTitle:  "News",
-				ChannelName: "Channel One HD",
-				StreamURL:   "http://example.com/stream1",
+				TvgID:         "channel1",
+				TvgName:       "Channel One",
+				TvgLogo:       "http://example.com/logo1.png",
+				GroupTitle:    "News",
+				ChannelName:   "Channel One HD",
+				ChannelNumber: 1,
+				StreamURL:     "http://example.com/stream1",
 			},
 			{
-				TvgID:       "channel2",
-				TvgName:     "Channel Two",
-				TvgLogo:     "http://example.com/logo2.png",
-				GroupTitle:  "Sports",
-				ChannelName: "Channel Two HD",
-				StreamURL:   "http://example.com/stream2",
+				TvgID:         "channel2",
+				TvgName:       "Channel Two",
+				TvgLogo:       "http://example.com/logo2.png",
+				GroupTitle:    "Sports",
+				ChannelName:   "Channel Two HD",
+				ChannelNumber: 2,
+				StreamURL:     "http://example.com/stream2",
 			},
 		}
 
@@ -105,9 +107,10 @@ func TestStage_Execute_ProducesValidM3U(t *testing.T) {
 		state := newTestState(t)
 		state.Channels = []*models.Channel{
 			{
-				TvgID:       "test",
-				ChannelName: "Test Channel",
-				StreamURL:   "http://example.com/stream",
+				TvgID:         "test",
+				ChannelName:   "Test Channel",
+				ChannelNumber: 1,
+				StreamURL:     "http://example.com/stream",
 			},
 		}
 
@@ -129,19 +132,22 @@ func TestStage_Execute_SkipsEmptyStreamURL(t *testing.T) {
 		state := newTestState(t)
 		state.Channels = []*models.Channel{
 			{
-				TvgID:       "valid",
-				ChannelName: "Valid Channel",
-				StreamURL:   "http://example.com/stream",
+				TvgID:         "valid",
+				ChannelName:   "Valid Channel",
+				ChannelNumber: 1,
+				StreamURL:     "http://example.com/stream",
 			},
 			{
-				TvgID:       "empty_url",
-				ChannelName: "Empty URL Channel",
-				StreamURL:   "", // Empty - should be skipped
+				TvgID:         "empty_url",
+				ChannelName:   "Empty URL Channel",
+				ChannelNumber: 2,
+				StreamURL:     "", // Empty - should be skipped
 			},
 			{
-				TvgID:       "another_valid",
-				ChannelName: "Another Valid Channel",
-				StreamURL:   "http://example.com/stream2",
+				TvgID:         "another_valid",
+				ChannelName:   "Another Valid Channel",
+				ChannelNumber: 3,
+				StreamURL:     "http://example.com/stream2",
 			},
 		}
 
@@ -174,11 +180,12 @@ func TestStage_Interface(t *testing.T) {
 func TestStage_ContextCancellation(t *testing.T) {
 	state := newTestState(t)
 	// Create many channels to increase chance of cancellation during iteration
-	for range 100 {
+	for i := range 100 {
 		state.Channels = append(state.Channels, &models.Channel{
-			TvgID:       "test",
-			ChannelName: "Test",
-			StreamURL:   "http://example.com/stream",
+			TvgID:         "test",
+			ChannelName:   "Test",
+			ChannelNumber: i + 1,
+			StreamURL:     "http://example.com/stream",
 		})
 	}
 

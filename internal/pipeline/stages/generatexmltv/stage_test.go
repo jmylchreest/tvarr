@@ -105,9 +105,10 @@ func TestStage_Execute_ProducesValidXMLTV(t *testing.T) {
 		// Verify <programme> elements
 		assert.Contains(t, contentStr, `<programme start=`)
 		assert.Contains(t, contentStr, `channel="channel1"`)
-		assert.Contains(t, contentStr, `<title lang="en">Morning Show</title>`)
-		assert.Contains(t, contentStr, `<title lang="en">News at Noon</title>`)
-		assert.Contains(t, contentStr, `<desc lang="en">Daily news update</desc>`)
+		// When Language is not set on the program, lang attribute is omitted
+		assert.Contains(t, contentStr, `<title>Morning Show</title>`)
+		assert.Contains(t, contentStr, `<title>News at Noon</title>`)
+		assert.Contains(t, contentStr, `<desc>Daily news update</desc>`)
 		assert.Contains(t, contentStr, `</programme>`)
 	})
 

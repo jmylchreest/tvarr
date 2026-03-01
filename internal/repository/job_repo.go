@@ -280,6 +280,28 @@ func (r *jobRepo) FindDuplicatePending(ctx context.Context, jobType models.JobTy
 	return &job, nil
 }
 
+// HasPendingIngestionJobs checks whether any pending/scheduled/running ingestion jobs
+// exist for any of the given source IDs. This catches jobs that are queued but haven't
+// been picked up by a worker yet (and thus aren't tracked in the in-memory StateManager).
+func (r *jobRepo) HasPendingIngestionJobs(ctx context.Context, sourceIDs []models.ULID) (bool, error) {
+	if len(sourceIDs) == 0 {
+		return false, nil
+	}
+
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&models.Job{}).
+		Where("type IN (?, ?) AND target_id IN ? AND status IN (?, ?, ?)",
+			models.JobTypeStreamIngestion, models.JobTypeEpgIngestion,
+			sourceIDs,
+			models.JobStatusPending, models.JobStatusScheduled, models.JobStatusRunning).
+		Count(&count).Error
+	if err != nil {
+		return false, fmt.Errorf("checking pending ingestion jobs: %w", err)
+	}
+	return count > 0, nil
+}
+
 // CreateHistory creates a job history record.
 func (r *jobRepo) CreateHistory(ctx context.Context, history *models.JobHistory) error {
 	if err := r.db.WithContext(ctx).Create(history).Error; err != nil {

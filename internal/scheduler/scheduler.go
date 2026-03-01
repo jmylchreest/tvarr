@@ -471,6 +471,18 @@ func (s *Scheduler) createJobFunc(jobType models.JobType, targetID models.ULID, 
 	}
 }
 
+// jobPriorityForType returns the appropriate job priority for a given job type.
+// Ingestion jobs (stream + EPG) get higher priority than generation jobs to ensure
+// workers pick up data ingestion before proxy generation.
+func jobPriorityForType(jobType models.JobType) int {
+	switch jobType {
+	case models.JobTypeStreamIngestion, models.JobTypeEpgIngestion:
+		return models.JobPriorityIngestion
+	default:
+		return models.JobPriorityDefault
+	}
+}
+
 // createJobIfNotDuplicate creates a job if no duplicate pending job exists.
 // Returns the job (existing or new) and any error.
 func (s *Scheduler) createJobIfNotDuplicate(ctx context.Context, jobType models.JobType, targetID models.ULID, targetName, cronSchedule string) (*models.Job, error) {
@@ -495,6 +507,7 @@ func (s *Scheduler) createJobIfNotDuplicate(ctx context.Context, jobType models.
 		TargetName:   targetName,
 		Status:       models.JobStatusPending,
 		CronSchedule: cronSchedule,
+		Priority:     jobPriorityForType(jobType),
 	}
 
 	if err := s.jobRepo.Create(ctx, job); err != nil {
@@ -532,6 +545,7 @@ func (s *Scheduler) ScheduleImmediate(ctx context.Context, jobType models.JobTyp
 		TargetID:   targetID,
 		TargetName: targetName,
 		Status:     models.JobStatusPending,
+		Priority:   jobPriorityForType(jobType),
 	}
 
 	if err := s.jobRepo.Create(ctx, job); err != nil {

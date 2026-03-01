@@ -55,6 +55,24 @@ type EpgProgram struct {
 	// IsLive indicates if this is a live broadcast.
 	IsLive bool `gorm:"default:false" json:"is_live"`
 
+	// PreviouslyShown indicates if this is a repeat/rerun.
+	PreviouslyShown bool `gorm:"default:false" json:"previously_shown"`
+
+	// Date is the original air date or production year (e.g., "2025", "20250315").
+	Date string `gorm:"size:20" json:"date,omitempty"`
+
+	// StarRating is the community/critic rating (e.g., "8/10", "4/5").
+	StarRating string `gorm:"size:20" json:"star_rating,omitempty"`
+
+	// SeasonNumber is the parsed season number (1-based, 0 means unknown).
+	SeasonNumber int `gorm:"default:0" json:"season_number"`
+
+	// EpisodeNumber is the parsed episode number (1-based, 0 means unknown).
+	EpisodeNumber int `gorm:"default:0" json:"episode_number"`
+
+	// ProgramID is a unique program identifier (e.g., dd_progid) for recording dedup.
+	ProgramID string `gorm:"size:100" json:"program_id,omitempty"`
+
 	// Credits stores cast/crew as JSON.
 	Credits string `gorm:"type:text" json:"credits,omitempty"`
 

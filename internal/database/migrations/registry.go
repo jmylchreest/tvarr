@@ -32,6 +32,8 @@ import (
 // - 021: Add max_concurrent_streams column to stream_sources table
 // - 022: Add encoder_overrides table for hardware encoder workarounds
 // - 023: Remove deprecated client_detection_enabled column from stream_proxies
+// - 024: Fix dynamic codec rules with proper @dynamic() syntax for all fields
+// - 025: Add EPG enrichment fields (previously_shown, date, star_rating, season_number, episode_number, program_id, credits)
 func AllMigrations() []Migration {
 	return []Migration{
 		migration001Schema(),
@@ -58,6 +60,7 @@ func AllMigrations() []Migration {
 		migration022EncoderOverrides(),
 		migration023RemoveClientDetectionEnabled(),
 		migration024FixDynamicCodecRules(),
+		migration025EpgEnrichment(),
 	}
 }
 

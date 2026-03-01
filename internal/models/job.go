@@ -22,6 +22,19 @@ const (
 	JobTypeBackup JobType = "backup"
 )
 
+// Job priority constants. Higher values are executed first.
+// Ingestion jobs have higher priority than generation jobs to ensure
+// all data is ingested before proxy generation begins.
+const (
+	// JobPriorityDefault is the default priority for jobs.
+	JobPriorityDefault = 0
+	// JobPriorityIngestion is the priority for ingestion jobs (stream + EPG).
+	// Higher than generation to ensure workers pick up ingestion work first.
+	JobPriorityIngestion = 10
+	// JobPriorityGeneration is the priority for proxy generation jobs.
+	JobPriorityGeneration = JobPriorityDefault
+)
+
 // JobStatus represents the current status of a job.
 type JobStatus string
 
@@ -305,6 +318,7 @@ func NewJobFromSource(source *StreamSource, cronSchedule string) *Job {
 		TargetID:     source.ID,
 		TargetName:   source.Name,
 		CronSchedule: cronSchedule,
+		Priority:     JobPriorityIngestion,
 	}
 	return job
 }
@@ -316,6 +330,7 @@ func NewJobFromEpgSource(source *EpgSource, cronSchedule string) *Job {
 		TargetID:     source.ID,
 		TargetName:   source.Name,
 		CronSchedule: cronSchedule,
+		Priority:     JobPriorityIngestion,
 	}
 	return job
 }
@@ -327,6 +342,7 @@ func NewJobFromProxy(proxy *StreamProxy, cronSchedule string) *Job {
 		TargetID:     proxy.ID,
 		TargetName:   proxy.Name,
 		CronSchedule: cronSchedule,
+		Priority:     JobPriorityGeneration,
 	}
 	return job
 }

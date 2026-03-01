@@ -204,6 +204,35 @@ func (m *StateManager) IsAnyIngesting() bool {
 	return false
 }
 
+// IsAnyIngestingForSources returns true if any of the specified sources are currently ingesting.
+// This allows proxy-scoped checks where a proxy only waits for its own linked sources.
+func (m *StateManager) IsAnyIngestingForSources(sourceIDs []models.ULID) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, id := range sourceIDs {
+		if state, exists := m.states[id]; exists && state.Status == "ingesting" {
+			return true
+		}
+	}
+	return false
+}
+
+// ActiveIngestionNamesForSources returns the names of actively ingesting sources
+// from the given set of source IDs.
+func (m *StateManager) ActiveIngestionNamesForSources(sourceIDs []models.ULID) []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var names []string
+	for _, id := range sourceIDs {
+		if state, exists := m.states[id]; exists && state.Status == "ingesting" {
+			names = append(names, state.SourceName)
+		}
+	}
+	return names
+}
+
 // ActiveIngestionCount returns the number of active ingestions.
 func (m *StateManager) ActiveIngestionCount() int {
 	m.mu.RLock()

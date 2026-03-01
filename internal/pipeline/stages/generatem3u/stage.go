@@ -88,7 +88,6 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	}
 
 	channelCount := 0
-	channelNum := state.Proxy.StartingChannelNumber
 	var skippedCount int
 
 	for _, ch := range state.Channels {
@@ -106,7 +105,9 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 			continue
 		}
 
-		entry := shared.ChannelToM3UEntry(ch, channelNum)
+		// Use the channel number assigned by the numbering stage.
+		// This ensures M3U tvg-chno matches XMLTV display-name numbers.
+		entry := shared.ChannelToM3UEntry(ch, ch.ChannelNumber)
 
 		// Override URL with proxy stream URL so clients always use the proxy endpoint.
 		// The streaming endpoint decides at request time whether to redirect, proxy, or relay.
@@ -120,7 +121,6 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 		}
 
 		channelCount++
-		channelNum++
 	}
 
 	state.ChannelCount = channelCount

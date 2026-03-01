@@ -105,6 +105,7 @@ func NewFactory(deps *Dependencies) *Factory {
 // NewDefaultFactory creates a factory with the standard stage configuration.
 // If stateManager is nil, ingestion guard stage is skipped.
 // If logoCacher is nil, logo caching stage is skipped.
+// If jobRepo is nil, pending job checking in the ingestion guard is disabled.
 // baseURL is used to construct fully qualified URLs for cached logos (e.g., "http://localhost:8080").
 func NewDefaultFactory(
 	channelRepo repository.ChannelRepository,
@@ -115,6 +116,7 @@ func NewDefaultFactory(
 	logger *slog.Logger,
 	logoCacher logocaching.LogoCacher,
 	stateManager *ingestor.StateManager,
+	jobRepo repository.JobRepository,
 	baseURL string,
 ) *Factory {
 	deps := &Dependencies{
@@ -130,9 +132,16 @@ func NewDefaultFactory(
 	factory := NewFactory(deps)
 
 	// Register default stages in execution order
-	// Ingestion guard is FIRST to ensure data consistency
+	// Ingestion guard is FIRST to ensure data consistency.
+	// When jobRepo is provided, the guard also checks for pending/queued ingestion
+	// jobs that haven't started yet, preventing the race condition where proxy
+	// generation starts before all related ingestions have been picked up by workers.
 	if stateManager != nil {
-		factory.RegisterStage(ingestionguard.NewConstructor(stateManager))
+		var pendingJobChecker ingestionguard.PendingJobChecker
+		if jobRepo != nil {
+			pendingJobChecker = jobRepo
+		}
+		factory.RegisterStage(ingestionguard.NewConstructor(stateManager, pendingJobChecker))
 	}
 
 	factory.RegisterStage(loadchannels.NewConstructor())

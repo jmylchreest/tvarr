@@ -17,21 +17,29 @@ import (
 
 // Programme represents a single program entry in an XMLTV file.
 type Programme struct {
-	Start          time.Time
-	Stop           time.Time
-	Channel        string
-	Title          string
-	SubTitle       string
-	Description    string
-	Category       string
-	Icon           string
-	EpisodeNum     string
-	Rating         string
-	Language       string
-	IsNew          bool
-	IsPremiere     bool
-	Credits        *Credits
-	TimezoneOffset string // The timezone offset from the start time (e.g., "+0000", "-0500")
+	Start           time.Time
+	Stop            time.Time
+	Channel         string
+	Title           string
+	SubTitle        string
+	Description     string
+	Category        string
+	Categories      []string
+	Icon            string
+	EpisodeNum      string
+	Rating          string
+	Language        string
+	IsNew           bool
+	IsPremiere      bool
+	IsLive          bool
+	PreviouslyShown bool
+	Date            string
+	StarRating      string
+	SeasonNumber    int
+	EpisodeNumber   int
+	ProgramID       string
+	Credits         *Credits
+	TimezoneOffset  string // The timezone offset from start time (e.g., "+0000", "-0500")
 }
 
 // Credits holds cast and crew information.
@@ -45,10 +53,11 @@ type Credits struct {
 
 // Channel represents a channel definition in an XMLTV file.
 type Channel struct {
-	ID          string
-	DisplayName string
-	Icon        string
-	URL         string
+	ID           string
+	DisplayName  string
+	DisplayNames []string
+	Icon         string
+	URL          string
 }
 
 // Parser provides streaming XMLTV parsing with callback-based processing.
@@ -238,8 +247,14 @@ func (p *Parser) parseChannel(decoder *xml.Decoder, start xml.StartElement) (*Ch
 			switch elem.Name.Local {
 			case "display-name":
 				var name string
-				if err := decoder.DecodeElement(&name, &elem); err == nil && channel.DisplayName == "" {
-					channel.DisplayName = name
+				if err := decoder.DecodeElement(&name, &elem); err == nil {
+					name = strings.TrimSpace(name)
+					if name != "" {
+						channel.DisplayNames = append(channel.DisplayNames, name)
+						if channel.DisplayName == "" {
+							channel.DisplayName = name
+						}
+					}
 				}
 			case "icon":
 				for _, attr := range elem.Attr {
@@ -314,8 +329,14 @@ func (p *Parser) parseProgramme(decoder *xml.Decoder, start xml.StartElement) (*
 				}
 			case "category":
 				var cat string
-				if err := decoder.DecodeElement(&cat, &elem); err == nil && prog.Category == "" {
-					prog.Category = strings.TrimSpace(cat)
+				if err := decoder.DecodeElement(&cat, &elem); err == nil {
+					cat = strings.TrimSpace(cat)
+					if cat != "" {
+						prog.Categories = append(prog.Categories, cat)
+						if prog.Category == "" {
+							prog.Category = cat
+						}
+					}
 				}
 			case "icon":
 				for _, attr := range elem.Attr {
@@ -327,10 +348,21 @@ func (p *Parser) parseProgramme(decoder *xml.Decoder, start xml.StartElement) (*
 			case "episode-num":
 				var epNum string
 				if err := decoder.DecodeElement(&epNum, &elem); err == nil {
-					prog.EpisodeNum = strings.TrimSpace(epNum)
+					epNum = strings.TrimSpace(epNum)
+					prog.EpisodeNum = epNum
+
+					system := ""
+					for _, attr := range elem.Attr {
+						if attr.Name.Local == "system" {
+							system = attr.Value
+						}
+					}
+					p.parseEpisodeNum(epNum, system, prog)
 				}
 			case "rating":
 				p.parseRating(decoder, &elem, prog)
+			case "star-rating":
+				p.parseStarRating(decoder, &elem, prog)
 			case "language":
 				var lang string
 				if err := decoder.DecodeElement(&lang, &elem); err == nil {
@@ -342,6 +374,17 @@ func (p *Parser) parseProgramme(decoder *xml.Decoder, start xml.StartElement) (*
 			case "premiere":
 				prog.IsPremiere = true
 				_ = decoder.Skip()
+			case "previously-shown":
+				prog.PreviouslyShown = true
+				_ = decoder.Skip()
+			case "live":
+				prog.IsLive = true
+				_ = decoder.Skip()
+			case "date":
+				var date string
+				if err := decoder.DecodeElement(&date, &elem); err == nil {
+					prog.Date = strings.TrimSpace(date)
+				}
 			case "credits":
 				prog.Credits = p.parseCredits(decoder)
 			default:
@@ -412,6 +455,52 @@ func (p *Parser) parseCredits(decoder *xml.Decoder) *Credits {
 		case xml.EndElement:
 			if elem.Name.Local == "credits" {
 				return credits
+			}
+		}
+	}
+}
+
+// parseEpisodeNum parses episode-number based on system attribute.
+// xmltv_ns format uses 0-based numbering (e.g., "2.5." = Season 3, Episode 6).
+// We convert to 1-based numbering for storage (0 means unknown).
+func (p *Parser) parseEpisodeNum(value, system string, prog *Programme) {
+	if system == "xmltv_ns" {
+		parts := strings.Split(value, ".")
+		if len(parts) >= 2 {
+			var season, episode int
+			if _, err := fmt.Sscanf(parts[0], "%d", &season); err == nil {
+				prog.SeasonNumber = season + 1 // convert 0-based to 1-based
+			}
+			if _, err := fmt.Sscanf(parts[1], "%d", &episode); err == nil {
+				prog.EpisodeNumber = episode + 1 // convert 0-based to 1-based
+			}
+		}
+	} else if system == "dd_progid" {
+		prog.ProgramID = strings.TrimSpace(value)
+	}
+}
+
+// parseStarRating parses the star-rating element.
+func (p *Parser) parseStarRating(decoder *xml.Decoder, start *xml.StartElement, prog *Programme) {
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			return
+		}
+
+		switch elem := token.(type) {
+		case xml.StartElement:
+			if elem.Name.Local == "value" {
+				var value string
+				if err := decoder.DecodeElement(&value, &elem); err == nil {
+					prog.StarRating = strings.TrimSpace(value)
+				}
+			} else {
+				_ = decoder.Skip()
+			}
+		case xml.EndElement:
+			if elem.Name.Local == "star-rating" {
+				return
 			}
 		}
 	}

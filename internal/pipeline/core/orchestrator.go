@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/jmylchreest/tvarr/internal/models"
 )
 
@@ -100,8 +102,20 @@ func (o *Orchestrator) Execute(ctx context.Context) (*Result, error) {
 
 	startTime := time.Now()
 
-	// Execute each stage
-	for i, stage := range o.stages {
+	// Separate stages into sequential and parallel groups
+	var sequentialStages []Stage
+	var parallelStages []Stage
+	for _, stage := range o.stages {
+		stageName := stage.Name()
+		if stageName == "generate_xmltv" || stageName == "generate_m3u" {
+			parallelStages = append(parallelStages, stage)
+		} else {
+			sequentialStages = append(sequentialStages, stage)
+		}
+	}
+
+	// Execute sequential stages
+	for i, stage := range sequentialStages {
 		select {
 		case <-ctx.Done():
 			result.Errors = append(result.Errors, ctx.Err())
@@ -122,6 +136,57 @@ func (o *Orchestrator) Execute(ctx context.Context) (*Result, error) {
 		}
 
 		// Force GC between stages to manage memory
+		o.cleanupBetweenStages()
+	}
+
+	// Execute parallel stages (generate_m3u and generate_xmltv) using errgroup
+	if len(parallelStages) > 0 {
+		g, ctx := errgroup.WithContext(ctx)
+		for i, stage := range parallelStages {
+			currentStage := stage
+			stageIndex := len(sequentialStages) + i
+
+			g.Go(func() error {
+				stageResult, err := o.executeStage(ctx, stageIndex, currentStage)
+				if stageResult == nil {
+					stageResult = &StageResult{}
+				}
+				stageResult.Duration = time.Since(startTime)
+
+				if err != nil {
+					o.logger.ErrorContext(ctx, "stage failed",
+						slog.String("stage_id", currentStage.ID()),
+						slog.String("stage_name", currentStage.Name()),
+						slog.String("error", err.Error()),
+						slog.Duration("duration", stageResult.Duration),
+					)
+					return err
+				}
+
+				// Register artifacts in state
+				for _, artifact := range stageResult.Artifacts {
+					o.state.AddArtifact(currentStage.ID(), artifact)
+				}
+
+				o.logger.InfoContext(ctx, "stage completed",
+					slog.String("stage_id", currentStage.ID()),
+					slog.String("stage_name", currentStage.Name()),
+					slog.Duration("duration", stageResult.Duration),
+				)
+
+				result.StageResults[currentStage.ID()] = stageResult
+				return nil
+			})
+		}
+
+		if err := g.Wait(); err != nil {
+			result.Errors = append(result.Errors, err)
+			result.Duration = time.Since(startTime)
+			o.cleanupStages(ctx, parallelStages)
+			return result, err
+		}
+
+		// Force GC after parallel stages
 		o.cleanupBetweenStages()
 	}
 

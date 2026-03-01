@@ -55,13 +55,27 @@ func (w *Writer) WriteChannel(ch *Channel) error {
 		return err
 	}
 
-	_, err = fmt.Fprintf(w.w, `    <display-name>%s</display-name>`, xmlEscape(ch.DisplayName))
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintln(w.w)
-	if err != nil {
-		return err
+	// Display-names (emit all if available, otherwise just DisplayName)
+	if len(ch.DisplayNames) > 0 {
+		for _, name := range ch.DisplayNames {
+			_, err = fmt.Fprintf(w.w, `    <display-name>%s</display-name>`, xmlEscape(name))
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(w.w)
+			if err != nil {
+				return err
+			}
+		}
+	} else if ch.DisplayName != "" {
+		_, err = fmt.Fprintf(w.w, `    <display-name>%s</display-name>`, xmlEscape(ch.DisplayName))
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(w.w)
+		if err != nil {
+			return err
+		}
 	}
 
 	if ch.Icon != "" {
@@ -91,6 +105,12 @@ func (w *Writer) WriteChannel(ch *Channel) error {
 }
 
 // WriteProgramme writes a programme entry.
+// Element ordering follows the XMLTV DTD specification:
+//
+//	title, sub-title, desc, credits, date, category, keyword, language,
+//	orig-language, length, icon, url, country, episode-num, video, audio,
+//	previously-shown, premiere, last-chance, new, subtitles, rating,
+//	star-rating, review, image
 func (w *Writer) WriteProgramme(prog *Programme) error {
 	if err := w.WriteHeader(); err != nil {
 		return err
@@ -110,12 +130,17 @@ func (w *Writer) WriteProgramme(prog *Programme) error {
 		return err
 	}
 
-	// Title (required)
+	// Determine language attribute: use program's language if set, omit if unknown.
+	// Jellyfin filters elements by lang matching the user's preferred language;
+	// omitting lang causes it to be treated as a universal match.
 	lang := prog.Language
-	if lang == "" {
-		lang = "en"
+
+	// --- DTD order: title (required) ---
+	if lang != "" {
+		_, err = fmt.Fprintf(w.w, `    <title lang="%s">%s</title>`, lang, xmlEscape(prog.Title))
+	} else {
+		_, err = fmt.Fprintf(w.w, `    <title>%s</title>`, xmlEscape(prog.Title))
 	}
-	_, err = fmt.Fprintf(w.w, `    <title lang="%s">%s</title>`, lang, xmlEscape(prog.Title))
 	if err != nil {
 		return err
 	}
@@ -124,9 +149,13 @@ func (w *Writer) WriteProgramme(prog *Programme) error {
 		return err
 	}
 
-	// Sub-title
+	// --- DTD order: sub-title ---
 	if prog.SubTitle != "" {
-		_, err = fmt.Fprintf(w.w, `    <sub-title lang="%s">%s</sub-title>`, lang, xmlEscape(prog.SubTitle))
+		if lang != "" {
+			_, err = fmt.Fprintf(w.w, `    <sub-title lang="%s">%s</sub-title>`, lang, xmlEscape(prog.SubTitle))
+		} else {
+			_, err = fmt.Fprintf(w.w, `    <sub-title>%s</sub-title>`, xmlEscape(prog.SubTitle))
+		}
 		if err != nil {
 			return err
 		}
@@ -136,9 +165,13 @@ func (w *Writer) WriteProgramme(prog *Programme) error {
 		}
 	}
 
-	// Description
+	// --- DTD order: desc ---
 	if prog.Description != "" {
-		_, err = fmt.Fprintf(w.w, `    <desc lang="%s">%s</desc>`, lang, xmlEscape(prog.Description))
+		if lang != "" {
+			_, err = fmt.Fprintf(w.w, `    <desc lang="%s">%s</desc>`, lang, xmlEscape(prog.Description))
+		} else {
+			_, err = fmt.Fprintf(w.w, `    <desc>%s</desc>`, xmlEscape(prog.Description))
+		}
 		if err != nil {
 			return err
 		}
@@ -148,9 +181,16 @@ func (w *Writer) WriteProgramme(prog *Programme) error {
 		}
 	}
 
-	// Category
-	if prog.Category != "" {
-		_, err = fmt.Fprintf(w.w, `    <category lang="%s">%s</category>`, lang, xmlEscape(prog.Category))
+	// --- DTD order: credits ---
+	if prog.Credits != nil {
+		if err := w.writeCredits(prog.Credits); err != nil {
+			return err
+		}
+	}
+
+	// --- DTD order: date ---
+	if prog.Date != "" {
+		_, err = fmt.Fprintf(w.w, `    <date>%s</date>`, xmlEscape(prog.Date))
 		if err != nil {
 			return err
 		}
@@ -160,7 +200,27 @@ func (w *Writer) WriteProgramme(prog *Programme) error {
 		}
 	}
 
-	// Icon
+	// --- DTD order: category ---
+	categories := prog.Categories
+	if len(categories) == 0 && prog.Category != "" {
+		categories = []string{prog.Category}
+	}
+	for _, category := range categories {
+		if lang != "" {
+			_, err = fmt.Fprintf(w.w, `    <category lang="%s">%s</category>`, lang, xmlEscape(category))
+		} else {
+			_, err = fmt.Fprintf(w.w, `    <category>%s</category>`, xmlEscape(category))
+		}
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(w.w)
+		if err != nil {
+			return err
+		}
+	}
+
+	// --- DTD order: icon ---
 	if prog.Icon != "" {
 		_, err = fmt.Fprintf(w.w, `    <icon src="%s"/>`, xmlEscape(prog.Icon))
 		if err != nil {
@@ -172,9 +232,43 @@ func (w *Writer) WriteProgramme(prog *Programme) error {
 		}
 	}
 
-	// Episode number
-	if prog.EpisodeNum != "" {
-		_, err = fmt.Fprintf(w.w, `    <episode-num system="onscreen">%s</episode-num>`, xmlEscape(prog.EpisodeNum))
+	// --- DTD order: episode-num ---
+	// xmltv_ns format: values are 1-based in model (0 = unknown), xmltv_ns uses 0-based
+	if prog.SeasonNumber > 0 || prog.EpisodeNumber > 0 {
+		season := prog.SeasonNumber - 1
+		if season < 0 {
+			season = 0
+		}
+		episode := prog.EpisodeNumber - 1
+		if episode < 0 {
+			episode = 0
+		}
+		_, err = fmt.Fprintf(w.w, `    <episode-num system="xmltv_ns">%d.%d.</episode-num>`, season, episode)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(w.w)
+		if err != nil {
+			return err
+		}
+
+		// SxxExx format for broader compatibility (Plex onscreen support)
+		if prog.SeasonNumber > 0 && prog.EpisodeNumber > 0 {
+			_, err = fmt.Fprintf(w.w, `    <episode-num system="onscreen">S%02dE%02d</episode-num>`,
+				prog.SeasonNumber, prog.EpisodeNumber)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(w.w)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	// dd_progid format
+	if prog.ProgramID != "" {
+		_, err = fmt.Fprintf(w.w, `    <episode-num system="dd_progid">%s</episode-num>`, xmlEscape(prog.ProgramID))
 		if err != nil {
 			return err
 		}
@@ -184,7 +278,31 @@ func (w *Writer) WriteProgramme(prog *Programme) error {
 		}
 	}
 
-	// Rating
+	// --- DTD order: previously-shown ---
+	if prog.PreviouslyShown {
+		_, err = fmt.Fprintln(w.w, `    <previously-shown/>`)
+		if err != nil {
+			return err
+		}
+	}
+
+	// --- DTD order: premiere ---
+	if prog.IsPremiere {
+		_, err = fmt.Fprintln(w.w, `    <premiere/>`)
+		if err != nil {
+			return err
+		}
+	}
+
+	// --- DTD order: new ---
+	if prog.IsNew {
+		_, err = fmt.Fprintln(w.w, `    <new/>`)
+		if err != nil {
+			return err
+		}
+	}
+
+	// --- DTD order: rating ---
 	if prog.Rating != "" {
 		_, err = fmt.Fprintf(w.w, `    <rating><value>%s</value></rating>`, xmlEscape(prog.Rating))
 		if err != nil {
@@ -196,21 +314,64 @@ func (w *Writer) WriteProgramme(prog *Programme) error {
 		}
 	}
 
-	// Flags
-	if prog.IsNew {
-		_, err = fmt.Fprintln(w.w, `    <new/>`)
+	// --- DTD order: star-rating ---
+	if prog.StarRating != "" {
+		_, err = fmt.Fprintf(w.w, `    <star-rating><value>%s</value></star-rating>`, xmlEscape(prog.StarRating))
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(w.w)
 		if err != nil {
 			return err
 		}
 	}
-	if prog.IsPremiere {
-		_, err = fmt.Fprintln(w.w, `    <premiere/>`)
+
+	// --- Non-DTD extension: live (Jellyfin-specific) ---
+	if prog.IsLive {
+		_, err = fmt.Fprintln(w.w, `    <live/>`)
 		if err != nil {
 			return err
 		}
 	}
 
 	_, err = fmt.Fprintln(w.w, `  </programme>`)
+	return err
+}
+
+// writeCredits writes the credits element with proper DTD-ordered sub-elements.
+// DTD order: director, actor, writer, adapter, producer, composer, editor,
+// presenter, commentator, guest.
+func (w *Writer) writeCredits(credits *Credits) error {
+	_, err := fmt.Fprintln(w.w, `    <credits>`)
+	if err != nil {
+		return err
+	}
+	for _, director := range credits.Directors {
+		if _, err = fmt.Fprintf(w.w, "      <director>%s</director>\n", xmlEscape(director)); err != nil {
+			return err
+		}
+	}
+	for _, actor := range credits.Actors {
+		if _, err = fmt.Fprintf(w.w, "      <actor>%s</actor>\n", xmlEscape(actor)); err != nil {
+			return err
+		}
+	}
+	for _, writer := range credits.Writers {
+		if _, err = fmt.Fprintf(w.w, "      <writer>%s</writer>\n", xmlEscape(writer)); err != nil {
+			return err
+		}
+	}
+	for _, producer := range credits.Producers {
+		if _, err = fmt.Fprintf(w.w, "      <producer>%s</producer>\n", xmlEscape(producer)); err != nil {
+			return err
+		}
+	}
+	for _, presenter := range credits.Presenters {
+		if _, err = fmt.Fprintf(w.w, "      <presenter>%s</presenter>\n", xmlEscape(presenter)); err != nil {
+			return err
+		}
+	}
+	_, err = fmt.Fprintln(w.w, `    </credits>`)
 	return err
 }
 

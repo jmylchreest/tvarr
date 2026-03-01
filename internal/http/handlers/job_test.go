@@ -203,6 +203,26 @@ func (m *mockJobRepo) DeleteHistory(ctx context.Context, before time.Time) (int6
 	return 0, nil
 }
 
+func (m *mockJobRepo) HasPendingIngestionJobs(ctx context.Context, sourceIDs []models.ULID) (bool, error) {
+	if m.err != nil {
+		return false, m.err
+	}
+	for _, j := range m.jobs {
+		if (j.Status == models.JobStatusPending || j.Status == models.JobStatusScheduled) &&
+			(j.Type == models.JobTypeStreamIngestion || j.Type == models.JobTypeEpgIngestion) {
+			if len(sourceIDs) == 0 {
+				return true, nil
+			}
+			for _, id := range sourceIDs {
+				if j.TargetID == id {
+					return true, nil
+				}
+			}
+		}
+	}
+	return false, nil
+}
+
 // mockStreamSourceRepoForJob implements repository.StreamSourceRepository for testing.
 type mockStreamSourceRepoForJob struct {
 	sources map[models.ULID]*models.StreamSource
