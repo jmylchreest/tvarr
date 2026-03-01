@@ -351,6 +351,18 @@ func registerEPGFields(r *FieldRegistry) {
 		Aliases:     []string{"program_icon", "poster"},
 		Domains:     []FieldDomain{DomainEPG, DomainRule},
 	})
+
+	// channel_group_title is a read-only field injected at pipeline runtime from
+	// the parent channel's group_title. It is only meaningful in EPG mapping rules
+	// where the datamapping stage resolves the channel context for each programme.
+	r.Register(&FieldDefinition{
+		Name:        "channel_group_title",
+		Type:        FieldTypeString,
+		Description: "The group_title of the channel this programme belongs to (read-only, injected at pipeline runtime)",
+		Aliases:     []string{"channel_group"},
+		Domains:     []FieldDomain{DomainEPG, DomainRule},
+		ReadOnly:    true,
+	})
 }
 
 // registerSourceMetadataFields registers source metadata fields.
