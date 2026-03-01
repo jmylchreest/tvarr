@@ -32,6 +32,8 @@ func (r *epgProgramRepo) Create(ctx context.Context, program *models.EpgProgram)
 // CreateBatch creates multiple programs in a single batch.
 // Uses UPSERT to handle duplicates: when a program with the same (source_id, channel_id, start)
 // already exists, it will be updated with the new data instead of causing a constraint error.
+// Wraps the upsert in an explicit transaction so SQLite performs a single fsync per batch
+// instead of one per row (SkipDefaultTransaction=true means no implicit transaction).
 func (r *epgProgramRepo) CreateBatch(ctx context.Context, programs []*models.EpgProgram) error {
 	if len(programs) == 0 {
 		return nil
@@ -42,17 +44,19 @@ func (r *epgProgramRepo) CreateBatch(ctx context.Context, programs []*models.Epg
 	// When a duplicate is found, update all non-key fields with the new values.
 	// Retries on transient SQLite BUSY/LOCKED errors with exponential backoff.
 	return database.WithRetry(ctx, database.DefaultRetryConfig, nil, "CreateBatch", func() error {
-		if err := r.db.WithContext(ctx).Clauses(clause.OnConflict{
-			Columns: []clause.Column{{Name: "source_id"}, {Name: "channel_id"}, {Name: "start"}},
-			DoUpdates: clause.AssignmentColumns([]string{
-				"stop", "title", "sub_title", "description", "category",
-				"icon", "episode_num", "rating", "language", "credits",
-				"is_new", "is_premiere", "updated_at",
-			}),
-		}).Create(programs).Error; err != nil {
-			return fmt.Errorf("creating EPG program batch: %w", err)
-		}
-		return nil
+		return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := tx.Clauses(clause.OnConflict{
+				Columns: []clause.Column{{Name: "source_id"}, {Name: "channel_id"}, {Name: "start"}},
+				DoUpdates: clause.AssignmentColumns([]string{
+					"stop", "title", "sub_title", "description", "category",
+					"icon", "episode_num", "rating", "language", "credits",
+					"is_new", "is_premiere", "updated_at",
+				}),
+			}).Create(programs).Error; err != nil {
+				return fmt.Errorf("creating EPG program batch: %w", err)
+			}
+			return nil
+		})
 	})
 }
 
