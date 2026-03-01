@@ -37,6 +37,7 @@ import (
 // - 026: Add EPG category inference rules from channel group_title (enables Jellyfin Live TV sections)
 // - 027: Hard-delete duplicate stream grouping rules left by migration 015
 // - 028: Fix EPG category rule expressions: replace broken ?= with SET_IF_EMPTY keyword
+// - 029: Hard-delete Group * Channels stream mapping rules (superseded by EPG category inference)
 func AllMigrations() []Migration {
 	return []Migration{
 		migration001Schema(),
@@ -67,6 +68,7 @@ func AllMigrations() []Migration {
 		migration026EpgCategoryRules(),
 		migration027DedupGroupingRules(),
 		migration028FixEpgCategoryExpressions(),
+		migration029RemoveGroupChannelRules(),
 	}
 }
 

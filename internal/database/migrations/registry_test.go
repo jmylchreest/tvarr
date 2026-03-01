@@ -55,7 +55,8 @@ func TestAllMigrations_ReturnsExpectedCount(t *testing.T) {
 	// 026: Add EPG category inference rules from channel group_title
 	// 027: Hard-delete duplicate stream grouping rules left by migration 015
 	// 028: Fix EPG category rule expressions: replace broken ?= with SET_IF_EMPTY keyword
-	assert.Len(t, migrations, 28)
+	// 029: Hard-delete Group * Channels stream mapping rules (superseded by EPG category inference)
+	assert.Len(t, migrations, 29)
 }
 
 func TestAllMigrations_VersionsAreUnique(t *testing.T) {
@@ -125,10 +126,10 @@ func TestMigrator_Status(t *testing.T) {
 	migrator := NewMigrator(db, nil)
 	migrator.RegisterAll(AllMigrations())
 
-	// Before running migrations (28 migrations total)
+	// Before running migrations (29 migrations total)
 	statuses, err := migrator.Status(ctx)
 	require.NoError(t, err)
-	assert.Len(t, statuses, 28)
+	assert.Len(t, statuses, 29)
 
 	for _, s := range statuses {
 		assert.False(t, s.Applied)
@@ -166,6 +167,13 @@ func TestMigrator_Down_RollsBackLastMigration(t *testing.T) {
 	assert.True(t, db.Migrator().HasTable("backup_settings"))
 	assert.True(t, db.Migrator().HasTable("ffmpegd_config"))
 	assert.True(t, db.Migrator().HasTable("encoder_overrides"))
+
+	// Roll back migration 029 (remove Group * Channels rules - no-op down)
+	err = migrator.Down(ctx)
+	require.NoError(t, err)
+
+	// data_mapping_rules table still exists after rolling back Group rules removal
+	assert.True(t, db.Migrator().HasTable("data_mapping_rules"))
 
 	// Roll back migration 028 (fix EPG category expressions - restores broken exprs)
 	err = migrator.Down(ctx)
@@ -409,10 +417,10 @@ func TestMigrator_Pending(t *testing.T) {
 	migrator := NewMigrator(db, nil)
 	migrator.RegisterAll(AllMigrations())
 
-	// All should be pending initially (28 migrations total)
+	// All should be pending initially (29 migrations total)
 	pending, err := migrator.Pending(ctx)
 	require.NoError(t, err)
-	assert.Len(t, pending, 28)
+	assert.Len(t, pending, 29)
 
 	// Run migrations
 	err = migrator.Up(ctx)
