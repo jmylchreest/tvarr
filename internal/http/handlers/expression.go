@@ -739,6 +739,10 @@ func (h *ExpressionHandler) TestDataMappingExpression(ctx context.Context, input
 
 	var affectedCount, totalCount int
 
+	// channelGroupMap is built lazily on first EPG source and reused across
+	// multiple sources in the same request. nil means not yet built.
+	var channelGroupMap map[string]string
+
 	for _, sourceIDStr := range input.Body.SourceIDs {
 		sourceID, err := models.ParseULID(sourceIDStr)
 		if err != nil {
@@ -777,21 +781,40 @@ func (h *ExpressionHandler) TestDataMappingExpression(ctx context.Context, input
 				continue
 			}
 		} else {
+			// Build a channelID -> group_title map so EPG rules that reference
+			// channel_group_title get the same context as the pipeline provides.
+			// This is built once (lazily) before iterating programmes.
+			if channelGroupMap == nil {
+				channelGroupMap = make(map[string]string)
+				_ = h.channelRepo.GetAllStreaming(ctx, func(ch *models.Channel) error {
+					if ch.TvgID != "" {
+						channelGroupMap[ch.TvgID] = ch.GroupTitle
+					}
+					return nil
+				})
+			}
+
 			// Test against EPG programs
 			err = h.epgProgramRepo.GetBySourceID(ctx, sourceID, func(prog *models.EpgProgram) error {
 				totalCount++
 
-				// Create evaluation context
+				// Create evaluation context — mirrors createProgramContext in the
+				// datamapping pipeline stage so previews reflect actual behaviour.
 				fields := map[string]string{
 					"programme_title":       prog.Title,
 					"programme_description": prog.Description,
 					"programme_category":    prog.Category,
+					"programme_icon":        prog.Icon,
 				}
 				if !prog.Start.IsZero() {
 					fields["programme_start"] = prog.Start.Format("2006-01-02T15:04:05Z07:00")
 				}
 				if !prog.Stop.IsZero() {
 					fields["programme_stop"] = prog.Stop.Format("2006-01-02T15:04:05Z07:00")
+				}
+				if groupTitle, ok := channelGroupMap[prog.ChannelID]; ok {
+					fields["channel_group_title"] = groupTitle
+					fields["channel_group"] = groupTitle
 				}
 				evalCtx := expression.NewProgramEvalContext(fields)
 
