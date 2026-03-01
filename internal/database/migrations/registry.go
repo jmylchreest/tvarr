@@ -35,6 +35,7 @@ import (
 // - 024: Fix dynamic codec rules with proper @dynamic() syntax for all fields
 // - 025: Add EPG enrichment fields (previously_shown, date, star_rating, season_number, episode_number, program_id, credits)
 // - 026: Add EPG category inference rules from channel group_title (enables Jellyfin Live TV sections)
+// - 027: Hard-delete duplicate stream grouping rules left by migration 015
 func AllMigrations() []Migration {
 	return []Migration{
 		migration001Schema(),
@@ -63,6 +64,7 @@ func AllMigrations() []Migration {
 		migration024FixDynamicCodecRules(),
 		migration025EpgEnrichment(),
 		migration026EpgCategoryRules(),
+		migration027DedupGroupingRules(),
 	}
 }
 
