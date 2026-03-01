@@ -51,6 +51,7 @@ type Stage struct {
 	rules            []DataMappingRule
 	compiledRules    []*compiledRule
 	stopOnFirstMatch bool
+	channelMap       map[string]*models.Channel // tvgID -> Channel, populated per Execute call
 	logger           *slog.Logger
 }
 
@@ -151,6 +152,11 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 		slog.Int("rule_count", len(s.rules)),
 		slog.Int("input_channels", len(state.Channels)),
 		slog.Int("input_programs", len(state.Programs)))
+
+	// Build channel map for use by EPG program rules (channel_group_title lookup).
+	// Use state.ChannelMap directly (tvgID -> *Channel).
+	s.channelMap = state.ChannelMap
+	defer func() { s.channelMap = nil }()
 
 	// Compile rules
 	if err := s.compileRules(); err != nil {
@@ -420,6 +426,8 @@ func (c *programContext) GetFieldValue(name string) (string, bool) {
 		return c.fields["programme_category"], true
 	case "icon":
 		return c.fields["programme_icon"], true
+	case "channel_group", "group_title":
+		return c.fields["channel_group_title"], true
 	}
 	return "", false
 }
@@ -443,6 +451,15 @@ func (s *Stage) createProgramContext(prog *models.EpgProgram) expression.Modifia
 	}
 	if !prog.Stop.IsZero() {
 		fields["programme_stop"] = prog.Stop.Format("2006-01-02T15:04:05Z07:00")
+	}
+
+	// Inject channel_group_title from the parent channel (read-only).
+	// This allows EPG rules to match on the channel's group_title and set
+	// programme_category when it is otherwise empty (e.g. Xtream EPG sources).
+	if s.channelMap != nil {
+		if ch, ok := s.channelMap[prog.ChannelID]; ok {
+			fields["channel_group_title"] = ch.GroupTitle
+		}
 	}
 
 	return &programContext{

@@ -101,7 +101,14 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 
 	totalPrograms := 0
 	totalScanned := 0
+	totalDuplicates := 0
 	now := time.Now()
+
+	// seenPrograms tracks (channelID, startMinute) pairs to deduplicate programmes
+	// that appear in multiple EPG sources with the same or near-identical start time.
+	// Key: "<channelID>|<start truncated to minute as unix timestamp>"
+	// First source wins, which is correct because enabledSources is ordered by priority.
+	seenPrograms := make(map[string]bool)
 
 	// Load programs from each EPG source
 	for _, source := range enabledSources {
@@ -131,6 +138,18 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 				return nil
 			}
 
+			// Deduplicate: skip if another source already provided a programme for
+			// this channel starting within the same minute. This prevents duplicate
+			// guide entries in Jellyfin when two EPG sources cover the same channel
+			// with slightly different start times (e.g. 21:30 vs 21:31).
+			startMinute := prog.Start.Truncate(time.Minute).Unix()
+			dedupKey := fmt.Sprintf("%s|%d", prog.ChannelID, startMinute)
+			if seenPrograms[dedupKey] {
+				totalDuplicates++
+				return nil
+			}
+			seenPrograms[dedupKey] = true
+
 			state.Programs = append(state.Programs, prog)
 			sourceProgramCount++
 			totalPrograms++
@@ -159,12 +178,13 @@ func (s *Stage) Execute(ctx context.Context, state *core.State) (*core.StageResu
 	}
 
 	result.RecordsProcessed = totalPrograms
-	result.Message = fmt.Sprintf("Loaded %d programs from %d EPG sources (scanned %d)", totalPrograms, len(enabledSources), totalScanned)
+	result.Message = fmt.Sprintf("Loaded %d programs from %d EPG sources (scanned %d, deduplicated %d)", totalPrograms, len(enabledSources), totalScanned, totalDuplicates)
 
 	// T030: Log stage completion
 	s.log(ctx, slog.LevelInfo, "program load complete",
 		slog.Int("total_programs", totalPrograms),
-		slog.Int("total_scanned", totalScanned))
+		slog.Int("total_scanned", totalScanned),
+		slog.Int("total_duplicates", totalDuplicates))
 
 	// Create artifact for loaded programs
 	artifact := core.NewArtifact(core.ArtifactTypePrograms, core.ProcessingStageRaw, StageID).
