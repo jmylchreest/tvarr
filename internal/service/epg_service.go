@@ -480,16 +480,9 @@ func (s *EpgService) performIngestion(ctx context.Context, source *models.EpgSou
 		progressMgr.SetMessage(fmt.Sprintf("Connecting to %s", source.Name))
 	}
 
-	// Delete existing programs
-	if err := s.epgProgramRepo.DeleteBySourceID(ctx, id); err != nil {
-		if progressMgr != nil {
-			progressMgr.Fail(err)
-		}
-		s.stateManager.Fail(id, err)
-		source.MarkFailed(err)
-		_ = s.epgSourceRepo.Update(ctx, source)
-		return
-	}
+	// Record ingestion start time for stale program cleanup.
+	// Programs not updated after this time will be considered stale and deleted.
+	ingestionStartTime := time.Now()
 
 	// Stage 2: Download - complete connect, start download
 	var downloadStage *progress.StageUpdater
@@ -500,7 +493,22 @@ func (s *EpgService) performIngestion(ctx context.Context, source *models.EpgSou
 		progressMgr.SetMessage("Downloading EPG data...")
 	}
 
-	// Perform ingestion - download, parse, and batch-insert programs
+	// Acquire type-level write lock to prevent concurrent EPG ingestions from
+	// writing to the epg_programs table simultaneously (prevents SQLite BUSY errors).
+	// Lock is acquired BEFORE writes begin (not before download).
+	s.logger.Debug("acquiring EPG write lock", "source_id", id.String())
+	epgWriteMutex.Lock()
+	s.logger.Debug("EPG write lock acquired", "source_id", id.String())
+	defer func() {
+		epgWriteMutex.Unlock()
+		s.logger.Debug("EPG write lock released", "source_id", id.String())
+	}()
+
+	// Perform ingestion - download, parse, and upsert programs in batches.
+	// Using upsert (CreateBatch with ON CONFLICT DO UPDATE) allows us to:
+	// 1. Keep existing programs if ingestion fails partway through
+	// 2. Update programs that changed since last ingestion
+	// 3. Defer deletion of stale programs until the end
 	var programCount int
 	var batchPrograms []*models.EpgProgram
 	const batchSize = 1000
@@ -518,7 +526,7 @@ func (s *EpgService) performIngestion(ctx context.Context, source *models.EpgSou
 
 		if len(batchPrograms) >= batchSize {
 			if err := s.epgProgramRepo.CreateBatch(ctx, batchPrograms); err != nil {
-				return err
+				return fmt.Errorf("batch upsert: %w", err)
 			}
 			batchPrograms = batchPrograms[:0]
 		}
@@ -526,17 +534,18 @@ func (s *EpgService) performIngestion(ctx context.Context, source *models.EpgSou
 		return nil
 	})
 
-	// Stage 3: Finalize - flush remaining programs and update metadata
+	// Stage 3: Finalize - flush remaining programs and cleanup stale data
 	if progressMgr != nil && downloadStage != nil {
 		downloadStage.Complete()
 		progressMgr.StartStage("finalize")
 		progressMgr.SetMessage("Finalizing...")
 	}
 
+	// Flush any remaining programs
 	if len(batchPrograms) > 0 {
 		if batchErr := s.epgProgramRepo.CreateBatch(ctx, batchPrograms); batchErr != nil {
 			if err == nil {
-				err = batchErr
+				err = fmt.Errorf("final batch upsert: %w", batchErr)
 			}
 		}
 	}
@@ -553,6 +562,21 @@ func (s *EpgService) performIngestion(ctx context.Context, source *models.EpgSou
 			"error", err,
 		)
 		return
+	}
+
+	// Clean up stale programs (programs not updated during this ingestion).
+	staleBefore := ingestionStartTime
+	deletedCount, deleteErr := s.epgProgramRepo.DeleteStaleBySourceID(ctx, id, staleBefore)
+	if deleteErr != nil {
+		s.logger.Warn("failed to delete stale EPG programs",
+			"source_id", id.String(),
+			"error", deleteErr,
+		)
+	} else if deletedCount > 0 {
+		s.logger.Info("deleted stale EPG programs",
+			"source_id", id.String(),
+			"deleted_count", deletedCount,
+		)
 	}
 
 	source.MarkSuccess(programCount)
