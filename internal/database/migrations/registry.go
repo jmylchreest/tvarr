@@ -36,6 +36,7 @@ import (
 // - 025: Add EPG enrichment fields (previously_shown, date, star_rating, season_number, episode_number, program_id, credits)
 // - 026: Add EPG category inference rules from channel group_title (enables Jellyfin Live TV sections)
 // - 027: Hard-delete duplicate stream grouping rules left by migration 015
+// - 028: Fix EPG category rule expressions: replace broken ?= with SET_IF_EMPTY keyword
 func AllMigrations() []Migration {
 	return []Migration{
 		migration001Schema(),
@@ -65,6 +66,7 @@ func AllMigrations() []Migration {
 		migration025EpgEnrichment(),
 		migration026EpgCategoryRules(),
 		migration027DedupGroupingRules(),
+		migration028FixEpgCategoryExpressions(),
 	}
 }
 

@@ -329,6 +329,12 @@ func (p *Parser) parseActions() ([]*Action, error) {
 }
 
 // parseActionAssignment parses "field = value" or "field" (for DELETE).
+// When a shorthand operator (?=, +=, -=) appears in place of = after the field
+// name, the shorthand operator overrides the parent keyword's action operator.
+// For example: "SET_IF_EMPTY field ?= value" is legal and equivalent to
+// "SET_IF_EMPTY field = value" (the ?= shorthand just reinforces SET_IF_EMPTY).
+// More usefully, "SET field ?= value" lets the shorthand override SET to
+// SET_IF_EMPTY for that particular field assignment.
 func (p *Parser) parseActionAssignment(actionOp ActionOperator) (*Action, error) {
 	// Parse field name
 	if p.current.Type != TokenIdent {
@@ -342,11 +348,24 @@ func (p *Parser) parseActionAssignment(actionOp ActionOperator) (*Action, error)
 		return NewAction(field, actionOp, nil), nil
 	}
 
-	// Expect = for assignment
-	if p.current.Type != TokenEquals {
+	// Accept plain = or any shorthand operator (?=, +=, -=).
+	// A shorthand operator overrides the parent keyword's action operator.
+	switch p.current.Type {
+	case TokenEquals:
+		// plain =: use the parent keyword's action operator
+		p.advance()
+	case TokenSetIfEmpty:
+		actionOp = ActionSetIfEmpty
+		p.advance()
+	case TokenAppend:
+		actionOp = ActionAppend
+		p.advance()
+	case TokenRemove:
+		actionOp = ActionRemove
+		p.advance()
+	default:
 		return nil, p.errorf("expected '=' after field name")
 	}
-	p.advance()
 
 	// Parse value
 	value, err := p.parseActionValue()

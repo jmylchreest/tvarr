@@ -849,3 +849,56 @@ func TestParser_ShorthandBackwardCompatibility(t *testing.T) {
 		})
 	}
 }
+
+// TestParser_KeywordWithShorthandOperator verifies that shorthand assignment
+// operators (?=, +=, -=) are accepted inside keyword-style action blocks
+// (e.g. "SET field ?= value"). This is the fix for the bug where expressions
+// like `SET programme_category ?= "Sports"` would fail with
+// "expected '=' after field name".
+func TestParser_KeywordWithShorthandOperator(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		field     string
+		wantOpera ActionOperator
+	}{
+		{
+			name:      "SET field ?= value overrides to SET_IF_EMPTY",
+			input:     `channel_name contains "sport" SET programme_category ?= "Sports"`,
+			field:     "programme_category",
+			wantOpera: ActionSetIfEmpty,
+		},
+		{
+			name:      "SET field += value overrides to APPEND",
+			input:     `channel_name contains "HD" SET tvg_name += " HD"`,
+			field:     "tvg_name",
+			wantOpera: ActionAppend,
+		},
+		{
+			name:      "SET field -= value overrides to REMOVE",
+			input:     `channel_name contains "UK" SET tvg_name -= "[UK]"`,
+			field:     "tvg_name",
+			wantOpera: ActionRemove,
+		},
+		{
+			name:      "SET_IF_EMPTY field ?= value (redundant but valid)",
+			input:     `channel_group_title matches "(?i)\\b(sport|football|soccer)" SET_IF_EMPTY programme_category ?= "Sports"`,
+			field:     "programme_category",
+			wantOpera: ActionSetIfEmpty,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, err := PreprocessAndParse(tt.input)
+			require.NoError(t, err)
+			require.True(t, parsed.HasActions, "expected HasActions=true")
+
+			condActions, ok := parsed.Expression.(*ConditionWithActions)
+			require.True(t, ok, "expected ConditionWithActions")
+			require.Len(t, condActions.Actions, 1)
+			assert.Equal(t, tt.field, condActions.Actions[0].Field)
+			assert.Equal(t, tt.wantOpera, condActions.Actions[0].Operator)
+		})
+	}
+}
