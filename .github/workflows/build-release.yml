@@ -96,6 +96,7 @@ jobs:
           name: frontend-assets
           path: internal/assets/static/
           if-no-files-found: error
+          retention-days: 1
 
   # Build binaries for all platforms
   build:
@@ -179,6 +180,7 @@ jobs:
           name: tvarr_${{ matrix.goos }}_${{ matrix.goarch }}
           path: dist/*.tar.gz
           if-no-files-found: error
+          retention-days: 1
 
   # Create GitHub release
   release:
@@ -206,7 +208,6 @@ jobs:
       - name: Generate SBOM
         uses: anchore/sbom-action@v0
         with:
-          artifact-name: sbom-${{ needs.prepare.outputs.version }}.spdx.json
           output-file: artifacts/sbom-${{ needs.prepare.outputs.version }}.spdx.json
           format: spdx-json
 

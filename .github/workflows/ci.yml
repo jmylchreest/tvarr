@@ -121,7 +121,7 @@ jobs:
         with:
           name: govulncheck-results
           path: govulncheck-results.json
-          retention-days: 30
+          retention-days: 7
         continue-on-error: true
 
   verify:
