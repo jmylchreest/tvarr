@@ -641,7 +641,13 @@ func (cb *CircuitBreaker) RecordSuccess() {
 	cb.lastSuccessTime = time.Now()
 	cb.errorCounts.Increment(ErrorCategorySuccess2xx)
 
-	if cb.state == CircuitHalfOpen {
+	switch cb.state {
+	case CircuitClosed:
+		// Reset consecutive failure count on success so only truly
+		// consecutive failures can trip the breaker.
+		cb.failures = 0
+
+	case CircuitHalfOpen:
 		// Reset to closed after success in half-open
 		oldState := cb.state
 		cb.state = CircuitClosed
@@ -715,6 +721,7 @@ func (cb *CircuitBreaker) Reset() {
 	cb.failures = 0
 	cb.successes = 0
 	cb.halfOpenCount = 0
+	cb.lastFailureTime = time.Time{}
 
 	// Record transition if state changed
 	if oldState != CircuitClosed && cb.stateTracker != nil {
