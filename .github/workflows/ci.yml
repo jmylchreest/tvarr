@@ -84,7 +84,7 @@ jobs:
           # G304: File path from taint input (sandbox validates paths)
           # G307: Deprecated
           # G404: Weak random (acceptable for non-crypto uses)
-          args: "-exclude=G103,G104,G108,G114,G115,G204,G301,G302,G304,G306,G307,G404 -fmt sarif -out gosec-results.sarif -no-fail ./..."
+          args: "-exclude=G103,G104,G108,G114,G115,G118,G122,G204,G301,G302,G304,G306,G307,G404 -fmt sarif -out gosec-results.sarif -no-fail ./..."
         continue-on-error: true
 
       - name: Filter SARIF fixes field

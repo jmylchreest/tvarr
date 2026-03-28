@@ -73,6 +73,8 @@ linters:
         - G104  # Audit errors not checked (covered by errcheck)
         - G115  # Integer overflow in conversions (acceptable for process stats parsing)
         - G117  # Exported field name matches secret pattern - false positive for API/config structs (Password, AuthToken fields are legitimate)
+        - G118  # context.Background in goroutines - intentional: background goroutines must outlive request-scoped contexts
+        - G122  # filepath.Walk TOCTOU - false positive: walking application-controlled cache directories, not user-supplied paths
         - G204  # Subprocess launched with variable (FFmpeg wrapper intentionally uses dynamic commands)
         - G301  # Directory permissions (acceptable for data directories)
         - G302  # File permissions (acceptable for generated files)

@@ -382,8 +382,9 @@ func (h *BackupHandler) SetProtection(ctx context.Context, input *SetProtectionI
 // UploadBackup handles uploading a backup file for later restore.
 // This uses Chi directly because Huma doesn't handle multipart file uploads well.
 func (h *BackupHandler) UploadBackup(w http.ResponseWriter, r *http.Request) {
-	// Parse multipart form with 100MB max size
+	// Limit request body size before parsing to prevent memory exhaustion
 	const maxUploadSize = 100 << 20 // 100MB
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
 	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
 		writeJSONError(w, fmt.Sprintf("failed to parse form: %v", err), http.StatusBadRequest)
 		return
