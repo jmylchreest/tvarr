@@ -30,6 +30,11 @@
     "@docusaurus/types": "3.9.2",
     "typescript": "~5.9.3"
   },
+  "overrides": {
+    "path-to-regexp@<0.1.13": "0.1.13",
+    "serialize-javascript@<7.0.5": "7.0.5",
+    "node-forge@<=1.3.3": "1.4.0"
+  },
   "engines": {
     "node": ">=20.0"
   },
