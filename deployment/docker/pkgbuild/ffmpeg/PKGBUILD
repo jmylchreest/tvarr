@@ -27,6 +27,7 @@ depends=(
   vulkan-radeon
   vulkan-intel
   intel-media-driver
+  libplacebo
 )
 
 makedepends=(
@@ -83,6 +84,7 @@ build() {
     \
     --enable-vaapi \
     --enable-vulkan \
+    --enable-libplacebo \
     --enable-ffnvcodec \
     --enable-cuda-llvm \
     --enable-nvdec \
