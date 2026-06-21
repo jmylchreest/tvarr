@@ -1,6 +1,12 @@
+# syntax=docker/dockerfile:1
 # tvarr-ffmpeg: Minimal FFmpeg with hardware acceleration
 # AMD VAAPI (RDNA 3/4), Intel QSV/VAAPI, NVIDIA NVENC/NVDEC
 # Tags: YYYY.MM.DD-N, latest
+#
+# Note: makepkg runs under fakeroot, whose SysV-IPC backend fails inside the
+# BuildKit sandbox ("libfakeroot internal error: payload not recognized!").
+# RUN --security=insecure lifts the sandbox so fakeroot works. Requires the
+# builder to allow the security.insecure entitlement (see docker-ffmpeg.yml).
 
 # Stage 1a: Build tvarr-ffmpeg package
 FROM archlinux:base AS ffmpeg-builder
@@ -17,7 +23,7 @@ RUN chown -R builder:builder /home/builder/pkgbuild
 USER builder
 WORKDIR /home/builder/pkgbuild
 
-RUN makepkg -s --noconfirm
+RUN --security=insecure makepkg -s --noconfirm
 
 # Stage 1b: Build gosu package
 FROM archlinux:base AS gosu-builder
@@ -33,7 +39,7 @@ RUN chown -R builder:builder /home/builder/pkgbuild-gosu
 
 USER builder
 WORKDIR /home/builder/pkgbuild-gosu
-RUN makepkg -s --noconfirm
+RUN --security=insecure makepkg -s --noconfirm
 
 # Stage 2: Build minimal rootfs
 FROM archlinux:base AS rootfs-builder
