@@ -114,7 +114,7 @@ export function DateTimePicker({
             mode="single"
             selected={date}
             onSelect={handleDateSelect}
-            initialFocus
+            autoFocus
             className="rounded-lg border-0"
           />
           <div className="border-t p-4">
