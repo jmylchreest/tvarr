@@ -2,7 +2,7 @@
 # Maintainer: tvarr project
 
 pkgname=tvarr-ffmpeg
-pkgver=8.0.1
+pkgver=8.1.2
 pkgrel=1
 pkgdesc='Minimal FFmpeg for tvarr video transcoding'
 arch=(x86_64 aarch64)
