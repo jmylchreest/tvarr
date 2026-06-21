@@ -88,7 +88,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 # Copy frontend package files for layer caching
-COPY frontend/package.json frontend/pnpm-lock.yaml* ./frontend/
+COPY frontend/package.json frontend/pnpm-lock.yaml* frontend/pnpm-workspace.yaml ./frontend/
 
 # Copy Taskfile early so we can use it
 COPY Taskfile.yml ./
