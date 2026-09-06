@@ -181,6 +181,7 @@ type Manager struct {
 	connectionPool           *ConnectionPool
 	fallbackGenerator        *FallbackGenerator
 	errorSlateGenerator      *ErrorSlateGenerator
+	accountProber            *AccountProber
 	daemonRegistry           *DaemonRegistry
 	daemonStreamMgr          *DaemonStreamManager
 	activeJobMgr             *ActiveJobManager
@@ -242,6 +243,7 @@ func NewManager(config ManagerConfig) *Manager {
 		connectionPool:           NewConnectionPool(config.ConnectionPoolConfig),
 		fallbackGenerator:        NewFallbackGenerator(config.FallbackConfig, logger),
 		errorSlateGenerator:      NewErrorSlateGenerator(config.ErrorSlateConfig, logger),
+		accountProber:            NewAccountProber(config.HTTPClient, logger),
 		daemonRegistry:           config.DaemonRegistry,
 		daemonStreamMgr:          config.DaemonStreamManager,
 		activeJobMgr:             config.ActiveJobManager,
@@ -907,6 +909,7 @@ func (m *Manager) createSession(ctx context.Context, channelID models.ULID, chan
 	// fallback there is nothing to pre-warm and no readiness gate: a session
 	// always gets a generator and always has something to show on failure.
 	session.errorSlateGenerator = m.errorSlateGenerator
+	session.accountProber = m.accountProber
 
 	// Initialize fallback controller if fallback generator is ready
 	// Note: Fallback settings are now managed at the manager level, not profile level
