@@ -501,6 +501,14 @@ func (g *ErrorSlateGenerator) encode(ctx context.Context, variant CodecVariant, 
 		"-f", "lavfi",
 		"-i", fmt.Sprintf("anullsrc=r=48000:cl=stereo:d=%.3f", g.config.Duration),
 		"-c:v", videoEncoder,
+	}
+
+	// x264/x265 still-image tunings, bound to the video stream.
+	if videoEncoder == "libx264" || videoEncoder == "libx265" {
+		args = append(args, "-preset", "ultrafast", "-tune", "stillimage")
+	}
+
+	args = append(args,
 		"-pix_fmt", "yuv420p",
 		"-b:v", fmt.Sprintf("%dk", g.config.VideoBitrate),
 		// Every frame a keyframe: the slate is looped by re-injecting its samples,
@@ -512,12 +520,7 @@ func (g *ErrorSlateGenerator) encode(ctx context.Context, variant CodecVariant, 
 		"-f", "mp4",
 		"-movflags", "+frag_keyframe+empty_moov+default_base_moof",
 		"pipe:1",
-	}
-
-	// x264/x265 need their still-image tunings passed before the output.
-	if videoEncoder == "libx264" || videoEncoder == "libx265" {
-		args = insertEncoderTuning(args, videoEncoder)
-	}
+	)
 
 	cmd := exec.CommandContext(ctx, g.config.FFmpegPath, args...)
 
@@ -561,19 +564,6 @@ func (g *ErrorSlateGenerator) encode(ctx context.Context, variant CodecVariant, 
 	}
 
 	return stdout.Bytes(), nil
-}
-
-// insertEncoderTuning adds still-image tunings immediately after the encoder
-// selection so they bind to the video stream.
-func insertEncoderTuning(args []string, encoder string) []string {
-	out := make([]string, 0, len(args)+4)
-	for i, a := range args {
-		out = append(out, a)
-		if a == encoder && i > 0 && args[i-1] == "-c:v" {
-			out = append(out, "-preset", "ultrafast", "-tune", "stillimage")
-		}
-	}
-	return out
 }
 
 // Slate colours. Deliberately dark: these appear full-screen on a television,
