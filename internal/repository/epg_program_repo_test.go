@@ -16,13 +16,20 @@ import (
 func setupEpgProgramTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+	// foreign_keys(ON) matches production (see internal/database/database.go).
+	// Without it SQLite silently ignores the epg_programs -> epg_sources
+	// constraint, and a delete ordering that fails in production passes here.
+	db, err := gorm.Open(sqlite.Open(":memory:?_pragma=foreign_keys(ON)"), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
 	require.NoError(t, err)
 
 	err = db.AutoMigrate(&models.EpgSource{}, &models.EpgProgram{})
 	require.NoError(t, err)
+
+	var fk int
+	require.NoError(t, db.Raw("PRAGMA foreign_keys").Scan(&fk).Error)
+	require.Equal(t, 1, fk, "foreign keys must be enforced or these tests do not reflect production")
 
 	return db
 }
@@ -578,44 +585,79 @@ func TestEpgProgramRepo_DeleteBySourceID_Cancellation(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
-// TestEpgProgramRepo_DeleteOrphaned covers recovery from an interrupted sweep:
-// source deletion removes the source row first, so a restart in between leaves
-// programs that nothing queries and nothing else would ever remove.
-func TestEpgProgramRepo_DeleteOrphaned(t *testing.T) {
+// TestEpgProgramRepo_SourceDeleteOrdering pins the ordering the foreign key
+// forces. Deleting the source row while its programs remain fails outright --
+// which is exactly what shipped, because the test database did not enforce
+// foreign keys and production does.
+func TestEpgProgramRepo_SourceDeleteOrdering(t *testing.T) {
 	db := setupEpgProgramTestDB(t)
 	repo := NewEpgProgramRepository(db)
 	ctx := context.Background()
 
-	live := createTestEpgSource(t, db, "live-epg")
-	doomed := createTestEpgSource(t, db, "doomed-epg")
+	source := createTestEpgSource(t, db, "ordering-epg")
 
 	now := time.Now().Truncate(time.Second)
-	var programs []*models.EpgProgram
-	for i := range 5 {
-		programs = append(programs,
-			&models.EpgProgram{
-				SourceID: live.ID, ChannelID: "live.1",
-				Start: now.Add(time.Duration(i) * time.Minute),
-				Stop:  now.Add(time.Duration(i+1) * time.Minute),
-				Title: "Live",
-			},
-			&models.EpgProgram{
-				SourceID: doomed.ID, ChannelID: "doomed.1",
-				Start: now.Add(time.Duration(i) * time.Minute),
-				Stop:  now.Add(time.Duration(i+1) * time.Minute),
-				Title: "Orphan",
-			})
+	require.NoError(t, repo.CreateBatch(ctx, []*models.EpgProgram{{
+		SourceID:  source.ID,
+		ChannelID: "ch.1",
+		Start:     now,
+		Stop:      now.Add(time.Hour),
+		Title:     "Programme",
+	}}))
+
+	// Parent first: rejected by the constraint.
+	err := db.Unscoped().Delete(&models.EpgSource{}, "id = ?", source.ID).Error
+	require.Error(t, err, "deleting a source with programs must violate the foreign key")
+	require.Contains(t, err.Error(), "FOREIGN KEY")
+
+	// Children first, then the parent: accepted.
+	require.NoError(t, repo.DeleteBySourceID(ctx, source.ID))
+	require.NoError(t, db.Unscoped().Delete(&models.EpgSource{}, "id = ?", source.ID).Error)
+}
+
+// TestEpgSourceRepo_SoftDeleteHidesButKeepsRow covers the mechanism the delete
+// relies on: the source must vanish from ordinary queries immediately while its
+// row survives to satisfy the foreign key until the programs are gone.
+func TestEpgSourceRepo_SoftDeleteHidesButKeepsRow(t *testing.T) {
+	db := setupEpgProgramTestDB(t)
+	programRepo := NewEpgProgramRepository(db)
+	sourceRepo := NewEpgSourceRepository(db)
+	ctx := context.Background()
+
+	source := createTestEpgSource(t, db, "soft-epg")
+
+	now := time.Now().Truncate(time.Second)
+	require.NoError(t, programRepo.CreateBatch(ctx, []*models.EpgProgram{{
+		SourceID:  source.ID,
+		ChannelID: "ch.1",
+		Start:     now,
+		Stop:      now.Add(time.Hour),
+		Title:     "Programme",
+	}}))
+
+	require.NoError(t, sourceRepo.SoftDelete(ctx, source.ID))
+
+	// Invisible to the UI... (GetByID reports a missing row as nil, not an error)
+	got, err := sourceRepo.GetByID(ctx, source.ID)
+	require.NoError(t, err)
+	require.Nil(t, got, "a soft-deleted source is still visible")
+
+	all, err := sourceRepo.GetAll(ctx)
+	require.NoError(t, err)
+	for _, listed := range all {
+		require.NotEqual(t, source.ID, listed.ID, "soft-deleted source still listed")
 	}
-	require.NoError(t, repo.CreateBatch(ctx, programs))
 
-	// Simulate the source row going first, then the process stopping.
-	require.NoError(t, db.Unscoped().Delete(&models.EpgSource{}, "id = ?", doomed.ID).Error)
-
-	deleted, err := repo.DeleteOrphaned(ctx)
+	// ...but still present, so the programs' foreign key holds.
+	pending, err := sourceRepo.ListSoftDeleted(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, int64(5), deleted)
+	require.Contains(t, pending, source.ID, "unfinished deletion not reported for recovery")
 
-	remaining, err := repo.CountBySourceID(ctx, live.ID)
+	// And the deletion can be completed in the correct order.
+	require.NoError(t, programRepo.DeleteBySourceID(ctx, source.ID))
+	require.NoError(t, sourceRepo.Delete(ctx, source.ID))
+
+	pending, err = sourceRepo.ListSoftDeleted(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, int64(5), remaining, "the live source's programs were swept as orphans")
+	require.NotContains(t, pending, source.ID)
 }

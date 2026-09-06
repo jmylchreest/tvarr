@@ -171,25 +171,27 @@ func (s *EpgService) Update(ctx context.Context, source *models.EpgSource) error
 	return nil
 }
 
-// Delete deletes an EPG source and all its programs.
 // Delete removes an EPG source and all of its programs.
 //
-// The source row goes first and the programs are swept in the background,
-// because a mature source holds millions of program rows and removing them takes
-// far longer than any HTTP client will wait -- deleting them inline returned a
-// request timeout to the user while the delete was still running, leaving them
-// no way to tell whether it had worked.
+// A mature source holds millions of program rows and removing them takes far
+// longer than any HTTP client will wait -- doing it inline returned a request
+// timeout while the delete was still running, leaving the user unable to tell
+// whether it had worked.
 //
-// Removing the source first is deliberate: it is a single row, so it is instant,
-// and once it is gone the source is absent from the UI and cannot be ingested
-// again. The programs left behind are unreachable through any query, and
-// SweepOrphanedPrograms reclaims them if this process stops mid-sweep.
+// The source row cannot simply go first, either: epg_programs.source_id has a
+// foreign key onto epg_sources.id, so dropping the parent while its programs
+// remain fails outright with "FOREIGN KEY constraint failed".
+//
+// So the source is marked deleted, which hides it from every ordinary query at
+// once (GORM scopes them to deleted_at IS NULL) and lets the request return
+// immediately, and the row lingers purely to satisfy the constraint while the
+// programs are swept behind the response. The row itself goes last.
 func (s *EpgService) Delete(ctx context.Context, id models.ULID) error {
-	if err := s.epgSourceRepo.Delete(ctx, id); err != nil {
+	if err := s.epgSourceRepo.SoftDelete(ctx, id); err != nil {
 		return fmt.Errorf("deleting EPG source: %w", err)
 	}
 
-	s.logger.Info("deleted EPG source, sweeping its programs in the background",
+	s.logger.Info("marked EPG source deleted, sweeping its programs in the background",
 		"id", id.String())
 
 	go func() {
@@ -198,39 +200,58 @@ func (s *EpgService) Delete(ctx context.Context, id models.ULID) error {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), epgProgramSweepTimeout)
 		defer cancel()
 
-		started := time.Now()
-		if err := s.epgProgramRepo.DeleteBySourceID(ctx, id); err != nil {
-			// Not fatal: the rows are orphaned, and the next startup sweep
-			// reclaims them.
-			s.logger.Error("sweeping programs for deleted EPG source failed; orphans will be reclaimed on next startup",
-				"id", id.String(),
-				"elapsed", time.Since(started),
-				"error", err)
-			return
+		if err := s.finishDeletion(ctx, id); err != nil {
+			// Not fatal: the source is already invisible, and the next startup
+			// finishes what is left.
+			s.logger.Error("sweeping programs for deleted EPG source failed; will retry on next startup",
+				"id", id.String(), "error", err)
 		}
-
-		s.logger.Info("swept programs for deleted EPG source",
-			"id", id.String(),
-			"elapsed", time.Since(started))
 	}()
 
 	return nil
 }
 
-// SweepOrphanedPrograms removes programs left behind by a source deletion that
-// did not finish. Intended to be called once at startup.
-func (s *EpgService) SweepOrphanedPrograms(ctx context.Context) error {
+// finishDeletion removes a soft-deleted source's programs and then its row.
+func (s *EpgService) finishDeletion(ctx context.Context, id models.ULID) error {
 	started := time.Now()
 
-	deleted, err := s.epgProgramRepo.DeleteOrphaned(ctx)
-	if err != nil {
-		return fmt.Errorf("sweeping orphaned EPG programs: %w", err)
+	if err := s.epgProgramRepo.DeleteBySourceID(ctx, id); err != nil {
+		return fmt.Errorf("deleting programs: %w", err)
 	}
 
-	if deleted > 0 {
-		s.logger.Info("reclaimed orphaned EPG programs",
-			"count", deleted,
-			"elapsed", time.Since(started))
+	// Only now is the foreign key satisfied and the row free to go.
+	if err := s.epgSourceRepo.Delete(ctx, id); err != nil {
+		return fmt.Errorf("deleting EPG source row: %w", err)
+	}
+
+	s.logger.Info("finished deleting EPG source",
+		"id", id.String(), "elapsed", time.Since(started))
+
+	return nil
+}
+
+// FinishPendingDeletions completes source deletions whose program sweep did not
+// finish. Intended to be called once at startup.
+//
+// A source marked deleted whose row is still present is an interrupted sweep:
+// invisible in the UI, still holding its programs, with nothing else that would
+// ever come back to it.
+func (s *EpgService) FinishPendingDeletions(ctx context.Context) error {
+	ids, err := s.epgSourceRepo.ListSoftDeleted(ctx)
+	if err != nil {
+		return fmt.Errorf("listing unfinished EPG source deletions: %w", err)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	s.logger.Info("resuming unfinished EPG source deletions", "count", len(ids))
+
+	for _, id := range ids {
+		if err := s.finishDeletion(ctx, id); err != nil {
+			s.logger.Error("could not finish EPG source deletion",
+				"id", id.String(), "error", err)
+		}
 	}
 
 	return nil
