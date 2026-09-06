@@ -368,3 +368,72 @@ func TestSlateEndToEnd(t *testing.T) {
 		t.Errorf("cached lookup took %v, cache is not working", elapsed)
 	}
 }
+
+// TestPublishForClientsReleasesWaiters is the regression test for a slate that
+// was rendered, buffered, and then never delivered.
+//
+// The session only signalled readiness on the successful pipeline path, so a
+// client blocked in WaitReady until its own timeout: mpv waited 60 seconds and
+// received a 503, while the "Too Many Connections" picture it should have shown
+// sat complete in the buffer.
+func TestPublishForClientsReleasesWaiters(t *testing.T) {
+	s := &RelaySession{readyCh: make(chan struct{})}
+	s.ctx, s.cancel = context.WithCancel(context.Background())
+	defer s.cancel()
+
+	if s.IsReady() {
+		t.Fatal("a fresh session must not report ready")
+	}
+
+	// A client arriving before the pipeline publishes must block.
+	blocked := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		blocked <- s.WaitReady(ctx)
+	}()
+
+	select {
+	case err := <-blocked:
+		t.Fatalf("WaitReady returned %v before the pipeline was published", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	s.publishForClients(NewCodecVariant("h264", "aac"), 4, 10, 5)
+
+	select {
+	case err := <-blocked:
+		if err != nil {
+			t.Fatalf("WaitReady returned %v after publishing", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("client stayed blocked after the pipeline was published")
+	}
+
+	if !s.IsReady() {
+		t.Error("session does not report ready after publishing")
+	}
+	// The output path needs both of these, or it fails right after WaitReady.
+	if s.processorConfig == nil {
+		t.Error("processorConfig not set; on-demand processor creation will fail")
+	}
+	if s.formatRouter == nil {
+		t.Error("formatRouter not set; the client's format cannot be routed")
+	}
+}
+
+// TestPublishForClientsIsIdempotent covers recovery: the slate publishes, then
+// the origin returns and the normal pipeline publishes again on the same
+// session. markReady closes a channel, so a second call must not panic.
+func TestPublishForClientsIsIdempotent(t *testing.T) {
+	s := &RelaySession{readyCh: make(chan struct{})}
+	s.ctx, s.cancel = context.WithCancel(context.Background())
+	defer s.cancel()
+
+	s.publishForClients(NewCodecVariant("h264", "aac"), 4, 10, 5)
+	s.publishForClients(NewCodecVariant("h264", "aac"), 4, 10, 5)
+
+	if !s.IsReady() {
+		t.Error("session not ready after repeated publishing")
+	}
+}

@@ -471,6 +471,31 @@ const liveSPSScanSamples = 256
 // timelines never collide, small enough to be invisible.
 const slatePTSGap = 3600
 
+// publishForClients makes the session consumable: it records the config used to
+// build processors on demand, installs the format router, and signals readiness.
+//
+// Every path that produces content for clients has to do this, not just the
+// successful one. A session that skips it leaves clients blocked in WaitReady
+// until their own timeout expires -- the error slate did exactly that, and mpv
+// sat for 60s and got a 503 rather than the picture that had already been
+// rendered and buffered for it.
+func (s *RelaySession) publishForClients(targetVariant CodecVariant, targetSegmentDuration float64, maxSegments, playlistSegments int) {
+	// Processors are NOT created here - they are created on-demand when clients
+	// connect, via GetOrCreateProcessor().
+	s.processorConfig = &ProcessorConfig{
+		TargetVariant:         targetVariant,
+		TargetSegmentDuration: targetSegmentDuration,
+		MaxSegments:           maxSegments,
+		PlaylistSegments:      playlistSegments,
+	}
+
+	if s.formatRouter == nil {
+		s.formatRouter = NewFormatRouter(models.ContainerFormatMPEGTS)
+	}
+
+	s.markReady()
+}
+
 // slateVariant picks the codec variant to render the error slate in.
 //
 // When the origin failed before any codec was detected -- the common case, since
@@ -570,6 +595,16 @@ func (s *RelaySession) serveErrorSlate(cause error) (recovered bool, err error) 
 
 	s.slatePTS.Store(InjectErrorSlate(esVariant, slate, s.slatePTS.Load(), slateLead))
 	s.lastActivity.Store(time.Now())
+
+	// Content is in the buffer, so let clients in. Without this the session never
+	// becomes ready and every client blocks until it times out, which is the dead
+	// stream the slate exists to replace.
+	s.publishForClients(
+		variant,
+		s.manager.config.HLSConfig.TargetSegmentDuration,
+		s.manager.config.HLSConfig.MaxSegments,
+		s.manager.config.HLSConfig.PlaylistSegments,
+	)
 
 	for {
 		select {
@@ -1037,22 +1072,7 @@ func (s *RelaySession) runESPipeline() error {
 		slog.String("session_id", s.ID.String()),
 		slog.String("target_variant", targetVariant.String()))
 
-	// Store processor config for on-demand creation
-	// Processors are NOT created here - they are created on-demand when clients connect
-	s.processorConfig = &ProcessorConfig{
-		TargetVariant:         targetVariant,
-		TargetSegmentDuration: targetSegmentDuration,
-		MaxSegments:           maxSegments,
-		PlaylistSegments:      playlistSegments,
-	}
-
-	// Set up format router WITHOUT pre-created processors
-	// Processors will be created on-demand via GetOrCreateProcessor()
-	s.formatRouter = NewFormatRouter(models.ContainerFormatMPEGTS)
-
-	// Signal that the pipeline is ready for clients
-	// Clients will trigger on-demand processor creation when they connect
-	s.markReady()
+	s.publishForClients(targetVariant, targetSegmentDuration, maxSegments, playlistSegments)
 
 	slog.Debug("Started ES-based pipeline (processors created on-demand)",
 		slog.String("session_id", s.ID.String()),
