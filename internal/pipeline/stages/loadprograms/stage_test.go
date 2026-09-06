@@ -72,6 +72,10 @@ func (m *mockProgramRepo) DeleteBySourceID(ctx context.Context, sourceID models.
 	return nil
 }
 
+func (m *mockProgramRepo) DeleteOrphaned(ctx context.Context) (int64, error) {
+	return 0, nil
+}
+
 func (m *mockProgramRepo) DeleteStaleBySourceID(ctx context.Context, sourceID models.ULID, olderThan time.Time) (int64, error) {
 	return 0, nil
 }
@@ -498,6 +502,10 @@ func (m *perSourceMockRepo) GetCurrentByChannelID(ctx context.Context, channelID
 
 func (m *perSourceMockRepo) Delete(ctx context.Context, id models.ULID) error {
 	return nil
+}
+
+func (m *perSourceMockRepo) DeleteOrphaned(ctx context.Context) (int64, error) {
+	return 0, nil
 }
 
 func (m *perSourceMockRepo) DeleteBySourceID(ctx context.Context, sourceID models.ULID) error {

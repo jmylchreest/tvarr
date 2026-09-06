@@ -145,6 +145,8 @@ type EpgProgramRepository interface {
 	Delete(ctx context.Context, id models.ULID) error
 	// DeleteBySourceID deletes all programs for a source (used when deleting the source itself).
 	DeleteBySourceID(ctx context.Context, sourceID models.ULID) error
+	// DeleteOrphaned removes programs whose source no longer exists, returning the row count.
+	DeleteOrphaned(ctx context.Context) (int64, error)
 	// DeleteStaleBySourceID deletes programs not updated since the given time (used during ingestion cleanup).
 	DeleteStaleBySourceID(ctx context.Context, sourceID models.ULID, olderThan time.Time) (int64, error)
 	// DeleteExpired deletes programs that ended before the given time.

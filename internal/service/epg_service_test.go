@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -120,21 +121,31 @@ func (m *mockEpgSourceRepo) GetByURL(ctx context.Context, url string) (*models.E
 
 // Mock EPG Program Repository
 type mockEpgProgramRepo struct {
+	// mu guards programs: source deletion now sweeps them on a background
+	// goroutine, so tests and the sweep touch this map concurrently.
+	mu             sync.Mutex
 	programs       map[models.ULID]*models.EpgProgram
 	createErr      error
 	createBatchErr error
 	deleteErr      error
 	countBySource  map[models.ULID]int64
+	// knownSources marks which sources still exist, so DeleteOrphaned can tell
+	// an orphan from a live program.
+	knownSources map[models.ULID]bool
 }
 
 func newMockEpgProgramRepo() *mockEpgProgramRepo {
 	return &mockEpgProgramRepo{
 		programs:      make(map[models.ULID]*models.EpgProgram),
+		knownSources:  make(map[models.ULID]bool),
 		countBySource: make(map[models.ULID]int64),
 	}
 }
 
 func (m *mockEpgProgramRepo) Create(ctx context.Context, program *models.EpgProgram) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.createErr != nil {
 		return m.createErr
 	}
@@ -147,6 +158,9 @@ func (m *mockEpgProgramRepo) Create(ctx context.Context, program *models.EpgProg
 }
 
 func (m *mockEpgProgramRepo) CreateBatch(ctx context.Context, programs []*models.EpgProgram) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.createBatchErr != nil {
 		return m.createBatchErr
 	}
@@ -161,6 +175,9 @@ func (m *mockEpgProgramRepo) CreateBatch(ctx context.Context, programs []*models
 }
 
 func (m *mockEpgProgramRepo) GetByID(ctx context.Context, id models.ULID) (*models.EpgProgram, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	program, ok := m.programs[id]
 	if !ok {
 		return nil, errors.New("not found")
@@ -169,6 +186,9 @@ func (m *mockEpgProgramRepo) GetByID(ctx context.Context, id models.ULID) (*mode
 }
 
 func (m *mockEpgProgramRepo) GetBySourceID(ctx context.Context, sourceID models.ULID, callback func(*models.EpgProgram) error) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	for _, p := range m.programs {
 		if p.SourceID == sourceID {
 			if err := callback(p); err != nil {
@@ -180,6 +200,9 @@ func (m *mockEpgProgramRepo) GetBySourceID(ctx context.Context, sourceID models.
 }
 
 func (m *mockEpgProgramRepo) GetByChannelID(ctx context.Context, channelID string, start, end time.Time) ([]*models.EpgProgram, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	var programs []*models.EpgProgram
 	for _, p := range m.programs {
 		if p.ChannelID == channelID && p.Start.Before(end) && p.Stop.After(start) {
@@ -190,6 +213,9 @@ func (m *mockEpgProgramRepo) GetByChannelID(ctx context.Context, channelID strin
 }
 
 func (m *mockEpgProgramRepo) GetByChannelIDWithLimit(ctx context.Context, channelID string, limit int) ([]*models.EpgProgram, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	var programs []*models.EpgProgram
 	for _, p := range m.programs {
 		if p.ChannelID == channelID {
@@ -203,6 +229,9 @@ func (m *mockEpgProgramRepo) GetByChannelIDWithLimit(ctx context.Context, channe
 }
 
 func (m *mockEpgProgramRepo) GetCurrentByChannelID(ctx context.Context, channelID string) (*models.EpgProgram, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	now := time.Now()
 	for _, p := range m.programs {
 		if p.ChannelID == channelID && p.Start.Before(now) && p.Stop.After(now) {
@@ -213,6 +242,9 @@ func (m *mockEpgProgramRepo) GetCurrentByChannelID(ctx context.Context, channelI
 }
 
 func (m *mockEpgProgramRepo) Delete(ctx context.Context, id models.ULID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.deleteErr != nil {
 		return m.deleteErr
 	}
@@ -224,6 +256,9 @@ func (m *mockEpgProgramRepo) Delete(ctx context.Context, id models.ULID) error {
 }
 
 func (m *mockEpgProgramRepo) DeleteBySourceID(ctx context.Context, sourceID models.ULID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.deleteErr != nil {
 		return m.deleteErr
 	}
@@ -237,6 +272,9 @@ func (m *mockEpgProgramRepo) DeleteBySourceID(ctx context.Context, sourceID mode
 }
 
 func (m *mockEpgProgramRepo) DeleteStaleBySourceID(ctx context.Context, sourceID models.ULID, olderThan time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	var count int64
 	for id, p := range m.programs {
 		if p.SourceID == sourceID && p.UpdatedAt.Before(olderThan) {
@@ -249,6 +287,9 @@ func (m *mockEpgProgramRepo) DeleteStaleBySourceID(ctx context.Context, sourceID
 }
 
 func (m *mockEpgProgramRepo) DeleteExpired(ctx context.Context, before time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	var count int64
 	for id, p := range m.programs {
 		if p.Stop.Before(before) {
@@ -259,11 +300,39 @@ func (m *mockEpgProgramRepo) DeleteExpired(ctx context.Context, before time.Time
 	return count, nil
 }
 
+// DeleteOld delegates to DeleteExpired, which takes the lock itself -- taking it
+// here as well would deadlock on the non-reentrant mutex.
 func (m *mockEpgProgramRepo) DeleteOld(ctx context.Context) (int64, error) {
 	return m.DeleteExpired(ctx, time.Now().Add(-24*time.Hour))
 }
 
+// DeleteOrphaned removes programs whose source is no longer known to the mock.
+func (m *mockEpgProgramRepo) DeleteOrphaned(ctx context.Context) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var deleted int64
+	for id, p := range m.programs {
+		if !m.knownSources[p.SourceID] {
+			delete(m.programs, id)
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
+// countPrograms reports how many programs remain, for assertions against the
+// background sweep.
+func (m *mockEpgProgramRepo) countPrograms() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.programs)
+}
+
 func (m *mockEpgProgramRepo) CountBySourceID(ctx context.Context, sourceID models.ULID) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	return m.countBySource[sourceID], nil
 }
 
@@ -632,4 +701,108 @@ func TestEpgService_CreateXMLTV_NoAutoStreamSource(t *testing.T) {
 	// No stream source should be created
 	streamSources, _ := streamSourceRepo.GetAll(context.Background())
 	assert.Len(t, streamSources, 0)
+}
+
+// TestEpgService_DeleteReturnsBeforeSweepingPrograms covers the reason this path
+// changed: deleting a source with millions of programs used to remove them inline
+// and the request timed out before the source was gone, leaving the user unable
+// to tell whether the delete had worked.
+func TestEpgService_DeleteReturnsBeforeSweepingPrograms(t *testing.T) {
+	sourceRepo := newMockEpgSourceRepo()
+	programRepo := newMockEpgProgramRepo()
+	service := NewEpgService(sourceRepo, programRepo,
+		ingestor.NewEpgHandlerFactory(), ingestor.NewStateManager())
+
+	source := &models.EpgSource{
+		Name:    "Large EPG",
+		Type:    models.EpgSourceTypeXMLTV,
+		URL:     "http://example.com/epg.xml",
+		Enabled: new(true),
+	}
+	require.NoError(t, service.Create(context.Background(), source))
+
+	for range 500 {
+		require.NoError(t, programRepo.Create(context.Background(), &models.EpgProgram{
+			SourceID:  source.ID,
+			ChannelID: "ch1",
+			Title:     "Programme",
+			Start:     time.Now(),
+			Stop:      time.Now().Add(time.Hour),
+		}))
+	}
+
+	require.NoError(t, service.Delete(context.Background(), source.ID))
+
+	// The source must be gone the moment Delete returns: that is what the UI
+	// reflects, and what makes the request fast.
+	_, err := service.GetByID(context.Background(), source.ID)
+	require.Error(t, err)
+
+	// Programs are swept behind the response.
+	require.Eventually(t, func() bool {
+		return programRepo.countPrograms() == 0
+	}, 5*time.Second, 10*time.Millisecond, "background sweep did not remove the programs")
+}
+
+// TestEpgService_DeleteSurvivesRequestCancellation guards the detached context:
+// the request context is cancelled as soon as the response is written, and a
+// sweep bound to it would abort immediately, orphaning every remaining row.
+func TestEpgService_DeleteSurvivesRequestCancellation(t *testing.T) {
+	sourceRepo := newMockEpgSourceRepo()
+	programRepo := newMockEpgProgramRepo()
+	service := NewEpgService(sourceRepo, programRepo,
+		ingestor.NewEpgHandlerFactory(), ingestor.NewStateManager())
+
+	source := &models.EpgSource{
+		Name:    "Cancelled EPG",
+		Type:    models.EpgSourceTypeXMLTV,
+		URL:     "http://example.com/epg.xml",
+		Enabled: new(true),
+	}
+	require.NoError(t, service.Create(context.Background(), source))
+	require.NoError(t, programRepo.Create(context.Background(), &models.EpgProgram{
+		SourceID:  source.ID,
+		ChannelID: "ch1",
+		Title:     "Programme",
+		Start:     time.Now(),
+		Stop:      time.Now().Add(time.Hour),
+	}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	require.NoError(t, service.Delete(ctx, source.ID))
+	cancel() // as the HTTP layer does once the response is written
+
+	require.Eventually(t, func() bool {
+		return programRepo.countPrograms() == 0
+	}, 5*time.Second, 10*time.Millisecond, "sweep aborted when the request context was cancelled")
+}
+
+// TestEpgService_SweepOrphanedPrograms covers the recovery path for a sweep that
+// did not finish, since the source row is removed first and a restart in between
+// would otherwise strand its programs permanently.
+func TestEpgService_SweepOrphanedPrograms(t *testing.T) {
+	sourceRepo := newMockEpgSourceRepo()
+	programRepo := newMockEpgProgramRepo()
+	service := NewEpgService(sourceRepo, programRepo,
+		ingestor.NewEpgHandlerFactory(), ingestor.NewStateManager())
+
+	live := models.NewULID()
+	orphaned := models.NewULID()
+	programRepo.knownSources[live] = true
+
+	for _, sourceID := range []models.ULID{live, live, orphaned, orphaned, orphaned} {
+		require.NoError(t, programRepo.Create(context.Background(), &models.EpgProgram{
+			SourceID:  sourceID,
+			ChannelID: "ch1",
+			Title:     "Programme",
+			Start:     time.Now(),
+			Stop:      time.Now().Add(time.Hour),
+		}))
+	}
+
+	require.NoError(t, service.SweepOrphanedPrograms(context.Background()))
+
+	if got := programRepo.countPrograms(); got != 2 {
+		t.Errorf("after sweep %d programs remain, want the 2 belonging to the live source", got)
+	}
 }

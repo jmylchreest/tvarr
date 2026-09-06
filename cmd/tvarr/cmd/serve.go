@@ -372,6 +372,16 @@ func runServe(_ *cobra.Command, _ []string) error {
 	).WithLogger(logger).WithProgressService(progressService).
 		WithStreamSourceRepo(streamSourceRepo)
 
+	// Reclaim programs left behind by a source deletion that did not finish.
+	// Deleting a source removes its row first and sweeps the programs behind the
+	// response, so a restart mid-sweep would otherwise strand them: the source is
+	// gone, nothing queries them, and nothing else would ever remove them.
+	go func() {
+		if err := epgService.SweepOrphanedPrograms(context.Background()); err != nil {
+			logger.Warn("failed to sweep orphaned EPG programs on startup", slog.Any("error", err))
+		}
+	}()
+
 	proxyService := service.NewProxyService(
 		proxyRepo,
 		pipelineFactory,

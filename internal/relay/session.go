@@ -204,6 +204,17 @@ type RelaySession struct {
 	fallbackController *FallbackController
 	fallbackGenerator  *FallbackGenerator
 
+	// errorSlateGenerator renders viewer-facing slates for pipeline failures.
+	errorSlateGenerator *ErrorSlateGenerator
+	// slateErr holds the classified error currently being shown as a slate.
+	slateErr atomic.Pointer[StreamError]
+	// slatePTS is the next PTS to write slate samples at, kept monotonic across
+	// refills so clients never see time run backwards.
+	slatePTS atomic.Int64
+	// livePTSRebase, when non-zero, is the PTS the resumed origin stream is
+	// shifted onto after a slate, so live picks up where the slate stopped.
+	livePTSRebase atomic.Int64
+
 	// Multi-format streaming support
 	formatRouter    *FormatRouter          // Routes requests to appropriate output handler
 	containerFormat models.ContainerFormat // Current container format
@@ -303,6 +314,27 @@ func (s *RelaySession) runPipeline() {
 			}
 		}
 
+		// Otherwise show the viewer what went wrong rather than dropping them
+		// into a dead stream. Unlike the FFmpeg fallback above this needs no
+		// pre-warming and no error-pattern match, so it is the path that
+		// actually runs for upstream failures.
+		if err != nil && !errors.Is(err, context.Canceled) {
+			recovered, slateErr := s.serveErrorSlate(err)
+			if slateErr == nil {
+				s.manager.circuitBreakers.Get(s.StreamURL).RecordFailure()
+				if recovered {
+					// The origin came back while the viewer was watching the
+					// slate. Retry the live pipeline rather than ending here, so
+					// the channel resumes without the viewer touching anything.
+					err = nil
+					continue
+				}
+				// Slate ran until the client left or the session was closed.
+				err = nil
+				return
+			}
+		}
+
 		// No error or no fallback configured - exit
 		if err != nil {
 			cb := s.manager.circuitBreakers.Get(s.StreamURL)
@@ -398,6 +430,173 @@ func (s *RelaySession) logPipelineDecision() {
 	}
 
 	slog.Info("Starting relay pipeline", logFields...)
+}
+
+// liveVideoSize reports the resolution the live stream is actually coding at.
+//
+// It reads the SPS out of recent keyframe samples rather than the track's init
+// data, because the MPEG-TS path sets video init data to nil -- SetVideoCodec
+// ("h264", nil) -- and carries parameter sets inline in each keyframe instead.
+// Reading init data here would always come back empty on a live stream.
+//
+// Returns ok=false before any keyframe has arrived, where the slate is free to
+// pick its own size because there is no live raster to match.
+func (s *RelaySession) liveVideoSize(variant *ESVariant) (SlateSize, bool) {
+	if variant == nil {
+		return SlateSize{}, false
+	}
+
+	videoCodec := variant.Variant().VideoCodec()
+
+	// Keyframes carry the parameter sets; scan back from the newest so a
+	// mid-stream resolution change is picked up rather than the opening one.
+	samples := variant.VideoTrack().ReadFromKeyframe(0, liveSPSScanSamples)
+	for i := len(samples) - 1; i >= 0; i-- {
+		if !samples[i].IsKeyframe {
+			continue
+		}
+		if size, ok := spsSizeFromAnnexB(samples[i].Data, videoCodec); ok {
+			return size, true
+		}
+	}
+
+	return SlateSize{}, false
+}
+
+// liveSPSScanSamples bounds how far back to look for a parameter set.
+const liveSPSScanSamples = 256
+
+// slatePTSGap is the 90kHz gap left between the live stream and spliced slate
+// content, and again on the way back. One frame at 25fps: enough that the two
+// timelines never collide, small enough to be invisible.
+const slatePTSGap = 3600
+
+// slateVariant picks the codec variant to render the error slate in.
+//
+// When the origin failed before any codec was detected -- the common case, since
+// an HTTP refusal happens before a single TS packet arrives -- there is no source
+// variant to copy, so the client's negotiated target codecs are used instead.
+// Those are what the client asked for, so they are what it can decode.
+func (s *RelaySession) slateVariant() CodecVariant {
+	if s.esBuffer != nil {
+		if v := s.esBuffer.GetSourceVariant(); v != nil {
+			return v.Variant()
+		}
+	}
+
+	videoCodec, audioCodec := "h264", "aac"
+	if s.EncodingProfile != nil {
+		if c := string(s.EncodingProfile.TargetVideoCodec); c != "" {
+			videoCodec = c
+		}
+		if c := string(s.EncodingProfile.TargetAudioCodec); c != "" {
+			audioCodec = c
+		}
+	}
+	return NewCodecVariant(videoCodec, audioCodec)
+}
+
+// serveErrorSlate renders the failure as a looping video slate and feeds it to
+// connected clients until the context is cancelled or the origin recovers.
+//
+// It returns recovered=true when the origin came back and the caller should
+// resume the live pipeline. A non-nil error means no slate could be produced, in
+// which case the caller falls back to failing the session as before.
+func (s *RelaySession) serveErrorSlate(cause error) (recovered bool, err error) {
+	if s.errorSlateGenerator == nil {
+		return false, errors.New("no error slate generator configured")
+	}
+	if s.esBuffer == nil {
+		return false, errors.New("no ES buffer to inject a slate into")
+	}
+
+	streamErr := ClassifyStreamError(cause)
+	s.slateErr.Store(streamErr)
+
+	variant := s.slateVariant()
+
+	// Publishing the variant as the source unblocks the processors already
+	// waiting on WaitSourceVariant, so the existing output path serves the slate
+	// without needing a parallel one per container format.
+	esVariant := s.esBuffer.GetSourceVariant()
+	if esVariant == nil {
+		esVariant = s.esBuffer.CreateSourceVariant(variant.VideoCodec(), variant.AudioCodec())
+	}
+	if esVariant == nil {
+		return false, errors.New("could not obtain a variant for the slate")
+	}
+
+	// Match the live raster when there is one, so the slate's slices agree with
+	// the parameter sets the track already published.
+	size, matched := s.liveVideoSize(esVariant)
+
+	// Continue the live timeline instead of restarting it. Without this the
+	// slate would splice in at PTS 0 behind a stream already minutes in, and
+	// decoders treat a backwards jump as a discontinuity and drop the stream.
+	if latest := esVariant.VideoTrack().LatestPTS(); latest > s.slatePTS.Load() {
+		s.slatePTS.Store(latest + slatePTSGap)
+	}
+
+	slate, err := s.errorSlateGenerator.Slate(s.ctx, variant, streamErr, size)
+	if err != nil {
+		slog.Warn("Could not render error slate",
+			slog.String("session_id", s.ID.String()),
+			slog.String("variant", variant.String()),
+			slog.String("error", err.Error()))
+		return false, err
+	}
+
+	slog.Info("Serving error slate",
+		slog.String("session_id", s.ID.String()),
+		slog.String("channel", s.ChannelName),
+		slog.String("variant", variant.String()),
+		slog.Bool("matched_live_resolution", matched),
+		slog.Int64("splice_pts", s.slatePTS.Load()),
+		slog.String("kind", string(streamErr.Kind)),
+		slog.String("headline", streamErr.Headline),
+		slog.String("detail", streamErr.Detail))
+
+	s.inFallback.Store(true)
+	defer s.inFallback.Store(false)
+
+	// Keep roughly this much slate buffered ahead of the client at all times.
+	const slateLead = 6 * time.Second
+
+	refill := time.NewTicker(slate.Duration)
+	defer refill.Stop()
+
+	recovery := time.NewTicker(DefaultFallbackRecoveryInterval)
+	defer recovery.Stop()
+
+	s.slatePTS.Store(InjectErrorSlate(esVariant, slate, s.slatePTS.Load(), slateLead))
+	s.lastActivity.Store(time.Now())
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return false, nil
+
+		case <-refill.C:
+			s.slatePTS.Store(InjectErrorSlate(esVariant, slate, s.slatePTS.Load(), slate.Duration))
+			s.lastActivity.Store(time.Now())
+
+		case <-recovery.C:
+			if !s.testUpstreamRecovery() {
+				continue
+			}
+			// The resumed origin restarts on its own timeline, which has no
+			// relation to where the slate ended. Rebase it onto the slate's end
+			// so the return to live is as seamless as the switch away from it.
+			s.livePTSRebase.Store(s.slatePTS.Load() + slatePTSGap)
+
+			slog.Info("Origin recovered while showing error slate",
+				slog.String("session_id", s.ID.String()),
+				slog.String("channel", s.ChannelName),
+				slog.Int64("live_rebase_pts", s.livePTSRebase.Load()))
+			s.slateErr.Store(nil)
+			return true, nil
+		}
+	}
 }
 
 // runFallbackStream runs the fallback stream until recovery or cancellation.
@@ -546,6 +745,8 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 	if s.CachedCodecInfo != nil && s.CachedCodecInfo.AudioCodec != "" {
 		demuxerConfig.ProbeOverrideAudioCodec = s.CachedCodecInfo.AudioCodec
 	}
+	// Resuming after an error slate: shift the origin onto the slate's timeline.
+	demuxerConfig.PTSRebaseTarget = s.livePTSRebase.Swap(0)
 	s.tsDemuxer = NewTSDemuxer(s.esBuffer, demuxerConfig)
 
 	// Use HLS config from manager for segment settings
@@ -746,6 +947,8 @@ func (s *RelaySession) runESPipeline() error {
 	if s.CachedCodecInfo != nil && s.CachedCodecInfo.AudioCodec != "" {
 		demuxerConfig.ProbeOverrideAudioCodec = s.CachedCodecInfo.AudioCodec
 	}
+	// Resuming after an error slate: shift the origin onto the slate's timeline.
+	demuxerConfig.PTSRebaseTarget = s.livePTSRebase.Swap(0)
 	s.tsDemuxer = NewTSDemuxer(s.esBuffer, demuxerConfig)
 
 	// Determine the source URL
@@ -894,18 +1097,24 @@ func (s *RelaySession) runIngestLoop(inputURL string, demuxer *TSDemuxer) error 
 
 	resp, err := s.manager.config.HTTPClient.Do(req)
 	if err != nil {
+		streamErr := ClassifyStreamError(err)
 		slog.Error("Ingest loop: HTTP request failed",
 			slog.String("session_id", s.ID.String()),
-			slog.String("error", err.Error()))
-		return err
+			slog.String("error", err.Error()),
+			slog.String("kind", string(streamErr.Kind)),
+			slog.String("headline", streamErr.Headline))
+		return streamErr
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		streamErr := NewUpstreamStatusError(resp.StatusCode)
 		slog.Error("Ingest loop: upstream returned non-200 status",
 			slog.String("session_id", s.ID.String()),
-			slog.Int("status", resp.StatusCode))
-		return fmt.Errorf("upstream returned HTTP %d", resp.StatusCode)
+			slog.Int("status", resp.StatusCode),
+			slog.String("kind", string(streamErr.Kind)),
+			slog.String("headline", streamErr.Headline))
+		return streamErr
 	}
 
 	// Log upstream response headers for debugging stream termination issues

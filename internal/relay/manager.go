@@ -84,6 +84,8 @@ type ManagerConfig struct {
 	ConnectionPoolConfig ConnectionPoolConfig
 	// FallbackConfig for fallback stream generation.
 	FallbackConfig FallbackConfig
+	// ErrorSlateConfig for rendered error slates.
+	ErrorSlateConfig ErrorSlateConfig
 	// HTTPClient for upstream requests.
 	HTTPClient *http.Client
 	// CodecRepo for caching stream codec information.
@@ -134,6 +136,7 @@ func DefaultManagerConfig() ManagerConfig {
 		CircuitBreakerConfig: DefaultCircuitBreakerConfig(),
 		ConnectionPoolConfig: DefaultConnectionPoolConfig(),
 		FallbackConfig:       DefaultFallbackConfig(),
+		ErrorSlateConfig:     DefaultErrorSlateConfig(),
 		// For streaming, we use a transport with connection timeouts but no overall
 		// request timeout. The Timeout field on http.Client applies to the entire
 		// request including reading the body, which would cut off long-running streams.
@@ -177,6 +180,7 @@ type Manager struct {
 	circuitBreakers          *CircuitBreakerRegistry
 	connectionPool           *ConnectionPool
 	fallbackGenerator        *FallbackGenerator
+	errorSlateGenerator      *ErrorSlateGenerator
 	daemonRegistry           *DaemonRegistry
 	daemonStreamMgr          *DaemonStreamManager
 	activeJobMgr             *ActiveJobManager
@@ -237,6 +241,7 @@ func NewManager(config ManagerConfig) *Manager {
 		circuitBreakers:          NewCircuitBreakerRegistry(config.CircuitBreakerConfig),
 		connectionPool:           NewConnectionPool(config.ConnectionPoolConfig),
 		fallbackGenerator:        NewFallbackGenerator(config.FallbackConfig, logger),
+		errorSlateGenerator:      NewErrorSlateGenerator(config.ErrorSlateConfig, logger),
 		daemonRegistry:           config.DaemonRegistry,
 		daemonStreamMgr:          config.DaemonStreamManager,
 		activeJobMgr:             config.ActiveJobManager,
@@ -261,6 +266,11 @@ func (m *Manager) InitializeFallback(ctx context.Context) error {
 // FallbackGenerator returns the manager's fallback generator.
 func (m *Manager) FallbackGenerator() *FallbackGenerator {
 	return m.fallbackGenerator
+}
+
+// ErrorSlateGenerator returns the manager's error slate generator.
+func (m *Manager) ErrorSlateGenerator() *ErrorSlateGenerator {
+	return m.errorSlateGenerator
 }
 
 // DaemonRegistry returns the manager's daemon registry for distributed transcoding.
@@ -893,14 +903,19 @@ func (m *Manager) createSession(ctx context.Context, channelID models.ULID, chan
 	session.lastActivity.Store(time.Now())
 	session.idleSince.Store(time.Time{})
 
+	// Error slates are rendered on demand, so unlike the old FFmpeg-generated
+	// fallback there is nothing to pre-warm and no readiness gate: a session
+	// always gets a generator and always has something to show on failure.
+	session.errorSlateGenerator = m.errorSlateGenerator
+
 	// Initialize fallback controller if fallback generator is ready
 	// Note: Fallback settings are now managed at the manager level, not profile level
 	if m.fallbackGenerator != nil && m.fallbackGenerator.IsReady() {
 		session.fallbackGenerator = m.fallbackGenerator
 		session.fallbackController = NewFallbackController(
 			m.fallbackGenerator,
-			3,  // Default error threshold
-			30, // Default recovery interval in seconds
+			DefaultFallbackErrorThreshold,
+			DefaultFallbackRecoveryInterval,
 			m.logger.With(slog.String("session_id", session.ID.String())),
 		)
 	}

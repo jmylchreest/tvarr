@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h264"
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h265"
@@ -31,6 +32,16 @@ type TSDemuxerConfig struct {
 	// This is used when encountering unsupported audio tracks.
 	ProbeOverrideAudioCodec string
 
+	// PTSRebaseTarget, when non-zero, shifts the whole stream so its first
+	// sample lands on this PTS.
+	//
+	// Used when resuming a live origin after an error slate: the origin restarts
+	// on its own timeline, which bears no relation to where the slate stopped, so
+	// without a shift the return to live is a backwards jump for the decoder.
+	// The offset is derived from the first sample seen and then held constant, so
+	// the stream's internal timing is untouched.
+	PTSRebaseTarget int64
+
 	// Callbacks for demuxed samples.
 	OnVideoSample func(pts, dts int64, data []byte, isKeyframe bool)
 	OnAudioSample func(pts int64, data []byte)
@@ -40,6 +51,11 @@ type TSDemuxerConfig struct {
 type TSDemuxer struct {
 	config TSDemuxerConfig
 	buffer *SharedESBuffer
+
+	// ptsOffset is applied to every emitted sample; resolved from the first
+	// sample when PTSRebaseTarget is set.
+	ptsOffset     atomic.Int64
+	ptsOffsetOnce sync.Once
 
 	// mediacommon reader
 	reader *mpegts.Reader
@@ -539,7 +555,25 @@ func (d *TSDemuxer) handleOpus(pts int64, packets [][]byte) error {
 }
 
 // emitVideoSample writes a video sample to the buffer and/or callback.
+// rebase resolves the rebase offset from the first sample seen and applies it.
+func (d *TSDemuxer) rebase(pts, dts int64) (int64, int64) {
+	if d.config.PTSRebaseTarget == 0 {
+		return pts, dts
+	}
+	d.ptsOffsetOnce.Do(func() {
+		d.ptsOffset.Store(d.config.PTSRebaseTarget - pts)
+		d.config.Logger.Info("Rebasing resumed stream onto the slate timeline",
+			slog.Int64("first_pts", pts),
+			slog.Int64("target_pts", d.config.PTSRebaseTarget),
+			slog.Int64("offset", d.ptsOffset.Load()))
+	})
+	off := d.ptsOffset.Load()
+	return pts + off, dts + off
+}
+
 func (d *TSDemuxer) emitVideoSample(pts, dts int64, data []byte, isKeyframe bool) {
+	pts, dts = d.rebase(pts, dts)
+
 	// Trace: Log keyframe detection (very verbose)
 	if isKeyframe {
 		d.config.Logger.Log(context.Background(), observability.LevelTrace, "Keyframe detected in demuxer",
@@ -566,6 +600,8 @@ func (d *TSDemuxer) emitVideoSample(pts, dts int64, data []byte, isKeyframe bool
 
 // emitAudioSample writes an audio sample to the buffer and/or callback.
 func (d *TSDemuxer) emitAudioSample(pts int64, data []byte) {
+	pts, _ = d.rebase(pts, pts)
+
 	// Write to buffer
 	if d.buffer != nil {
 		if d.config.TargetVariant != "" {
