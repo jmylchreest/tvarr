@@ -231,42 +231,6 @@ func (r *epgProgramRepo) DeleteBySourceID(ctx context.Context, sourceID models.U
 	}
 }
 
-// DeleteOrphaned removes programs whose source no longer exists, returning how
-// many rows were deleted.
-//
-// Source deletion removes the source row first so the UI responds immediately,
-// then sweeps the programs in the background. If the process stops mid-sweep the
-// remaining programs have no source, are unreachable through any query, and
-// would otherwise sit in the database forever. This reclaims them.
-func (r *epgProgramRepo) DeleteOrphaned(ctx context.Context) (int64, error) {
-	var total int64
-
-	for {
-		if err := ctx.Err(); err != nil {
-			return total, err
-		}
-
-		liveSources := r.db.Model(&models.EpgSource{}).Select("id")
-
-		ids := r.db.Model(&models.EpgProgram{}).
-			Select("id").
-			Where("source_id NOT IN (?)", liveSources).
-			Limit(epgProgramDeleteBatch)
-
-		result := r.db.WithContext(ctx).Unscoped().
-			Where("id IN (?)", ids).
-			Delete(&models.EpgProgram{})
-		if result.Error != nil {
-			return total, fmt.Errorf("deleting orphaned EPG programs after %d rows: %w", total, result.Error)
-		}
-
-		total += result.RowsAffected
-		if result.RowsAffected == 0 {
-			return total, nil
-		}
-	}
-}
-
 // DeleteStaleBySourceID deletes programs for a source that haven't been updated since the given time.
 // This implements "mark and sweep" cleanup: upsert updates the updated_at timestamp, so programs
 // not present in the new ingestion data will have an older updated_at and will be deleted.

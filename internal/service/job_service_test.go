@@ -351,6 +351,14 @@ func (m *jobMockEpgSourceRepo) Update(ctx context.Context, source *models.EpgSou
 	return nil
 }
 
+func (m *jobMockEpgSourceRepo) SoftDelete(ctx context.Context, id models.ULID) error {
+	return nil
+}
+
+func (m *jobMockEpgSourceRepo) ListSoftDeleted(ctx context.Context) ([]models.ULID, error) {
+	return nil, nil
+}
+
 func (m *jobMockEpgSourceRepo) Delete(ctx context.Context, id models.ULID) error {
 	return nil
 }

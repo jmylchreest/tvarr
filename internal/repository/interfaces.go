@@ -117,6 +117,10 @@ type EpgSourceRepository interface {
 	Update(ctx context.Context, source *models.EpgSource) error
 	// Delete deletes an EPG source by ID.
 	Delete(ctx context.Context, id models.ULID) error
+	// SoftDelete marks an EPG source deleted, leaving the row for the FK.
+	SoftDelete(ctx context.Context, id models.ULID) error
+	// ListSoftDeleted returns IDs of sources whose deletion has not finished.
+	ListSoftDeleted(ctx context.Context) ([]models.ULID, error)
 	// GetByName retrieves an EPG source by name.
 	GetByName(ctx context.Context, name string) (*models.EpgSource, error)
 	// GetByURL retrieves an EPG source by URL.
@@ -145,8 +149,6 @@ type EpgProgramRepository interface {
 	Delete(ctx context.Context, id models.ULID) error
 	// DeleteBySourceID deletes all programs for a source (used when deleting the source itself).
 	DeleteBySourceID(ctx context.Context, sourceID models.ULID) error
-	// DeleteOrphaned removes programs whose source no longer exists, returning the row count.
-	DeleteOrphaned(ctx context.Context) (int64, error)
 	// DeleteStaleBySourceID deletes programs not updated since the given time (used during ingestion cleanup).
 	DeleteStaleBySourceID(ctx context.Context, sourceID models.ULID, olderThan time.Time) (int64, error)
 	// DeleteExpired deletes programs that ended before the given time.

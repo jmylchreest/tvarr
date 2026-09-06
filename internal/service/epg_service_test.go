@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"gorm.io/gorm"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +16,11 @@ import (
 
 // Mock EPG Source Repository
 type mockEpgSourceRepo struct {
+	// mu guards the maps: deletion now sweeps on a background goroutine.
+	mu sync.Mutex
+	// softDeleted mirrors the real schema, where a deleted source keeps its row
+	// (so the programs' foreign key still resolves) but disappears from reads.
+	softDeleted map[models.ULID]bool
 	sources     map[models.ULID]*models.EpgSource
 	createErr   error
 	getErr      error
@@ -41,14 +47,47 @@ func (m *mockEpgSourceRepo) Create(ctx context.Context, source *models.EpgSource
 }
 
 func (m *mockEpgSourceRepo) GetByID(ctx context.Context, id models.ULID) (*models.EpgSource, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.getErr != nil {
 		return nil, m.getErr
 	}
 	source, ok := m.sources[id]
-	if !ok {
+	if !ok || m.softDeleted[id] {
 		return nil, errors.New("not found")
 	}
 	return source, nil
+}
+
+func (m *mockEpgSourceRepo) SoftDelete(ctx context.Context, id models.ULID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
+	if _, ok := m.sources[id]; !ok {
+		return gorm.ErrRecordNotFound
+	}
+	if m.softDeleted == nil {
+		m.softDeleted = make(map[models.ULID]bool)
+	}
+	m.softDeleted[id] = true
+	return nil
+}
+
+func (m *mockEpgSourceRepo) ListSoftDeleted(ctx context.Context) ([]models.ULID, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var ids []models.ULID
+	for id := range m.softDeleted {
+		if _, ok := m.sources[id]; ok {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
 }
 
 func (m *mockEpgSourceRepo) GetAll(ctx context.Context) ([]*models.EpgSource, error) {
@@ -84,10 +123,14 @@ func (m *mockEpgSourceRepo) Update(ctx context.Context, source *models.EpgSource
 }
 
 func (m *mockEpgSourceRepo) Delete(ctx context.Context, id models.ULID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.deleteErr != nil {
 		return m.deleteErr
 	}
 	delete(m.sources, id)
+	delete(m.softDeleted, id)
 	return nil
 }
 
@@ -777,32 +820,80 @@ func TestEpgService_DeleteSurvivesRequestCancellation(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond, "sweep aborted when the request context was cancelled")
 }
 
-// TestEpgService_SweepOrphanedPrograms covers the recovery path for a sweep that
-// did not finish, since the source row is removed first and a restart in between
-// would otherwise strand its programs permanently.
-func TestEpgService_SweepOrphanedPrograms(t *testing.T) {
+// TestEpgService_FinishPendingDeletions covers recovery from a sweep that did
+// not finish: the source is marked deleted and invisible, but its row and
+// programs remain, and nothing else would come back to them.
+func TestEpgService_FinishPendingDeletions(t *testing.T) {
 	sourceRepo := newMockEpgSourceRepo()
 	programRepo := newMockEpgProgramRepo()
 	service := NewEpgService(sourceRepo, programRepo,
 		ingestor.NewEpgHandlerFactory(), ingestor.NewStateManager())
 
-	live := models.NewULID()
-	orphaned := models.NewULID()
-	programRepo.knownSources[live] = true
-
-	for _, sourceID := range []models.ULID{live, live, orphaned, orphaned, orphaned} {
-		require.NoError(t, programRepo.Create(context.Background(), &models.EpgProgram{
-			SourceID:  sourceID,
-			ChannelID: "ch1",
-			Title:     "Programme",
-			Start:     time.Now(),
-			Stop:      time.Now().Add(time.Hour),
-		}))
+	source := &models.EpgSource{
+		Name:    "Interrupted EPG",
+		Type:    models.EpgSourceTypeXMLTV,
+		URL:     "http://example.com/epg.xml",
+		Enabled: new(true),
 	}
+	require.NoError(t, service.Create(context.Background(), source))
+	require.NoError(t, programRepo.Create(context.Background(), &models.EpgProgram{
+		SourceID:  source.ID,
+		ChannelID: "ch1",
+		Title:     "Programme",
+		Start:     time.Now(),
+		Stop:      time.Now().Add(time.Hour),
+	}))
 
-	require.NoError(t, service.SweepOrphanedPrograms(context.Background()))
+	// Simulate the interruption: marked deleted, nothing swept.
+	require.NoError(t, sourceRepo.SoftDelete(context.Background(), source.ID))
 
-	if got := programRepo.countPrograms(); got != 2 {
-		t.Errorf("after sweep %d programs remain, want the 2 belonging to the live source", got)
+	pending, err := sourceRepo.ListSoftDeleted(context.Background())
+	require.NoError(t, err)
+	require.Len(t, pending, 1, "the unfinished deletion was not detected")
+
+	require.NoError(t, service.FinishPendingDeletions(context.Background()))
+
+	assert.Zero(t, programRepo.countPrograms(), "programs survived the recovery sweep")
+
+	pending, err = sourceRepo.ListSoftDeleted(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, pending, "the source row was not removed after its programs")
+}
+
+// TestEpgService_DeleteRemovesProgramsBeforeTheSourceRow pins the ordering the
+// foreign key forces. Removing the source row first fails outright in
+// production, which is exactly what shipped when this was reordered for speed.
+func TestEpgService_DeleteRemovesProgramsBeforeTheSourceRow(t *testing.T) {
+	sourceRepo := newMockEpgSourceRepo()
+	programRepo := newMockEpgProgramRepo()
+	service := NewEpgService(sourceRepo, programRepo,
+		ingestor.NewEpgHandlerFactory(), ingestor.NewStateManager())
+
+	source := &models.EpgSource{
+		Name:    "Ordered EPG",
+		Type:    models.EpgSourceTypeXMLTV,
+		URL:     "http://example.com/epg.xml",
+		Enabled: new(true),
 	}
+	require.NoError(t, service.Create(context.Background(), source))
+	require.NoError(t, programRepo.Create(context.Background(), &models.EpgProgram{
+		SourceID:  source.ID,
+		ChannelID: "ch1",
+		Title:     "Programme",
+		Start:     time.Now(),
+		Stop:      time.Now().Add(time.Hour),
+	}))
+
+	require.NoError(t, service.Delete(context.Background(), source.ID))
+
+	// Hidden immediately, so the UI responds without waiting for the sweep.
+	got, err := service.GetByID(context.Background(), source.ID)
+	require.Error(t, err)
+	assert.Nil(t, got)
+
+	// The row survives only until its programs are gone, then goes itself.
+	require.Eventually(t, func() bool {
+		pending, err := sourceRepo.ListSoftDeleted(context.Background())
+		return err == nil && len(pending) == 0 && programRepo.countPrograms() == 0
+	}, 5*time.Second, 10*time.Millisecond, "deletion did not complete in the background")
 }
