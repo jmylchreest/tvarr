@@ -520,3 +520,38 @@ func TestSlateLayoutIsVerticallyCentred(t *testing.T) {
 		}
 	}
 }
+
+// TestShouldRetainForDraining pins when running transcoders may keep a session
+// with no clients alive.
+//
+// The exemption exists so a finite stream can finish transcoding after its last
+// client leaves. It was applied to any running transcoder, and a live origin
+// never finishes, so such a session was immortal: no clients, grace period never
+// applied, cleanup skipping it forever, and its upstream connection held open.
+// The provider allows a fixed number of concurrent connections, so every
+// abandoned session permanently consumed one.
+func TestShouldRetainForDraining(t *testing.T) {
+	tests := []struct {
+		name            string
+		transcoders     int
+		ingestCompleted bool
+		want            bool
+	}{
+		{"live origin, no clients - must not be retained", 2, false, false},
+		{"finite origin still draining - retained", 2, true, true},
+		{"finite origin, nothing left to drain", 0, true, false},
+		{"live origin, no transcoders", 0, false, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &RelaySession{}
+			s.ingestCompleted.Store(tt.ingestCompleted)
+
+			if got := s.shouldRetainForDraining(tt.transcoders); got != tt.want {
+				t.Errorf("shouldRetainForDraining(%d) with ingestCompleted=%v = %v, want %v",
+					tt.transcoders, tt.ingestCompleted, got, tt.want)
+			}
+		})
+	}
+}

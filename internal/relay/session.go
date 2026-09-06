@@ -2760,6 +2760,26 @@ func (s *RelaySession) IngestCompleted() bool {
 // Note: We only consider active transcoders as "active content", not buffer data alone.
 // If ingest is complete and all transcoders are stopped, buffer data is stale and the
 // session should be cleaned up even if the buffer still has bytes.
+// shouldRetainForDraining reports whether running transcoders should keep a
+// session with no clients alive.
+//
+// Only while the origin has finished. That is what this exemption was for --
+// letting a finite stream finish transcoding after the last client left -- but
+// it was applied to any running transcoder, and a live origin never finishes.
+// Such a session was therefore immortal: no clients, no grace period, cleanup
+// skipping it on every pass, and its upstream connection held open forever.
+//
+// That is not merely untidy. The provider allows a fixed number of concurrent
+// connections, so each abandoned session permanently consumes one, and once they
+// are used up every new stream is refused with "Too Many Connections" while
+// nobody is watching anything.
+//
+// Buffer contents alone never count: data with no transcoder and no client is
+// stale by definition.
+func (s *RelaySession) shouldRetainForDraining(activeTranscoders int) bool {
+	return activeTranscoders > 0 && s.IngestCompleted()
+}
+
 func (s *RelaySession) HasActiveContent() bool {
 	// Check for active (non-closed) transcoders
 	s.esTranscodersMu.RLock()
@@ -2779,10 +2799,7 @@ func (s *RelaySession) HasActiveContent() bool {
 		bufferBytes = stats.TotalBytes
 	}
 
-	// Only active transcoders count as active content.
-	// Buffer data alone (without active transcoders) is considered stale
-	// and the session can be cleaned up.
-	hasActive := activeTranscoders > 0
+	hasActive := s.shouldRetainForDraining(activeTranscoders)
 
 	slog.Debug("HasActiveContent check",
 		slog.String("session_id", s.ID.String()),
