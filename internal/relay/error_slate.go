@@ -106,10 +106,25 @@ func NewUpstreamStatusError(status int) *StreamError {
 	e := &StreamError{HTTPStatus: status}
 
 	switch {
-	case status == 429, status == 509, status == 555, status == 999:
+	case status == 429 || status == 509:
+		// Standard, and actually mean rate/bandwidth limiting.
 		e.Kind = StreamErrorLimitReached
 		e.Headline = "Too Many Connections"
-		e.Detail = fmt.Sprintf("Provider refused the stream (HTTP %d). Another device may be watching.", status)
+		e.Detail = fmt.Sprintf("Provider is rate-limiting this account (HTTP %d).", status)
+
+	case status == 555 || status == 666 || status > 599:
+		// Xtream panels return codes of their own -- 555, 666 and 999 have all
+		// been observed -- with empty bodies and no consistency: the
+		// same URL requested twice returns different ones. They were originally
+		// read here as a concurrency refusal, which was wrong and actively
+		// misleading: the account reported max_connections 1 with active_cons 0
+		// at the moment of refusal, so the slate sent the viewer looking for
+		// another device that was not there.
+		//
+		// Report what was observed and leave the cause alone.
+		e.Kind = StreamErrorUnavailable
+		e.Headline = "Channel Unavailable"
+		e.Detail = fmt.Sprintf("Provider refused the stream (HTTP %d).", status)
 
 	case status == 401 || status == 403:
 		e.Kind = StreamErrorUnavailable

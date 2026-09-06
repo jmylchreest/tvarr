@@ -30,8 +30,12 @@ func TestNewUpstreamStatusError(t *testing.T) {
 		// The two codes seen in production from the Xtream panel. Neither is a
 		// real HTTP status, and both mean the panel refused the stream while the
 		// same account still authenticates against player_api.php.
-		{"xtream 555", 555, StreamErrorLimitReached, "Too Many Connections"},
-		{"xtream 999", 999, StreamErrorLimitReached, "Too Many Connections"},
+		// Non-standard panel codes: observed rotating between 555, 666 and 999
+		// for the same URL, so they carry no reliable meaning and must not be
+		// reported as a concurrency limit.
+		{"xtream 555", 555, StreamErrorUnavailable, "Channel Unavailable"},
+		{"xtream 666", 666, StreamErrorUnavailable, "Channel Unavailable"},
+		{"xtream 999", 999, StreamErrorUnavailable, "Channel Unavailable"},
 		{"too many requests", 429, StreamErrorLimitReached, "Too Many Connections"},
 		{"bandwidth limit", 509, StreamErrorLimitReached, "Too Many Connections"},
 		{"unauthorized", 401, StreamErrorUnavailable, "Not Authorised"},
@@ -72,7 +76,7 @@ func TestClassifyStreamError(t *testing.T) {
 	})
 
 	t.Run("existing StreamError passes through unchanged", func(t *testing.T) {
-		orig := NewUpstreamStatusError(555)
+		orig := NewUpstreamStatusError(429)
 		got := ClassifyStreamError(fmt.Errorf("wrapped: %w", orig))
 		if got != orig {
 			t.Fatalf("classification replaced the precise error: got %+v", got)
