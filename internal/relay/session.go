@@ -204,6 +204,14 @@ type RelaySession struct {
 	fallbackController *FallbackController
 	fallbackGenerator  *FallbackGenerator
 
+	// errorSlateGenerator renders viewer-facing slates for pipeline failures.
+	errorSlateGenerator *ErrorSlateGenerator
+	// slateErr holds the classified error currently being shown as a slate.
+	slateErr atomic.Pointer[StreamError]
+	// slatePTS is the next PTS to write slate samples at, kept monotonic across
+	// refills so clients never see time run backwards.
+	slatePTS atomic.Int64
+
 	// Multi-format streaming support
 	formatRouter    *FormatRouter          // Routes requests to appropriate output handler
 	containerFormat models.ContainerFormat // Current container format
@@ -303,6 +311,27 @@ func (s *RelaySession) runPipeline() {
 			}
 		}
 
+		// Otherwise show the viewer what went wrong rather than dropping them
+		// into a dead stream. Unlike the FFmpeg fallback above this needs no
+		// pre-warming and no error-pattern match, so it is the path that
+		// actually runs for upstream failures.
+		if err != nil && !errors.Is(err, context.Canceled) {
+			recovered, slateErr := s.serveErrorSlate(err)
+			if slateErr == nil {
+				s.manager.circuitBreakers.Get(s.StreamURL).RecordFailure()
+				if recovered {
+					// The origin came back while the viewer was watching the
+					// slate. Retry the live pipeline rather than ending here, so
+					// the channel resumes without the viewer touching anything.
+					err = nil
+					continue
+				}
+				// Slate ran until the client left or the session was closed.
+				err = nil
+				return
+			}
+		}
+
 		// No error or no fallback configured - exit
 		if err != nil {
 			cb := s.manager.circuitBreakers.Get(s.StreamURL)
@@ -398,6 +427,115 @@ func (s *RelaySession) logPipelineDecision() {
 	}
 
 	slog.Info("Starting relay pipeline", logFields...)
+}
+
+// slateVariant picks the codec variant to render the error slate in.
+//
+// When the origin failed before any codec was detected -- the common case, since
+// an HTTP refusal happens before a single TS packet arrives -- there is no source
+// variant to copy, so the client's negotiated target codecs are used instead.
+// Those are what the client asked for, so they are what it can decode.
+func (s *RelaySession) slateVariant() CodecVariant {
+	if s.esBuffer != nil {
+		if v := s.esBuffer.GetSourceVariant(); v != nil {
+			return v.Variant()
+		}
+	}
+
+	videoCodec, audioCodec := "h264", "aac"
+	if s.EncodingProfile != nil {
+		if c := string(s.EncodingProfile.TargetVideoCodec); c != "" {
+			videoCodec = c
+		}
+		if c := string(s.EncodingProfile.TargetAudioCodec); c != "" {
+			audioCodec = c
+		}
+	}
+	return NewCodecVariant(videoCodec, audioCodec)
+}
+
+// serveErrorSlate renders the failure as a looping video slate and feeds it to
+// connected clients until the context is cancelled or the origin recovers.
+//
+// It returns recovered=true when the origin came back and the caller should
+// resume the live pipeline. A non-nil error means no slate could be produced, in
+// which case the caller falls back to failing the session as before.
+func (s *RelaySession) serveErrorSlate(cause error) (recovered bool, err error) {
+	if s.errorSlateGenerator == nil {
+		return false, errors.New("no error slate generator configured")
+	}
+	if s.esBuffer == nil {
+		return false, errors.New("no ES buffer to inject a slate into")
+	}
+
+	streamErr := ClassifyStreamError(cause)
+	s.slateErr.Store(streamErr)
+
+	variant := s.slateVariant()
+
+	slate, err := s.errorSlateGenerator.Slate(s.ctx, variant, streamErr)
+	if err != nil {
+		slog.Warn("Could not render error slate",
+			slog.String("session_id", s.ID.String()),
+			slog.String("variant", variant.String()),
+			slog.String("error", err.Error()))
+		return false, err
+	}
+
+	// Publishing the variant as the source unblocks the processors already
+	// waiting on WaitSourceVariant, so the existing output path serves the slate
+	// without needing a parallel one per container format.
+	esVariant := s.esBuffer.GetSourceVariant()
+	if esVariant == nil {
+		esVariant = s.esBuffer.CreateSourceVariant(variant.VideoCodec(), variant.AudioCodec())
+	}
+	if esVariant == nil {
+		return false, errors.New("could not obtain a variant for the slate")
+	}
+
+	slog.Info("Serving error slate",
+		slog.String("session_id", s.ID.String()),
+		slog.String("channel", s.ChannelName),
+		slog.String("variant", variant.String()),
+		slog.String("kind", string(streamErr.Kind)),
+		slog.String("headline", streamErr.Headline),
+		slog.String("detail", streamErr.Detail))
+
+	s.inFallback.Store(true)
+	defer s.inFallback.Store(false)
+
+	// Keep roughly this much slate buffered ahead of the client at all times.
+	const slateLead = 6 * time.Second
+
+	refill := time.NewTicker(slate.Duration)
+	defer refill.Stop()
+
+	recovery := time.NewTicker(DefaultFallbackRecoveryInterval)
+	defer recovery.Stop()
+
+	s.slatePTS.Store(InjectErrorSlate(esVariant, slate, s.slatePTS.Load(), slateLead))
+	s.lastActivity.Store(time.Now())
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return false, nil
+
+		case <-refill.C:
+			s.slatePTS.Store(InjectErrorSlate(esVariant, slate, s.slatePTS.Load(), slate.Duration))
+			s.lastActivity.Store(time.Now())
+
+		case <-recovery.C:
+			if !s.testUpstreamRecovery() {
+				continue
+			}
+			slog.Info("Origin recovered while showing error slate",
+				slog.String("session_id", s.ID.String()),
+				slog.String("channel", s.ChannelName))
+			s.slateErr.Store(nil)
+			return true, nil
+		}
+	}
 }
 
 // runFallbackStream runs the fallback stream until recovery or cancellation.
@@ -894,18 +1032,24 @@ func (s *RelaySession) runIngestLoop(inputURL string, demuxer *TSDemuxer) error 
 
 	resp, err := s.manager.config.HTTPClient.Do(req)
 	if err != nil {
+		streamErr := ClassifyStreamError(err)
 		slog.Error("Ingest loop: HTTP request failed",
 			slog.String("session_id", s.ID.String()),
-			slog.String("error", err.Error()))
-		return err
+			slog.String("error", err.Error()),
+			slog.String("kind", string(streamErr.Kind)),
+			slog.String("headline", streamErr.Headline))
+		return streamErr
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		streamErr := NewUpstreamStatusError(resp.StatusCode)
 		slog.Error("Ingest loop: upstream returned non-200 status",
 			slog.String("session_id", s.ID.String()),
-			slog.Int("status", resp.StatusCode))
-		return fmt.Errorf("upstream returned HTTP %d", resp.StatusCode)
+			slog.Int("status", resp.StatusCode),
+			slog.String("kind", string(streamErr.Kind)),
+			slog.String("headline", streamErr.Headline))
+		return streamErr
 	}
 
 	// Log upstream response headers for debugging stream termination issues

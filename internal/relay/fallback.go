@@ -53,6 +53,21 @@ func DefaultFallbackConfig() FallbackConfig {
 	}
 }
 
+const (
+	// DefaultFallbackErrorThreshold is how many matching upstream errors must be
+	// seen before a session switches to fallback content.
+	DefaultFallbackErrorThreshold = 3
+
+	// DefaultFallbackRecoveryInterval is how long to wait between upstream
+	// recovery probes while in fallback.
+	//
+	// This was previously passed at the call site as the untyped constant 30,
+	// which as a time.Duration is 30 NANOSECONDS. NewFallbackController's
+	// "< 5*time.Second" clamp silently rewrote it to 30s, so the bug never
+	// surfaced -- but the call site read as though it meant seconds and did not.
+	DefaultFallbackRecoveryInterval = 30 * time.Second
+)
+
 // ErrFallbackGenerationFailed is returned when fallback stream generation fails.
 var ErrFallbackGenerationFailed = errors.New("fallback stream generation failed")
 
