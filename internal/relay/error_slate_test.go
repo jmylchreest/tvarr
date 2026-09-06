@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/image/font/basicfont"
 )
 
 // newTestESVariant builds a standalone h264/aac variant for injection tests.
@@ -435,5 +437,86 @@ func TestPublishForClientsIsIdempotent(t *testing.T) {
 
 	if !s.IsReady() {
 		t.Error("session not ready after repeated publishing")
+	}
+}
+
+// TestSlateLayoutNeverOverlaps is the regression test for a slate that reached a
+// real client and was unreadable: the headline and the detail line were drawn
+// through each other, because the vertical offsets were fixed multiples of the
+// scale rather than the measured height of the text being drawn.
+func TestSlateLayoutNeverOverlaps(t *testing.T) {
+	sizes := []SlateSize{
+		{Width: 640, Height: 360},
+		{Width: 1280, Height: 720},
+		{Width: 1920, Height: 1080},
+		{Width: 3840, Height: 2160},
+	}
+	errs := []*StreamError{
+		NewUpstreamStatusError(555),
+		NewUpstreamStatusError(999),
+		NewUpstreamStatusError(404),
+		ClassifyStreamError(&net.DNSError{Err: "no such host", Name: "cf.bek252.xyz"}),
+		{Kind: StreamErrorUnavailable, Headline: "Channel Unavailable", Detail: strings.Repeat("a very long provider message that has to wrap ", 6)},
+		{Kind: StreamErrorEnded, Headline: "Ended", Detail: ""},
+	}
+
+	g := NewErrorSlateGenerator(DefaultErrorSlateConfig(), nil)
+
+	for _, size := range sizes {
+		for _, se := range errs {
+			name := fmt.Sprintf("%dx%d/%s", size.Width, size.Height, se.Headline)
+			t.Run(name, func(t *testing.T) {
+				head, detail := g.slateScales(size)
+				rule, blocks := layoutSlate(se, size, head, detail)
+
+				all := append([]image.Rectangle{rule}, func() []image.Rectangle {
+					r := make([]image.Rectangle, len(blocks))
+					for i, b := range blocks {
+						r[i] = b.rect
+					}
+					return r
+				}()...)
+
+				bounds := image.Rect(0, 0, size.Width, size.Height)
+				for i, a := range all {
+					if a.Empty() {
+						t.Errorf("element %d has no area: %v", i, a)
+					}
+					if !a.In(bounds) {
+						t.Errorf("element %d escapes the raster: %v not within %v", i, a, bounds)
+					}
+					for j := i + 1; j < len(all); j++ {
+						if a.Overlaps(all[j]) {
+							t.Errorf("elements %d and %d overlap: %v ∩ %v = %v",
+								i, j, a, all[j], a.Intersect(all[j]))
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestSlateLayoutIsVerticallyCentred keeps the stack balanced rather than
+// drifting to one edge as the detail wraps onto more lines.
+func TestSlateLayoutIsVerticallyCentred(t *testing.T) {
+	g := NewErrorSlateGenerator(DefaultErrorSlateConfig(), nil)
+	size := SlateSize{Width: 1280, Height: 720}
+	head, detail := g.slateScales(size)
+
+	for _, se := range []*StreamError{
+		NewUpstreamStatusError(999),
+		{Kind: StreamErrorUnavailable, Headline: "Wrapped", Detail: strings.Repeat("word ", 40)},
+	} {
+		rule, blocks := layoutSlate(se, size, head, detail)
+
+		top := rule.Min.Y
+		bottom := blocks[len(blocks)-1].rect.Max.Y
+		above, below := top, size.Height-bottom
+
+		// Allow a line's slack; exact symmetry is not the point, balance is.
+		if diff := above - below; diff > faceLineHeight(basicfont.Face7x13)*detail || diff < -faceLineHeight(basicfont.Face7x13)*detail {
+			t.Errorf("%q: stack is off-centre - %dpx above, %dpx below", se.Headline, above, below)
+		}
 	}
 }
