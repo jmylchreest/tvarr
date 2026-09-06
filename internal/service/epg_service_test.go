@@ -897,3 +897,57 @@ func TestEpgService_DeleteRemovesProgramsBeforeTheSourceRow(t *testing.T) {
 		return err == nil && len(pending) == 0 && programRepo.countPrograms() == 0
 	}, 5*time.Second, 10*time.Millisecond, "deletion did not complete in the background")
 }
+
+// TestEpgBatchWriterHoldsLockOnlyForTheWrite is the regression test for an
+// ingestion that wedged the whole subsystem.
+//
+// epgWriteMutex was held across handler.Ingest -- the network download -- so a
+// provider that accepted the connection and then stopped responding kept the
+// lock for the lifetime of the process, and every other EPG source queued behind
+// it forever. The lock must cover the database write and nothing else.
+func TestEpgBatchWriterHoldsLockOnlyForTheWrite(t *testing.T) {
+	sourceRepo := newMockEpgSourceRepo()
+	programRepo := newMockEpgProgramRepo()
+	service := NewEpgService(sourceRepo, programRepo,
+		ingestor.NewEpgHandlerFactory(), ingestor.NewStateManager())
+
+	write := service.epgBatchWriter(context.Background(), models.NewULID())
+
+	// While no write is in flight the lock must be free, however long a
+	// notional download is taking.
+	if !epgWriteMutex.TryLock() {
+		t.Fatal("EPG write lock is held outside a write; a stalled download would block every other source")
+	}
+	epgWriteMutex.Unlock()
+
+	// And it still serialises actual writes.
+	require.NoError(t, write([]*models.EpgProgram{{
+		SourceID:  models.NewULID(),
+		ChannelID: "ch1",
+		Title:     "Programme",
+		Start:     time.Now(),
+		Stop:      time.Now().Add(time.Hour),
+	}}))
+
+	if got := programRepo.countPrograms(); got != 1 {
+		t.Errorf("programs written = %d, want 1", got)
+	}
+
+	// An empty batch must not touch the database or the lock.
+	require.NoError(t, write(nil))
+	if got := programRepo.countPrograms(); got != 1 {
+		t.Errorf("empty batch wrote something: %d programs", got)
+	}
+}
+
+// TestEpgIngestionTimeoutIsBounded guards the deadline itself. The background
+// ingestion previously ran on context.Background(), so a hung provider wedged
+// the source until the process restarted.
+func TestEpgIngestionTimeoutIsBounded(t *testing.T) {
+	if epgIngestionTimeout <= 0 {
+		t.Fatal("EPG ingestion has no deadline; a hung provider will wedge the source forever")
+	}
+	if epgIngestionTimeout > 6*time.Hour {
+		t.Errorf("EPG ingestion deadline of %v is long enough to outlast the 6-hourly schedule", epgIngestionTimeout)
+	}
+}
