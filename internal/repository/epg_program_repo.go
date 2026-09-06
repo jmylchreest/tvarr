@@ -185,55 +185,86 @@ func (r *epgProgramRepo) Delete(ctx context.Context, id models.ULID) error {
 	return nil
 }
 
+// epgProgramDeleteBatch bounds how many programs a single DELETE removes.
+//
+// Each statement takes SQLite's write lock for its duration, so the batch size
+// trades total throughput against how long anything else -- an ingestion, a
+// stream lookup -- is blocked behind it.
+const epgProgramDeleteBatch = 5000
+
 // DeleteBySourceID hard-deletes all programs for a source.
-// Uses Unscoped() for permanent deletion since EPG programs are fully replaced on each ingestion.
-// Deletes in batches by channel to reduce lock duration and prevent SQLite BUSY errors.
+// Uses Unscoped() for permanent deletion since EPG programs are fully replaced
+// on each ingestion.
+//
+// Deletes in bounded batches keyed on the primary key. The previous
+// implementation first ran SELECT DISTINCT channel_id across every program row
+// for the source, purely to group the deletes by channel: on a source with over
+// a million programs that scan alone outlasted the HTTP request that triggered
+// it, and the caller saw a timeout before a single row had been removed.
+// Batching on the primary key needs no such pre-pass, and each statement holds
+// the write lock only briefly.
 func (r *epgProgramRepo) DeleteBySourceID(ctx context.Context, sourceID models.ULID) error {
-	// Get distinct channel IDs for this source to batch delete by channel
-	var channelIDs []string
-	if err := r.db.WithContext(ctx).
-		Model(&models.EpgProgram{}).
-		Where("source_id = ?", sourceID).
-		Distinct("channel_id").
-		Pluck("channel_id", &channelIDs).Error; err != nil {
-		return fmt.Errorf("fetching channel IDs for deletion: %w", err)
-	}
+	var total int64
 
-	if len(channelIDs) == 0 {
-		// No programs to delete
-		return nil
-	}
-
-	// Delete in batches of channels (e.g., 50 channels at a time)
-	// This balances transaction size with number of transactions
-	const channelBatchSize = 50
-	totalDeleted := int64(0)
-
-	for i := 0; i < len(channelIDs); i += channelBatchSize {
-		end := i + channelBatchSize
-		if end > len(channelIDs) {
-			end = len(channelIDs)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		channelBatch := channelIDs[i:end]
 
-		// Delete all programs for this batch of channels
+		ids := r.db.Model(&models.EpgProgram{}).
+			Select("id").
+			Where("source_id = ?", sourceID).
+			Limit(epgProgramDeleteBatch)
+
 		result := r.db.WithContext(ctx).Unscoped().
-			Where("source_id = ? AND channel_id IN ?", sourceID, channelBatch).
+			Where("id IN (?)", ids).
 			Delete(&models.EpgProgram{})
-
 		if result.Error != nil {
-			return fmt.Errorf("deleting EPG programs (batch %d-%d of %d channels): %w",
-				i, end, len(channelIDs), result.Error)
+			return fmt.Errorf("deleting EPG programs for source %s after %d rows: %w",
+				sourceID, total, result.Error)
 		}
-		totalDeleted += result.RowsAffected
 
-		// Check for context cancellation between batches
-		if ctx.Err() != nil {
-			return ctx.Err()
+		total += result.RowsAffected
+		if result.RowsAffected == 0 {
+			return nil
 		}
 	}
+}
 
-	return nil
+// DeleteOrphaned removes programs whose source no longer exists, returning how
+// many rows were deleted.
+//
+// Source deletion removes the source row first so the UI responds immediately,
+// then sweeps the programs in the background. If the process stops mid-sweep the
+// remaining programs have no source, are unreachable through any query, and
+// would otherwise sit in the database forever. This reclaims them.
+func (r *epgProgramRepo) DeleteOrphaned(ctx context.Context) (int64, error) {
+	var total int64
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+
+		liveSources := r.db.Model(&models.EpgSource{}).Select("id")
+
+		ids := r.db.Model(&models.EpgProgram{}).
+			Select("id").
+			Where("source_id NOT IN (?)", liveSources).
+			Limit(epgProgramDeleteBatch)
+
+		result := r.db.WithContext(ctx).Unscoped().
+			Where("id IN (?)", ids).
+			Delete(&models.EpgProgram{})
+		if result.Error != nil {
+			return total, fmt.Errorf("deleting orphaned EPG programs after %d rows: %w", total, result.Error)
+		}
+
+		total += result.RowsAffected
+		if result.RowsAffected == 0 {
+			return total, nil
+		}
+	}
 }
 
 // DeleteStaleBySourceID deletes programs for a source that haven't been updated since the given time.

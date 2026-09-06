@@ -506,3 +506,116 @@ func TestEpgProgramRepo_CreateInBatches(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(10), count)
 }
+
+// TestEpgProgramRepo_DeleteBySourceID_LargeSource exercises the batching path.
+// The old implementation ran SELECT DISTINCT channel_id over every row for the
+// source before deleting anything, which on a real source of over a million
+// programs outlasted the HTTP request that triggered it.
+func TestEpgProgramRepo_DeleteBySourceID_LargeSource(t *testing.T) {
+	db := setupEpgProgramTestDB(t)
+	repo := NewEpgProgramRepository(db)
+	ctx := context.Background()
+
+	target := createTestEpgSource(t, db, "large-epg")
+	keep := createTestEpgSource(t, db, "keep-epg")
+
+	// More rows than one delete batch, so the loop runs more than once.
+	const programCount = epgProgramDeleteBatch + 250
+
+	now := time.Now().Truncate(time.Second)
+	programs := make([]*models.EpgProgram, 0, programCount+10)
+	for i := range programCount {
+		programs = append(programs, &models.EpgProgram{
+			SourceID:  target.ID,
+			ChannelID: "ch." + string(rune('a'+i%26)),
+			Start:     now.Add(time.Duration(i) * time.Minute),
+			Stop:      now.Add(time.Duration(i+1) * time.Minute),
+			Title:     "Programme",
+		})
+	}
+	for i := range 10 {
+		programs = append(programs, &models.EpgProgram{
+			SourceID:  keep.ID,
+			ChannelID: "keep.1",
+			Start:     now.Add(time.Duration(i) * time.Minute),
+			Stop:      now.Add(time.Duration(i+1) * time.Minute),
+			Title:     "Keep me",
+		})
+	}
+	// Insert in chunks: a single CreateBatch of this many rows exceeds SQLite's
+	// bound-variable limit.
+	const insertChunk = 500
+	for i := 0; i < len(programs); i += insertChunk {
+		end := min(i+insertChunk, len(programs))
+		require.NoError(t, repo.CreateBatch(ctx, programs[i:end]))
+	}
+
+	require.NoError(t, repo.DeleteBySourceID(ctx, target.ID))
+
+	gone, err := repo.CountBySourceID(ctx, target.ID)
+	require.NoError(t, err)
+	assert.Zero(t, gone, "programs for the deleted source remain")
+
+	// Deleting one source must not touch another's rows.
+	kept, err := repo.CountBySourceID(ctx, keep.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(10), kept, "deleting one source removed another source's programs")
+}
+
+// TestEpgProgramRepo_DeleteBySourceID_Cancellation checks the loop honours
+// cancellation: a sweep that cannot be stopped would hold the write lock through
+// shutdown.
+func TestEpgProgramRepo_DeleteBySourceID_Cancellation(t *testing.T) {
+	db := setupEpgProgramTestDB(t)
+	repo := NewEpgProgramRepository(db)
+
+	source := createTestEpgSource(t, db, "cancel-epg")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := repo.DeleteBySourceID(ctx, source.ID)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+// TestEpgProgramRepo_DeleteOrphaned covers recovery from an interrupted sweep:
+// source deletion removes the source row first, so a restart in between leaves
+// programs that nothing queries and nothing else would ever remove.
+func TestEpgProgramRepo_DeleteOrphaned(t *testing.T) {
+	db := setupEpgProgramTestDB(t)
+	repo := NewEpgProgramRepository(db)
+	ctx := context.Background()
+
+	live := createTestEpgSource(t, db, "live-epg")
+	doomed := createTestEpgSource(t, db, "doomed-epg")
+
+	now := time.Now().Truncate(time.Second)
+	var programs []*models.EpgProgram
+	for i := range 5 {
+		programs = append(programs,
+			&models.EpgProgram{
+				SourceID: live.ID, ChannelID: "live.1",
+				Start: now.Add(time.Duration(i) * time.Minute),
+				Stop:  now.Add(time.Duration(i+1) * time.Minute),
+				Title: "Live",
+			},
+			&models.EpgProgram{
+				SourceID: doomed.ID, ChannelID: "doomed.1",
+				Start: now.Add(time.Duration(i) * time.Minute),
+				Stop:  now.Add(time.Duration(i+1) * time.Minute),
+				Title: "Orphan",
+			})
+	}
+	require.NoError(t, repo.CreateBatch(ctx, programs))
+
+	// Simulate the source row going first, then the process stopping.
+	require.NoError(t, db.Unscoped().Delete(&models.EpgSource{}, "id = ?", doomed.ID).Error)
+
+	deleted, err := repo.DeleteOrphaned(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(5), deleted)
+
+	remaining, err := repo.CountBySourceID(ctx, live.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(5), remaining, "the live source's programs were swept as orphans")
+}

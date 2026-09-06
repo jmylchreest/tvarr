@@ -13,6 +13,11 @@ import (
 	"github.com/jmylchreest/tvarr/internal/service/progress"
 )
 
+// epgProgramSweepTimeout bounds a background program sweep. Generous, because
+// it is deleting millions of rows in batches behind a shared write lock, but
+// finite so a wedged sweep cannot hold resources for the process's lifetime.
+const epgProgramSweepTimeout = 30 * time.Minute
+
 // EpgService provides business logic for EPG source management.
 type EpgService struct {
 	epgSourceRepo   repository.EpgSourceRepository
@@ -167,18 +172,66 @@ func (s *EpgService) Update(ctx context.Context, source *models.EpgSource) error
 }
 
 // Delete deletes an EPG source and all its programs.
+// Delete removes an EPG source and all of its programs.
+//
+// The source row goes first and the programs are swept in the background,
+// because a mature source holds millions of program rows and removing them takes
+// far longer than any HTTP client will wait -- deleting them inline returned a
+// request timeout to the user while the delete was still running, leaving them
+// no way to tell whether it had worked.
+//
+// Removing the source first is deliberate: it is a single row, so it is instant,
+// and once it is gone the source is absent from the UI and cannot be ingested
+// again. The programs left behind are unreachable through any query, and
+// SweepOrphanedPrograms reclaims them if this process stops mid-sweep.
 func (s *EpgService) Delete(ctx context.Context, id models.ULID) error {
-	// First delete all programs for this source
-	if err := s.epgProgramRepo.DeleteBySourceID(ctx, id); err != nil {
-		return fmt.Errorf("deleting programs: %w", err)
-	}
-
-	// Then delete the source
 	if err := s.epgSourceRepo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("deleting EPG source: %w", err)
 	}
 
-	s.logger.Info("deleted EPG source", "id", id.String())
+	s.logger.Info("deleted EPG source, sweeping its programs in the background",
+		"id", id.String())
+
+	go func() {
+		// Detached from the request context, which is cancelled the moment the
+		// response is written and would abort the sweep immediately.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), epgProgramSweepTimeout)
+		defer cancel()
+
+		started := time.Now()
+		if err := s.epgProgramRepo.DeleteBySourceID(ctx, id); err != nil {
+			// Not fatal: the rows are orphaned, and the next startup sweep
+			// reclaims them.
+			s.logger.Error("sweeping programs for deleted EPG source failed; orphans will be reclaimed on next startup",
+				"id", id.String(),
+				"elapsed", time.Since(started),
+				"error", err)
+			return
+		}
+
+		s.logger.Info("swept programs for deleted EPG source",
+			"id", id.String(),
+			"elapsed", time.Since(started))
+	}()
+
+	return nil
+}
+
+// SweepOrphanedPrograms removes programs left behind by a source deletion that
+// did not finish. Intended to be called once at startup.
+func (s *EpgService) SweepOrphanedPrograms(ctx context.Context) error {
+	started := time.Now()
+
+	deleted, err := s.epgProgramRepo.DeleteOrphaned(ctx)
+	if err != nil {
+		return fmt.Errorf("sweeping orphaned EPG programs: %w", err)
+	}
+
+	if deleted > 0 {
+		s.logger.Info("reclaimed orphaned EPG programs",
+			"count", deleted,
+			"elapsed", time.Since(started))
+	}
 
 	return nil
 }
