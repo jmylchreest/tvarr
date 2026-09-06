@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h264"
+	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h265"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/basicfont"
 	"golang.org/x/image/font/inconsolata"
@@ -302,20 +304,44 @@ func NewErrorSlateGenerator(config ErrorSlateConfig, logger *slog.Logger) *Error
 	}
 }
 
-// cacheKey combines the variant and the error, since the same message must be
-// encoded once per codec variant.
-func (g *ErrorSlateGenerator) cacheKey(variant CodecVariant, se *StreamError) string {
-	return string(variant) + "\x00" + se.CacheKey()
+// cacheKey combines variant, size and message: the same text must be encoded
+// once per codec variant AND per resolution, because a slate spliced onto a live
+// track has to match the parameter sets that track already advertises.
+func (g *ErrorSlateGenerator) cacheKey(variant CodecVariant, size SlateSize, se *StreamError) string {
+	return fmt.Sprintf("%s\x00%dx%d\x00%s", variant, size.Width, size.Height, se.CacheKey())
 }
 
-// Slate returns ES samples rendering the error for the variant, encoding on
-// first use and serving from cache afterwards.
-func (g *ErrorSlateGenerator) Slate(ctx context.Context, variant CodecVariant, se *StreamError) (*CachedPlaceholder, error) {
+// SlateSize is the raster size of a slate. Zero values mean "use the
+// generator's configured default".
+type SlateSize struct {
+	Width  int
+	Height int
+}
+
+// normalise fills in generator defaults for any zero dimension and forces even
+// dimensions, which yuv420p requires.
+func (s SlateSize) normalise(cfg ErrorSlateConfig) SlateSize {
+	if s.Width <= 0 || s.Height <= 0 {
+		s = SlateSize{Width: cfg.Width, Height: cfg.Height}
+	}
+	s.Width &^= 1
+	s.Height &^= 1
+	return s
+}
+
+// Slate returns ES samples rendering the error for the variant at the requested
+// size, encoding on first use and serving from cache afterwards.
+//
+// Size matters as much as codec. Splicing a 720p slate onto a track that has
+// already published 1080p SPS/PPS gives the decoder slices its parameter sets do
+// not describe, so callers pass the live stream's resolution when there is one.
+func (g *ErrorSlateGenerator) Slate(ctx context.Context, variant CodecVariant, se *StreamError, size SlateSize) (*CachedPlaceholder, error) {
 	if se == nil {
 		return nil, errors.New("nil stream error")
 	}
 
-	key := g.cacheKey(variant, se)
+	size = size.normalise(g.config)
+	key := g.cacheKey(variant, size, se)
 
 	g.mu.RLock()
 	cached, ok := g.cache[key]
@@ -334,7 +360,7 @@ func (g *ErrorSlateGenerator) Slate(ctx context.Context, variant CodecVariant, s
 
 	start := time.Now()
 
-	data, err := g.encode(ctx, variant, se)
+	data, err := g.encode(ctx, variant, se, size)
 	if err != nil {
 		return nil, err
 	}
@@ -346,10 +372,15 @@ func (g *ErrorSlateGenerator) Slate(ctx context.Context, variant CodecVariant, s
 		return nil, fmt.Errorf("demux slate: %w", err)
 	}
 
+	if err := toAnnexBInPlace(parsed, variant); err != nil {
+		return nil, fmt.Errorf("converting slate to the live sample format: %w", err)
+	}
+
 	g.cache[key] = parsed
 
 	g.logger.Info("rendered error slate",
 		slog.String("variant", string(variant)),
+		slog.String("size", fmt.Sprintf("%dx%d", size.Width, size.Height)),
 		slog.String("kind", string(se.Kind)),
 		slog.String("headline", se.Headline),
 		slog.Int("video_samples", len(parsed.VideoSamples)),
@@ -442,14 +473,14 @@ func (g *ErrorSlateGenerator) checkEncodable(variant CodecVariant, videoEncoder,
 }
 
 // encode rasterises the slate and encodes it to a fragmented MP4.
-func (g *ErrorSlateGenerator) encode(ctx context.Context, variant CodecVariant, se *StreamError) ([]byte, error) {
+func (g *ErrorSlateGenerator) encode(ctx context.Context, variant CodecVariant, se *StreamError, size SlateSize) ([]byte, error) {
 	videoEncoder := codec.GetVideoEncoder(codec.Video(variant.VideoCodec()), codec.HWAccelNone)
 	audioEncoder := codec.GetAudioEncoder(codec.Audio(variant.AudioCodec()))
 	if err := g.checkEncodable(variant, videoEncoder, audioEncoder); err != nil {
 		return nil, err
 	}
 
-	img := g.render(se)
+	img := g.render(se, size)
 	frame := rgbaFrameBytes(img)
 	frameCount := max(int(g.config.Duration*float64(g.config.FrameRate)), 1)
 
@@ -462,7 +493,7 @@ func (g *ErrorSlateGenerator) encode(ctx context.Context, variant CodecVariant, 
 		// Raw RGBA frames on stdin. No demuxer probing, no font handling.
 		"-f", "rawvideo",
 		"-pixel_format", "rgba",
-		"-video_size", fmt.Sprintf("%dx%d", g.config.Width, g.config.Height),
+		"-video_size", fmt.Sprintf("%dx%d", size.Width, size.Height),
 		"-framerate", fmt.Sprintf("%d", g.config.FrameRate),
 		"-i", "pipe:0",
 		// Silent audio so clients that expect an audio track keep their decoder
@@ -554,36 +585,40 @@ var (
 	slateDetail     = color.RGBA{R: 0x9a, G: 0xa4, B: 0xb2, A: 0xff}
 )
 
-// render rasterises the slate for an error.
-func (g *ErrorSlateGenerator) render(se *StreamError) *image.RGBA {
-	img := image.NewRGBA(image.Rect(0, 0, g.config.Width, g.config.Height))
+// render rasterises the slate for an error at the given size.
+func (g *ErrorSlateGenerator) render(se *StreamError, size SlateSize) *image.RGBA {
+	size = size.normalise(g.config)
+
+	img := image.NewRGBA(image.Rect(0, 0, size.Width, size.Height))
 	draw.Draw(img, img.Bounds(), &image.Uniform{slateBackground}, image.Point{}, draw.Src)
 
-	headScale := g.config.Scale
-	detailScale := max(g.config.Scale-1, 1)
+	// Scale typography with the raster so a 4K slate is not captioned in text
+	// sized for 720p, and an SD one does not overflow.
+	headScale := max(g.config.Scale*size.Height/720, 1)
+	detailScale := max(headScale-1, 1)
 
 	// A thin accent rule above the headline gives the slate an obvious top edge
 	// on displays that overscan.
-	ruleW := g.config.Width / 3
-	ruleH := max(g.config.Scale, 2)
-	ruleY := g.config.Height/2 - 12*headScale - 6*ruleH
-	drawRect(img, (g.config.Width-ruleW)/2, ruleY, ruleW, ruleH, slateAccent)
+	ruleW := size.Width / 3
+	ruleH := max(headScale, 2)
+	ruleY := size.Height/2 - 12*headScale - 6*ruleH
+	drawRect(img, (size.Width-ruleW)/2, ruleY, ruleW, ruleH, slateAccent)
 
 	headFace := inconsolata.Bold8x16
 	headText := se.Headline
 	headW := textWidth(headFace, headText) * headScale
 	drawScaledText(img, headFace, headText,
-		(g.config.Width-headW)/2, g.config.Height/2, headScale, slateHeadline)
+		(size.Width-headW)/2, size.Height/2, headScale, slateHeadline)
 
 	// Wrap the detail so a long provider message does not run off the raster.
 	detailFace := basicfont.Face7x13
-	maxChars := max((g.config.Width-80)/(detailFace.Advance*detailScale), 20)
+	maxChars := max((size.Width-80)/(detailFace.Advance*detailScale), 20)
 	lines := wrapText(se.Detail, maxChars)
 
-	y := g.config.Height/2 + 10*headScale
+	y := size.Height/2 + 10*headScale
 	for _, line := range lines {
 		w := textWidth(detailFace, line) * detailScale
-		drawScaledText(img, detailFace, line, (g.config.Width-w)/2, y, detailScale, slateDetail)
+		drawScaledText(img, detailFace, line, (size.Width-w)/2, y, detailScale, slateDetail)
 		y += 16 * detailScale
 	}
 
@@ -686,6 +721,122 @@ func rgbaFrameBytes(img *image.RGBA) []byte {
 	return out
 }
 
+// toAnnexBInPlace rewrites slate samples into the format the live pipeline uses.
+//
+// The two sources disagree, and splicing them onto one track without this is
+// undecodable no matter how well the timestamps line up:
+//
+//   - The TS demuxer emits Annex-B (h264.AnnexB(au).Marshal()) with SPS/PPS
+//     carried inline in each keyframe access unit, and sets the track's init data
+//     to nil, because that is how MPEG-TS delivers parameter sets.
+//   - fMP4 samples are AVCC -- length-prefixed NAL units -- with the parameter
+//     sets held once in the init segment and never in the samples.
+//
+// So each slate sample is converted to Annex-B, and the parameter sets recovered
+// from the fMP4 init data are prepended to every keyframe. A decoder joining on a
+// slate keyframe then has everything it needs from the sample alone, exactly as
+// it would from the live stream.
+func toAnnexBInPlace(p *CachedPlaceholder, variant CodecVariant) error {
+	var params [][]byte
+
+	switch variant.VideoCodec() {
+	case "h264", "avc":
+		sps, pps := parseH264InitData(p.VideoInitData)
+		if len(sps) > 0 {
+			params = append(params, sps)
+		}
+		if len(pps) > 0 {
+			params = append(params, pps)
+		}
+	case "h265", "hevc":
+		vps, sps, pps := parseH265InitData(p.VideoInitData)
+		for _, nal := range [][]byte{vps, sps, pps} {
+			if len(nal) > 0 {
+				params = append(params, nal)
+			}
+		}
+	default:
+		// Other codecs are not spliced onto an Annex-B track.
+		return nil
+	}
+
+	for i, sample := range p.VideoSamples {
+		var avcc h264.AVCC
+		if err := avcc.Unmarshal(sample.Data); err != nil {
+			return fmt.Errorf("sample %d: %w", i, err)
+		}
+
+		au := [][]byte(avcc)
+		if len(params) > 0 {
+			au = append(append([][]byte{}, params...), au...)
+		}
+
+		annexB, err := h264.AnnexB(au).Marshal()
+		if err != nil {
+			return fmt.Errorf("sample %d: %w", i, err)
+		}
+		p.VideoSamples[i].Data = annexB
+
+		// Every slate frame is encoded with -g 1, so every one is an IDR and
+		// now carries its own parameter sets. Marking them says so.
+		//
+		// This is not cosmetic: the fMP4 sample flags come back with no keyframe
+		// set at all, and the output processors pull via ReadFromKeyframe. Left
+		// unmarked, consumers find no keyframe to start from and the slate never
+		// reaches the viewer -- the dead stream, one layer further down.
+		p.VideoSamples[i].IsKeyframe = true
+	}
+
+	// The parameter sets now travel in the samples, so the init data must not be
+	// published as well: a live track never has any, and adopting it here would
+	// make the slate's track shape differ from the stream it replaces.
+	p.VideoInitData = nil
+
+	return nil
+}
+
+// spsSizeFromAnnexB scans an Annex-B access unit for a parameter set and returns
+// the coded resolution it describes.
+//
+// Live MPEG-TS keeps SPS inline in keyframes rather than in track init data, so
+// this is the only place the live resolution can actually be read from.
+func spsSizeFromAnnexB(data []byte, videoCodec string) (SlateSize, bool) {
+	var au h264.AnnexB
+	if err := au.Unmarshal(data); err != nil {
+		return SlateSize{}, false
+	}
+
+	for _, nal := range au {
+		if len(nal) == 0 {
+			continue
+		}
+
+		switch videoCodec {
+		case "h264", "avc":
+			if nal[0]&0x1f != 7 { // SPS
+				continue
+			}
+			var sps h264.SPS
+			if err := sps.Unmarshal(nal); err != nil {
+				continue
+			}
+			return SlateSize{Width: sps.Width(), Height: sps.Height()}, true
+
+		case "h265", "hevc":
+			if len(nal) < 2 || (nal[0]>>1)&0x3f != 33 { // SPS
+				continue
+			}
+			var sps h265.SPS
+			if err := sps.Unmarshal(nal); err != nil {
+				continue
+			}
+			return SlateSize{Width: sps.Width(), Height: sps.Height()}, true
+		}
+	}
+
+	return SlateSize{}, false
+}
+
 // InjectErrorSlate loops slate samples into the variant starting at startPTS and
 // returns the PTS immediately after the last sample written.
 //
@@ -698,12 +849,12 @@ func InjectErrorSlate(variant *ESVariant, slate *CachedPlaceholder, startPTS int
 		return startPTS
 	}
 
-	// Only adopt the slate's init data when the variant has none. Overwriting
-	// live SPS/PPS mid-stream would change the decoder configuration underneath
-	// a client that has already started decoding.
-	if variant.VideoTrack().GetInitData() == nil && len(slate.VideoInitData) > 0 {
-		variant.VideoTrack().SetInitData(slate.VideoInitData)
-	}
+	// Video parameter sets travel inline in the samples (see toAnnexBInPlace), so
+	// nothing is published to the video track here: a live track carries no video
+	// init data either, and the slate must not make the track look different.
+	//
+	// Audio is the opposite: AAC config lives in the track's init data in both
+	// paths, so adopt it only when the track has none of its own.
 	if variant.AudioTrack().GetInitData() == nil && len(slate.AudioInitData) > 0 {
 		variant.AudioTrack().SetInitData(slate.AudioInitData)
 	}

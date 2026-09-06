@@ -211,6 +211,9 @@ type RelaySession struct {
 	// slatePTS is the next PTS to write slate samples at, kept monotonic across
 	// refills so clients never see time run backwards.
 	slatePTS atomic.Int64
+	// livePTSRebase, when non-zero, is the PTS the resumed origin stream is
+	// shifted onto after a slate, so live picks up where the slate stopped.
+	livePTSRebase atomic.Int64
 
 	// Multi-format streaming support
 	formatRouter    *FormatRouter          // Routes requests to appropriate output handler
@@ -429,6 +432,45 @@ func (s *RelaySession) logPipelineDecision() {
 	slog.Info("Starting relay pipeline", logFields...)
 }
 
+// liveVideoSize reports the resolution the live stream is actually coding at.
+//
+// It reads the SPS out of recent keyframe samples rather than the track's init
+// data, because the MPEG-TS path sets video init data to nil -- SetVideoCodec
+// ("h264", nil) -- and carries parameter sets inline in each keyframe instead.
+// Reading init data here would always come back empty on a live stream.
+//
+// Returns ok=false before any keyframe has arrived, where the slate is free to
+// pick its own size because there is no live raster to match.
+func (s *RelaySession) liveVideoSize(variant *ESVariant) (SlateSize, bool) {
+	if variant == nil {
+		return SlateSize{}, false
+	}
+
+	videoCodec := variant.Variant().VideoCodec()
+
+	// Keyframes carry the parameter sets; scan back from the newest so a
+	// mid-stream resolution change is picked up rather than the opening one.
+	samples := variant.VideoTrack().ReadFromKeyframe(0, liveSPSScanSamples)
+	for i := len(samples) - 1; i >= 0; i-- {
+		if !samples[i].IsKeyframe {
+			continue
+		}
+		if size, ok := spsSizeFromAnnexB(samples[i].Data, videoCodec); ok {
+			return size, true
+		}
+	}
+
+	return SlateSize{}, false
+}
+
+// liveSPSScanSamples bounds how far back to look for a parameter set.
+const liveSPSScanSamples = 256
+
+// slatePTSGap is the 90kHz gap left between the live stream and spliced slate
+// content, and again on the way back. One frame at 25fps: enough that the two
+// timelines never collide, small enough to be invisible.
+const slatePTSGap = 3600
+
 // slateVariant picks the codec variant to render the error slate in.
 //
 // When the origin failed before any codec was detected -- the common case, since
@@ -473,15 +515,6 @@ func (s *RelaySession) serveErrorSlate(cause error) (recovered bool, err error) 
 
 	variant := s.slateVariant()
 
-	slate, err := s.errorSlateGenerator.Slate(s.ctx, variant, streamErr)
-	if err != nil {
-		slog.Warn("Could not render error slate",
-			slog.String("session_id", s.ID.String()),
-			slog.String("variant", variant.String()),
-			slog.String("error", err.Error()))
-		return false, err
-	}
-
 	// Publishing the variant as the source unblocks the processors already
 	// waiting on WaitSourceVariant, so the existing output path serves the slate
 	// without needing a parallel one per container format.
@@ -493,10 +526,32 @@ func (s *RelaySession) serveErrorSlate(cause error) (recovered bool, err error) 
 		return false, errors.New("could not obtain a variant for the slate")
 	}
 
+	// Match the live raster when there is one, so the slate's slices agree with
+	// the parameter sets the track already published.
+	size, matched := s.liveVideoSize(esVariant)
+
+	// Continue the live timeline instead of restarting it. Without this the
+	// slate would splice in at PTS 0 behind a stream already minutes in, and
+	// decoders treat a backwards jump as a discontinuity and drop the stream.
+	if latest := esVariant.VideoTrack().LatestPTS(); latest > s.slatePTS.Load() {
+		s.slatePTS.Store(latest + slatePTSGap)
+	}
+
+	slate, err := s.errorSlateGenerator.Slate(s.ctx, variant, streamErr, size)
+	if err != nil {
+		slog.Warn("Could not render error slate",
+			slog.String("session_id", s.ID.String()),
+			slog.String("variant", variant.String()),
+			slog.String("error", err.Error()))
+		return false, err
+	}
+
 	slog.Info("Serving error slate",
 		slog.String("session_id", s.ID.String()),
 		slog.String("channel", s.ChannelName),
 		slog.String("variant", variant.String()),
+		slog.Bool("matched_live_resolution", matched),
+		slog.Int64("splice_pts", s.slatePTS.Load()),
 		slog.String("kind", string(streamErr.Kind)),
 		slog.String("headline", streamErr.Headline),
 		slog.String("detail", streamErr.Detail))
@@ -529,9 +584,15 @@ func (s *RelaySession) serveErrorSlate(cause error) (recovered bool, err error) 
 			if !s.testUpstreamRecovery() {
 				continue
 			}
+			// The resumed origin restarts on its own timeline, which has no
+			// relation to where the slate ended. Rebase it onto the slate's end
+			// so the return to live is as seamless as the switch away from it.
+			s.livePTSRebase.Store(s.slatePTS.Load() + slatePTSGap)
+
 			slog.Info("Origin recovered while showing error slate",
 				slog.String("session_id", s.ID.String()),
-				slog.String("channel", s.ChannelName))
+				slog.String("channel", s.ChannelName),
+				slog.Int64("live_rebase_pts", s.livePTSRebase.Load()))
 			s.slateErr.Store(nil)
 			return true, nil
 		}
@@ -684,6 +745,8 @@ func (s *RelaySession) runHLSCollapsePipeline() error {
 	if s.CachedCodecInfo != nil && s.CachedCodecInfo.AudioCodec != "" {
 		demuxerConfig.ProbeOverrideAudioCodec = s.CachedCodecInfo.AudioCodec
 	}
+	// Resuming after an error slate: shift the origin onto the slate's timeline.
+	demuxerConfig.PTSRebaseTarget = s.livePTSRebase.Swap(0)
 	s.tsDemuxer = NewTSDemuxer(s.esBuffer, demuxerConfig)
 
 	// Use HLS config from manager for segment settings
@@ -884,6 +947,8 @@ func (s *RelaySession) runESPipeline() error {
 	if s.CachedCodecInfo != nil && s.CachedCodecInfo.AudioCodec != "" {
 		demuxerConfig.ProbeOverrideAudioCodec = s.CachedCodecInfo.AudioCodec
 	}
+	// Resuming after an error slate: shift the origin onto the slate's timeline.
+	demuxerConfig.PTSRebaseTarget = s.livePTSRebase.Swap(0)
 	s.tsDemuxer = NewTSDemuxer(s.esBuffer, demuxerConfig)
 
 	// Determine the source URL

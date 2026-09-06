@@ -194,7 +194,7 @@ func TestRenderProducesReadableSlate(t *testing.T) {
 	g := NewErrorSlateGenerator(DefaultErrorSlateConfig(), nil)
 	se := NewUpstreamStatusError(555)
 
-	img := g.render(se)
+	img := g.render(se, SlateSize{})
 
 	bounds := img.Bounds()
 	if bounds.Dx() != 1280 || bounds.Dy() != 720 {
@@ -237,7 +237,7 @@ func TestSlateRejectsVariantWithNoEncoder(t *testing.T) {
 	// The shipped FFmpeg build has neither libaom-av1 nor libsvtav1, so an AV1
 	// client must fall back to the embedded static placeholder rather than
 	// silently receive nothing.
-	_, err := g.Slate(context.Background(), NewCodecVariant("av1", "opus"), NewUpstreamStatusError(555))
+	_, err := g.Slate(context.Background(), NewCodecVariant("av1", "opus"), NewUpstreamStatusError(555), SlateSize{})
 	if !errors.Is(err, ErrGeneratorNoEncoder) {
 		t.Errorf("err = %v, want ErrGeneratorNoEncoder", err)
 	}
@@ -245,7 +245,7 @@ func TestSlateRejectsVariantWithNoEncoder(t *testing.T) {
 
 func TestSlateRejectsNilError(t *testing.T) {
 	g := NewErrorSlateGenerator(DefaultErrorSlateConfig(), nil)
-	if _, err := g.Slate(context.Background(), NewCodecVariant("h264", "aac"), nil); err == nil {
+	if _, err := g.Slate(context.Background(), NewCodecVariant("h264", "aac"), nil, SlateSize{}); err == nil {
 		t.Error("expected an error for a nil StreamError")
 	}
 }
@@ -347,7 +347,7 @@ func TestSlateEndToEnd(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	slate, err := g.Slate(ctx, variant, se)
+	slate, err := g.Slate(ctx, variant, se, SlateSize{})
 	if err != nil {
 		t.Fatalf("Slate() failed: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestSlateEndToEnd(t *testing.T) {
 
 	// A second call must hit the cache rather than re-encoding.
 	start := time.Now()
-	again, err := g.Slate(ctx, variant, se)
+	again, err := g.Slate(ctx, variant, se, SlateSize{})
 	if err != nil {
 		t.Fatalf("cached Slate() failed: %v", err)
 	}
