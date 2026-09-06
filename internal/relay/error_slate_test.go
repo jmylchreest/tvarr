@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/image/font/basicfont"
 )
 
 // newTestESVariant builds a standalone h264/aac variant for injection tests.
@@ -28,8 +30,12 @@ func TestNewUpstreamStatusError(t *testing.T) {
 		// The two codes seen in production from the Xtream panel. Neither is a
 		// real HTTP status, and both mean the panel refused the stream while the
 		// same account still authenticates against player_api.php.
-		{"xtream 555", 555, StreamErrorLimitReached, "Too Many Connections"},
-		{"xtream 999", 999, StreamErrorLimitReached, "Too Many Connections"},
+		// Non-standard panel codes: observed rotating between 555, 666 and 999
+		// for the same URL, so they carry no reliable meaning and must not be
+		// reported as a concurrency limit.
+		{"xtream 555", 555, StreamErrorUnavailable, "Channel Unavailable"},
+		{"xtream 666", 666, StreamErrorUnavailable, "Channel Unavailable"},
+		{"xtream 999", 999, StreamErrorUnavailable, "Channel Unavailable"},
 		{"too many requests", 429, StreamErrorLimitReached, "Too Many Connections"},
 		{"bandwidth limit", 509, StreamErrorLimitReached, "Too Many Connections"},
 		{"unauthorized", 401, StreamErrorUnavailable, "Not Authorised"},
@@ -70,7 +76,7 @@ func TestClassifyStreamError(t *testing.T) {
 	})
 
 	t.Run("existing StreamError passes through unchanged", func(t *testing.T) {
-		orig := NewUpstreamStatusError(555)
+		orig := NewUpstreamStatusError(429)
 		got := ClassifyStreamError(fmt.Errorf("wrapped: %w", orig))
 		if got != orig {
 			t.Fatalf("classification replaced the precise error: got %+v", got)
@@ -435,5 +441,121 @@ func TestPublishForClientsIsIdempotent(t *testing.T) {
 
 	if !s.IsReady() {
 		t.Error("session not ready after repeated publishing")
+	}
+}
+
+// TestSlateLayoutNeverOverlaps is the regression test for a slate that reached a
+// real client and was unreadable: the headline and the detail line were drawn
+// through each other, because the vertical offsets were fixed multiples of the
+// scale rather than the measured height of the text being drawn.
+func TestSlateLayoutNeverOverlaps(t *testing.T) {
+	sizes := []SlateSize{
+		{Width: 640, Height: 360},
+		{Width: 1280, Height: 720},
+		{Width: 1920, Height: 1080},
+		{Width: 3840, Height: 2160},
+	}
+	errs := []*StreamError{
+		NewUpstreamStatusError(555),
+		NewUpstreamStatusError(999),
+		NewUpstreamStatusError(404),
+		ClassifyStreamError(&net.DNSError{Err: "no such host", Name: "cf.bek252.xyz"}),
+		{Kind: StreamErrorUnavailable, Headline: "Channel Unavailable", Detail: strings.Repeat("a very long provider message that has to wrap ", 6)},
+		{Kind: StreamErrorEnded, Headline: "Ended", Detail: ""},
+	}
+
+	g := NewErrorSlateGenerator(DefaultErrorSlateConfig(), nil)
+
+	for _, size := range sizes {
+		for _, se := range errs {
+			name := fmt.Sprintf("%dx%d/%s", size.Width, size.Height, se.Headline)
+			t.Run(name, func(t *testing.T) {
+				head, detail := g.slateScales(size)
+				rule, blocks := layoutSlate(se, size, head, detail)
+
+				all := append([]image.Rectangle{rule}, func() []image.Rectangle {
+					r := make([]image.Rectangle, len(blocks))
+					for i, b := range blocks {
+						r[i] = b.rect
+					}
+					return r
+				}()...)
+
+				bounds := image.Rect(0, 0, size.Width, size.Height)
+				for i, a := range all {
+					if a.Empty() {
+						t.Errorf("element %d has no area: %v", i, a)
+					}
+					if !a.In(bounds) {
+						t.Errorf("element %d escapes the raster: %v not within %v", i, a, bounds)
+					}
+					for j := i + 1; j < len(all); j++ {
+						if a.Overlaps(all[j]) {
+							t.Errorf("elements %d and %d overlap: %v ∩ %v = %v",
+								i, j, a, all[j], a.Intersect(all[j]))
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestSlateLayoutIsVerticallyCentred keeps the stack balanced rather than
+// drifting to one edge as the detail wraps onto more lines.
+func TestSlateLayoutIsVerticallyCentred(t *testing.T) {
+	g := NewErrorSlateGenerator(DefaultErrorSlateConfig(), nil)
+	size := SlateSize{Width: 1280, Height: 720}
+	head, detail := g.slateScales(size)
+
+	for _, se := range []*StreamError{
+		NewUpstreamStatusError(999),
+		{Kind: StreamErrorUnavailable, Headline: "Wrapped", Detail: strings.Repeat("word ", 40)},
+	} {
+		rule, blocks := layoutSlate(se, size, head, detail)
+
+		top := rule.Min.Y
+		bottom := blocks[len(blocks)-1].rect.Max.Y
+		above, below := top, size.Height-bottom
+
+		// Allow a line's slack; exact symmetry is not the point, balance is.
+		if diff := above - below; diff > faceLineHeight(basicfont.Face7x13)*detail || diff < -faceLineHeight(basicfont.Face7x13)*detail {
+			t.Errorf("%q: stack is off-centre - %dpx above, %dpx below", se.Headline, above, below)
+		}
+	}
+}
+
+// TestShouldRetainForDraining pins when running transcoders may keep a session
+// with no clients alive.
+//
+// The exemption exists so a finite stream can finish transcoding after its last
+// client leaves. It was applied to any running transcoder, and a live origin
+// never finishes, so such a session was immortal: no clients, grace period never
+// applied, cleanup skipping it forever, and its upstream connection held open.
+// The provider allows a fixed number of concurrent connections, so every
+// abandoned session permanently consumed one.
+func TestShouldRetainForDraining(t *testing.T) {
+	tests := []struct {
+		name            string
+		transcoders     int
+		ingestCompleted bool
+		want            bool
+	}{
+		{"live origin, no clients - must not be retained", 2, false, false},
+		{"finite origin still draining - retained", 2, true, true},
+		{"finite origin, nothing left to drain", 0, true, false},
+		{"live origin, no transcoders", 0, false, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &RelaySession{}
+			s.ingestCompleted.Store(tt.ingestCompleted)
+
+			if got := s.shouldRetainForDraining(tt.transcoders); got != tt.want {
+				t.Errorf("shouldRetainForDraining(%d) with ingestCompleted=%v = %v, want %v",
+					tt.transcoders, tt.ingestCompleted, got, tt.want)
+			}
+		})
 	}
 }

@@ -106,10 +106,25 @@ func NewUpstreamStatusError(status int) *StreamError {
 	e := &StreamError{HTTPStatus: status}
 
 	switch {
-	case status == 429, status == 509, status == 555, status == 999:
+	case status == 429 || status == 509:
+		// Standard, and actually mean rate/bandwidth limiting.
 		e.Kind = StreamErrorLimitReached
 		e.Headline = "Too Many Connections"
-		e.Detail = fmt.Sprintf("Provider refused the stream (HTTP %d). Another device may be watching.", status)
+		e.Detail = fmt.Sprintf("Provider is rate-limiting this account (HTTP %d).", status)
+
+	case status == 555 || status == 666 || status > 599:
+		// Xtream panels return codes of their own -- 555, 666 and 999 have all
+		// been observed -- with empty bodies and no consistency: the
+		// same URL requested twice returns different ones. They were originally
+		// read here as a concurrency refusal, which was wrong and actively
+		// misleading: the account reported max_connections 1 with active_cons 0
+		// at the moment of refusal, so the slate sent the viewer looking for
+		// another device that was not there.
+		//
+		// Report what was observed and leave the cause alone.
+		e.Kind = StreamErrorUnavailable
+		e.Headline = "Channel Unavailable"
+		e.Detail = fmt.Sprintf("Provider refused the stream (HTTP %d).", status)
 
 	case status == 401 || status == 403:
 		e.Kind = StreamErrorUnavailable
@@ -575,6 +590,86 @@ var (
 	slateDetail     = color.RGBA{R: 0x9a, G: 0xa4, B: 0xb2, A: 0xff}
 )
 
+// slateBlock is one positioned run of text in the slate layout.
+type slateBlock struct {
+	face   font.Face
+	text   string
+	scale  int
+	colour color.RGBA
+	rect   image.Rectangle
+}
+
+// faceLineHeight returns the full line height of a face, in pixels at 1x.
+func faceLineHeight(f font.Face) int {
+	m := f.Metrics()
+	return (m.Ascent + m.Descent).Round()
+}
+
+// layoutSlate positions the accent rule and the text blocks as one vertically
+// centred stack.
+//
+// Every offset comes from the measured line height of the face that will draw
+// it. Fixed multiples of the scale were used here at first and they overlapped:
+// drawScaledText takes y as the TOP of a block, so a 48px headline drawn at the
+// vertical centre ran to centre+48 while the detail line began at centre+30, and
+// the two were rendered through each other on screen.
+//
+// Returned separately from the drawing so the geometry can be asserted directly.
+func layoutSlate(se *StreamError, size SlateSize, headScale, detailScale int) (image.Rectangle, []slateBlock) {
+	headFace := inconsolata.Bold8x16
+	detailFace := basicfont.Face7x13
+
+	headH := faceLineHeight(headFace) * headScale
+	detailH := faceLineHeight(detailFace) * detailScale
+
+	// Breathing room proportional to the type, so it holds at any raster size.
+	gap := headH / 2
+	ruleH := max(headScale, 2)
+	ruleW := size.Width / 3
+
+	// Wrap the detail so a long provider message does not run off the raster.
+	margin := size.Width / 10
+	advance := max(detailFace.Advance*detailScale, 1)
+	lines := wrapText(se.Detail, max((size.Width-2*margin)/advance, 20))
+
+	total := ruleH + gap + headH
+	if len(lines) > 0 {
+		total += gap + len(lines)*detailH
+	}
+
+	y := max((size.Height-total)/2, 0)
+
+	rule := image.Rect((size.Width-ruleW)/2, y, (size.Width+ruleW)/2, y+ruleH)
+	y += ruleH + gap
+
+	blocks := make([]slateBlock, 0, 1+len(lines))
+
+	headW := textWidth(headFace, se.Headline) * headScale
+	blocks = append(blocks, slateBlock{
+		face: headFace, text: se.Headline, scale: headScale, colour: slateHeadline,
+		rect: image.Rect((size.Width-headW)/2, y, (size.Width+headW)/2, y+headH),
+	})
+	y += headH + gap
+
+	for _, line := range lines {
+		w := textWidth(detailFace, line) * detailScale
+		blocks = append(blocks, slateBlock{
+			face: detailFace, text: line, scale: detailScale, colour: slateDetail,
+			rect: image.Rect((size.Width-w)/2, y, (size.Width+w)/2, y+detailH),
+		})
+		y += detailH
+	}
+
+	return rule, blocks
+}
+
+// slateScales returns the type scales for a raster, so a 4K slate is not
+// captioned in text sized for 720p and an SD one does not overflow.
+func (g *ErrorSlateGenerator) slateScales(size SlateSize) (head, detail int) {
+	head = max(g.config.Scale*size.Height/720, 1)
+	return head, max(head-1, 1)
+}
+
 // render rasterises the slate for an error at the given size.
 func (g *ErrorSlateGenerator) render(se *StreamError, size SlateSize) *image.RGBA {
 	size = size.normalise(g.config)
@@ -582,34 +677,12 @@ func (g *ErrorSlateGenerator) render(se *StreamError, size SlateSize) *image.RGB
 	img := image.NewRGBA(image.Rect(0, 0, size.Width, size.Height))
 	draw.Draw(img, img.Bounds(), &image.Uniform{slateBackground}, image.Point{}, draw.Src)
 
-	// Scale typography with the raster so a 4K slate is not captioned in text
-	// sized for 720p, and an SD one does not overflow.
-	headScale := max(g.config.Scale*size.Height/720, 1)
-	detailScale := max(headScale-1, 1)
+	headScale, detailScale := g.slateScales(size)
+	rule, blocks := layoutSlate(se, size, headScale, detailScale)
 
-	// A thin accent rule above the headline gives the slate an obvious top edge
-	// on displays that overscan.
-	ruleW := size.Width / 3
-	ruleH := max(headScale, 2)
-	ruleY := size.Height/2 - 12*headScale - 6*ruleH
-	drawRect(img, (size.Width-ruleW)/2, ruleY, ruleW, ruleH, slateAccent)
-
-	headFace := inconsolata.Bold8x16
-	headText := se.Headline
-	headW := textWidth(headFace, headText) * headScale
-	drawScaledText(img, headFace, headText,
-		(size.Width-headW)/2, size.Height/2, headScale, slateHeadline)
-
-	// Wrap the detail so a long provider message does not run off the raster.
-	detailFace := basicfont.Face7x13
-	maxChars := max((size.Width-80)/(detailFace.Advance*detailScale), 20)
-	lines := wrapText(se.Detail, maxChars)
-
-	y := size.Height/2 + 10*headScale
-	for _, line := range lines {
-		w := textWidth(detailFace, line) * detailScale
-		drawScaledText(img, detailFace, line, (size.Width-w)/2, y, detailScale, slateDetail)
-		y += 16 * detailScale
+	drawRect(img, rule.Min.X, rule.Min.Y, rule.Dx(), rule.Dy(), slateAccent)
+	for _, b := range blocks {
+		drawScaledText(img, b.face, b.text, b.rect.Min.X, b.rect.Min.Y, b.scale, b.colour)
 	}
 
 	return img

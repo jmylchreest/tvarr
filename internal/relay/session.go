@@ -206,6 +206,9 @@ type RelaySession struct {
 
 	// errorSlateGenerator renders viewer-facing slates for pipeline failures.
 	errorSlateGenerator *ErrorSlateGenerator
+	// accountProber asks the provider what it thinks of the account, so a slate
+	// can report a real cause instead of an opaque refusal code.
+	accountProber *AccountProber
 	// slateErr holds the classified error currently being shown as a slate.
 	slateErr atomic.Pointer[StreamError]
 	// slatePTS is the next PTS to write slate samples at, kept monotonic across
@@ -496,6 +499,46 @@ func (s *RelaySession) publishForClients(targetVariant CodecVariant, targetSegme
 	s.markReady()
 }
 
+// explainWithAccount replaces a bare refusal with whatever the provider's own
+// account record explains, when it explains anything.
+//
+// The codes an Xtream panel returns on a refused stream mean nothing reliable:
+// the same URL answered 555, then 999, with 666 on another channel, all with
+// empty bodies. Guessing a cause from them produced a slate that told the viewer
+// to look for another device while the account reported zero connections in use.
+// player_api.php is the panel's own answer, so ask it and report that instead.
+func (s *RelaySession) explainWithAccount(streamErr *StreamError) *StreamError {
+	// Only worth asking when the provider answered at all. A DNS or dial failure
+	// has already been classified precisely, and the panel is unreachable anyway.
+	if s.accountProber == nil || streamErr == nil || streamErr.HTTPStatus == 0 {
+		return streamErr
+	}
+
+	ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
+	defer cancel()
+
+	account, err := s.accountProber.Account(ctx, s.StreamURL)
+	if err != nil {
+		slog.Debug("Could not read provider account state",
+			slog.String("session_id", s.ID.String()),
+			slog.String("error", err.Error()))
+		return streamErr
+	}
+
+	refined := account.Refine(streamErr)
+	if refined != streamErr {
+		slog.Info("Provider account explains the refusal",
+			slog.String("session_id", s.ID.String()),
+			slog.Int("status", streamErr.HTTPStatus),
+			slog.String("headline", refined.Headline),
+			slog.Int("active_cons", account.ActiveCons),
+			slog.Int("max_connections", account.MaxConnections),
+			slog.String("account_status", account.Status))
+	}
+
+	return refined
+}
+
 // slateVariant picks the codec variant to render the error slate in.
 //
 // When the origin failed before any codec was detected -- the common case, since
@@ -535,7 +578,7 @@ func (s *RelaySession) serveErrorSlate(cause error) (recovered bool, err error) 
 		return false, errors.New("no ES buffer to inject a slate into")
 	}
 
-	streamErr := ClassifyStreamError(cause)
+	streamErr := s.explainWithAccount(ClassifyStreamError(cause))
 	s.slateErr.Store(streamErr)
 
 	variant := s.slateVariant()
@@ -2760,6 +2803,26 @@ func (s *RelaySession) IngestCompleted() bool {
 // Note: We only consider active transcoders as "active content", not buffer data alone.
 // If ingest is complete and all transcoders are stopped, buffer data is stale and the
 // session should be cleaned up even if the buffer still has bytes.
+// shouldRetainForDraining reports whether running transcoders should keep a
+// session with no clients alive.
+//
+// Only while the origin has finished. That is what this exemption was for --
+// letting a finite stream finish transcoding after the last client left -- but
+// it was applied to any running transcoder, and a live origin never finishes.
+// Such a session was therefore immortal: no clients, no grace period, cleanup
+// skipping it on every pass, and its upstream connection held open forever.
+//
+// That is not merely untidy. The provider allows a fixed number of concurrent
+// connections, so each abandoned session permanently consumes one, and once they
+// are used up every new stream is refused with "Too Many Connections" while
+// nobody is watching anything.
+//
+// Buffer contents alone never count: data with no transcoder and no client is
+// stale by definition.
+func (s *RelaySession) shouldRetainForDraining(activeTranscoders int) bool {
+	return activeTranscoders > 0 && s.IngestCompleted()
+}
+
 func (s *RelaySession) HasActiveContent() bool {
 	// Check for active (non-closed) transcoders
 	s.esTranscodersMu.RLock()
@@ -2779,10 +2842,7 @@ func (s *RelaySession) HasActiveContent() bool {
 		bufferBytes = stats.TotalBytes
 	}
 
-	// Only active transcoders count as active content.
-	// Buffer data alone (without active transcoders) is considered stale
-	// and the session can be cleaned up.
-	hasActive := activeTranscoders > 0
+	hasActive := s.shouldRetainForDraining(activeTranscoders)
 
 	slog.Debug("HasActiveContent check",
 		slog.String("session_id", s.ID.String()),
