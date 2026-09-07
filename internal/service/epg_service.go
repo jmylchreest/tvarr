@@ -27,6 +27,10 @@ const epgProgramSweepTimeout = 30 * time.Minute
 
 // EpgService provides business logic for EPG source management.
 type EpgService struct {
+	// ingests tracks in-flight ingestions so editing a source stops the run
+	// that is still using the old settings.
+	ingests ingestionCanceller
+
 	epgSourceRepo   repository.EpgSourceRepository
 	epgProgramRepo  repository.EpgProgramRepository
 	sourceRepo      repository.StreamSourceRepository
@@ -164,6 +168,14 @@ func (s *EpgService) tryAutoCreateStreamSource(ctx context.Context, epgSource *m
 func (s *EpgService) Update(ctx context.Context, source *models.EpgSource) error {
 	if err := source.Validate(); err != nil {
 		return fmt.Errorf("validation failed: %w", err)
+	}
+
+	// An ingestion keeps using the source it loaded when it started, so one
+	// already running would carry on against the old settings and then write its
+	// stale copy back over this edit. Stop it.
+	if s.ingests.cancel(source.ID) {
+		s.logger.Info("cancelled in-flight EPG ingestion because the source was updated",
+			"id", source.ID.String())
 	}
 
 	if err := s.epgSourceRepo.Update(ctx, source); err != nil {
@@ -437,8 +449,7 @@ func (s *EpgService) Ingest(ctx context.Context, id models.ULID) error {
 			progressMgr.Fail(err)
 		}
 		s.stateManager.Fail(id, err)
-		source.MarkFailed(err)
-		_ = s.epgSourceRepo.Update(ctx, source)
+		s.recordOutcome(ctx, id, func(fresh *models.EpgSource) { fresh.MarkFailed(err) })
 		s.logger.Error("EPG ingestion failed",
 			"source_id", id.String(),
 			"error", err,
@@ -464,13 +475,7 @@ func (s *EpgService) Ingest(ctx context.Context, id models.ULID) error {
 	}
 
 	// Mark success
-	source.MarkSuccess(programCount)
-	if err := s.epgSourceRepo.Update(ctx, source); err != nil {
-		s.logger.Error("failed to update EPG source status",
-			"source_id", id.String(),
-			"error", err,
-		)
-	}
+	s.recordOutcome(ctx, id, func(fresh *models.EpgSource) { fresh.MarkSuccess(programCount) })
 
 	s.stateManager.Complete(id, programCount)
 
@@ -516,10 +521,36 @@ func (s *EpgService) IngestAsync(ctx context.Context, id models.ULID) error {
 	go func() {
 		bgCtx, cancel := context.WithTimeout(context.Background(), epgIngestionTimeout)
 		defer cancel()
+
+		untrack := s.ingests.track(id, cancel)
+		defer untrack()
+
 		s.performIngestion(bgCtx, source)
 	}()
 
 	return nil
+}
+
+// recordOutcome writes an ingestion's result against the current stored source
+// rather than the copy the run started with.
+//
+// The repository saves whole rows, so writing back the loaded copy silently
+// reverted anything changed while the run was in progress -- a URL corrected
+// mid-ingestion was undone the moment the stale run finished.
+func (s *EpgService) recordOutcome(ctx context.Context, id models.ULID, apply func(*models.EpgSource)) {
+	fresh, err := s.epgSourceRepo.GetByID(ctx, id)
+	if err != nil || fresh == nil {
+		s.logger.Warn("could not load EPG source to record the ingestion outcome",
+			"id", id.String(), "error", err)
+		return
+	}
+
+	apply(fresh)
+
+	if err := s.epgSourceRepo.Update(ctx, fresh); err != nil {
+		s.logger.Warn("could not record the EPG ingestion outcome",
+			"id", id.String(), "error", err)
+	}
 }
 
 // epgBatchWriter returns a function that upserts a batch of programs while
@@ -666,8 +697,7 @@ func (s *EpgService) performIngestion(ctx context.Context, source *models.EpgSou
 			progressMgr.Fail(err)
 		}
 		s.stateManager.Fail(id, err)
-		source.MarkFailed(err)
-		_ = s.epgSourceRepo.Update(ctx, source)
+		s.recordOutcome(ctx, id, func(fresh *models.EpgSource) { fresh.MarkFailed(err) })
 		s.logger.Error("async EPG ingestion failed",
 			"source_id", id.String(),
 			"error", err,
@@ -690,8 +720,7 @@ func (s *EpgService) performIngestion(ctx context.Context, source *models.EpgSou
 		)
 	}
 
-	source.MarkSuccess(programCount)
-	_ = s.epgSourceRepo.Update(ctx, source)
+	s.recordOutcome(ctx, id, func(fresh *models.EpgSource) { fresh.MarkSuccess(programCount) })
 	s.stateManager.Complete(id, programCount)
 
 	// Complete progress tracking
