@@ -119,7 +119,7 @@ func TestChannel_FullModel(t *testing.T) {
 	sourceID := NewULID()
 
 	c := Channel{
-		BaseModel:     BaseModel{ID: id},
+		ID:            id,
 		SourceID:      sourceID,
 		ExtID:         "ext-123",
 		TvgID:         "tvg-456",

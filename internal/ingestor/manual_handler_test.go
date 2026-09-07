@@ -144,7 +144,7 @@ func TestManualHandler_Ingest(t *testing.T) {
 		mockRepo := &MockManualChannelRepository{
 			channels: []*models.ManualStreamChannel{
 				{
-					BaseModel:   models.BaseModel{ID: ch1ID},
+					ID:          ch1ID,
 					SourceID:    sourceID,
 					ChannelName: "Channel 1",
 					StreamURL:   "http://stream1.com/live",
@@ -152,7 +152,7 @@ func TestManualHandler_Ingest(t *testing.T) {
 					Enabled:     new(true),
 				},
 				{
-					BaseModel:   models.BaseModel{ID: ch2ID},
+					ID:          ch2ID,
 					SourceID:    sourceID,
 					ChannelName: "Channel 2",
 					StreamURL:   "http://stream2.com/live",
@@ -160,7 +160,7 @@ func TestManualHandler_Ingest(t *testing.T) {
 					Enabled:     new(true),
 				},
 				{
-					BaseModel:   models.BaseModel{ID: ch3ID},
+					ID:          ch3ID,
 					SourceID:    sourceID,
 					ChannelName: "Disabled Channel",
 					StreamURL:   "http://stream3.com/live",
@@ -171,9 +171,9 @@ func TestManualHandler_Ingest(t *testing.T) {
 
 		handler := NewManualHandler(mockRepo)
 		source := &models.StreamSource{
-			BaseModel: models.BaseModel{ID: sourceID},
-			Type:      models.SourceTypeManual,
-			Name:      "Test Manual Source",
+			ID:   sourceID,
+			Type: models.SourceTypeManual,
+			Name: "Test Manual Source",
 		}
 
 		var channels []*models.Channel
@@ -197,9 +197,9 @@ func TestManualHandler_Ingest(t *testing.T) {
 
 		handler := NewManualHandler(mockRepo)
 		source := &models.StreamSource{
-			BaseModel: models.BaseModel{ID: sourceID},
-			Type:      models.SourceTypeManual,
-			Name:      "Empty Manual Source",
+			ID:   sourceID,
+			Type: models.SourceTypeManual,
+			Name: "Empty Manual Source",
 		}
 
 		var channels []*models.Channel
@@ -216,7 +216,7 @@ func TestManualHandler_Ingest(t *testing.T) {
 		mockRepo := &MockManualChannelRepository{
 			channels: []*models.ManualStreamChannel{
 				{
-					BaseModel:   models.BaseModel{ID: ch1ID},
+					ID:          ch1ID,
 					SourceID:    sourceID,
 					ChannelName: "Channel 1",
 					StreamURL:   "http://stream1.com/live",
@@ -227,8 +227,8 @@ func TestManualHandler_Ingest(t *testing.T) {
 
 		handler := NewManualHandler(mockRepo)
 		source := &models.StreamSource{
-			BaseModel: models.BaseModel{ID: sourceID},
-			Type:      models.SourceTypeManual,
+			ID:   sourceID,
+			Type: models.SourceTypeManual,
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -245,8 +245,8 @@ func TestManualHandler_Ingest(t *testing.T) {
 	t.Run("returns error when repository not configured", func(t *testing.T) {
 		handler := NewManualHandler(nil)
 		source := &models.StreamSource{
-			BaseModel: models.BaseModel{ID: sourceID},
-			Type:      models.SourceTypeManual,
+			ID:   sourceID,
+			Type: models.SourceTypeManual,
 		}
 
 		err := handler.Ingest(context.Background(), source, func(ch *models.Channel) error {
@@ -265,7 +265,7 @@ func TestManualHandler_ChannelConversion(t *testing.T) {
 	mockRepo := &MockManualChannelRepository{
 		channels: []*models.ManualStreamChannel{
 			{
-				BaseModel:     models.BaseModel{ID: channelID},
+				ID:            channelID,
 				SourceID:      sourceID,
 				TvgID:         "tvg123",
 				TvgName:       "TVG Name",
@@ -287,8 +287,8 @@ func TestManualHandler_ChannelConversion(t *testing.T) {
 
 	handler := NewManualHandler(mockRepo)
 	source := &models.StreamSource{
-		BaseModel: models.BaseModel{ID: sourceID},
-		Type:      models.SourceTypeManual,
+		ID:   sourceID,
+		Type: models.SourceTypeManual,
 	}
 
 	var channels []*models.Channel

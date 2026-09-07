@@ -14,8 +14,8 @@ func TestStateManager_Start(t *testing.T) {
 
 	sourceID := models.NewULID()
 	source := &models.StreamSource{
-		BaseModel: models.BaseModel{ID: sourceID},
-		Name:      "Test Source",
+		ID:   sourceID,
+		Name: "Test Source",
 	}
 
 	// Start should succeed
@@ -47,7 +47,7 @@ func TestStateManager_UpdateProgress(t *testing.T) {
 	m := NewStateManager()
 
 	sourceID := models.NewULID()
-	source := &models.StreamSource{BaseModel: models.BaseModel{ID: sourceID}, Name: "Test"}
+	source := &models.StreamSource{ID: sourceID, Name: "Test"}
 	_ = m.Start(source)
 
 	m.UpdateProgress(sourceID, 100, 5)
@@ -65,7 +65,7 @@ func TestStateManager_Complete(t *testing.T) {
 	m := NewStateManager()
 
 	sourceID := models.NewULID()
-	source := &models.StreamSource{BaseModel: models.BaseModel{ID: sourceID}, Name: "Test"}
+	source := &models.StreamSource{ID: sourceID, Name: "Test"}
 	_ = m.Start(source)
 
 	m.Complete(sourceID, 500)
@@ -86,7 +86,7 @@ func TestStateManager_Fail(t *testing.T) {
 	m := NewStateManager()
 
 	sourceID := models.NewULID()
-	source := &models.StreamSource{BaseModel: models.BaseModel{ID: sourceID}, Name: "Test"}
+	source := &models.StreamSource{ID: sourceID, Name: "Test"}
 	_ = m.Start(source)
 
 	expectedErr := errors.New("test error")
@@ -108,7 +108,7 @@ func TestStateManager_Cancel(t *testing.T) {
 	m := NewStateManager()
 
 	sourceID := models.NewULID()
-	source := &models.StreamSource{BaseModel: models.BaseModel{ID: sourceID}, Name: "Test"}
+	source := &models.StreamSource{ID: sourceID, Name: "Test"}
 	_ = m.Start(source)
 
 	m.Cancel(sourceID)
@@ -130,7 +130,7 @@ func TestStateManager_IsIngesting(t *testing.T) {
 		t.Error("expected IsIngesting to be false initially")
 	}
 
-	source := &models.StreamSource{BaseModel: models.BaseModel{ID: sourceID}, Name: "Test"}
+	source := &models.StreamSource{ID: sourceID, Name: "Test"}
 	_ = m.Start(source)
 
 	// Should be ingesting now
@@ -152,7 +152,7 @@ func TestStateManager_GetAllStates(t *testing.T) {
 	// Start multiple ingestions
 	for range 3 {
 		sourceID := models.NewULID()
-		_ = m.Start(&models.StreamSource{BaseModel: models.BaseModel{ID: sourceID}, Name: "Source"})
+		_ = m.Start(&models.StreamSource{ID: sourceID, Name: "Source"})
 	}
 
 	states := m.GetAllStates()
@@ -165,7 +165,7 @@ func TestStateManager_WaitForCompletion(t *testing.T) {
 	m := NewStateManager()
 
 	sourceID := models.NewULID()
-	source := &models.StreamSource{BaseModel: models.BaseModel{ID: sourceID}, Name: "Test"}
+	source := &models.StreamSource{ID: sourceID, Name: "Test"}
 	_ = m.Start(source)
 
 	// Complete in a goroutine
@@ -187,7 +187,7 @@ func TestStateManager_WaitForCompletion_ContextCancelled(t *testing.T) {
 	m := NewStateManager()
 
 	sourceID := models.NewULID()
-	source := &models.StreamSource{BaseModel: models.BaseModel{ID: sourceID}, Name: "Test"}
+	source := &models.StreamSource{ID: sourceID, Name: "Test"}
 	_ = m.Start(source)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -214,7 +214,7 @@ func TestStateManager_WaitForCompletion_Failed(t *testing.T) {
 	m := NewStateManager()
 
 	sourceID := models.NewULID()
-	source := &models.StreamSource{BaseModel: models.BaseModel{ID: sourceID}, Name: "Test"}
+	source := &models.StreamSource{ID: sourceID, Name: "Test"}
 	_ = m.Start(source)
 
 	expectedErr := errors.New("ingestion failed")

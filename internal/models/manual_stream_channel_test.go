@@ -14,7 +14,7 @@ func TestManualStreamChannel_TableName(t *testing.T) {
 
 func TestManualStreamChannel_GetID(t *testing.T) {
 	id := NewULID()
-	c := ManualStreamChannel{BaseModel: BaseModel{ID: id}}
+	c := ManualStreamChannel{ID: id}
 	assert.Equal(t, id, c.GetID())
 }
 
@@ -64,7 +64,7 @@ func TestManualStreamChannel_Validate(t *testing.T) {
 func TestManualStreamChannel_ToChannel(t *testing.T) {
 	id := NewULID()
 	mc := ManualStreamChannel{
-		BaseModel:     BaseModel{ID: id},
+		ID:            id,
 		TvgID:         "tvg-123",
 		TvgName:       "Test Name",
 		TvgLogo:       "http://example.com/logo.png",
@@ -103,7 +103,7 @@ func TestManualStreamChannel_ToChannel(t *testing.T) {
 func TestManualStreamChannel_FullModel(t *testing.T) {
 	id := NewULID()
 	mc := ManualStreamChannel{
-		BaseModel:     BaseModel{ID: id},
+		ID:            id,
 		TvgID:         "tvg-123",
 		TvgName:       "Test Name",
 		TvgLogo:       "http://example.com/logo.png",

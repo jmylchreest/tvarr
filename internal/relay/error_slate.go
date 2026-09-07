@@ -158,8 +158,7 @@ func ClassifyStreamError(err error) *StreamError {
 		return nil
 	}
 
-	var se *StreamError
-	if errors.As(err, &se) {
+	if se, ok := errors.AsType[*StreamError](err); ok {
 		return se
 	}
 
@@ -175,8 +174,7 @@ func ClassifyStreamError(err error) *StreamError {
 	// DNS failure: the provider hostname no longer resolves. Distinguished from a
 	// refused connection because it is almost always a dead or changed provider
 	// domain rather than a transient outage, and the viewer's fix differs.
-	var dnsErr *net.DNSError
-	if errors.As(err, &dnsErr) {
+	if dnsErr, ok := errors.AsType[*net.DNSError](err); ok {
 		return &StreamError{
 			Kind:     StreamErrorUnavailable,
 			Headline: "Provider Not Found",
@@ -446,7 +444,7 @@ func availableEncoders(ffmpegPath string) (map[string]bool, error) {
 		}
 
 		found := make(map[string]bool)
-		for _, line := range strings.Split(string(out), "\n") {
+		for line := range strings.SplitSeq(string(out), "\n") {
 			// Lines look like " V....D libx264   libx264 H.264 / AVC ...".
 			fields := strings.Fields(line)
 			if len(fields) < 2 || !strings.HasPrefix(line, " ") {

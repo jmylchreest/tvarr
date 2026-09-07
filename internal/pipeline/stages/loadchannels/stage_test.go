@@ -13,8 +13,8 @@ import (
 func newTestState(t *testing.T) *core.State {
 	t.Helper()
 	proxy := &models.StreamProxy{
-		BaseModel: models.BaseModel{ID: models.NewULID()},
-		Name:      "Test Proxy",
+		ID:   models.NewULID(),
+		Name: "Test Proxy",
 	}
 	return core.NewState(proxy)
 }

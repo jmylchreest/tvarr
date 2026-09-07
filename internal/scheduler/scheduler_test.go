@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -197,10 +198,8 @@ func (m *mockJobRepo) HasPendingIngestionJobs(ctx context.Context, sourceIDs []m
 			if len(sourceIDs) == 0 {
 				return true, nil
 			}
-			for _, id := range sourceIDs {
-				if j.TargetID == id {
-					return true, nil
-				}
+			if slices.Contains(sourceIDs, j.TargetID) {
+				return true, nil
 			}
 		}
 	}

@@ -139,9 +139,9 @@ func TestXMLTVHandler_Ingest(t *testing.T) {
 	handler := NewXMLTVHandler()
 	sourceID := models.NewULID()
 	source := &models.EpgSource{
-		BaseModel: models.BaseModel{ID: sourceID},
-		Type:      models.EpgSourceTypeXMLTV,
-		URL:       server.URL + "/epg.xml",
+		ID:   sourceID,
+		Type: models.EpgSourceTypeXMLTV,
+		URL:  server.URL + "/epg.xml",
 	}
 
 	var programs []*models.EpgProgram
@@ -202,9 +202,9 @@ func TestXMLTVHandler_Ingest_CallbackError(t *testing.T) {
 	handler := NewXMLTVHandler()
 	sourceID := models.NewULID()
 	source := &models.EpgSource{
-		BaseModel: models.BaseModel{ID: sourceID},
-		Type:      models.EpgSourceTypeXMLTV,
-		URL:       server.URL,
+		ID:   sourceID,
+		Type: models.EpgSourceTypeXMLTV,
+		URL:  server.URL,
 	}
 
 	err := handler.Ingest(context.Background(), source, func(program *models.EpgProgram) error {
@@ -234,9 +234,9 @@ func TestXMLTVHandler_Ingest_ContextCancellation(t *testing.T) {
 	handler := NewXMLTVHandler()
 	sourceID := models.NewULID()
 	source := &models.EpgSource{
-		BaseModel: models.BaseModel{ID: sourceID},
-		Type:      models.EpgSourceTypeXMLTV,
-		URL:       server.URL,
+		ID:   sourceID,
+		Type: models.EpgSourceTypeXMLTV,
+		URL:  server.URL,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -326,9 +326,9 @@ func TestXMLTVHandler_Ingest_SkipsInvalidTimeRanges(t *testing.T) {
 	handler := NewXMLTVHandler()
 	sourceID := models.NewULID()
 	source := &models.EpgSource{
-		BaseModel: models.BaseModel{ID: sourceID},
-		Type:      models.EpgSourceTypeXMLTV,
-		URL:       server.URL,
+		ID:   sourceID,
+		Type: models.EpgSourceTypeXMLTV,
+		URL:  server.URL,
 	}
 
 	var programs []*models.EpgProgram
@@ -443,10 +443,10 @@ func TestXMLTVHandler_Ingest_WithEpgShift(t *testing.T) {
 	handler := NewXMLTVHandler()
 	sourceID := models.NewULID()
 	source := &models.EpgSource{
-		BaseModel: models.BaseModel{ID: sourceID},
-		Type:      models.EpgSourceTypeXMLTV,
-		URL:       server.URL,
-		EpgShift:  2, // Apply +2 hour shift
+		ID:       sourceID,
+		Type:     models.EpgSourceTypeXMLTV,
+		URL:      server.URL,
+		EpgShift: 2, // Apply +2 hour shift
 	}
 
 	var programs []*models.EpgProgram
@@ -483,9 +483,9 @@ func TestXMLTVHandler_Ingest_DetectsTimezone(t *testing.T) {
 	handler := NewXMLTVHandler()
 	sourceID := models.NewULID()
 	source := &models.EpgSource{
-		BaseModel: models.BaseModel{ID: sourceID},
-		Type:      models.EpgSourceTypeXMLTV,
-		URL:       server.URL,
+		ID:   sourceID,
+		Type: models.EpgSourceTypeXMLTV,
+		URL:  server.URL,
 	}
 
 	var programs []*models.EpgProgram

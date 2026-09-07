@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -222,9 +223,9 @@ func (c *SSECollector) PrintTimeline() {
 		}
 
 		// Get final state and any error
-		for i := len(opEvents) - 1; i >= 0; i-- {
-			if opEvents[i].State != "" {
-				op.finalState = opEvents[i].State
+		for _, opEvent := range slices.Backward(opEvents) {
+			if opEvent.State != "" {
+				op.finalState = opEvent.State
 				break
 			}
 		}

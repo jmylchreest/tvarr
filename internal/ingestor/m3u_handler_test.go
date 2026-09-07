@@ -126,10 +126,10 @@ http://stream.example.com/sports2.m3u8
 	h := NewM3UHandler()
 	sourceID := models.NewULID()
 	source := &models.StreamSource{
-		BaseModel: models.BaseModel{ID: sourceID},
-		Name:      "Test Source",
-		Type:      models.SourceTypeM3U,
-		URL:       server.URL,
+		ID:   sourceID,
+		Name: "Test Source",
+		Type: models.SourceTypeM3U,
+		URL:  server.URL,
 	}
 
 	var channels []*models.Channel
@@ -199,10 +199,10 @@ http://example.com/2.m3u8
 	h := NewM3UHandler()
 	sourceID := models.NewULID()
 	source := &models.StreamSource{
-		BaseModel: models.BaseModel{ID: sourceID},
-		Name:      "Test Source",
-		Type:      models.SourceTypeM3U,
-		URL:       server.URL,
+		ID:   sourceID,
+		Name: "Test Source",
+		Type: models.SourceTypeM3U,
+		URL:  server.URL,
 	}
 
 	expectedErr := errors.New("callback error")
@@ -244,10 +244,10 @@ http://example.com/3.m3u8
 	h := NewM3UHandler()
 	sourceID := models.NewULID()
 	source := &models.StreamSource{
-		BaseModel: models.BaseModel{ID: sourceID},
-		Name:      "Test Source",
-		Type:      models.SourceTypeM3U,
-		URL:       server.URL,
+		ID:   sourceID,
+		Name: "Test Source",
+		Type: models.SourceTypeM3U,
+		URL:  server.URL,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -277,10 +277,10 @@ func TestM3UHandler_Ingest_HTTPError(t *testing.T) {
 	h := NewM3UHandler()
 	sourceID := models.NewULID()
 	source := &models.StreamSource{
-		BaseModel: models.BaseModel{ID: sourceID},
-		Name:      "Test Source",
-		Type:      models.SourceTypeM3U,
-		URL:       server.URL,
+		ID:   sourceID,
+		Name: "Test Source",
+		Type: models.SourceTypeM3U,
+		URL:  server.URL,
 	}
 
 	err := h.Ingest(context.Background(), source, func(ch *models.Channel) error {

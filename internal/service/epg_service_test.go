@@ -638,7 +638,7 @@ func TestEpgService_DeleteOldPrograms(t *testing.T) {
 	oldTime := time.Now().Add(-48 * time.Hour)
 	programID := models.NewULID()
 	programRepo.programs[programID] = &models.EpgProgram{
-		BaseModel: models.BaseModel{ID: programID},
+		ID:        programID,
 		SourceID:  source.ID,
 		ChannelID: "ch1",
 		Start:     oldTime,

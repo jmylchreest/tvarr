@@ -454,11 +454,11 @@ func (s *RelaySession) liveVideoSize(variant *ESVariant) (SlateSize, bool) {
 	// Keyframes carry the parameter sets; scan back from the newest so a
 	// mid-stream resolution change is picked up rather than the opening one.
 	samples := variant.VideoTrack().ReadFromKeyframe(0, liveSPSScanSamples)
-	for i := len(samples) - 1; i >= 0; i-- {
-		if !samples[i].IsKeyframe {
+	for _, sample := range slices.Backward(samples) {
+		if !sample.IsKeyframe {
 			continue
 		}
-		if size, ok := spsSizeFromAnnexB(samples[i].Data, videoCodec); ok {
+		if size, ok := spsSizeFromAnnexB(sample.Data, videoCodec); ok {
 			return size, true
 		}
 	}

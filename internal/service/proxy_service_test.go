@@ -153,7 +153,7 @@ func (m *mockProxyRepo) SetSources(ctx context.Context, proxyID models.ULID, sou
 	// Simplified - just store empty sources for the IDs
 	m.sources[proxyID] = make([]*models.StreamSource, len(sourceIDs))
 	for i, id := range sourceIDs {
-		m.sources[proxyID][i] = &models.StreamSource{BaseModel: models.BaseModel{ID: id}, Enabled: new(true)}
+		m.sources[proxyID][i] = &models.StreamSource{ID: id, Enabled: new(true)}
 	}
 	return nil
 }
@@ -164,7 +164,7 @@ func (m *mockProxyRepo) SetEpgSources(ctx context.Context, proxyID models.ULID, 
 	}
 	m.epgSources[proxyID] = make([]*models.EpgSource, len(sourceIDs))
 	for i, id := range sourceIDs {
-		m.epgSources[proxyID][i] = &models.EpgSource{BaseModel: models.BaseModel{ID: id}, Enabled: new(true)}
+		m.epgSources[proxyID][i] = &models.EpgSource{ID: id, Enabled: new(true)}
 	}
 	return nil
 }
