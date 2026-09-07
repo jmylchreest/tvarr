@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -246,10 +247,8 @@ func (m *jobMockJobRepo) HasPendingIngestionJobs(ctx context.Context, sourceIDs 
 			if len(sourceIDs) == 0 {
 				return true, nil
 			}
-			for _, id := range sourceIDs {
-				if j.TargetID == id {
-					return true, nil
-				}
+			if slices.Contains(sourceIDs, j.TargetID) {
+				return true, nil
 			}
 		}
 	}

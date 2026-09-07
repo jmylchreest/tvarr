@@ -162,7 +162,7 @@ func TestEpgSource_TableName(t *testing.T) {
 
 func TestEpgSource_GetID(t *testing.T) {
 	id := NewULID()
-	source := &EpgSource{BaseModel: BaseModel{ID: id}}
+	source := &EpgSource{ID: id}
 	if source.GetID() != id {
 		t.Errorf("expected ID %s, got %s", id, source.GetID())
 	}

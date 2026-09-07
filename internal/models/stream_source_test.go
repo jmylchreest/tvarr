@@ -15,7 +15,7 @@ func TestStreamSource_TableName(t *testing.T) {
 
 func TestStreamSource_GetID(t *testing.T) {
 	id := NewULID()
-	s := StreamSource{BaseModel: BaseModel{ID: id}}
+	s := StreamSource{ID: id}
 	assert.Equal(t, id, s.GetID())
 }
 

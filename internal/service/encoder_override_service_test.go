@@ -360,8 +360,8 @@ func TestEncoderOverrideService_Update_NotFound(t *testing.T) {
 	ctx := context.Background()
 
 	override := &models.EncoderOverride{
-		BaseModel: models.BaseModel{ID: models.NewULID()},
-		Name:      "Ghost",
+		ID:   models.NewULID(),
+		Name: "Ghost",
 	}
 	err := svc.Update(ctx, override)
 	assert.ErrorIs(t, err, ErrEncoderOverrideNotFound)
@@ -374,7 +374,7 @@ func TestEncoderOverrideService_Update_SystemOverride_OnlyEnabledToggle(t *testi
 
 	// Insert system override directly into repo (bypassing service which blocks IsSystem)
 	systemOverride := &models.EncoderOverride{
-		BaseModel:     models.BaseModel{ID: models.NewULID()},
+		ID:            models.NewULID(),
 		Name:          "System Override",
 		Description:   "System desc",
 		CodecType:     models.EncoderOverrideCodecTypeVideo,
@@ -389,7 +389,7 @@ func TestEncoderOverrideService_Update_SystemOverride_OnlyEnabledToggle(t *testi
 
 	// Try to update name - should fail
 	attempt := &models.EncoderOverride{
-		BaseModel:     models.BaseModel{ID: systemOverride.ID},
+		ID:            systemOverride.ID,
 		Name:          "Renamed System",
 		Description:   "System desc",
 		CodecType:     models.EncoderOverrideCodecTypeVideo,
@@ -405,7 +405,7 @@ func TestEncoderOverrideService_Update_SystemOverride_OnlyEnabledToggle(t *testi
 
 	// Toggle enabled - should work
 	toggleAttempt := &models.EncoderOverride{
-		BaseModel:     models.BaseModel{ID: systemOverride.ID},
+		ID:            systemOverride.ID,
 		Name:          "System Override",
 		Description:   "System desc",
 		CodecType:     models.EncoderOverrideCodecTypeVideo,
@@ -454,7 +454,7 @@ func TestEncoderOverrideService_Delete_SystemOverride(t *testing.T) {
 
 	// Insert system override directly
 	systemOverride := &models.EncoderOverride{
-		BaseModel:     models.BaseModel{ID: models.NewULID()},
+		ID:            models.NewULID(),
 		Name:          "System Override",
 		CodecType:     models.EncoderOverrideCodecTypeVideo,
 		SourceCodec:   "h265",
@@ -625,7 +625,7 @@ func TestEncoderOverrideService_GetSystem(t *testing.T) {
 
 	// Insert system override directly
 	system := &models.EncoderOverride{
-		BaseModel:     models.BaseModel{ID: models.NewULID()},
+		ID:            models.NewULID(),
 		Name:          "System",
 		CodecType:     models.EncoderOverrideCodecTypeVideo,
 		SourceCodec:   "h265",

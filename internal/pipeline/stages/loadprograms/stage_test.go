@@ -97,15 +97,15 @@ func boolPtr(b bool) *bool {
 
 func makeEpgSource(name string, enabled bool) *models.EpgSource {
 	return &models.EpgSource{
-		BaseModel: models.BaseModel{ID: models.NewULID()},
-		Name:      name,
-		Enabled:   new(enabled),
+		ID:      models.NewULID(),
+		Name:    name,
+		Enabled: new(enabled),
 	}
 }
 
 func makeProgram(channelID, title string, start, stop time.Time) *models.EpgProgram {
 	return &models.EpgProgram{
-		BaseModel: models.BaseModel{ID: models.NewULID()},
+		ID:        models.NewULID(),
 		ChannelID: channelID,
 		Title:     title,
 		Start:     start,
@@ -116,8 +116,8 @@ func makeProgram(channelID, title string, start, stop time.Time) *models.EpgProg
 func newTestState(t *testing.T) *core.State {
 	t.Helper()
 	proxy := &models.StreamProxy{
-		BaseModel: models.BaseModel{ID: models.NewULID()},
-		Name:      "Test Proxy",
+		ID:   models.NewULID(),
+		Name: "Test Proxy",
 	}
 	return core.NewState(proxy)
 }
@@ -419,9 +419,9 @@ func TestStage_Execute(t *testing.T) {
 
 	t.Run("nil Enabled treated as enabled (BoolVal default)", func(t *testing.T) {
 		src := &models.EpgSource{
-			BaseModel: models.BaseModel{ID: models.NewULID()},
-			Name:      "nil-enabled",
-			Enabled:   nil, // BoolVal(nil) returns true
+			ID:      models.NewULID(),
+			Name:    "nil-enabled",
+			Enabled: nil, // BoolVal(nil) returns true
 		}
 		repo := &mockProgramRepo{
 			programs: map[models.ULID][]*models.EpgProgram{

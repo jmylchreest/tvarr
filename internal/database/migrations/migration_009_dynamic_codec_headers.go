@@ -47,7 +47,7 @@ func migration009DynamicCodecHeaders() Migration {
 			// This rule extracts any valid video codec from the X-Video-Codec header
 			// using the unified @dynamic(path):key syntax
 			videoRule := models.ClientDetectionRule{
-				BaseModel:   models.BaseModel{ID: models.NewULID()},
+				ID:          models.NewULID(),
 				Name:        "Dynamic Video Codec Header",
 				Description: "Extracts video codec from X-Video-Codec header using @dynamic() syntax. Validates: h264, h265/hevc, vp9, av1.",
 				Expression:  `@dynamic(request.headers):x-video-codec not_equals "" SET preferred_video_codec = @dynamic(request.headers):x-video-codec`,
@@ -70,7 +70,7 @@ func migration009DynamicCodecHeaders() Migration {
 			// This rule extracts any valid audio codec from the X-Audio-Codec header
 			// using the unified @dynamic(path):key syntax
 			audioRule := models.ClientDetectionRule{
-				BaseModel:           models.BaseModel{ID: models.NewULID()},
+				ID:                  models.NewULID(),
 				Name:                "Dynamic Audio Codec Header",
 				Description:         "Extracts audio codec from X-Audio-Codec header using @dynamic() syntax. Validates: aac, mp3, ac3, eac3, opus.",
 				Expression:          `@dynamic(request.headers):x-audio-codec not_equals "" SET preferred_audio_codec = @dynamic(request.headers):x-audio-codec`,
@@ -93,7 +93,7 @@ func migration009DynamicCodecHeaders() Migration {
 			// This rule extracts container/format preference from the X-Container header
 			// using the unified @dynamic(path):key syntax
 			containerRule := models.ClientDetectionRule{
-				BaseModel:           models.BaseModel{ID: models.NewULID()},
+				ID:                  models.NewULID(),
 				Name:                "Dynamic Container Format Header",
 				Description:         "Extracts container format from X-Container header using @dynamic() syntax. Validates: hls-fmp4, hls-ts, dash, fmp4, mpegts, ts.",
 				Expression:          `@dynamic(request.headers):x-container not_equals "" SET preferred_format = @dynamic(request.headers):x-container`,

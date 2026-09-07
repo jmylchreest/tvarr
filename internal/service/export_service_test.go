@@ -47,7 +47,7 @@ func setupExportTestDB(t *testing.T) (
 // createTestFilter creates a test filter with the given parameters
 func createTestFilter(name, expression string, sourceType models.FilterSourceType, action models.FilterAction, isSystem bool) *models.Filter {
 	return &models.Filter{
-		BaseModel:  models.BaseModel{ID: models.NewULID()},
+		ID:         models.NewULID(),
 		Name:       name,
 		Expression: expression,
 		SourceType: sourceType,
@@ -60,7 +60,7 @@ func createTestFilter(name, expression string, sourceType models.FilterSourceTyp
 func createTestDataMappingRule(name, expression string, sourceType models.DataMappingRuleSourceType, priority int, isSystem bool) *models.DataMappingRule {
 	enabled := true
 	return &models.DataMappingRule{
-		BaseModel:  models.BaseModel{ID: models.NewULID()},
+		ID:         models.NewULID(),
 		Name:       name,
 		Expression: expression,
 		SourceType: sourceType,
@@ -74,7 +74,7 @@ func createTestDataMappingRule(name, expression string, sourceType models.DataMa
 func createTestClientDetectionRule(name, expression string, priority int, isSystem bool) *models.ClientDetectionRule {
 	enabled := true
 	return &models.ClientDetectionRule{
-		BaseModel:  models.BaseModel{ID: models.NewULID()},
+		ID:         models.NewULID(),
 		Name:       name,
 		Expression: expression,
 		Priority:   priority,
@@ -87,7 +87,7 @@ func createTestClientDetectionRule(name, expression string, priority int, isSyst
 func createTestEncodingProfile(name string, videoCodec models.VideoCodec, audioCodec models.AudioCodec, isSystem bool) *models.EncodingProfile {
 	enabled := true
 	return &models.EncodingProfile{
-		BaseModel:        models.BaseModel{ID: models.NewULID()},
+		ID:               models.NewULID(),
 		Name:             name,
 		TargetVideoCodec: videoCodec,
 		TargetAudioCodec: audioCodec,
@@ -222,7 +222,7 @@ func TestExportService_ExportFilters_ItemFields(t *testing.T) {
 	// Create filter with all fields
 	sourceID := models.NewULID()
 	filter := &models.Filter{
-		BaseModel:   models.BaseModel{ID: models.NewULID()},
+		ID:          models.NewULID(),
 		Name:        "Full Filter",
 		Description: "A complete filter with all fields",
 		Expression:  "group = 'movies' AND name contains 'HD'",
@@ -262,7 +262,7 @@ func TestExportService_ExportDataMappingRules(t *testing.T) {
 			setup: func(db *gorm.DB) []models.ULID {
 				enabled := true
 				rule1 := &models.DataMappingRule{
-					BaseModel:   models.BaseModel{ID: models.NewULID()},
+					ID:          models.NewULID(),
 					Name:        "User Rule 1",
 					Expression:  "name = name.toUpperCase()",
 					SourceType:  models.DataMappingRuleSourceTypeStream,
@@ -272,7 +272,7 @@ func TestExportService_ExportDataMappingRules(t *testing.T) {
 					IsSystem:    false,
 				}
 				rule2 := &models.DataMappingRule{
-					BaseModel:  models.BaseModel{ID: models.NewULID()},
+					ID:         models.NewULID(),
 					Name:       "System Rule",
 					Expression: "internal",
 					SourceType: models.DataMappingRuleSourceTypeStream,
@@ -345,7 +345,7 @@ func TestExportService_ExportClientDetectionRules(t *testing.T) {
 
 				// Create client detection rule with encoding profile
 				rule := &models.ClientDetectionRule{
-					BaseModel:           models.BaseModel{ID: models.NewULID()},
+					ID:                  models.NewULID(),
 					Name:                "Client Rule with Profile",
 					Expression:          "user_agent contains 'VLC'",
 					Priority:            5,
@@ -391,14 +391,14 @@ func TestExportService_ExportClientDetectionRules(t *testing.T) {
 				enabled := true
 				rules := []*models.ClientDetectionRule{
 					{
-						BaseModel:  models.BaseModel{ID: models.NewULID()},
+						ID:         models.NewULID(),
 						Name:       "User Client Rule",
 						Expression: "custom",
 						IsEnabled:  &enabled,
 						IsSystem:   false,
 					},
 					{
-						BaseModel:  models.BaseModel{ID: models.NewULID()},
+						ID:         models.NewULID(),
 						Name:       "System Client Rule",
 						Expression: "system",
 						IsEnabled:  &enabled,
@@ -456,7 +456,7 @@ func TestExportService_ExportEncodingProfiles(t *testing.T) {
 				enabled := true
 				profiles := []*models.EncodingProfile{
 					{
-						BaseModel:        models.BaseModel{ID: models.NewULID()},
+						ID:               models.NewULID(),
 						Name:             "User Profile 1",
 						Description:      "Custom transcoding profile",
 						TargetVideoCodec: models.VideoCodecH265,
@@ -471,7 +471,7 @@ func TestExportService_ExportEncodingProfiles(t *testing.T) {
 						IsSystem:         false,
 					},
 					{
-						BaseModel:        models.BaseModel{ID: models.NewULID()},
+						ID:               models.NewULID(),
 						Name:             "System Passthrough",
 						TargetVideoCodec: models.VideoCodecH264,
 						TargetAudioCodec: models.AudioCodecAAC,
