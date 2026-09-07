@@ -93,6 +93,10 @@ func (c *DefaultEPGChecker) CheckEPGAvailability(ctx context.Context, baseURL, u
 
 // SourceService provides business logic for stream source management.
 type SourceService struct {
+	// ingests tracks in-flight ingestions so editing a source stops the run
+	// that is still using the old settings.
+	ingests ingestionCanceller
+
 	sourceRepo      repository.StreamSourceRepository
 	channelRepo     repository.ChannelRepository
 	epgSourceRepo   repository.EpgSourceRepository
@@ -257,6 +261,14 @@ func (s *SourceService) Update(ctx context.Context, source *models.StreamSource)
 		return fmt.Errorf("validation failed: %w", err)
 	}
 
+	// An ingestion keeps using the source it loaded when it started, so one
+	// already running would carry on against the old settings and then write its
+	// stale copy back over this edit. Stop it.
+	if s.ingests.cancel(source.ID) {
+		s.logger.Info("cancelled in-flight stream ingestion because the source was updated",
+			"id", source.ID.String())
+	}
+
 	if err := s.sourceRepo.Update(ctx, source); err != nil {
 		return fmt.Errorf("updating source: %w", err)
 	}
@@ -418,8 +430,7 @@ func (s *SourceService) Ingest(ctx context.Context, id models.ULID) error {
 			progressMgr.Fail(err)
 		}
 		s.stateManager.Fail(id, err)
-		source.MarkFailed(err)
-		_ = s.sourceRepo.Update(ctx, source)
+		s.recordOutcome(ctx, id, func(fresh *models.StreamSource) { fresh.MarkFailed(err) })
 		return fmt.Errorf("ingesting channels: %w", err)
 	}
 
@@ -473,13 +484,7 @@ func (s *SourceService) Ingest(ctx context.Context, id models.ULID) error {
 	}
 
 	// Mark success
-	source.MarkSuccess(channelCount)
-	if err := s.sourceRepo.Update(ctx, source); err != nil {
-		s.logger.Error("failed to update source status",
-			"source_id", id.String(),
-			"error", err,
-		)
-	}
+	s.recordOutcome(ctx, id, func(fresh *models.StreamSource) { fresh.MarkSuccess(channelCount) })
 
 	s.stateManager.Complete(id, channelCount)
 
@@ -527,19 +532,51 @@ func (s *SourceService) IngestAsync(ctx context.Context, id models.ULID) error {
 		return fmt.Errorf("starting state tracking: %w", err)
 	}
 
-	// Run ingestion in background
+	// Run ingestion in background.
+	//
+	// Bounded and cancellable: on a context.Background() a provider that stops
+	// responding blocked the run for the lifetime of the process, and nothing
+	// could stop a run that was using settings the user had since corrected.
 	go func() {
 		// Ensure we release the lock when done
 		defer s.ingestionLocks.Delete(id)
 
-		// Create a new context that isn't tied to the request
-		bgCtx := context.Background()
+		bgCtx, cancel := context.WithTimeout(context.Background(), streamIngestionTimeout)
+		defer cancel()
+
+		untrack := s.ingests.track(id, cancel)
+		defer untrack()
 
 		// Perform the actual ingestion (state already started)
 		s.performIngestion(bgCtx, source)
 	}()
 
 	return nil
+}
+
+// streamIngestionTimeout bounds one stream source ingestion run.
+const streamIngestionTimeout = 2 * time.Hour
+
+// recordOutcome writes an ingestion's result against the current stored source
+// rather than the copy the run started with.
+//
+// The repository saves whole rows, so writing back the loaded copy silently
+// reverted anything changed while the run was in progress -- a URL corrected
+// mid-ingestion was undone the moment the stale run finished.
+func (s *SourceService) recordOutcome(ctx context.Context, id models.ULID, apply func(*models.StreamSource)) {
+	fresh, err := s.sourceRepo.GetByID(ctx, id)
+	if err != nil || fresh == nil {
+		s.logger.Warn("could not load stream source to record the ingestion outcome",
+			"id", id.String(), "error", err)
+		return
+	}
+
+	apply(fresh)
+
+	if err := s.sourceRepo.Update(ctx, fresh); err != nil {
+		s.logger.Warn("could not record the stream ingestion outcome",
+			"id", id.String(), "error", err)
+	}
 }
 
 // performIngestion performs the actual ingestion work.
@@ -676,8 +713,7 @@ func (s *SourceService) performIngestion(ctx context.Context, source *models.Str
 			progressMgr.Fail(err)
 		}
 		s.stateManager.Fail(id, err)
-		source.MarkFailed(err)
-		_ = s.sourceRepo.Update(ctx, source)
+		s.recordOutcome(ctx, id, func(fresh *models.StreamSource) { fresh.MarkFailed(err) })
 		s.logger.Error("async ingestion failed",
 			"source_id", id.String(),
 			"error", err,

@@ -951,3 +951,74 @@ func TestEpgIngestionTimeoutIsBounded(t *testing.T) {
 		t.Errorf("EPG ingestion deadline of %v is long enough to outlast the 6-hourly schedule", epgIngestionTimeout)
 	}
 }
+
+// TestEpgUpdateCancelsInFlightIngestion covers the edit case that prompted this:
+// a run started against a dead provider kept using it, ignoring a corrected URL.
+func TestEpgUpdateCancelsInFlightIngestion(t *testing.T) {
+	sourceRepo := newMockEpgSourceRepo()
+	programRepo := newMockEpgProgramRepo()
+	service := NewEpgService(sourceRepo, programRepo,
+		ingestor.NewEpgHandlerFactory(), ingestor.NewStateManager())
+
+	source := &models.EpgSource{
+		Name:    "Editable EPG",
+		Type:    models.EpgSourceTypeXMLTV,
+		URL:     "http://old.example/epg.xml",
+		Enabled: new(true),
+	}
+	require.NoError(t, service.Create(context.Background(), source))
+
+	// Stand in for an ingestion in flight against the old URL.
+	runCtx, cancel := context.WithCancel(context.Background())
+	untrack := service.ingests.track(source.ID, cancel)
+	defer untrack()
+
+	source.URL = "http://new.example/epg.xml"
+	require.NoError(t, service.Update(context.Background(), source))
+
+	select {
+	case <-runCtx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("updating the source left the ingestion running against the old URL")
+	}
+}
+
+// TestEpgRecordOutcomeDoesNotRevertConcurrentEdits is the regression test for
+// the lost update: the repository saves whole rows, so an ingestion writing back
+// the copy it loaded silently undid a URL corrected while it was running.
+func TestEpgRecordOutcomeDoesNotRevertConcurrentEdits(t *testing.T) {
+	sourceRepo := newMockEpgSourceRepo()
+	programRepo := newMockEpgProgramRepo()
+	service := NewEpgService(sourceRepo, programRepo,
+		ingestor.NewEpgHandlerFactory(), ingestor.NewStateManager())
+
+	source := &models.EpgSource{
+		Name:    "Edited Mid-Run",
+		Type:    models.EpgSourceTypeXMLTV,
+		URL:     "http://old.example/epg.xml",
+		Enabled: new(true),
+	}
+	require.NoError(t, service.Create(context.Background(), source))
+
+	// The ingestion holds this copy, taken before the edit.
+	stale := *source
+
+	// Meanwhile the user corrects the URL.
+	updated := *source
+	updated.URL = "http://new.example/epg.xml"
+	require.NoError(t, service.Update(context.Background(), &updated))
+
+	// The stale run now finishes and records its result.
+	service.recordOutcome(context.Background(), stale.ID, func(fresh *models.EpgSource) {
+		fresh.MarkSuccess(1234)
+	})
+
+	got, err := service.GetByID(context.Background(), source.ID)
+	require.NoError(t, err)
+	if got.URL != "http://new.example/epg.xml" {
+		t.Errorf("URL = %q; the finishing ingestion reverted the edit", got.URL)
+	}
+	if got.ProgramCount != 1234 {
+		t.Errorf("ProgramCount = %d, want 1234 - the outcome was not recorded", got.ProgramCount)
+	}
+}
