@@ -2,7 +2,7 @@
 # Maintainer: tvarr project
 
 pkgname=tvarr-ffmpeg
-pkgver=8.1.2
+pkgver=9.0.2
 pkgrel=1
 pkgdesc='Minimal FFmpeg for tvarr video transcoding'
 arch=(x86_64 aarch64)
@@ -54,7 +54,7 @@ conflicts=(ffmpeg)
 #source=("git+https://git.ffmpeg.org/ffmpeg.git#tag=n${pkgver}")
 #sha256sums=('SKIP')
 source=("https://ffmpeg.org/releases/ffmpeg-${pkgver}.tar.xz")
-sha256sums=('464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c')
+sha256sums=('8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e')
 
 options=(!lto)
 
