@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -142,8 +143,8 @@ func (c *LogoCache) CleanupEmptyDirs() error {
 	}
 
 	// Remove empty directories (in reverse order to handle nested dirs)
-	for i := len(emptyDirs) - 1; i >= 0; i-- {
-		if err := os.Remove(emptyDirs[i]); err != nil {
+	for _, emptyDir := range slices.Backward(emptyDirs) {
+		if err := os.Remove(emptyDir); err != nil {
 			// Ignore errors - directory might have been populated
 			continue
 		}

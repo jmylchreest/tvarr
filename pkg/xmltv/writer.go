@@ -235,14 +235,8 @@ func (w *Writer) WriteProgramme(prog *Programme) error {
 	// --- DTD order: episode-num ---
 	// xmltv_ns format: values are 1-based in model (0 = unknown), xmltv_ns uses 0-based
 	if prog.SeasonNumber > 0 || prog.EpisodeNumber > 0 {
-		season := prog.SeasonNumber - 1
-		if season < 0 {
-			season = 0
-		}
-		episode := prog.EpisodeNumber - 1
-		if episode < 0 {
-			episode = 0
-		}
+		season := max(prog.SeasonNumber-1, 0)
+		episode := max(prog.EpisodeNumber-1, 0)
 		_, err = fmt.Fprintf(w.w, `    <episode-num system="xmltv_ns">%d.%d.</episode-num>`, season, episode)
 		if err != nil {
 			return err

@@ -324,7 +324,7 @@ func (s *Stage) cacheChannelLogos(ctx context.Context, state *core.State, batchS
 
 	// Use concurrent workers to cache logos
 	var (
-		processed   int32
+		processed   atomic.Int32
 		errors      int32
 		newlyCached int32
 	)
@@ -380,7 +380,7 @@ func (s *Stage) cacheChannelLogos(ctx context.Context, state *core.State, batchS
 	// Process results
 	total := len(urlsToFetch)
 	for result := range results {
-		current := int(atomic.AddInt32(&processed, 1))
+		current := int(processed.Add(1))
 
 		if result.err != nil {
 			atomic.AddInt32(&errors, 1)
@@ -493,7 +493,7 @@ func (s *Stage) cacheProgramLogos(ctx context.Context, state *core.State, batchS
 
 	// Use concurrent workers to cache logos
 	var (
-		processed   int32
+		processed   atomic.Int32
 		errors      int32
 		newlyCached int32
 	)
@@ -549,7 +549,7 @@ func (s *Stage) cacheProgramLogos(ctx context.Context, state *core.State, batchS
 	// Process results
 	total := len(urlsToFetch)
 	for result := range results {
-		current := int(atomic.AddInt32(&processed, 1))
+		current := int(processed.Add(1))
 
 		if result.err != nil {
 			atomic.AddInt32(&errors, 1)

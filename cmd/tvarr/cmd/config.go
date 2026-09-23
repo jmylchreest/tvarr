@@ -48,7 +48,7 @@ func init() {
 func toMap(v any) map[string]any {
 	result := make(map[string]any)
 	val := reflect.ValueOf(v)
-	if val.Kind() == reflect.Ptr {
+	if val.Kind() == reflect.Pointer {
 		val = val.Elem()
 	}
 	typ := val.Type()

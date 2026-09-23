@@ -117,6 +117,10 @@ type EpgSourceRepository interface {
 	Update(ctx context.Context, source *models.EpgSource) error
 	// Delete deletes an EPG source by ID.
 	Delete(ctx context.Context, id models.ULID) error
+	// SoftDelete marks an EPG source deleted, leaving the row for the FK.
+	SoftDelete(ctx context.Context, id models.ULID) error
+	// ListSoftDeleted returns IDs of sources whose deletion has not finished.
+	ListSoftDeleted(ctx context.Context) ([]models.ULID, error)
 	// GetByName retrieves an EPG source by name.
 	GetByName(ctx context.Context, name string) (*models.EpgSource, error)
 	// GetByURL retrieves an EPG source by URL.

@@ -1,0 +1,5 @@
+# Allow sharp's install script to run (native image-optimization binaries).
+# pnpm 11 blocks unapproved build scripts and fails `install --frozen-lockfile`
+# in CI without this approval.
+allowBuilds:
+  sharp: true

@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -197,10 +198,8 @@ func (m *mockJobRepo) HasPendingIngestionJobs(ctx context.Context, sourceIDs []m
 			if len(sourceIDs) == 0 {
 				return true, nil
 			}
-			for _, id := range sourceIDs {
-				if j.TargetID == id {
-					return true, nil
-				}
+			if slices.Contains(sourceIDs, j.TargetID) {
+				return true, nil
 			}
 		}
 	}
@@ -293,6 +292,14 @@ func (m *mockEpgSourceRepo) GetEnabled(ctx context.Context) ([]*models.EpgSource
 
 func (m *mockEpgSourceRepo) Update(ctx context.Context, source *models.EpgSource) error {
 	return nil
+}
+
+func (m *mockEpgSourceRepo) SoftDelete(ctx context.Context, id models.ULID) error {
+	return nil
+}
+
+func (m *mockEpgSourceRepo) ListSoftDeleted(ctx context.Context) ([]models.ULID, error) {
+	return nil, nil
 }
 
 func (m *mockEpgSourceRepo) Delete(ctx context.Context, id models.ULID) error {

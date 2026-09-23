@@ -99,9 +99,9 @@ func TestClient_Get(t *testing.T) {
 
 func TestClient_Retries(t *testing.T) {
 	t.Run("retries on 503 then succeeds", func(t *testing.T) {
-		var attempts int32
+		var attempts atomic.Int32
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			count := atomic.AddInt32(&attempts, 1)
+			count := attempts.Add(1)
 			if count < 3 {
 				w.WriteHeader(http.StatusServiceUnavailable)
 				return
@@ -121,13 +121,13 @@ func TestClient_Retries(t *testing.T) {
 		defer resp.Body.Close()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
-		assert.Equal(t, int32(3), atomic.LoadInt32(&attempts))
+		assert.Equal(t, int32(3), attempts.Load())
 	})
 
 	t.Run("returns error after max retries", func(t *testing.T) {
-		var attempts int32
+		var attempts atomic.Int32
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			atomic.AddInt32(&attempts, 1)
+			attempts.Add(1)
 			w.WriteHeader(http.StatusServiceUnavailable)
 		}))
 		defer server.Close()
@@ -140,13 +140,13 @@ func TestClient_Retries(t *testing.T) {
 		_, err := client.Get(context.Background(), server.URL)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrMaxRetries)
-		assert.Equal(t, int32(3), atomic.LoadInt32(&attempts)) // initial + 2 retries
+		assert.Equal(t, int32(3), attempts.Load()) // initial + 2 retries
 	})
 
 	t.Run("does not retry on 404", func(t *testing.T) {
-		var attempts int32
+		var attempts atomic.Int32
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			atomic.AddInt32(&attempts, 1)
+			attempts.Add(1)
 			w.WriteHeader(http.StatusNotFound)
 		}))
 		defer server.Close()
@@ -160,7 +160,7 @@ func TestClient_Retries(t *testing.T) {
 		resp.Body.Close()
 
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
-		assert.Equal(t, int32(1), atomic.LoadInt32(&attempts))
+		assert.Equal(t, int32(1), attempts.Load())
 	})
 
 	t.Run("respects context cancellation", func(t *testing.T) {
@@ -337,9 +337,9 @@ func TestCircuitState_String(t *testing.T) {
 
 func TestClient_CircuitBreakerIntegration(t *testing.T) {
 	t.Run("opens circuit on repeated failures", func(t *testing.T) {
-		var attempts int32
+		var attempts atomic.Int32
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			atomic.AddInt32(&attempts, 1)
+			attempts.Add(1)
 			w.WriteHeader(http.StatusServiceUnavailable)
 		}))
 		defer server.Close()
@@ -513,9 +513,9 @@ func TestClient_AcceptableStatusCodes_CircuitBreaker(t *testing.T) {
 	})
 
 	t.Run("500 still trips circuit even when 404 is acceptable", func(t *testing.T) {
-		var requestCount int32
+		var requestCount atomic.Int32
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			count := atomic.AddInt32(&requestCount, 1)
+			count := requestCount.Add(1)
 			if count <= 2 {
 				w.WriteHeader(http.StatusNotFound) // First 2 requests: 404
 			} else {
@@ -543,9 +543,9 @@ func TestClient_AcceptableStatusCodes_CircuitBreaker(t *testing.T) {
 	})
 
 	t.Run("multiple acceptable codes work together", func(t *testing.T) {
-		var requestCount int32
+		var requestCount atomic.Int32
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			count := atomic.AddInt32(&requestCount, 1)
+			count := requestCount.Add(1)
 			switch count % 3 {
 			case 1:
 				w.WriteHeader(http.StatusNotFound)

@@ -142,10 +142,9 @@ func (h *SystemHandler) GetFFmpegInfo(ctx context.Context, input *FFmpegInfoInpu
 		Configuration: info.Configuration,
 		Encoders:      info.Encoders,
 		Decoders:      info.Decoders,
-	}
 
-	// Convert codecs
-	response.Codecs = make([]FFmpegCodecResponse, 0, len(info.Codecs))
+		// Convert codecs
+		Codecs: make([]FFmpegCodecResponse, 0, len(info.Codecs))}
 	for _, codec := range info.Codecs {
 		response.Codecs = append(response.Codecs, FFmpegCodecResponse{
 			Name:        codec.Name,

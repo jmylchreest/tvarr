@@ -146,7 +146,7 @@ func TestEpgProgram_TableName(t *testing.T) {
 
 func TestEpgProgram_GetID(t *testing.T) {
 	id := NewULID()
-	program := &EpgProgram{BaseModel: BaseModel{ID: id}}
+	program := &EpgProgram{ID: id}
 	if program.GetID() != id {
 		t.Errorf("expected ID %s, got %s", id, program.GetID())
 	}

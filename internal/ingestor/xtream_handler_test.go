@@ -160,12 +160,12 @@ func TestXtreamHandler_Ingest(t *testing.T) {
 	h := NewXtreamHandler()
 	sourceID := models.NewULID()
 	source := &models.StreamSource{
-		BaseModel: models.BaseModel{ID: sourceID},
-		Name:      "Test Xtream",
-		Type:      models.SourceTypeXtream,
-		URL:       server.URL,
-		Username:  "testuser",
-		Password:  "testpass",
+		ID:       sourceID,
+		Name:     "Test Xtream",
+		Type:     models.SourceTypeXtream,
+		URL:      server.URL,
+		Username: "testuser",
+		Password: "testpass",
 	}
 
 	var channels []*models.Channel
@@ -237,12 +237,12 @@ func TestXtreamHandler_Ingest_CallbackError(t *testing.T) {
 	h := NewXtreamHandler()
 	sourceID := models.NewULID()
 	source := &models.StreamSource{
-		BaseModel: models.BaseModel{ID: sourceID},
-		Name:      "Test",
-		Type:      models.SourceTypeXtream,
-		URL:       server.URL,
-		Username:  "user",
-		Password:  "pass",
+		ID:       sourceID,
+		Name:     "Test",
+		Type:     models.SourceTypeXtream,
+		URL:      server.URL,
+		Username: "user",
+		Password: "pass",
 	}
 
 	expectedErr := errors.New("callback failed")
@@ -280,12 +280,12 @@ func TestXtreamHandler_Ingest_ContextCancellation(t *testing.T) {
 	h := NewXtreamHandler()
 	sourceID := models.NewULID()
 	source := &models.StreamSource{
-		BaseModel: models.BaseModel{ID: sourceID},
-		Name:      "Test",
-		Type:      models.SourceTypeXtream,
-		URL:       server.URL,
-		Username:  "user",
-		Password:  "pass",
+		ID:       sourceID,
+		Name:     "Test",
+		Type:     models.SourceTypeXtream,
+		URL:      server.URL,
+		Username: "user",
+		Password: "pass",
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -328,12 +328,12 @@ func TestXtreamHandler_Ingest_SkipsInvalidChannels(t *testing.T) {
 	h := NewXtreamHandler()
 	sourceID := models.NewULID()
 	source := &models.StreamSource{
-		BaseModel: models.BaseModel{ID: sourceID},
-		Name:      "Test",
-		Type:      models.SourceTypeXtream,
-		URL:       server.URL,
-		Username:  "user",
-		Password:  "pass",
+		ID:       sourceID,
+		Name:     "Test",
+		Type:     models.SourceTypeXtream,
+		URL:      server.URL,
+		Username: "user",
+		Password: "pass",
 	}
 
 	var channels []*models.Channel
@@ -367,12 +367,12 @@ func TestXtreamHandler_Ingest_HTTPError(t *testing.T) {
 	h := NewXtreamHandler()
 	sourceID := models.NewULID()
 	source := &models.StreamSource{
-		BaseModel: models.BaseModel{ID: sourceID},
-		Name:      "Test",
-		Type:      models.SourceTypeXtream,
-		URL:       server.URL,
-		Username:  "user",
-		Password:  "pass",
+		ID:       sourceID,
+		Name:     "Test",
+		Type:     models.SourceTypeXtream,
+		URL:      server.URL,
+		Username: "user",
+		Password: "pass",
 	}
 
 	err := h.Ingest(context.Background(), source, func(ch *models.Channel) error {

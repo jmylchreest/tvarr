@@ -300,7 +300,7 @@ func TestOutputRequest_IsPlaylistRequest(t *testing.T) {
 			name: "has segment",
 			req: OutputRequest{
 				Format:  FormatValueHLS,
-				Segment: ptrUint64(1),
+				Segment: new(uint64(1)),
 			},
 			expected: false,
 		},
@@ -338,7 +338,7 @@ func TestOutputRequest_IsSegmentRequest(t *testing.T) {
 			name: "has segment",
 			req: OutputRequest{
 				Format:  FormatValueHLS,
-				Segment: ptrUint64(1),
+				Segment: new(uint64(1)),
 			},
 			expected: true,
 		},
@@ -346,7 +346,7 @@ func TestOutputRequest_IsSegmentRequest(t *testing.T) {
 			name: "has segment 0",
 			req: OutputRequest{
 				Format:  FormatValueHLS,
-				Segment: ptrUint64(0),
+				Segment: new(uint64(0)),
 			},
 			expected: true,
 		},
@@ -435,13 +435,6 @@ func TestIsAppleDevice(t *testing.T) {
 			}
 		})
 	}
-}
-
-// Helper to create uint64 pointer
-//
-//go:fix inline
-func ptrUint64(v uint64) *uint64 {
-	return new(v)
 }
 
 // Mock segment provider for testing

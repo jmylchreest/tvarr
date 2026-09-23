@@ -392,8 +392,8 @@ func TestStreamProxy_Relationships(t *testing.T) {
 	// Test that the relationship structs can be composed correctly
 	proxy := StreamProxy{
 		Name: "Test Proxy",
-	}
-	proxy.ID = NewULID()
+
+		ID: NewULID()}
 
 	sourceID := NewULID()
 	epgSourceID := NewULID()

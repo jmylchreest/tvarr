@@ -345,9 +345,9 @@ func (s *SessionStats) ToSessionInfo() RelaySessionInfo {
 			ConnectedAt:   c.ConnectedAt,
 			ConnectedSecs: connectedSecs,
 			BytesRead:     c.BytesRead,
-		}
-		// Extract player type from user agent if available
-		clientInfo.PlayerType = extractPlayerType(c.UserAgent)
+
+			// Extract player type from user agent if available
+			PlayerType: extractPlayerType(c.UserAgent)}
 		info.Clients = append(info.Clients, clientInfo)
 	}
 

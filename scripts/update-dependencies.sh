@@ -136,6 +136,15 @@ get_ffmpeg_latest() {
         | tail -1
 }
 
+get_ffmpeg_sha256() {
+    local version="$1"
+    # Must match the source URL in the PKGBUILD (ffmpeg.org release tarball).
+    local tarball_url="https://ffmpeg.org/releases/ffmpeg-${version}.tar.xz"
+
+    # Download and compute sha256
+    curl -fsSL "$tarball_url" 2>/dev/null | sha256sum | cut -d' ' -f1
+}
+
 check_ffmpeg() {
     log_section "FFmpeg"
 
@@ -170,12 +179,28 @@ check_ffmpeg() {
 
     if [[ "$UPDATE" == true ]]; then
         log_info "Updating FFmpeg PKGBUILD..."
+
+        # Get new sha256sum (the release tarball is pinned in the PKGBUILD; an
+        # outdated checksum makes makepkg fail its validity check)
+        log_info "Computing sha256sum for FFmpeg $latest_version..."
+        local new_sha256
+        new_sha256=$(get_ffmpeg_sha256 "$latest_version")
+        if [[ -z "$new_sha256" ]]; then
+            log_error "Could not compute sha256sum for FFmpeg $latest_version"
+            return 1
+        fi
+        echo "New sha256sum: $new_sha256"
+
+        # Update version and sha256sum
         update_pkgbuild_version "$FFMPEG_PKGBUILD" "$latest_version"
+        update_pkgbuild_sha256 "$FFMPEG_PKGBUILD" "$new_sha256"
 
         # Verify the update
-        local new_version
+        local new_version new_stored_sha256
         new_version=$(get_pkgbuild_version "$FFMPEG_PKGBUILD")
-        if [[ "$new_version" == "$latest_version" ]]; then
+        new_stored_sha256=$(get_pkgbuild_sha256 "$FFMPEG_PKGBUILD")
+
+        if [[ "$new_version" == "$latest_version" ]] && [[ "$new_stored_sha256" == "$new_sha256" ]]; then
             log_success "FFmpeg PKGBUILD updated to $latest_version"
         else
             log_error "Failed to update FFmpeg PKGBUILD"

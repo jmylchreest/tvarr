@@ -114,10 +114,7 @@ func WithRetry(ctx context.Context, cfg RetryConfig, logger *slog.Logger, op str
 		case <-time.After(backoff):
 		}
 
-		backoff = time.Duration(float64(backoff) * cfg.Multiplier)
-		if backoff > cfg.MaxBackoff {
-			backoff = cfg.MaxBackoff
-		}
+		backoff = min(time.Duration(float64(backoff)*cfg.Multiplier), cfg.MaxBackoff)
 	}
 
 	// Unreachable, but satisfies the compiler.

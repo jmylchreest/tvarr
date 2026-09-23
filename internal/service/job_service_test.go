@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -246,10 +247,8 @@ func (m *jobMockJobRepo) HasPendingIngestionJobs(ctx context.Context, sourceIDs 
 			if len(sourceIDs) == 0 {
 				return true, nil
 			}
-			for _, id := range sourceIDs {
-				if j.TargetID == id {
-					return true, nil
-				}
+			if slices.Contains(sourceIDs, j.TargetID) {
+				return true, nil
 			}
 		}
 	}
@@ -349,6 +348,14 @@ func (m *jobMockEpgSourceRepo) GetEnabled(ctx context.Context) ([]*models.EpgSou
 
 func (m *jobMockEpgSourceRepo) Update(ctx context.Context, source *models.EpgSource) error {
 	return nil
+}
+
+func (m *jobMockEpgSourceRepo) SoftDelete(ctx context.Context, id models.ULID) error {
+	return nil
+}
+
+func (m *jobMockEpgSourceRepo) ListSoftDeleted(ctx context.Context) ([]models.ULID, error) {
+	return nil, nil
 }
 
 func (m *jobMockEpgSourceRepo) Delete(ctx context.Context, id models.ULID) error {

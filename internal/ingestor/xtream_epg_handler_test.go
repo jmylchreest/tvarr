@@ -190,11 +190,11 @@ func TestXtreamEpgHandler_Ingest(t *testing.T) {
 	handler := NewXtreamEpgHandler()
 	sourceID := models.NewULID()
 	source := &models.EpgSource{
-		BaseModel: models.BaseModel{ID: sourceID},
-		Type:      models.EpgSourceTypeXtream,
-		URL:       server.URL,
-		Username:  "testuser",
-		Password:  "testpass",
+		ID:       sourceID,
+		Type:     models.EpgSourceTypeXtream,
+		URL:      server.URL,
+		Username: "testuser",
+		Password: "testpass",
 	}
 
 	var programs []*models.EpgProgram
@@ -250,11 +250,11 @@ func TestXtreamEpgHandler_Ingest_ContextCancellation(t *testing.T) {
 	handler := NewXtreamEpgHandler()
 	sourceID := models.NewULID()
 	source := &models.EpgSource{
-		BaseModel: models.BaseModel{ID: sourceID},
-		Type:      models.EpgSourceTypeXtream,
-		URL:       server.URL,
-		Username:  "user",
-		Password:  "pass",
+		ID:       sourceID,
+		Type:     models.EpgSourceTypeXtream,
+		URL:      server.URL,
+		Username: "user",
+		Password: "pass",
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -291,11 +291,11 @@ func TestXtreamEpgHandler_Ingest_CallbackError(t *testing.T) {
 	handler := NewXtreamEpgHandler()
 	sourceID := models.NewULID()
 	source := &models.EpgSource{
-		BaseModel: models.BaseModel{ID: sourceID},
-		Type:      models.EpgSourceTypeXtream,
-		URL:       server.URL,
-		Username:  "user",
-		Password:  "pass",
+		ID:       sourceID,
+		Type:     models.EpgSourceTypeXtream,
+		URL:      server.URL,
+		Username: "user",
+		Password: "pass",
 	}
 
 	err := handler.Ingest(context.Background(), source, func(program *models.EpgProgram) error {
@@ -359,11 +359,11 @@ func TestXtreamEpgHandler_Ingest_SkipsInvalidTimeRanges(t *testing.T) {
 	handler := NewXtreamEpgHandler()
 	sourceID := models.NewULID()
 	source := &models.EpgSource{
-		BaseModel: models.BaseModel{ID: sourceID},
-		Type:      models.EpgSourceTypeXtream,
-		URL:       server.URL,
-		Username:  "user",
-		Password:  "pass",
+		ID:       sourceID,
+		Type:     models.EpgSourceTypeXtream,
+		URL:      server.URL,
+		Username: "user",
+		Password: "pass",
 	}
 
 	var programs []*models.EpgProgram
@@ -543,7 +543,7 @@ func TestXtreamEpgHandler_Ingest_WithEpgShift(t *testing.T) {
 	handler := NewXtreamEpgHandler()
 	sourceID := models.NewULID()
 	source := &models.EpgSource{
-		BaseModel:         models.BaseModel{ID: sourceID},
+		ID:                sourceID,
 		Type:              models.EpgSourceTypeXtream,
 		URL:               server.URL,
 		Username:          "testuser",

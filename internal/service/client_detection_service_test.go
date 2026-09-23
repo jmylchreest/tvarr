@@ -144,7 +144,7 @@ func TestClientDetectionService_EvaluateRequest_FirstMatchWins(t *testing.T) {
 
 	// Create rules with different priorities
 	rule1 := &models.ClientDetectionRule{
-		BaseModel:           models.BaseModel{ID: models.NewULID()},
+		ID:                  models.NewULID(),
 		Name:                "High Priority Chrome",
 		Expression:          `@dynamic(request.headers):user-agent contains "Chrome"`,
 		Priority:            10,
@@ -157,7 +157,7 @@ func TestClientDetectionService_EvaluateRequest_FirstMatchWins(t *testing.T) {
 		SupportsMPEGTS:      new(true),
 	}
 	rule2 := &models.ClientDetectionRule{
-		BaseModel:           models.BaseModel{ID: models.NewULID()},
+		ID:                  models.NewULID(),
 		Name:                "Low Priority Generic",
 		Expression:          `@dynamic(request.headers):user-agent contains "Mozilla"`,
 		Priority:            100,
@@ -199,7 +199,7 @@ func TestClientDetectionService_EvaluateRequest_PriorityOrdering(t *testing.T) {
 
 	// Create rules that would all match, in various priority orders
 	ruleAndroidTV := &models.ClientDetectionRule{
-		BaseModel:           models.BaseModel{ID: models.NewULID()},
+		ID:                  models.NewULID(),
 		Name:                "Android TV",
 		Expression:          `@dynamic(request.headers):user-agent contains "Android" AND @dynamic(request.headers):user-agent contains "TV"`,
 		Priority:            100,
@@ -212,7 +212,7 @@ func TestClientDetectionService_EvaluateRequest_PriorityOrdering(t *testing.T) {
 		SupportsMPEGTS:      new(true),
 	}
 	ruleAndroidMobile := &models.ClientDetectionRule{
-		BaseModel:           models.BaseModel{ID: models.NewULID()},
+		ID:                  models.NewULID(),
 		Name:                "Android Mobile",
 		Expression:          `@dynamic(request.headers):user-agent contains "Android"`,
 		Priority:            200, // Lower priority than Android TV
@@ -262,7 +262,7 @@ func TestClientDetectionService_EvaluateRequest_ExplicitCodecHeaders(t *testing.
 
 	// Create explicit codec header rules (highest priority)
 	ruleH265Header := &models.ClientDetectionRule{
-		BaseModel:           models.BaseModel{ID: models.NewULID()},
+		ID:                  models.NewULID(),
 		Name:                "Explicit H.265 Request",
 		Expression:          `@dynamic(request.headers):x-video-codec equals "h265"`,
 		Priority:            1, // Highest priority
@@ -276,7 +276,7 @@ func TestClientDetectionService_EvaluateRequest_ExplicitCodecHeaders(t *testing.
 	}
 
 	ruleChromeUA := &models.ClientDetectionRule{
-		BaseModel:           models.BaseModel{ID: models.NewULID()},
+		ID:                  models.NewULID(),
 		Name:                "Chrome Browser",
 		Expression:          `@dynamic(request.headers):user-agent contains "Chrome"`,
 		Priority:            160, // Lower priority than explicit header
@@ -326,7 +326,7 @@ func TestClientDetectionService_EvaluateRequest_NoMatch(t *testing.T) {
 
 	// Add a rule that won't match
 	rule := &models.ClientDetectionRule{
-		BaseModel:           models.BaseModel{ID: models.NewULID()},
+		ID:                  models.NewULID(),
 		Name:                "VLC Only",
 		Expression:          `@dynamic(request.headers):user-agent contains "VLC"`,
 		Priority:            100,
@@ -364,7 +364,7 @@ func TestClientDetectionService_EvaluateRequest_DisabledRule(t *testing.T) {
 
 	// Disabled rule (would match)
 	disabledRule := &models.ClientDetectionRule{
-		BaseModel:           models.BaseModel{ID: models.NewULID()},
+		ID:                  models.NewULID(),
 		Name:                "Disabled Chrome Rule",
 		Expression:          `@dynamic(request.headers):user-agent contains "Chrome"`,
 		Priority:            10,
@@ -379,7 +379,7 @@ func TestClientDetectionService_EvaluateRequest_DisabledRule(t *testing.T) {
 
 	// Enabled rule (lower priority)
 	enabledRule := &models.ClientDetectionRule{
-		BaseModel:           models.BaseModel{ID: models.NewULID()},
+		ID:                  models.NewULID(),
 		Name:                "Enabled Generic Rule",
 		Expression:          `@dynamic(request.headers):user-agent contains "Mozilla"`,
 		Priority:            100,
@@ -416,7 +416,7 @@ func TestClientDetectionService_ExplicitHeaderPriorityOverUserAgent(t *testing.T
 
 	// Create explicit codec header rules (highest priority, 1-10)
 	ruleExplicitH265 := &models.ClientDetectionRule{
-		BaseModel:           models.BaseModel{ID: models.NewULID()},
+		ID:                  models.NewULID(),
 		Name:                "Explicit H.265 Video Request",
 		Expression:          `@dynamic(request.headers):x-video-codec equals "h265" OR @dynamic(request.headers):x-video-codec equals "hevc"`,
 		Priority:            1, // Highest priority
@@ -430,7 +430,7 @@ func TestClientDetectionService_ExplicitHeaderPriorityOverUserAgent(t *testing.T
 	}
 
 	ruleExplicitH264 := &models.ClientDetectionRule{
-		BaseModel:           models.BaseModel{ID: models.NewULID()},
+		ID:                  models.NewULID(),
 		Name:                "Explicit H.264 Video Request",
 		Expression:          `@dynamic(request.headers):x-video-codec equals "h264" OR @dynamic(request.headers):x-video-codec equals "avc"`,
 		Priority:            2,
@@ -444,7 +444,7 @@ func TestClientDetectionService_ExplicitHeaderPriorityOverUserAgent(t *testing.T
 	}
 
 	ruleExplicitVP9 := &models.ClientDetectionRule{
-		BaseModel:           models.BaseModel{ID: models.NewULID()},
+		ID:                  models.NewULID(),
 		Name:                "Explicit VP9 Video Request",
 		Expression:          `@dynamic(request.headers):x-video-codec equals "vp9"`,
 		Priority:            3,
@@ -458,7 +458,7 @@ func TestClientDetectionService_ExplicitHeaderPriorityOverUserAgent(t *testing.T
 	}
 
 	ruleExplicitAV1 := &models.ClientDetectionRule{
-		BaseModel:           models.BaseModel{ID: models.NewULID()},
+		ID:                  models.NewULID(),
 		Name:                "Explicit AV1 Video Request",
 		Expression:          `@dynamic(request.headers):x-video-codec equals "av1"`,
 		Priority:            4,
@@ -473,7 +473,7 @@ func TestClientDetectionService_ExplicitHeaderPriorityOverUserAgent(t *testing.T
 
 	// User-Agent based rules (lower priority, 100+)
 	ruleChrome := &models.ClientDetectionRule{
-		BaseModel:           models.BaseModel{ID: models.NewULID()},
+		ID:                  models.NewULID(),
 		Name:                "Chrome Browser",
 		Expression:          `@dynamic(request.headers):user-agent contains "Chrome" AND NOT @dynamic(request.headers):user-agent contains "Edge"`,
 		Priority:            160,
@@ -487,7 +487,7 @@ func TestClientDetectionService_ExplicitHeaderPriorityOverUserAgent(t *testing.T
 	}
 
 	ruleSafari := &models.ClientDetectionRule{
-		BaseModel:           models.BaseModel{ID: models.NewULID()},
+		ID:                  models.NewULID(),
 		Name:                "Safari Browser",
 		Expression:          `@dynamic(request.headers):user-agent contains "Safari" AND @dynamic(request.headers):user-agent contains "Macintosh"`,
 		Priority:            180,
@@ -591,7 +591,7 @@ func TestClientDetectionService_InvalidCodecHeaderFallthrough(t *testing.T) {
 
 	// Explicit codec header rules only match valid codec values
 	ruleExplicitH265 := &models.ClientDetectionRule{
-		BaseModel:           models.BaseModel{ID: models.NewULID()},
+		ID:                  models.NewULID(),
 		Name:                "Explicit H.265 Video Request",
 		Expression:          `@dynamic(request.headers):x-video-codec equals "h265" OR @dynamic(request.headers):x-video-codec equals "hevc"`,
 		Priority:            1,
@@ -605,7 +605,7 @@ func TestClientDetectionService_InvalidCodecHeaderFallthrough(t *testing.T) {
 	}
 
 	ruleExplicitH264 := &models.ClientDetectionRule{
-		BaseModel:           models.BaseModel{ID: models.NewULID()},
+		ID:                  models.NewULID(),
 		Name:                "Explicit H.264 Video Request",
 		Expression:          `@dynamic(request.headers):x-video-codec equals "h264" OR @dynamic(request.headers):x-video-codec equals "avc"`,
 		Priority:            2,
@@ -620,7 +620,7 @@ func TestClientDetectionService_InvalidCodecHeaderFallthrough(t *testing.T) {
 
 	// Fallback User-Agent rule
 	ruleChrome := &models.ClientDetectionRule{
-		BaseModel:           models.BaseModel{ID: models.NewULID()},
+		ID:                  models.NewULID(),
 		Name:                "Chrome Browser",
 		Expression:          `@dynamic(request.headers):user-agent contains "Chrome"`,
 		Priority:            160,
@@ -794,7 +794,7 @@ func TestClientDetectionService_DynamicCodecHeaders(t *testing.T) {
 	repo := &mockClientDetectionRuleRepo{
 		rules: []*models.ClientDetectionRule{
 			{
-				BaseModel:           models.BaseModel{ID: models.NewULID()},
+				ID:                  models.NewULID(),
 				Name:                "Dynamic Video Codec",
 				Expression:          `@dynamic(request.headers):x-video-codec not_equals "" SET preferred_video_codec = @dynamic(request.headers):x-video-codec`,
 				Priority:            10,
@@ -806,7 +806,7 @@ func TestClientDetectionService_DynamicCodecHeaders(t *testing.T) {
 				SupportsMPEGTS:      new(true),
 			},
 			{
-				BaseModel:           models.BaseModel{ID: models.NewULID()},
+				ID:                  models.NewULID(),
 				Name:                "Dynamic Audio Codec",
 				Expression:          `@dynamic(request.headers):x-audio-codec not_equals "" SET preferred_audio_codec = @dynamic(request.headers):x-audio-codec`,
 				Priority:            20,
@@ -818,7 +818,7 @@ func TestClientDetectionService_DynamicCodecHeaders(t *testing.T) {
 				SupportsMPEGTS:      new(true),
 			},
 			{
-				BaseModel:           models.BaseModel{ID: models.NewULID()},
+				ID:                  models.NewULID(),
 				Name:                "Fallback Rule",
 				Expression:          `@dynamic(request.headers):user-agent not_equals ""`, // Always matches if there's a user agent
 				Priority:            100,

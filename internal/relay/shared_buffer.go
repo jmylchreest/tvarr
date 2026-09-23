@@ -318,6 +318,22 @@ func (t *ESTrack) ReadFromKeyframe(afterSeq uint64, maxSamples int) []ESSample {
 	return t.collectSamplesLocked(startIdx, maxSamples)
 }
 
+// LatestPTS returns the presentation timestamp of the most recent sample, or 0
+// when the track is empty.
+//
+// Needed when splicing synthetic content onto a live track: the new samples must
+// continue from where the live stream stopped, not restart at zero, or decoders
+// see time run backwards and drop the stream.
+func (t *ESTrack) LatestPTS() int64 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if len(t.samples) == 0 {
+		return 0
+	}
+	return t.samples[len(t.samples)-1].PTS
+}
+
 // LastSequence returns the sequence number of the most recent sample.
 func (t *ESTrack) LastSequence() uint64 {
 	t.mu.RLock()

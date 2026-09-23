@@ -13,8 +13,24 @@ import (
 	"github.com/jmylchreest/tvarr/internal/service/progress"
 )
 
+// epgIngestionTimeout bounds one EPG ingestion run.
+//
+// Generous, because a large feed over a slow link legitimately takes a while,
+// but finite: without it a provider that stops responding mid-download wedges
+// the source forever.
+const epgIngestionTimeout = 2 * time.Hour
+
+// epgProgramSweepTimeout bounds a background program sweep. Generous, because
+// it is deleting millions of rows in batches behind a shared write lock, but
+// finite so a wedged sweep cannot hold resources for the process's lifetime.
+const epgProgramSweepTimeout = 30 * time.Minute
+
 // EpgService provides business logic for EPG source management.
 type EpgService struct {
+	// ingests tracks in-flight ingestions so editing a source stops the run
+	// that is still using the old settings.
+	ingests ingestionCanceller
+
 	epgSourceRepo   repository.EpgSourceRepository
 	epgProgramRepo  repository.EpgProgramRepository
 	sourceRepo      repository.StreamSourceRepository
@@ -154,6 +170,14 @@ func (s *EpgService) Update(ctx context.Context, source *models.EpgSource) error
 		return fmt.Errorf("validation failed: %w", err)
 	}
 
+	// An ingestion keeps using the source it loaded when it started, so one
+	// already running would carry on against the old settings and then write its
+	// stale copy back over this edit. Stop it.
+	if s.ingests.cancel(source.ID) {
+		s.logger.Info("cancelled in-flight EPG ingestion because the source was updated",
+			"id", source.ID.String())
+	}
+
 	if err := s.epgSourceRepo.Update(ctx, source); err != nil {
 		return fmt.Errorf("updating EPG source: %w", err)
 	}
@@ -166,19 +190,88 @@ func (s *EpgService) Update(ctx context.Context, source *models.EpgSource) error
 	return nil
 }
 
-// Delete deletes an EPG source and all its programs.
+// Delete removes an EPG source and all of its programs.
+//
+// A mature source holds millions of program rows and removing them takes far
+// longer than any HTTP client will wait -- doing it inline returned a request
+// timeout while the delete was still running, leaving the user unable to tell
+// whether it had worked.
+//
+// The source row cannot simply go first, either: epg_programs.source_id has a
+// foreign key onto epg_sources.id, so dropping the parent while its programs
+// remain fails outright with "FOREIGN KEY constraint failed".
+//
+// So the source is marked deleted, which hides it from every ordinary query at
+// once (GORM scopes them to deleted_at IS NULL) and lets the request return
+// immediately, and the row lingers purely to satisfy the constraint while the
+// programs are swept behind the response. The row itself goes last.
 func (s *EpgService) Delete(ctx context.Context, id models.ULID) error {
-	// First delete all programs for this source
+	if err := s.epgSourceRepo.SoftDelete(ctx, id); err != nil {
+		return fmt.Errorf("deleting EPG source: %w", err)
+	}
+
+	s.logger.Info("marked EPG source deleted, sweeping its programs in the background",
+		"id", id.String())
+
+	go func() {
+		// Detached from the request context, which is cancelled the moment the
+		// response is written and would abort the sweep immediately.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), epgProgramSweepTimeout)
+		defer cancel()
+
+		if err := s.finishDeletion(ctx, id); err != nil {
+			// Not fatal: the source is already invisible, and the next startup
+			// finishes what is left.
+			s.logger.Error("sweeping programs for deleted EPG source failed; will retry on next startup",
+				"id", id.String(), "error", err)
+		}
+	}()
+
+	return nil
+}
+
+// finishDeletion removes a soft-deleted source's programs and then its row.
+func (s *EpgService) finishDeletion(ctx context.Context, id models.ULID) error {
+	started := time.Now()
+
 	if err := s.epgProgramRepo.DeleteBySourceID(ctx, id); err != nil {
 		return fmt.Errorf("deleting programs: %w", err)
 	}
 
-	// Then delete the source
+	// Only now is the foreign key satisfied and the row free to go.
 	if err := s.epgSourceRepo.Delete(ctx, id); err != nil {
-		return fmt.Errorf("deleting EPG source: %w", err)
+		return fmt.Errorf("deleting EPG source row: %w", err)
 	}
 
-	s.logger.Info("deleted EPG source", "id", id.String())
+	s.logger.Info("finished deleting EPG source",
+		"id", id.String(), "elapsed", time.Since(started))
+
+	return nil
+}
+
+// FinishPendingDeletions completes source deletions whose program sweep did not
+// finish. Intended to be called once at startup.
+//
+// A source marked deleted whose row is still present is an interrupted sweep:
+// invisible in the UI, still holding its programs, with nothing else that would
+// ever come back to it.
+func (s *EpgService) FinishPendingDeletions(ctx context.Context) error {
+	ids, err := s.epgSourceRepo.ListSoftDeleted(ctx)
+	if err != nil {
+		return fmt.Errorf("listing unfinished EPG source deletions: %w", err)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	s.logger.Info("resuming unfinished EPG source deletions", "count", len(ids))
+
+	for _, id := range ids {
+		if err := s.finishDeletion(ctx, id); err != nil {
+			s.logger.Error("could not finish EPG source deletion",
+				"id", id.String(), "error", err)
+		}
+	}
 
 	return nil
 }
@@ -292,16 +385,16 @@ func (s *EpgService) Ingest(ctx context.Context, id models.ULID) error {
 		progressMgr.SetMessage("Downloading programs...")
 	}
 
-	// Acquire type-level write lock to prevent concurrent EPG ingestions from
-	// writing to the epg_programs table simultaneously (prevents SQLite BUSY errors).
-	// Lock is acquired BEFORE writes begin (not before download).
-	s.logger.Debug("acquiring EPG write lock", "source_id", id.String())
-	epgWriteMutex.Lock()
-	s.logger.Debug("EPG write lock acquired", "source_id", id.String())
-	defer func() {
-		epgWriteMutex.Unlock()
-		s.logger.Debug("EPG write lock released", "source_id", id.String())
-	}()
+	// Programs are written under epgWriteMutex, which serialises concurrent EPG
+	// ingestions against the epg_programs table and keeps SQLite from returning
+	// BUSY. Only the writes take it.
+	//
+	// It used to be held here, around the whole of handler.Ingest -- the
+	// download. The comment claimed otherwise; the code did not match it. One
+	// source whose provider stopped responding therefore held the lock against
+	// every other EPG source indefinitely, and since the only logging around it
+	// was at Debug level, the queue behind it was invisible.
+	writeBatch := s.epgBatchWriter(ctx, id)
 
 	// Perform ingestion - download, parse, and upsert programs in batches.
 	// Using upsert (CreateBatch with ON CONFLICT DO UPDATE) allows us to:
@@ -326,7 +419,7 @@ func (s *EpgService) Ingest(ctx context.Context, id models.ULID) error {
 
 		// Flush batch when full (uses upsert, not insert)
 		if len(batchPrograms) >= batchSize {
-			if err := s.epgProgramRepo.CreateBatch(ctx, batchPrograms); err != nil {
+			if err := writeBatch(batchPrograms); err != nil {
 				return fmt.Errorf("batch upsert: %w", err)
 			}
 			batchPrograms = batchPrograms[:0]
@@ -344,7 +437,7 @@ func (s *EpgService) Ingest(ctx context.Context, id models.ULID) error {
 
 	// Flush any remaining programs
 	if len(batchPrograms) > 0 {
-		if batchErr := s.epgProgramRepo.CreateBatch(ctx, batchPrograms); batchErr != nil {
+		if batchErr := writeBatch(batchPrograms); batchErr != nil {
 			if err == nil {
 				err = fmt.Errorf("final batch upsert: %w", batchErr)
 			}
@@ -356,8 +449,7 @@ func (s *EpgService) Ingest(ctx context.Context, id models.ULID) error {
 			progressMgr.Fail(err)
 		}
 		s.stateManager.Fail(id, err)
-		source.MarkFailed(err)
-		_ = s.epgSourceRepo.Update(ctx, source)
+		s.recordOutcome(ctx, id, func(fresh *models.EpgSource) { fresh.MarkFailed(err) })
 		s.logger.Error("EPG ingestion failed",
 			"source_id", id.String(),
 			"error", err,
@@ -383,13 +475,7 @@ func (s *EpgService) Ingest(ctx context.Context, id models.ULID) error {
 	}
 
 	// Mark success
-	source.MarkSuccess(programCount)
-	if err := s.epgSourceRepo.Update(ctx, source); err != nil {
-		s.logger.Error("failed to update EPG source status",
-			"source_id", id.String(),
-			"error", err,
-		)
-	}
+	s.recordOutcome(ctx, id, func(fresh *models.EpgSource) { fresh.MarkSuccess(programCount) })
 
 	s.stateManager.Complete(id, programCount)
 
@@ -425,13 +511,69 @@ func (s *EpgService) IngestAsync(ctx context.Context, id models.ULID) error {
 		return fmt.Errorf("starting state tracking: %w", err)
 	}
 
-	// Run ingestion in background
+	// Run ingestion in background.
+	//
+	// Bounded, because it was previously started on a context.Background() with
+	// no deadline: a provider that accepts the connection and then stops
+	// responding left the ingestion blocked for the lifetime of the process,
+	// the source stuck reporting "ingesting", and no way back short of a
+	// restart.
 	go func() {
-		bgCtx := context.Background()
+		bgCtx, cancel := context.WithTimeout(context.Background(), epgIngestionTimeout)
+		defer cancel()
+
+		untrack := s.ingests.track(id, cancel)
+		defer untrack()
+
 		s.performIngestion(bgCtx, source)
 	}()
 
 	return nil
+}
+
+// recordOutcome writes an ingestion's result against the current stored source
+// rather than the copy the run started with.
+//
+// The repository saves whole rows, so writing back the loaded copy silently
+// reverted anything changed while the run was in progress -- a URL corrected
+// mid-ingestion was undone the moment the stale run finished.
+func (s *EpgService) recordOutcome(ctx context.Context, id models.ULID, apply func(*models.EpgSource)) {
+	fresh, err := s.epgSourceRepo.GetByID(ctx, id)
+	if err != nil || fresh == nil {
+		s.logger.Warn("could not load EPG source to record the ingestion outcome",
+			"id", id.String(), "error", err)
+		return
+	}
+
+	apply(fresh)
+
+	if err := s.epgSourceRepo.Update(ctx, fresh); err != nil {
+		s.logger.Warn("could not record the EPG ingestion outcome",
+			"id", id.String(), "error", err)
+	}
+}
+
+// epgBatchWriter returns a function that upserts a batch of programs while
+// holding the EPG write lock, reporting any wait long enough to be worth
+// knowing about.
+func (s *EpgService) epgBatchWriter(ctx context.Context, id models.ULID) func([]*models.EpgProgram) error {
+	return func(programs []*models.EpgProgram) error {
+		if len(programs) == 0 {
+			return nil
+		}
+
+		waited := time.Now()
+		epgWriteMutex.Lock()
+		defer epgWriteMutex.Unlock()
+
+		if blocked := time.Since(waited); blocked > time.Second {
+			s.logger.Info("waited for the EPG write lock",
+				"source_id", id.String(),
+				"waited", blocked)
+		}
+
+		return s.epgProgramRepo.CreateBatch(ctx, programs)
+	}
 }
 
 // performIngestion performs the actual EPG ingestion work.
@@ -493,16 +635,16 @@ func (s *EpgService) performIngestion(ctx context.Context, source *models.EpgSou
 		progressMgr.SetMessage("Downloading EPG data...")
 	}
 
-	// Acquire type-level write lock to prevent concurrent EPG ingestions from
-	// writing to the epg_programs table simultaneously (prevents SQLite BUSY errors).
-	// Lock is acquired BEFORE writes begin (not before download).
-	s.logger.Debug("acquiring EPG write lock", "source_id", id.String())
-	epgWriteMutex.Lock()
-	s.logger.Debug("EPG write lock acquired", "source_id", id.String())
-	defer func() {
-		epgWriteMutex.Unlock()
-		s.logger.Debug("EPG write lock released", "source_id", id.String())
-	}()
+	// Programs are written under epgWriteMutex, which serialises concurrent EPG
+	// ingestions against the epg_programs table and keeps SQLite from returning
+	// BUSY. Only the writes take it.
+	//
+	// It used to be held here, around the whole of handler.Ingest -- the
+	// download. The comment claimed otherwise; the code did not match it. One
+	// source whose provider stopped responding therefore held the lock against
+	// every other EPG source indefinitely, and since the only logging around it
+	// was at Debug level, the queue behind it was invisible.
+	writeBatch := s.epgBatchWriter(ctx, id)
 
 	// Perform ingestion - download, parse, and upsert programs in batches.
 	// Using upsert (CreateBatch with ON CONFLICT DO UPDATE) allows us to:
@@ -525,7 +667,7 @@ func (s *EpgService) performIngestion(ctx context.Context, source *models.EpgSou
 		}
 
 		if len(batchPrograms) >= batchSize {
-			if err := s.epgProgramRepo.CreateBatch(ctx, batchPrograms); err != nil {
+			if err := writeBatch(batchPrograms); err != nil {
 				return fmt.Errorf("batch upsert: %w", err)
 			}
 			batchPrograms = batchPrograms[:0]
@@ -543,7 +685,7 @@ func (s *EpgService) performIngestion(ctx context.Context, source *models.EpgSou
 
 	// Flush any remaining programs
 	if len(batchPrograms) > 0 {
-		if batchErr := s.epgProgramRepo.CreateBatch(ctx, batchPrograms); batchErr != nil {
+		if batchErr := writeBatch(batchPrograms); batchErr != nil {
 			if err == nil {
 				err = fmt.Errorf("final batch upsert: %w", batchErr)
 			}
@@ -555,8 +697,7 @@ func (s *EpgService) performIngestion(ctx context.Context, source *models.EpgSou
 			progressMgr.Fail(err)
 		}
 		s.stateManager.Fail(id, err)
-		source.MarkFailed(err)
-		_ = s.epgSourceRepo.Update(ctx, source)
+		s.recordOutcome(ctx, id, func(fresh *models.EpgSource) { fresh.MarkFailed(err) })
 		s.logger.Error("async EPG ingestion failed",
 			"source_id", id.String(),
 			"error", err,
@@ -579,8 +720,7 @@ func (s *EpgService) performIngestion(ctx context.Context, source *models.EpgSou
 		)
 	}
 
-	source.MarkSuccess(programCount)
-	_ = s.epgSourceRepo.Update(ctx, source)
+	s.recordOutcome(ctx, id, func(fresh *models.EpgSource) { fresh.MarkSuccess(programCount) })
 	s.stateManager.Complete(id, programCount)
 
 	// Complete progress tracking

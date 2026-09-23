@@ -385,6 +385,7 @@ func (h *BackupHandler) UploadBackup(w http.ResponseWriter, r *http.Request) {
 	// Limit request body size before parsing to prevent memory exhaustion
 	const maxUploadSize = 100 << 20 // 100MB
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	//nolint:gosec // G120: body is bounded above by http.MaxBytesReader(maxUploadSize)
 	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
 		writeJSONError(w, fmt.Sprintf("failed to parse form: %v", err), http.StatusBadRequest)
 		return

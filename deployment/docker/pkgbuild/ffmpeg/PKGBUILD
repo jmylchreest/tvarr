@@ -2,7 +2,7 @@
 # Maintainer: tvarr project
 
 pkgname=tvarr-ffmpeg
-pkgver=8.0.1
+pkgver=8.1.2
 pkgrel=1
 pkgdesc='Minimal FFmpeg for tvarr video transcoding'
 arch=(x86_64 aarch64)
@@ -27,6 +27,7 @@ depends=(
   vulkan-radeon
   vulkan-intel
   intel-media-driver
+  libplacebo
 )
 
 makedepends=(
@@ -53,7 +54,7 @@ conflicts=(ffmpeg)
 #source=("git+https://git.ffmpeg.org/ffmpeg.git#tag=n${pkgver}")
 #sha256sums=('SKIP')
 source=("https://ffmpeg.org/releases/ffmpeg-${pkgver}.tar.xz")
-sha256sums=('05ee0b03119b45c0bdb4df654b96802e909e0a752f72e4fe3794f487229e5a41')
+sha256sums=('464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c')
 
 options=(!lto)
 
@@ -83,6 +84,7 @@ build() {
     \
     --enable-vaapi \
     --enable-vulkan \
+    --enable-libplacebo \
     --enable-ffnvcodec \
     --enable-cuda-llvm \
     --enable-nvdec \

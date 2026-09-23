@@ -72,6 +72,10 @@ func (m *mockProgramRepo) DeleteBySourceID(ctx context.Context, sourceID models.
 	return nil
 }
 
+func (m *mockProgramRepo) DeleteOrphaned(ctx context.Context) (int64, error) {
+	return 0, nil
+}
+
 func (m *mockProgramRepo) DeleteStaleBySourceID(ctx context.Context, sourceID models.ULID, olderThan time.Time) (int64, error) {
 	return 0, nil
 }
@@ -93,15 +97,15 @@ func boolPtr(b bool) *bool {
 
 func makeEpgSource(name string, enabled bool) *models.EpgSource {
 	return &models.EpgSource{
-		BaseModel: models.BaseModel{ID: models.NewULID()},
-		Name:      name,
-		Enabled:   new(enabled),
+		ID:      models.NewULID(),
+		Name:    name,
+		Enabled: new(enabled),
 	}
 }
 
 func makeProgram(channelID, title string, start, stop time.Time) *models.EpgProgram {
 	return &models.EpgProgram{
-		BaseModel: models.BaseModel{ID: models.NewULID()},
+		ID:        models.NewULID(),
 		ChannelID: channelID,
 		Title:     title,
 		Start:     start,
@@ -112,8 +116,8 @@ func makeProgram(channelID, title string, start, stop time.Time) *models.EpgProg
 func newTestState(t *testing.T) *core.State {
 	t.Helper()
 	proxy := &models.StreamProxy{
-		BaseModel: models.BaseModel{ID: models.NewULID()},
-		Name:      "Test Proxy",
+		ID:   models.NewULID(),
+		Name: "Test Proxy",
 	}
 	return core.NewState(proxy)
 }
@@ -415,9 +419,9 @@ func TestStage_Execute(t *testing.T) {
 
 	t.Run("nil Enabled treated as enabled (BoolVal default)", func(t *testing.T) {
 		src := &models.EpgSource{
-			BaseModel: models.BaseModel{ID: models.NewULID()},
-			Name:      "nil-enabled",
-			Enabled:   nil, // BoolVal(nil) returns true
+			ID:      models.NewULID(),
+			Name:    "nil-enabled",
+			Enabled: nil, // BoolVal(nil) returns true
 		}
 		repo := &mockProgramRepo{
 			programs: map[models.ULID][]*models.EpgProgram{
@@ -498,6 +502,10 @@ func (m *perSourceMockRepo) GetCurrentByChannelID(ctx context.Context, channelID
 
 func (m *perSourceMockRepo) Delete(ctx context.Context, id models.ULID) error {
 	return nil
+}
+
+func (m *perSourceMockRepo) DeleteOrphaned(ctx context.Context) (int64, error) {
+	return 0, nil
 }
 
 func (m *perSourceMockRepo) DeleteBySourceID(ctx context.Context, sourceID models.ULID) error {

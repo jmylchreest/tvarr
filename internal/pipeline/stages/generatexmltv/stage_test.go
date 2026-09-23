@@ -17,8 +17,8 @@ func newTestState(t *testing.T) *core.State {
 	t.Helper()
 	tempDir := t.TempDir()
 	proxy := &models.StreamProxy{
-		BaseModel: models.BaseModel{ID: models.NewULID()},
-		Name:      "Test Proxy",
+		ID:   models.NewULID(),
+		Name: "Test Proxy",
 	}
 	state := core.NewState(proxy)
 	state.TempDir = tempDir

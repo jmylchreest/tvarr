@@ -299,8 +299,7 @@ func (s *ProxyService) createErrorDetail(err error) progress.ErrorDetail {
 	}
 
 	// Check if this is a StageError with stage context
-	var stageErr *core.StageError
-	if errors.As(err, &stageErr) {
+	if stageErr, ok := errors.AsType[*core.StageError](err); ok {
 		detail.Stage = stageErr.StageID
 		detail.Message = fmt.Sprintf("Pipeline failed in %s stage", stageErr.StageName)
 		detail.Suggestion = s.getSuggestionForStage(stageErr.StageID, stageErr.Err)

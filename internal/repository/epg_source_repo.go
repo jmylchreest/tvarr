@@ -74,6 +74,38 @@ func (r *epgSourceRepo) Delete(ctx context.Context, id models.ULID) error {
 	return nil
 }
 
+// SoftDelete marks an EPG source deleted without removing the row.
+//
+// epg_programs.source_id has a foreign key onto epg_sources.id, so the source
+// row cannot be removed while any of its programs remain -- and on a large
+// source removing those first takes far longer than a request can wait. Marking
+// it deleted hides it from every ordinary query immediately (GORM scopes them to
+// deleted_at IS NULL), leaving the row in place purely to satisfy the constraint
+// until the programs have been swept.
+func (r *epgSourceRepo) SoftDelete(ctx context.Context, id models.ULID) error {
+	result := r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.EpgSource{})
+	if result.Error != nil {
+		return fmt.Errorf("soft-deleting EPG source: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+// ListSoftDeleted returns the IDs of sources marked deleted whose rows are still
+// present, i.e. deletions that have not finished sweeping their programs.
+func (r *epgSourceRepo) ListSoftDeleted(ctx context.Context) ([]models.ULID, error) {
+	var ids []models.ULID
+	if err := r.db.WithContext(ctx).Unscoped().
+		Model(&models.EpgSource{}).
+		Where("deleted_at IS NOT NULL").
+		Pluck("id", &ids).Error; err != nil {
+		return nil, fmt.Errorf("listing soft-deleted EPG sources: %w", err)
+	}
+	return ids, nil
+}
+
 // GetByName retrieves an EPG source by name.
 func (r *epgSourceRepo) GetByName(ctx context.Context, name string) (*models.EpgSource, error) {
 	var source models.EpgSource

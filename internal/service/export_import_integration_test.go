@@ -401,7 +401,7 @@ func TestExportImportRoundTrip_PreservesAllFields(t *testing.T) {
 	// Create filter with all fields populated
 	sourceID := models.NewULID()
 	filter := &models.Filter{
-		BaseModel:   models.BaseModel{ID: models.NewULID()},
+		ID:          models.NewULID(),
 		Name:        "Complete Filter",
 		Description: "A detailed description",
 		Expression:  "complex.expression > 100",

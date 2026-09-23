@@ -64,9 +64,9 @@ func makeProxyState(
 ) *core.State {
 	t.Helper()
 	proxy := &models.StreamProxy{
-		BaseModel: models.BaseModel{ID: models.NewULID()},
-		Name:      "test-proxy",
-		Filters:   proxyFilters,
+		ID:      models.NewULID(),
+		Name:    "test-proxy",
+		Filters: proxyFilters,
 	}
 	state := core.NewState(proxy)
 	state.Channels = channels
@@ -92,12 +92,12 @@ func makeProxyFilter(
 	t.Helper()
 	filterID := models.NewULID()
 	return models.ProxyFilter{
-		BaseModel: models.BaseModel{ID: models.NewULID()},
-		FilterID:  filterID,
-		Priority:  priority,
-		IsActive:  isActive,
+		ID:       models.NewULID(),
+		FilterID: filterID,
+		Priority: priority,
+		IsActive: isActive,
 		Filter: &models.Filter{
-			BaseModel:  models.BaseModel{ID: filterID},
+			ID:         filterID,
 			Name:       name,
 			SourceType: sourceType,
 			Action:     action,
@@ -961,10 +961,10 @@ func TestExecute_LoadFiltersFromProxy(t *testing.T) {
 
 func TestExecute_LoadFiltersFromProxy_NilFilterRelationship(t *testing.T) {
 	pf := models.ProxyFilter{
-		BaseModel: models.BaseModel{ID: models.NewULID()},
-		FilterID:  models.NewULID(),
-		Priority:  1,
-		Filter:    nil,
+		ID:       models.NewULID(),
+		FilterID: models.NewULID(),
+		Priority: 1,
+		Filter:   nil,
 	}
 
 	state := makeProxyState(t,
@@ -982,11 +982,11 @@ func TestExecute_LoadFiltersFromProxy_NilFilterRelationship(t *testing.T) {
 func TestExecute_LoadFiltersFromProxy_UnknownSourceType(t *testing.T) {
 	filterID := models.NewULID()
 	pf := models.ProxyFilter{
-		BaseModel: models.BaseModel{ID: models.NewULID()},
-		FilterID:  filterID,
-		Priority:  1,
+		ID:       models.NewULID(),
+		FilterID: filterID,
+		Priority: 1,
 		Filter: &models.Filter{
-			BaseModel:  models.BaseModel{ID: filterID},
+			ID:         filterID,
 			Name:       "Unknown Type",
 			SourceType: "unknown",
 			Action:     models.FilterActionInclude,
@@ -1009,11 +1009,11 @@ func TestExecute_LoadFiltersFromProxy_UnknownSourceType(t *testing.T) {
 func TestExecute_LoadFiltersFromProxy_UnknownAction(t *testing.T) {
 	filterID := models.NewULID()
 	pf := models.ProxyFilter{
-		BaseModel: models.BaseModel{ID: models.NewULID()},
-		FilterID:  filterID,
-		Priority:  1,
+		ID:       models.NewULID(),
+		FilterID: filterID,
+		Priority: 1,
 		Filter: &models.Filter{
-			BaseModel:  models.BaseModel{ID: filterID},
+			ID:         filterID,
 			Name:       "Unknown Action",
 			SourceType: models.FilterSourceTypeStream,
 			Action:     "unknown_action",

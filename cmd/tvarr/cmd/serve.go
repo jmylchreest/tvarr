@@ -372,6 +372,15 @@ func runServe(_ *cobra.Command, _ []string) error {
 	).WithLogger(logger).WithProgressService(progressService).
 		WithStreamSourceRepo(streamSourceRepo)
 
+	// Finish any source deletion whose program sweep was interrupted. Such a
+	// source is already invisible in the UI but still holds its programs, and
+	// nothing else would ever come back to it.
+	go func() {
+		if err := epgService.FinishPendingDeletions(context.Background()); err != nil {
+			logger.Warn("failed to finish pending EPG source deletions on startup", slog.Any("error", err))
+		}
+	}()
+
 	proxyService := service.NewProxyService(
 		proxyRepo,
 		pipelineFactory,
