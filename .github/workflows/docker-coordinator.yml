@@ -6,29 +6,7 @@ name: Build tvarr-coordinator Docker Image
 
 on:
   # Trigger after Test workflow completes (for push to main or tags)
-  workflow_run:
-    workflows: ["Test"]
-    types: [completed]
-  pull_request:
-    paths-ignore:
-      - 'deployment/docker/Dockerfile.ffmpeg'
-      - 'deployment/docker/Dockerfile.ffmpegd'
-      - 'deployment/docker/Dockerfile'
-      - '.github/workflows/docker-ffmpeg.yml'
-      - '.github/workflows/docker-transcoder.yml'
-      - '.github/workflows/docker-tvarr.yml'
-      - '.github/workflows/docker-coordinator.yml'
-      - '.github/workflows/dependency-updates.yml'
-      - '**.md'
-      - 'docs/**'
-      - 'specs/**'
-  workflow_dispatch:
-
-# Cancel in-progress runs for the same branch/tag
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_branch || github.ref }}
-  cancel-in-progress: true
-
+  workflow_call: {}
 permissions:
   contents: read
   packages: write
@@ -42,10 +20,6 @@ jobs:
   gate:
     name: Verify Tests Passed
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'pull_request' ||
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
       ref: ${{ steps.resolve.outputs.ref }}
@@ -53,24 +27,15 @@ jobs:
       - name: Resolve commit and ref
         id: resolve
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
-            echo "sha=${{ github.event.workflow_run.head_sha }}" >> $GITHUB_OUTPUT
-            echo "ref=${{ github.event.workflow_run.head_branch }}" >> $GITHUB_OUTPUT
-            echo "Triggered by Test workflow on ${{ github.event.workflow_run.head_branch }} (${{ github.event.workflow_run.head_sha }})"
-          else
-            echo "sha=${{ github.sha }}" >> $GITHUB_OUTPUT
-            echo "ref=${{ github.ref }}" >> $GITHUB_OUTPUT
-          fi
+          echo "sha=$COMMIT_SHA" >> "$GITHUB_OUTPUT"
+          echo "ref=$BUILD_REF" >> "$GITHUB_OUTPUT"
 
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          BUILD_REF: ${{ github.ref }}
   build:
     # Note: ARM64 not supported - Arch Linux base is amd64 only
     needs: gate
-    if: |
-      always() && (
-        github.event_name == 'pull_request' ||
-        github.event_name == 'workflow_dispatch' ||
-        needs.gate.result == 'success'
-      )
     strategy:
       fail-fast: false
       matrix:

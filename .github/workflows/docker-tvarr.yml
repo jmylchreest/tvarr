@@ -6,30 +6,7 @@ name: Build tvarr Docker Image
 
 on:
   # Trigger after Test workflow completes (for push to main or tags)
-  workflow_run:
-    workflows: ["Test"]
-    types: [completed]
-  pull_request:
-    paths-ignore:
-      - 'deployment/docker/Dockerfile.ffmpeg'
-      - 'deployment/docker/Dockerfile.ffmpegd'
-      - 'deployment/docker/Dockerfile.coordinator'
-      - 'deployment/docker/pkgbuild/**'
-      - '.github/workflows/docker-ffmpeg.yml'
-      - '.github/workflows/docker-transcoder.yml'
-      - '.github/workflows/docker-coordinator.yml'
-      - '.github/workflows/docker-tvarr.yml'
-      - '.github/workflows/dependency-updates.yml'
-      - '**.md'
-      - 'docs/**'
-      - 'specs/**'
-  workflow_dispatch:
-
-# Cancel in-progress runs for the same branch/tag
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_branch || github.ref }}
-  cancel-in-progress: true
-
+  workflow_call: {}
 permissions:
   contents: read
   packages: write
@@ -46,10 +23,6 @@ jobs:
     runs-on: ubuntu-latest
     # For workflow_run: only proceed if the triggering Test workflow succeeded
     # For PRs/workflow_dispatch: always proceed (tests checked via status checks)
-    if: |
-      github.event_name == 'pull_request' ||
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
       ref: ${{ steps.resolve.outputs.ref }}
@@ -57,80 +30,17 @@ jobs:
       - name: Resolve commit and ref
         id: resolve
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
-            echo "sha=${{ github.event.workflow_run.head_sha }}" >> $GITHUB_OUTPUT
-            echo "ref=${{ github.event.workflow_run.head_branch }}" >> $GITHUB_OUTPUT
-            echo "Triggered by Test workflow on ${{ github.event.workflow_run.head_branch }} (${{ github.event.workflow_run.head_sha }})"
-          else
-            echo "sha=${{ github.sha }}" >> $GITHUB_OUTPUT
-            echo "ref=${{ github.ref }}" >> $GITHUB_OUTPUT
-          fi
+          echo "sha=$COMMIT_SHA" >> "$GITHUB_OUTPUT"
+          echo "ref=$BUILD_REF" >> "$GITHUB_OUTPUT"
 
   # Wait for FFmpeg workflow to complete (if running) before building
-  verify-ffmpeg:
-    name: Verify FFmpeg Ready
-    needs: gate
-    runs-on: ubuntu-latest
-    if: |
-      always() && needs.gate.result == 'success' &&
-      github.event_name != 'pull_request'
-    steps:
-      - name: Wait for FFmpeg workflow to complete
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          COMMIT="${{ needs.gate.outputs.sha }}"
-          REPO="${{ github.repository }}"
-          echo "Checking FFmpeg workflow status for commit $COMMIT"
-
-          for i in {1..60}; do
-            RESULT=$(gh run list --repo "$REPO" --workflow=docker-ffmpeg.yml --commit="$COMMIT" --json status,conclusion -q '.[0]' 2>/dev/null || echo '')
-
-            if [[ -z "$RESULT" ]] || [[ "$RESULT" == "null" ]]; then
-              echo "No FFmpeg workflow found for this commit - paths likely didn't change"
-              echo "Proceeding with existing FFmpeg image"
-              exit 0
-            fi
-
-            STATUS=$(echo "$RESULT" | jq -r '.status // ""')
-            CONCLUSION=$(echo "$RESULT" | jq -r '.conclusion // ""')
-
-            if [[ -z "$STATUS" ]]; then
-              echo "No FFmpeg workflow found for this commit - paths likely didn't change"
-              echo "Proceeding with existing FFmpeg image"
-              exit 0
-            fi
-
-            if [[ "$STATUS" == "completed" ]]; then
-              if [[ "$CONCLUSION" == "success" ]] || [[ "$CONCLUSION" == "skipped" ]]; then
-                echo "FFmpeg workflow completed successfully"
-                exit 0
-              else
-                echo "FFmpeg workflow failed with conclusion: $CONCLUSION"
-                exit 1
-              fi
-            fi
-
-            echo "FFmpeg workflow status: $STATUS (attempt $i/60), waiting..."
-            sleep 30
-          done
-
-          echo "Timeout waiting for FFmpeg workflow after 30 minutes"
-          exit 1
-
+          COMMIT_SHA: ${{ github.sha }}
+          BUILD_REF: ${{ github.ref }}
   build:
     # Note: ARM64 not supported - FFmpeg base image (Arch Linux) is amd64 only
     # TODO: Add ARM64 support when FFmpeg base supports it
-    needs: [gate, verify-ffmpeg]
-    if: |
-      always() && (
-        github.event_name == 'pull_request' ||
-        github.event_name == 'workflow_dispatch' ||
-        (
-          needs.gate.result == 'success' &&
-          (needs.verify-ffmpeg.result == 'success' || needs.verify-ffmpeg.result == 'skipped')
-        )
-      )
+    needs: gate
     strategy:
       fail-fast: false
       matrix:

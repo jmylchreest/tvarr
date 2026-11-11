@@ -5,46 +5,14 @@
 name: Build FFmpeg Base Image
 
 on:
-  schedule:
-    # Weekly rebuild on Sunday at midnight UTC (for rolling release updates)
-    - cron: '0 0 * * 0'
-  push:
-    branches:
-      - main
-    paths:
-      - 'deployment/docker/Dockerfile.ffmpeg'
-      - 'deployment/docker/pkgbuild/**'
-      - 'deployment/docker/scripts/**'
-      - 'scripts/check-hwaccel.sh'
-      - '.github/workflows/docker-ffmpeg.yml'
-  pull_request:
-    paths:
-      - 'deployment/docker/Dockerfile.ffmpeg'
-      - 'deployment/docker/pkgbuild/**'
-      - 'deployment/docker/scripts/**'
-      - 'scripts/check-hwaccel.sh'
-      - '.github/workflows/docker-ffmpeg.yml'
-  workflow_dispatch:
+  workflow_call:
     inputs:
       force_rebuild:
-        description: 'Force rebuild even if image exists'
-        required: false
-        default: 'false'
         type: boolean
+        default: false
       build_target:
-        description: 'Build target (runtime=minimal, full-build=with base system)'
-        required: false
-        default: 'runtime'
-        type: choice
-        options:
-          - runtime
-          - full-build
-
-# Cancel in-progress runs for the same ref
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
+        type: string
+        default: runtime
 permissions:
   contents: read
   packages: write
@@ -55,52 +23,8 @@ env:
 
 jobs:
   # Wait for Test workflow to pass before building (only on push events)
-  verify-test:
-    name: Verify Tests Passed
-    runs-on: ubuntu-latest
-    # Skip for scheduled builds, PRs, and manual triggers
-    if: github.event_name == 'push'
-    steps:
-      - name: Wait for Test workflow to pass
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          COMMIT="${{ github.sha }}"
-          REPO="${{ github.repository }}"
-          echo "Waiting for Test workflow to pass for commit $COMMIT"
-
-          for i in {1..60}; do
-            RESULT=$(gh run list --repo "$REPO" --workflow=test.yml --commit="$COMMIT" --json status,conclusion -q '.[0]' 2>/dev/null || echo '{}')
-            STATUS=$(echo "$RESULT" | jq -r '.status // "not_found"')
-            CONCLUSION=$(echo "$RESULT" | jq -r '.conclusion // "pending"')
-
-            if [[ "$STATUS" == "completed" ]]; then
-              if [[ "$CONCLUSION" == "success" ]]; then
-                echo "Tests passed"
-                exit 0
-              else
-                echo "Tests failed with conclusion: $CONCLUSION"
-                exit 1
-              fi
-            fi
-
-            if [[ "$STATUS" == "not_found" ]] && [[ $i -gt 5 ]]; then
-              echo "No Test workflow found for this commit after 5 attempts"
-              echo "This may indicate the Test workflow was not triggered"
-              exit 1
-            fi
-
-            echo "Test workflow status: $STATUS (attempt $i/60), waiting..."
-            sleep 30
-          done
-
-          echo "Timeout waiting for Test workflow after 30 minutes"
-          exit 1
-
   prepare:
     # Wait for verify-test on push events, run immediately otherwise
-    needs: verify-test
-    if: always() && (needs.verify-test.result == 'success' || needs.verify-test.result == 'skipped')
     runs-on: ubuntu-latest
     outputs:
       date_tag: ${{ steps.tags.outputs.date_tag }}
@@ -173,7 +97,7 @@ jobs:
     # Skip if image exists for today (unless force rebuild or scheduled)
     if: |
       github.event_name == 'schedule' ||
-      github.event.inputs.force_rebuild == 'true' ||
+      inputs.force_rebuild ||
       needs.prepare.outputs.amd64_exists == 'false'
 
     runs-on: ${{ matrix.runner }}
@@ -186,7 +110,7 @@ jobs:
         id: should_build
         run: |
           if [[ "${{ github.event_name }}" == "schedule" ]] || \
-             [[ "${{ github.event.inputs.force_rebuild }}" == "true" ]] || \
+             [[ "${{ inputs.force_rebuild }}" == "true" ]] || \
              [[ "${{ matrix.exists }}" == "false" ]]; then
             echo "build=true" >> $GITHUB_OUTPUT
           else
@@ -217,7 +141,7 @@ jobs:
           context: .
           file: deployment/docker/Dockerfile.ffmpeg
           platforms: ${{ matrix.platform }}
-          target: ${{ github.event.inputs.build_target || 'runtime' }}
+          target: ${{ inputs.build_target || 'runtime' }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.full_tag }}-${{ matrix.arch }}
