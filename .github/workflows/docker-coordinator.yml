@@ -1,6 +1,6 @@
 # Build tvarr-coordinator Docker Image
-# Triggered after Test workflow succeeds (via workflow_run) or directly on PRs.
-# Uses workflow_run instead of polling for reliable cross-workflow dependency.
+# Called by Test after the exact revision passes tests.
+# Dependencies are managed by the calling workflow.
 
 name: Build tvarr-coordinator Docker Image
 
